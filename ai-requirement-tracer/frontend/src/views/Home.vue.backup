@@ -1,0 +1,1111 @@
+<template>
+  <div class="home">
+    <el-row :gutter="20">
+      <!-- 左侧：需求输入区域 -->
+      <el-col :lg="8" :md="24" :sm="24">
+        <el-card class="input-card" shadow="hover">
+          <template #header>
+            <div class="card-header">
+              <el-icon><EditPen /></el-icon>
+              <span>需求追溯分析</span>
+            </div>
+          </template>
+          
+          <!-- 分析模式选择 -->
+          <el-radio-group v-model="analysisMode" class="mode-selector">
+            <el-radio-button label="relation">关系追溯</el-radio-button>
+            <el-radio-button label="batch">批量分析</el-radio-button>
+          </el-radio-group>
+          
+          <!-- 关系追溯模式 -->
+          <div v-if="analysisMode === 'relation'">
+            <el-form @submit.prevent="analyzeRelation">
+              <!-- 顶层需求列表 -->
+              <el-form-item label="顶层需求">
+                <div class="requirement-list">
+                  <div 
+                    v-for="(req, index) in highLevelRequirements" 
+                    :key="`high-${index}`"
+                    class="requirement-item"
+                  >
+                    <el-input
+                      v-model="highLevelRequirements[index]"
+                      type="textarea"
+                      :rows="2"
+                      :placeholder="`顶层需求 ${index + 1}`"
+                      maxlength="500"
+                      show-word-limit
+                    />
+                    <el-button 
+                      type="danger" 
+                      size="small" 
+                      @click="removeHighLevelRequirement(index)"
+                      :disabled="highLevelRequirements.length <= 1"
+                      class="remove-btn"
+                    >
+                      <el-icon><Delete /></el-icon>
+                    </el-button>
+                  </div>
+                  <el-button 
+                    type="primary" 
+                    size="small" 
+                    @click="addHighLevelRequirement"
+                    class="add-btn"
+                  >
+                    <el-icon><Plus /></el-icon>
+                    添加顶层需求
+                  </el-button>
+                </div>
+              </el-form-item>
+              
+              <!-- 底层需求列表 -->
+              <el-form-item label="底层需求">
+                <div class="requirement-list">
+                  <div 
+                    v-for="(req, index) in lowLevelRequirements" 
+                    :key="`low-${index}`"
+                    class="requirement-item"
+                  >
+                    <el-input
+                      v-model="lowLevelRequirements[index]"
+                      type="textarea"
+                      :rows="2"
+                      :placeholder="`底层需求 ${index + 1}`"
+                      maxlength="500"
+                      show-word-limit
+                    />
+                    <el-button 
+                      type="danger" 
+                      size="small" 
+                      @click="removeLowLevelRequirement(index)"
+                      :disabled="lowLevelRequirements.length <= 1"
+                      class="remove-btn"
+                    >
+                      <el-icon><Delete /></el-icon>
+                    </el-button>
+                  </div>
+                  <el-button 
+                    type="success" 
+                    size="small" 
+                    @click="addLowLevelRequirement"
+                    class="add-btn"
+                  >
+                    <el-icon><Plus /></el-icon>
+                    添加底层需求
+                  </el-button>
+                </div>
+              </el-form-item>
+              
+              <el-form-item>
+                <el-button 
+                  type="primary" 
+                  @click="analyzeRelation"
+                  :loading="loading"
+                  :disabled="!hasValidRequirements()"
+                  size="large"
+                  style="width: 100%"
+                >
+                  <el-icon><Share /></el-icon>
+                  分析追溯关系
+                </el-button>
+              </el-form-item>
+            </el-form>
+          </div>
+
+          <!-- 批量分析模式 -->
+          <div v-if="analysisMode === 'batch'">
+            <el-form @submit.prevent="analyzeBatch">
+              <el-form-item label="顶层需求列表">
+                <el-input
+                  v-model="batchHighLevelRequirements"
+                  type="textarea"
+                  :rows="6"
+                  placeholder="请输入多个顶层需求，每行一个..."
+                  maxlength="3000"
+                  show-word-limit
+                />
+                <div class="input-tip">每行输入一个顶层需求</div>
+              </el-form-item>
+              
+              <el-form-item label="底层需求列表">
+                <el-input
+                  v-model="batchLowLevelRequirements"
+                  type="textarea"
+                  :rows="6"
+                  placeholder="请输入多个底层需求，每行一个..."
+                  maxlength="3000"
+                  show-word-limit
+                />
+                <div class="input-tip">每行输入一个底层需求</div>
+              </el-form-item>
+              
+              <el-form-item>
+                <el-button 
+                  type="primary" 
+                  @click="analyzeBatch"
+                  :loading="loading"
+                  :disabled="!batchHighLevelRequirements.trim() || !batchLowLevelRequirements.trim()"
+                  size="large"
+                  style="width: 100%"
+                >
+                  <el-icon><Grid /></el-icon>
+                  批量分析追溯关系
+                </el-button>
+              </el-form-item>
+            </el-form>
+          </div>
+
+          <!-- 快速示例 -->
+          <el-divider content-position="left">快速示例</el-divider>
+          <div class="examples">
+            <el-tag 
+              v-for="example in getCurrentExamples" 
+              :key="example.title"
+              @click="selectExample(example)"
+              class="example-tag"
+              effect="plain"
+              type="info"
+            >
+              {{ example.title }}
+            </el-tag>
+          </div>
+        </el-card>
+      </el-col>
+
+      <!-- 右侧：分析结果区域 -->
+      <el-col :lg="16" :md="24" :sm="24">
+        <el-card class="result-card" shadow="hover">
+          <template #header>
+            <div class="card-header">
+              <el-icon><DataAnalysis /></el-icon>
+              <span>分析结果</span>
+            </div>
+          </template>
+
+          <!-- 加载状态 -->
+          <div v-if="loading" class="loading-container">
+            <el-skeleton :rows="8" animated />
+            <div class="loading-text">
+              <el-icon class="loading-icon"><Loading /></el-icon>
+              AI正在分析您的需求，请稍候...
+            </div>
+          </div>
+
+          <!-- 分析结果 -->
+          <div v-else-if="analysisResult" class="analysis-result">
+            <!-- 总结 -->
+            <el-alert
+              :title="analysisResult.summary"
+              :type="getAlertType()"
+              :closable="false"
+              show-icon
+              class="summary-alert"
+            />
+
+            <!-- 关系分析模式的结果 -->
+            <div v-if="analysisMode === 'relation' && analysisResult.has_relation !== undefined" class="relation-analysis">
+              <div class="relation-info">
+                <h3>
+                  <el-icon><Share /></el-icon>
+                  需求关系分析
+                </h3>
+                <el-descriptions border :column="2">
+                  <el-descriptions-item label="关系状态">
+                    <el-tag :type="analysisResult.has_relation ? 'success' : 'info'">
+                      {{ analysisResult.has_relation ? '存在关系' : '无直接关系' }}
+                    </el-tag>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="关系类型">
+                    {{ getRelationTypeLabel(analysisResult.relation_type) }}
+                  </el-descriptions-item>
+                  <el-descriptions-item label="置信度">
+                    <el-progress 
+                      :percentage="Math.round(analysisResult.confidence * 100)" 
+                      :color="getConfidenceColor(analysisResult.confidence)"
+                      :stroke-width="8"
+                    />
+                  </el-descriptions-item>
+                  <el-descriptions-item label="关键词">
+                    <el-tag 
+                      v-for="keyword in analysisResult.keywords" 
+                      :key="keyword"
+                      size="small"
+                      type="info"
+                      class="keyword-tag"
+                    >
+                      {{ keyword }}
+                    </el-tag>
+                  </el-descriptions-item>
+                </el-descriptions>
+              </div>
+
+              <!-- 需求对比展示 -->
+              <div class="requirement-comparison">
+                <h3>
+                  <el-icon><InfoFilled /></el-icon>
+                  需求对比
+                </h3>
+                <el-row :gutter="16">
+                  <el-col :span="12">
+                    <el-card class="req-card high-level">
+                      <template #header>
+                        <div class="req-header">
+                          <el-icon><Top /></el-icon>
+                          <span>顶层需求</span>
+                        </div>
+                      </template>
+                      <div class="req-content">{{ analysisResult.high_level_requirement }}</div>
+                    </el-card>
+                  </el-col>
+                  <el-col :span="12">
+                    <el-card class="req-card low-level">
+                      <template #header>
+                        <div class="req-header">
+                          <el-icon><Bottom /></el-icon>
+                          <span>底层需求</span>
+                        </div>
+                      </template>
+                      <div class="req-content">{{ analysisResult.low_level_requirement }}</div>
+                    </el-card>
+                  </el-col>
+                </el-row>
+              </div>
+
+              <!-- 分析详情 -->
+              <div v-if="analysisResult.analysis_details" class="analysis-details">
+                <h3>
+                  <el-icon><DataAnalysis /></el-icon>
+                  详细分析
+                </h3>
+                <el-card>
+                  <div class="analysis-text">{{ analysisResult.analysis_details }}</div>
+                </el-card>
+              </div>
+            </div>
+
+            <!-- 批量分析模式的结果 -->
+            <div v-else-if="analysisMode === 'batch' && batchResult" class="batch-analysis">
+              <div class="batch-summary">
+                <h3>
+                  <el-icon><Grid /></el-icon>
+                  批量分析结果
+                </h3>
+                <el-descriptions border :column="3">
+                  <el-descriptions-item label="分析组合数">
+                    {{ batchResult.total_combinations }}
+                  </el-descriptions-item>
+                  <el-descriptions-item label="发现关系数">
+                    <el-tag type="success">{{ batchResult.total_relations_found }}</el-tag>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="关系发现率">
+                    <el-progress 
+                      :percentage="Math.round(batchResult.statistics.relation_rate * 100)" 
+                      :color="batchResult.statistics.relation_rate > 0.3 ? '#67c23a' : '#e6a23c'"
+                      :stroke-width="8"
+                    />
+                  </el-descriptions-item>
+                </el-descriptions>
+              </div>
+
+              <!-- 关系类型统计 -->
+              <div v-if="batchResult.relation_types_count && Object.keys(batchResult.relation_types_count).length > 0" class="relation-stats">
+                <h3>
+                  <el-icon><DataAnalysis /></el-icon>
+                  关系类型统计
+                </h3>
+                <el-row :gutter="16">
+                  <el-col :span="6" v-for="(count, type) in batchResult.relation_types_count" :key="type">
+                    <el-card class="stat-card">
+                      <div class="stat-content">
+                        <div class="stat-number">{{ count }}</div>
+                        <div class="stat-label">{{ getRelationTypeLabel(type) }}</div>
+                      </div>
+                    </el-card>
+                  </el-col>
+                </el-row>
+              </div>
+
+              <!-- 关系详情列表 -->
+              <div class="relations-list">
+                <h3>
+                  <el-icon><List /></el-icon>
+                  关系详情
+                </h3>
+                <el-table :data="batchResult.relations.filter(r => r.has_relation)" stripe>
+                  <el-table-column prop="high_level_index" label="顶层需求" width="80">
+                    <template #default="scope">
+                      <el-tag type="primary">#{{ scope.row.high_level_index + 1 }}</el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="low_level_index" label="底层需求" width="80">
+                    <template #default="scope">
+                      <el-tag type="success">#{{ scope.row.low_level_index + 1 }}</el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="relation_type" label="关系类型" width="120">
+                    <template #default="scope">
+                      <el-tag :type="getRelationTypeColor(scope.row.relation_type)">
+                        {{ getRelationTypeLabel(scope.row.relation_type) }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="confidence" label="置信度" width="100">
+                    <template #default="scope">
+                      <el-progress 
+                        :percentage="Math.round(scope.row.confidence * 100)" 
+                        :color="getConfidenceColor(scope.row.confidence)"
+                        :stroke-width="6"
+                      />
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="summary" label="分析摘要" min-width="200">
+                    <template #default="scope">
+                      <div class="relation-summary">{{ scope.row.summary }}</div>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
+            </div>
+
+
+            <!-- 需求追溯链网络 -->
+            <div class="trace-visualization">
+              <h3>
+                <el-icon><Share /></el-icon>
+                需求追溯链网络
+              </h3>
+              <RequirementTraceChart :trace-data="analysisResult" />
+            </div>
+
+            <!-- 向上追溯链 -->
+            <div v-if="analysisResult.upward_trace?.length > 0" class="upward-trace">
+              <h3>
+                <el-icon><Top /></el-icon>
+                向上追溯链（支持的上级需求）
+              </h3>
+              <el-timeline>
+                <el-timeline-item
+                  v-for="(trace, index) in analysisResult.upward_trace"
+                  :key="index"
+                  type="primary"
+                >
+                  <el-card class="trace-item-card">
+                    <div class="trace-header">
+                      <strong>{{ trace.name }}</strong>
+                      <el-tag type="primary" size="small">
+                        Level {{ trace.level }}
+                      </el-tag>
+                    </div>
+                    <p class="trace-description">{{ trace.text }}</p>
+                  </el-card>
+                </el-timeline-item>
+              </el-timeline>
+            </div>
+
+            <!-- 向下分解链 -->
+            <div v-if="analysisResult.downward_trace?.length > 0" class="downward-trace">
+              <h3>
+                <el-icon><Bottom /></el-icon>
+                向下分解链（具体实现需求）
+              </h3>
+              <el-timeline>
+                <el-timeline-item
+                  v-for="(trace, index) in analysisResult.downward_trace"
+                  :key="index"
+                  type="success"
+                >
+                  <el-card class="trace-item-card">
+                    <div class="trace-header">
+                      <strong>{{ trace.name }}</strong>
+                      <el-tag 
+                        :type="trace.priority === 'high' ? 'danger' : 'warning'" 
+                        size="small"
+                      >
+                        {{ trace.priority === 'high' ? '高优先级' : '中优先级' }}
+                      </el-tag>
+                    </div>
+                    <p class="trace-description">{{ trace.text }}</p>
+                  </el-card>
+                </el-timeline-item>
+              </el-timeline>
+            </div>
+
+            <!-- 风险分析 -->
+            <div v-if="analysisResult.risks && analysisResult.risks.length > 0" class="risks-section">
+              <h3>
+                <el-icon><WarningFilled /></el-icon>
+                风险分析
+              </h3>
+              <el-row :gutter="12">
+                <el-col 
+                  v-for="(risk, index) in analysisResult.risks" 
+                  :key="index"
+                  :lg="12" 
+                  :md="24"
+                >
+                  <el-alert
+                    :title="risk.title"
+                    :description="risk.description"
+                    :type="getRiskType(risk.level)"
+                    show-icon
+                    :closable="false"
+                    class="risk-alert"
+                  />
+                </el-col>
+              </el-row>
+            </div>
+
+            <!-- 改进建议 -->
+            <div v-if="analysisResult.suggestions && analysisResult.suggestions.length > 0" class="suggestions-section">
+              <h3>
+                <el-icon><Lightbulb /></el-icon>
+                改进建议
+              </h3>
+              <ul class="suggestions-list">
+                <li v-for="(suggestion, index) in analysisResult.suggestions" :key="index">
+                  <el-icon><Check /></el-icon>
+                  {{ suggestion }}
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <!-- 空状态 -->
+          <el-empty 
+            v-else
+            description="请在左侧输入需求描述，点击分析按钮开始AI智能分析"
+            :image-size="200"
+          />
+        </el-card>
+      </el-col>
+    </el-row>
+  </div>
+</template>
+
+<script>
+import { ElMessage } from 'element-plus'
+import { requirementApi } from '../api'
+import RequirementTraceChart from '../components/RequirementTraceChart.vue'
+import {
+  EditPen, DataAnalysis, Loading,
+  Share, List, WarningFilled, Lightbulb, Check,
+  SuccessFilled, Warning, CircleCloseFilled, InfoFilled,
+  Top, Bottom, Grid, Delete, Plus
+} from '@element-plus/icons-vue'
+
+export default {
+  name: 'Home',
+  components: {
+    RequirementTraceChart,
+    EditPen, DataAnalysis, Loading,
+    Share, List, WarningFilled, Lightbulb, Check,
+    SuccessFilled, Warning, CircleCloseFilled, InfoFilled,
+    Top, Bottom, Grid, Delete, Plus
+  },
+  data() {
+    return {
+      analysisMode: 'relation', // 'relation' 或 'batch'
+      highLevelRequirements: ['', ''], // 顶层需求数组，默认2个
+      lowLevelRequirements: ['', ''], // 底层需求数组，默认2个
+      batchHighLevelRequirements: '',
+      batchLowLevelRequirements: '',
+      loading: false,
+      analysisResult: null,
+      batchResult: null,
+      relationExamples: [
+        {
+          title: 'DPU-BOOT DRAM测试',
+          highLevel: 'The DPU-BOOT CSC shall include a DRAM BIT consisting of two write/read/compare tests.  The first test shall write the address of each memory location to that location.  The second test shall write the complement of each memory location to that location.',
+          lowLevel: 'DRAM BITPart of the memory is tested in Boot Sequence 1, and part of the memory is tested during Boot Sequence 2.  During Boot Sequence 1, ? KB of DRAM is tested before the Bootstrap is copied to this area.  During Boot Sequence 2, the  remaining memory is tested in ? KB blocks.'
+        },
+        {
+          title: 'Bootstrap Monitor命令',
+          highLevel: 'The DPU-BOOT CSC shall provide a monitor which accepts commands over the RS-232 interface.',
+          lowLevel: 'Bootstrap MonitorThe Bootstrap Monitor checks entered commands for syntax and number of arguments, and displays an error message to the RS-232 interface if an invalid command or argument is entered.'
+        },
+        {
+          title: '内存测试与记录',
+          highLevel: 'The DPU-BOOT CSC shall create a record of failed DRAM blocks, BIT_DRAM, in the SYSTEM_BLOCK.',
+          lowLevel: 'Exclude Failed DRAMThe Bootstrap performs a memory test before loading the operating system.  The results of this test are stored in the EEPROM.  The DPU-RTOS uses the results of the memory test to exclude memory segments with bit errors from the system memory pool.'
+        }
+      ],
+      batchExamples: [
+        {
+          title: '用户系统批量分析',
+          highLevel: '系统应提供用户登录功能\n系统应支持用户权限管理\n系统应提供用户数据统计',
+          lowLevel: '实现用户名密码验证机制\n实现角色权限分配功能\n实现用户行为数据收集\n实现数据可视化展示'
+        },
+        {
+          title: '电商平台批量分析',
+          highLevel: '平台应支持商品管理\n平台应提供订单处理功能\n平台应支持支付结算',
+          lowLevel: '实现商品信息录入功能\n实现商品分类管理\n实现订单状态跟踪\n实现多种支付方式\n实现库存自动更新'
+        }
+      ]
+    }
+  },
+  computed: {
+    getCurrentExamples() {
+      if (this.analysisMode === 'relation') {
+        return this.relationExamples
+      } else {
+        return this.batchExamples
+      }
+    }
+  },
+  methods: {
+    // 选择示例
+    selectExample(example) {
+      if (this.analysisMode === 'relation') {
+        // 将示例数据填充到需求数组中
+        this.highLevelRequirements = [example.highLevel]
+        this.lowLevelRequirements = [example.lowLevel]
+      } else if (this.analysisMode === 'batch') {
+        this.batchHighLevelRequirements = example.highLevel
+        this.batchLowLevelRequirements = example.lowLevel
+      }
+    },
+
+    // 添加顶层需求
+    addHighLevelRequirement() {
+      this.highLevelRequirements.push('')
+    },
+
+    // 删除顶层需求
+    removeHighLevelRequirement(index) {
+      if (this.highLevelRequirements.length > 1) {
+        this.highLevelRequirements.splice(index, 1)
+      }
+    },
+
+    // 添加底层需求
+    addLowLevelRequirement() {
+      this.lowLevelRequirements.push('')
+    },
+
+    // 删除底层需求
+    removeLowLevelRequirement(index) {
+      if (this.lowLevelRequirements.length > 1) {
+        this.lowLevelRequirements.splice(index, 1)
+      }
+    },
+
+    // 检查是否有有效的需求
+    hasValidRequirements() {
+      const hasHighLevel = this.highLevelRequirements.some(req => req.trim())
+      const hasLowLevel = this.lowLevelRequirements.some(req => req.trim())
+      return hasHighLevel && hasLowLevel
+    },
+
+
+
+    // 分析需求关系
+    async analyzeRelation() {
+      if (!this.hasValidRequirements()) {
+        ElMessage.warning('请至少输入一个顶层需求和一个底层需求')
+        return
+      }
+
+      // 过滤掉空的需求
+      const validHighLevel = this.highLevelRequirements.filter(req => req.trim())
+      const validLowLevel = this.lowLevelRequirements.filter(req => req.trim())
+
+      if (validHighLevel.length === 0 || validLowLevel.length === 0) {
+        ElMessage.warning('请至少输入一个顶层需求和一个底层需求')
+        return
+      }
+
+      this.loading = true
+      this.analysisResult = null
+
+      try {
+        // 如果只有一个顶层需求和一个底层需求，使用单对分析
+        if (validHighLevel.length === 1 && validLowLevel.length === 1) {
+          const result = await requirementApi.analyzeRequirementRelation(
+            validHighLevel[0].trim(),
+            validLowLevel[0].trim(),
+            false
+          )
+          
+          if (result.success) {
+            this.analysisResult = result.data
+            console.log('关系分析结果:', this.analysisResult)
+            
+            if (this.analysisResult.has_relation) {
+              ElMessage.success(`检测到${this.getRelationTypeLabel(this.analysisResult.relation_type)}！`)
+            } else {
+              ElMessage.info('未检测到直接的追溯关系')
+            }
+          } else {
+            ElMessage.error(result.error || '关系分析失败，请重试')
+          }
+        } else {
+          // 多个需求，使用批量分析
+          const result = await requirementApi.batchAnalyzeRequirementRelations(
+            validHighLevel.map(req => req.trim()),
+            validLowLevel.map(req => req.trim()),
+            false
+          )
+          
+          if (result.success) {
+            this.batchResult = result.data
+            console.log('批量分析结果:', this.batchResult)
+            
+            const relationsFound = this.batchResult.total_relations_found
+            const totalCombinations = this.batchResult.total_combinations
+            
+            ElMessage.success(`批量分析完成！共分析 ${totalCombinations} 个组合，发现 ${relationsFound} 个追溯关系`)
+          } else {
+            ElMessage.error(result.error || '批量分析失败，请重试')
+          }
+        }
+      } catch (error) {
+        console.error('关系分析失败:', error)
+        ElMessage.error('关系分析服务暂时不可用，请稍后重试')
+      } finally {
+        this.loading = false
+      }
+    },
+
+    // 批量分析需求关系
+    async analyzeBatch() {
+      if (!this.batchHighLevelRequirements.trim() || !this.batchLowLevelRequirements.trim()) {
+        ElMessage.warning('请输入顶层需求列表和底层需求列表')
+        return
+      }
+
+      // 解析需求列表
+      const highLevelReqs = this.batchHighLevelRequirements.trim().split('\n').filter(req => req.trim())
+      const lowLevelReqs = this.batchLowLevelRequirements.trim().split('\n').filter(req => req.trim())
+
+      if (highLevelReqs.length === 0 || lowLevelReqs.length === 0) {
+        ElMessage.warning('请确保每行输入一个需求')
+        return
+      }
+
+      if (highLevelReqs.length * lowLevelReqs.length > 50) {
+        ElMessage.warning('批量分析组合数量过多，建议不超过50个组合')
+        return
+      }
+
+      this.loading = true
+      this.batchResult = null
+
+      try {
+        const result = await requirementApi.batchAnalyzeRequirementRelations(
+          highLevelReqs,
+          lowLevelReqs,
+          false
+        )
+        
+        if (result.success) {
+          this.batchResult = result.data
+          console.log('批量分析结果:', this.batchResult)
+          
+          const relationsFound = this.batchResult.total_relations_found
+          const totalCombinations = this.batchResult.total_combinations
+          
+          ElMessage.success(`批量分析完成！共分析 ${totalCombinations} 个组合，发现 ${relationsFound} 个追溯关系`)
+        } else {
+          ElMessage.error(result.error || '批量分析失败，请重试')
+        }
+      } catch (error) {
+        console.error('批量分析失败:', error)
+        ElMessage.error('批量分析服务暂时不可用，请稍后重试')
+      } finally {
+        this.loading = false
+      }
+    },
+
+
+    // 获取时间线类型
+    getTimelineType(type) {
+      const types = {
+        success: 'success',
+        warning: 'warning',
+        error: 'danger',
+        info: 'info'
+      }
+      return types[type] || 'info'
+    },
+
+    // 获取时间线图标
+    getTimelineIcon(type) {
+      const icons = {
+        success: SuccessFilled,
+        warning: Warning,
+        error: CircleCloseFilled,
+        info: InfoFilled
+      }
+      return icons[type] || InfoFilled
+    },
+
+    // 获取标签类型
+    getTagType(type) {
+      const types = {
+        success: 'success',
+        warning: 'warning',
+        error: 'danger',
+        info: 'info'
+      }
+      return types[type] || 'info'
+    },
+
+    // 获取状态文本
+    getStatusText(type) {
+      const texts = {
+        success: '正常',
+        warning: '注意',
+        error: '风险',
+        info: '信息'
+      }
+      return texts[type] || '未知'
+    },
+
+    // 获取风险类型
+    getRiskType(level) {
+      const types = {
+        high: 'error',
+        warning: 'warning',
+        info: 'info',
+        low: 'success'
+      }
+      return types[level] || 'info'
+    },
+
+
+    // 获取警告类型
+    getAlertType() {
+      if (this.analysisMode === 'relation' && this.analysisResult.has_relation !== undefined) {
+        return this.analysisResult.has_relation ? 'success' : 'info'
+      }
+      return 'info'
+    },
+
+    // 获取关系类型标签
+    getRelationTypeLabel(relationType) {
+      const labels = {
+        'implementation': '实现关系',
+        'support': '支持关系', 
+        'dependency': '依赖关系',
+        'decomposition': '分解关系',
+        'general': '追溯关系',
+        'unknown': '未知关系'
+      }
+      return labels[relationType] || '追溯关系'
+    },
+
+    // 获取置信度颜色
+    getConfidenceColor(confidence) {
+      if (confidence >= 0.8) return '#67c23a'
+      if (confidence >= 0.6) return '#e6a23c'
+      if (confidence >= 0.4) return '#f56c6c'
+      return '#909399'
+    },
+
+    // 获取关系类型颜色
+    getRelationTypeColor(relationType) {
+      const colors = {
+        'implementation': 'success',
+        'support': 'warning',
+        'dependency': 'danger',
+        'decomposition': 'info',
+        'general': 'primary',
+        'unknown': 'info'
+      }
+      return colors[relationType] || 'info'
+    }
+  }
+}
+</script>
+
+<style scoped>
+.home {
+  padding: 20px 0;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: bold;
+  color: #2c3e50;
+}
+
+.card-header .el-icon {
+  margin-right: 8px;
+}
+
+.input-card {
+  margin-bottom: 20px;
+}
+
+.examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.example-tag {
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.example-tag:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.result-card {
+  margin-bottom: 20px;
+}
+
+.loading-container {
+  text-align: center;
+  padding: 40px 0;
+}
+
+.loading-text {
+  margin-top: 20px;
+  color: #909399;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.loading-icon {
+  animation: rotate 2s linear infinite;
+}
+
+@keyframes rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.summary-alert {
+  margin-bottom: 24px;
+}
+
+.trace-visualization,
+.detailed-analysis,
+.risks-section,
+.suggestions-section {
+  margin-bottom: 32px;
+}
+
+.trace-visualization h3,
+.detailed-analysis h3,
+.risks-section h3,
+.suggestions-section h3 {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+  color: #2c3e50;
+  font-size: 18px;
+}
+
+.trace-visualization h3 .el-icon,
+.detailed-analysis h3 .el-icon,
+.risks-section h3 .el-icon,
+.suggestions-section h3 .el-icon {
+  margin-right: 8px;
+  color: #409eff;
+}
+
+.trace-item-card {
+  margin-bottom: 8px;
+}
+
+.trace-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.trace-description {
+  color: #606266;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.risk-alert {
+  margin-bottom: 12px;
+}
+
+.suggestions-list {
+  list-style: none;
+  padding: 0;
+}
+
+.suggestions-list li {
+  display: flex;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.suggestions-list li:last-child {
+  border-bottom: none;
+}
+
+.suggestions-list li .el-icon {
+  color: #67c23a;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+/* 新增样式 */
+.mode-selector {
+  margin-bottom: 20px;
+  width: 100%;
+}
+
+.mode-selector .el-radio-button {
+  flex: 1;
+}
+
+.relation-analysis,
+.single-analysis {
+  margin-bottom: 24px;
+}
+
+.requirement-comparison {
+  margin-bottom: 24px;
+}
+
+.req-card {
+  height: 100%;
+}
+
+.req-header {
+  display: flex;
+  align-items: center;
+  font-weight: bold;
+}
+
+.req-header .el-icon {
+  margin-right: 8px;
+}
+
+.high-level .req-header {
+  color: #409eff;
+}
+
+.low-level .req-header {
+  color: #67c23a;
+}
+
+.req-content {
+  line-height: 1.6;
+  color: #606266;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.analysis-details {
+  margin-bottom: 24px;
+}
+
+.analysis-text {
+  line-height: 1.6;
+  color: #606266;
+  white-space: pre-wrap;
+}
+
+.keyword-tag {
+  margin-right: 8px;
+  margin-bottom: 4px;
+}
+
+/* 批量分析样式 */
+.batch-analysis {
+  margin-bottom: 24px;
+}
+
+.batch-summary {
+  margin-bottom: 24px;
+}
+
+.relation-stats {
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  text-align: center;
+  border: 1px solid #e4e7ed;
+}
+
+.stat-content {
+  padding: 16px;
+}
+
+.stat-number {
+  font-size: 24px;
+  font-weight: bold;
+  color: #409eff;
+  margin-bottom: 8px;
+}
+
+.stat-label {
+  font-size: 14px;
+  color: #606266;
+}
+
+.relations-list {
+  margin-bottom: 24px;
+}
+
+.relation-summary {
+  font-size: 14px;
+  color: #606266;
+  line-height: 1.4;
+}
+
+.input-tip {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+}
+
+/* 需求列表样式 */
+.requirement-list {
+  width: 100%;
+}
+
+.requirement-item {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 12px;
+  gap: 8px;
+}
+
+.requirement-item .el-input {
+  flex: 1;
+}
+
+.remove-btn {
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+.add-btn {
+  width: 100%;
+  margin-top: 8px;
+}
+
+/* 响应式设计 */
+@media (max-width: 992px) {
+  .home {
+    padding: 10px 0;
+  }
+  
+  .input-card {
+    margin-bottom: 20px;
+  }
+}
+</style>
