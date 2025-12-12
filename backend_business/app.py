@@ -1,32 +1,22 @@
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify
 from flask_cors import CORS
-import requests
+from routes.conflict_routes import conflict_bp
 
 app = Flask(__name__)
 CORS(app)
 
 # Configuration
-INFERENCE_SERVICE_URL = "http://localhost:8000"
 BUSINESS_PORT = 5001
 
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({"status": "business_backend_ok"})
 
-@app.route('/api/conflict/check', methods=['POST'])
-def check_conflict():
-    """
-    Proxy request to Inference Backend
-    """
-    try:
-        data = request.json
-        # Forward to Inference Backend
-        resp = requests.post(f"{INFERENCE_SERVICE_URL}/conflict/check", json=data)
-        return jsonify(resp.json()), resp.status_code
-    except requests.exceptions.ConnectionError:
-        return jsonify({"detail": "Inference service unavailable"}), 503
-    except Exception as e:
-        return jsonify({"detail": str(e)}), 500
+# Register Blueprints
+# This maps /api/conflict/check -> conflict_bp.check_conflict
+app.register_blueprint(conflict_bp, url_prefix='/api/conflict')
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=BUSINESS_PORT, debug=True)
+    # Use 0.0.0.0 to listen on all interfaces
+    # debug=True removed for better practice, or use env var if needed
+    app.run(host='0.0.0.0', port=BUSINESS_PORT)

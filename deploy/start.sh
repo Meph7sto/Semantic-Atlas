@@ -37,9 +37,9 @@ nohup uvicorn backend_inference.main:app --host 0.0.0.0 --port 8000 \
   > "${BASE_DIR}/deploy/logs/inference.log" 2>&1 &
 
 # 4) 启动 Flask 业务服务
-echo "[start] 启动 Flask 业务服务 (5000)..."
+echo "[start] 启动 Flask 业务服务 (5001)..."
 nohup python backend_business/app.py \
   > "${BASE_DIR}/deploy/logs/business.log" 2>&1 &
 
-echo "[start] 全部服务已尝试启动。Nginx 监听 80，Flask 5000，FastAPI 8000。"
+echo "[start] 全部服务已尝试启动。Nginx 监听 8008，Flask 5001，FastAPI 8000。"
 echo "[start] 查看日志: tail -f deploy/logs/*.log"
