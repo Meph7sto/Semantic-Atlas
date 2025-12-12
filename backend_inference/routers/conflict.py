@@ -4,11 +4,17 @@ from schemas.conflict_report import ConflictCheckRequest, ConflictCheckResponse
 
 router = APIRouter(prefix="/conflict", tags=["Conflict Detection"])
 
-SYSTEM_PROMPT_CONFLICT = """你是一个专业的系统需求分析专家。
-你的任务是准确判断给定的两个需求（需求A 和 需求B）是否存在逻辑上的冲突或无法同时满足的情况。
-如果存在冲突，请回答“冲突”并简要说明原因。
-如果不存在冲突，请回答“不冲突”。
-请只关注客观的技术或逻辑冲突。
+SYSTEM_PROMPT_CONFLICT = """你是一个严格的系统需求分析专家。
+你的任务是判断“需求A”和“需求B”是否存在实质性的逻辑冲突。
+
+判断规则：
+1. 冲突：指两个需求无法同时被满足（例如 A要求“响应时间<1s”，B要求“响应时间>2s”；或者 A要求“黑色背景”，B要求“白色背景”）。
+2. 不冲突：指两个需求兼容、一致、或者属于不同维度（例如 A要求“快”，B要求“快”；或者 A要求“界面美观”，B要求“功能稳定”）。
+3. 需求内容相同或相似，视为“不冲突”。
+
+输出格式：
+- 如果冲突，请直接以“冲突”开头，后跟简短原因。
+- 如果不冲突，请直接以“不冲突”开头。
 """
 
 @router.post("/check", response_model=ConflictCheckResponse)
@@ -27,14 +33,20 @@ async def check_conflict(request: ConflictCheckRequest):
         )
         
         # Simple parsing logic (can be refined based on model output stability)
-        is_conflict = "冲突" in answer and "不冲突" not in answer # Basic heuristic
-        # A better heuristic might be needed depending on strict output, 
-        # but the prompt asks for specific words.
-        # Let's trust the "Conflicts" vs "Not Conflicts" keyword for now.
-        if answer.startswith("冲突") or "是冲突" in answer:
-             is_conflict = True
-        elif "不冲突" in answer:
+        # Robust parsing logic
+        clean_answer = answer.strip()
+        if clean_answer.startswith("不冲突"):
              is_conflict = False
+        elif clean_answer.startswith("冲突"):
+             is_conflict = True
+        else:
+             # Fallback: look for keywords
+             if "不冲突" in clean_answer:
+                 is_conflict = False
+             elif "冲突" in clean_answer:
+                 is_conflict = True
+             else:
+                 is_conflict = False # Default safe assumption
         
         return ConflictCheckResponse(
             is_conflict=is_conflict,
