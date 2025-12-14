@@ -92,52 +92,52 @@ backend_inference/
 
 ---
 
-### 3. 如何扩展新功能（例如：添加“需求分类”）
+### 3. 需求冲突检测的设计思路 (Design Philosophy)
 
-假设需要添加一个“需求分类”功能，只需按照以下步骤操作，**无需修改现有冲突检测代码**：
+需求冲突检测模块 (`backend_inference/routers/conflict.py`) 的设计核心在于**利用大语言模型的语义理解能力，配合严格的提示词工程 (Prompt Engineering)**。
 
-#### 第一步：定义数据结构
- `backend_inference/schemas/classification.py`:
-```python
-from pydantic import BaseModel
+#### 实现机制
+1.  **输入**: 接收两个需求文本（Requirement A 和 Requirement B）。
+2.  **Prompt 构建**: 使用预定义的 `SYSTEM_PROMPT_CONFLICT`，明确告知模型什么情况属于“冲突”，什么属于“不冲突”。
+    *   **冲突定义**: 逻辑互斥（如“>2s”与“<1s”）、属性互斥（“黑”与“白”）。
+    *   **非冲突定义**: 兼容、不同维度、相似内容。
+3.  **推理**: 调用共享的 `model_engine` 生成文本回答。
+4.  **结果解析**:
+    *   采用规则解析 (Rule-based Parsing) 对模型的自然语言输出进行标准化处理。
+    *   主要依据模型输出的开头关键词（"冲突" 或 "不冲突"）来判定布尔值结果。
+    *   保留 `raw_response` 以便人工复核和调试。
 
-class ClassifyRequest(BaseModel):
-    requirement_text: str  # 只需要一段文本
+此设计的优势在于**灵活性**：通过调整 System Prompt 即可优化冲突检测的标准，而无需修改底层代码。
 
-class ClassifyResponse(BaseModel):
-    category: str          # 返回类别（如：功能性、性能、安全性）
-    confidence: float
-```
+---
 
-#### 第二步：编写业务路由
-新建 `backend_inference/routers/classification.py`:
-```python
-from fastapi import APIRouter
-from core.model_container import model_engine  # 引用同一个模型引擎
-from schemas.classification import ClassifyRequest, ClassifyResponse
+### 4. 需求追溯与需求分类开发指南
 
-router = APIRouter(prefix="/classification", tags=["Classification"])
+后续队友在提交“需求追溯”和“需求分类”功能时，请严格遵守以下开发规范：
 
-SYSTEM_PROMPT = "你是一个需求分类专家..."
+#### 需求分类 (Requirement Classification)
 
-@router.post("/predict", response_model=ClassifyResponse)
-async def classify(request: ClassifyRequest):
-    # 1. 拼接提示词
-    prompt = f"请分类以下需求：{request.requirement_text}"
-    
-    # 2. 调用模型
-    answer = model_engine.generate(prompt, system_prompt=SYSTEM_PROMPT)
-    
-    # 3. 解析结果并返回
-    return ClassifyResponse(category=answer, confidence=1.0)
-```
+**设计目标**: 将非结构化的需求文本自动归类为预定义的类别（如：功能需求、性能需求、安全需求等）。
 
-#### 第三步：注册路由
-打开 `backend_inference/main.py`，加入两行代码：
-```python
-from routers import classification  # 导入新模块
+**开发步骤**:
+1.  **定义数据结构**: 在 `backend_inference/schemas/classification.py` 中定义请求和响应模型。
+    *   Request: 包含 `requirement_text`。
+    *   Response: 包含 `category` (类别) 和 `confidence` (置信度，可选)。
+2.  **编写路由逻辑**: 在 `backend_inference/routers/` 下创建 `classification.py`。
+    *   定义 `SYSTEM_PROMPT_CLASSIFICATION`，列出所有可选类别及其定义。
+    *   构造 Prompt 让模型输出分类标签。
+3.  **注册路由**: 在 `main.py` 中取消 `app.include_router(classification.router)` 的注释。
 
-# ... 在 app = FastAPI(...) 之后
-app.include_router(classification.router) # 注册新模块
-```
+#### 需求追溯 (Requirement Traceability)
 
+**设计目标**: 建立需求之间的关联关系（如：Parent-Child, Depends-On），形成追溯图谱。
+
+**开发步骤**:
+1.  **定义数据结构**: 在 `backend_inference/schemas/trace_output.py` 中定义图谱结构。
+    *   通常包含 `nodes` (需求节点列表) 和 `links` (关联关系列表)。
+2.  **编写路由逻辑**: 在 `backend_inference/routers/` 下创建 `traceability.py` (假设命名)。
+    *   追溯通常需要分析多个需求。Prompt 可能会比较复杂，需要让模型输出 JSON 格式的关联列表。
+    *   示例 Prompt: "分析以下需求列表，找出它们之间的依赖关系，并以 JSON 格式输出..."。
+3.  **注册路由**: 同样在 `main.py` 中注册新路由。
+
+**注意**: 所有新功能都**必须**使用 `core/model_container.py` 中的 `model_engine` 单例，**严禁**在路由中重新加载模型。
