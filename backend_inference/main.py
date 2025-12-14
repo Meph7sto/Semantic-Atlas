@@ -20,7 +20,11 @@ async def lifespan(app: FastAPI):
     # Startup: Load the model
     print(f"Initializing Model from: {settings.MODEL_PATH}")
     if os.path.exists(settings.MODEL_PATH):
-        model_engine.load_model()
+        try:
+            model_engine.load_model()
+        except Exception as e:
+            print(f"CRITICAL ERROR: Failed to load model files: {e}")
+            # We continue startup so health checks pass, but inference will fail
     else:
         print(f"CRITICAL WARNING: Model directory not found at {settings.MODEL_PATH}")
     yield

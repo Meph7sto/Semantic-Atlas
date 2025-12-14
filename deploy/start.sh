@@ -14,18 +14,45 @@ PID_PATH="${BASE_DIR}/deploy/logs/nginx.pid"
 
 echo "[start] 使用前端目录: ${FRONTEND_ROOT}"
 
-# 1) 前端构建（如 dist 不存在则构建）
-if [ ! -d "$FRONTEND_ROOT" ]; then
-  echo "[start] 前端 dist 未找到，开始安装依赖并构建..."
-  (cd frontend && npm install && npm run build)
-else
-  echo "[start] 已存在 dist，跳过前端构建"
-fi
+# 1) 始终执行前端构建，确保代码更新生效
+echo "[start] 开始前端构建 (npm install & npm run build)..."
+# 清理旧的 dist 以防万一
+rm -rf "$FRONTEND_ROOT"
+
+# 为了防止服务器缺失配置文件，在此处自动生成
+echo "Generating tailwind.config.js..."
+cat > "${BASE_DIR}/frontend/tailwind.config.js" <<EOF
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: [
+    "./index.html",
+    "./src/**/*.{vue,js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+}
+EOF
+
+echo "Generating postcss.config.js..."
+cat > "${BASE_DIR}/frontend/postcss.config.js" <<EOF
+module.exports = {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}
+EOF
+
+(cd frontend && npm install && npm run build)
 
 # 2) 生成 Nginx 配置并重载
 echo "[start] 生成 Nginx 配置..."
 export FRONTEND_ROOT
-envsubst '$FRONTEND_ROOT' < "${BASE_DIR}/deploy/nginx.conf" > "${BASE_DIR}/deploy/nginx.generated.conf"
+export MIME_TYPES_PATH="${BASE_DIR}/deploy/mime.types"
+#如果是MacOS 可能需要 envsubst (gettext)
+envsubst '$FRONTEND_ROOT $MIME_TYPES_PATH' < "${BASE_DIR}/deploy/nginx.conf" > "${BASE_DIR}/deploy/nginx.generated.conf"
 
 echo "[start] 启动/重载 Nginx..."
 nginx -c "${BASE_DIR}/deploy/nginx.generated.conf" -p "${BASE_DIR}/deploy" -g "pid logs/nginx.pid;" -s reload 2>/dev/null || \

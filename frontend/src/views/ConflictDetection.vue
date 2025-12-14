@@ -1,220 +1,146 @@
 <script setup>
-import { ref, onMounted, nextTick } from 'vue';
-import axios from 'axios';
+import { ref } from 'vue'
+import axios from 'axios'
+import { Play, CheckCircle2, AlertCircle, Sparkles } from 'lucide-vue-next'
 
-// State
-const reqA = ref('');
-const reqB = ref('');
-const messages = ref([]);
-const isLoading = ref(false);
-const chatContainer = ref(null);
-const showWelcome = ref(true);
+const reqA = ref('')
+const reqB = ref('')
+const isLoading = ref(false)
+const result = ref(null) 
 
-// Methods
-const clearChat = () => {
-    messages.value = [];
-    reqA.value = '';
-    reqB.value = '';
-    showWelcome.value = true;
-};
-
-const scrollToBottom = async () => {
-    await nextTick();
-    if (chatContainer.value) {
-        chatContainer.value.scrollTop = chatContainer.value.scrollHeight;
+const detectConflict = async () => {
+  if (!reqA.value || !reqB.value) return
+  isLoading.value = true
+  result.value = null
+  
+  try {
+    const response = await axios.post('/api/conflict/check', {
+      requirement_a: reqA.value,
+      requirement_b: reqB.value
+    })
+    result.value = response.data
+  } catch (e) {
+    console.error(e)
+    let errorMsg = 'Failed to check conflict.'
+    
+    if (e.response && e.response.data) {
+        // Backend provided detailed error
+        errorMsg += ` Server says: ${e.response.data.detail || JSON.stringify(e.response.data)}`
+    } else if (e.message) {
+        // Network or other generic error
+        errorMsg += ` Error: ${e.message}`
     }
-};
-
-const checkConflict = async () => {
-    if (!reqA.value.trim() || !reqB.value.trim()) {
-        alert("Please enter both Requirement A and Requirement B.");
-        return;
-    }
-
-    showWelcome.value = false;
-    isLoading.value = true;
-
-    // 1. Add User Message
-    const userMsg = {
-        role: 'user',
-        content: `**Requirement A:**\n${reqA.value}\n\n**Requirement B:**\n${reqB.value}`
-    };
-    messages.value.push(userMsg);
-    await scrollToBottom();
-
-    try {
-        // Use relative path which is proxied by Vite to Flask backend
-        const response = await axios.post('/api/conflict/check', {
-            requirement_a: reqA.value,
-            requirement_b: reqB.value
-        });
-
-        // 2. Add AI Response
-        const data = response.data;
-        const statusHtml = data.is_conflict 
-            ? '<span class="status-indicator status-conflict">CONFLICT DETECTED</span>'
-            : '<span class="status-indicator status-ok">NO CONFLICT</span>';
-            
-        const aiMsg = {
-            role: 'ai',
-            content: `${statusHtml}\n\n${data.raw_response}`,
-            type: 'html' // Custom flag to render HTML
-        };
-        messages.value.push(aiMsg);
-
-    } catch (error) {
-        console.error(error);
-        messages.value.push({
-            role: 'ai',
-            content: `<span style="color: #ff6b6b">Error: ${error.message}</span>`,
-            type: 'html'
-        });
-    } finally {
-        isLoading.value = false;
-        await scrollToBottom();
-    }
-};
-
-// Handle Ctrl+Enter
-const handleKeydown = (e) => {
-    if (e.ctrlKey && e.key === 'Enter') {
-        checkConflict();
-    }
-};
+    
+    alert(errorMsg)
+  } finally {
+    isLoading.value = false
+  }
+}
 </script>
 
 <template>
-    <div class="layout">
-        <!-- Sidebar -->
-        <aside class="sidebar">
-            <button class="new-chat-btn" @click="clearChat">
-                <span>+</span> New Check
-            </button>
-            <div class="history-list">
-                <div class="feature-item" style="text-align: left; color: var(--text-secondary);">
-                    Previous Checks
-                </div>
-                <!-- Future history items -->
-            </div>
-            <div class="footer-info">
-                Semantic Atlas v1.0
-            </div>
-        </aside>
-
-        <!-- Main Content -->
-        <main class="main-content">
-            <div class="chat-container" ref="chatContainer" :class="{ 'has-messages': messages.length > 0 }">
-                <!-- Welcome Screen -->
-                <div v-if="showWelcome" class="welcome-screen">
-                    <h1>Conflict Detection</h1>
-                    <div class="feature-columns">
-                        <div class="feature-col">
-                            <div class="feature-icon">⚡</div>
-                            <div class="feature-title">Fast Analysis</div>
-                            <div class="feature-item">Instantly detects logical contradictions between requirements</div>
-                        </div>
-                        <div class="feature-col">
-                            <div class="feature-icon">🧠</div>
-                            <div class="feature-title">AI Powered</div>
-                            <div class="feature-item">Uses DeepSeek-LLM to understand semantic nuances</div>
-                        </div>
-                        <div class="feature-col">
-                            <div class="feature-icon">🛡️</div>
-                            <div class="feature-title">Safety Focused</div>
-                            <div class="feature-item">Identifies critical safety constraints and violations</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Chat Messages -->
-                <div v-else class="messages-list">
-                    <div v-for="(msg, index) in messages" :key="index" :class="['message', msg.role]">
-                        <div class="message-content">
-                            <div class="avatar" :class="msg.role">
-                                {{ msg.role === 'user' ? 'U' : 'AI' }}
-                            </div>
-                            <div class="text-content">
-                                <div v-if="msg.type === 'html'" v-html="msg.content"></div>
-                                <div v-else style="white-space: pre-wrap;">{{ msg.content }}</div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Loading Indicator -->
-                    <div v-if="isLoading" class="message ai">
-                        <div class="message-content">
-                            <div class="avatar ai">AI</div>
-                            <div class="text-content">
-                                <span class="loading-dots">Analyzing</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Input Area -->
-            <div class="input-area">
-                <div class="input-container">
-                    <div class="input-row">
-                        <div class="textarea-wrapper">
-                            <label class="textarea-label">Requirement A</label>
-                            <textarea 
-                                v-model="reqA" 
-                                placeholder="Enter the first requirement description..."
-                                @keydown="handleKeydown"
-                            ></textarea>
-                        </div>
-                        <div class="textarea-wrapper">
-                            <label class="textarea-label">Requirement B</label>
-                            <textarea 
-                                v-model="reqB" 
-                                placeholder="Enter the second requirement description..."
-                                @keydown="handleKeydown"
-                            ></textarea>
-                        </div>
-                    </div>
-                    <button class="send-btn" @click="checkConflict" :disabled="isLoading || !reqA || !reqB">
-                        <svg stroke="currentColor" fill="none" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" height="1em" width="1em" xmlns="http://www.w3.org/2000/svg"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-                        Check
-                    </button>
-                </div>
-                <div class="disclaimer">
-                    AI can make mistakes. Consider checking important information.
-                </div>
-            </div>
-        </main>
+  <div class="flex flex-col h-full w-full max-w-5xl mx-auto px-6 py-8">
+    <!-- Header -->
+    <div class="text-center mb-10">
+      <h2 class="text-3xl font-semibold text-zinc-800 tracking-tight flex items-center justify-center gap-2">
+        Conflict Detection
+      </h2>
+      <p class="text-zinc-500 mt-2 text-sm">Compare two requirements for logical inconsistencies using AI.</p>
     </div>
+
+    <!-- Input Area -->
+    <div class="grid grid-cols-2 gap-6 mb-8">
+      <!-- Requirement A -->
+      <div class="group relative">
+        <label class="block text-xs font-semibold text-zinc-400 mb-2 uppercase tracking-wider ml-1">Requirement A</label>
+        <textarea 
+          v-model="reqA"
+          placeholder="e.g. The system must respond within 1 second."
+          class="w-full h-40 p-4 rounded-xl bg-white border border-zinc-200 text-zinc-800 placeholder-zinc-300 resize-none focus:outline-none focus:ring-2 focus:ring-zinc-100 focus:border-zinc-300 transition-all shadow-sm group-hover:shadow-md"
+        ></textarea>
+      </div>
+
+      <!-- Requirement B -->
+      <div class="group relative">
+        <label class="block text-xs font-semibold text-zinc-400 mb-2 uppercase tracking-wider ml-1">Requirement B</label>
+        <textarea 
+          v-model="reqB"
+          placeholder="e.g. The system response time should be at least 2 seconds."
+          class="w-full h-40 p-4 rounded-xl bg-white border border-zinc-200 text-zinc-800 placeholder-zinc-300 resize-none focus:outline-none focus:ring-2 focus:ring-zinc-100 focus:border-zinc-300 transition-all shadow-sm group-hover:shadow-md"
+        ></textarea>
+      </div>
+    </div>
+
+    <!-- Action Button -->
+    <div class="flex justify-center mb-12">
+      <button 
+        @click="detectConflict"
+        :disabled="isLoading || !reqA || !reqB"
+        class="flex items-center gap-2 bg-zinc-900 text-white px-8 py-3 rounded-full font-medium hover:bg-zinc-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95 shadow-lg shadow-zinc-200"
+      >
+        <span v-if="isLoading" class="flex items-center gap-2">
+           <svg class="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+           </svg>
+           Analyzing...
+        </span>
+        <span v-else class="flex items-center gap-2">
+          <Play class="w-4 h-4 fill-white" />
+          Start Detection
+        </span>
+      </button>
+    </div>
+
+    <!-- Results Area -->
+    <div v-if="isLoading || result" class="max-w-3xl mx-auto w-full">
+      
+      <!-- Loading State (Breathing dots) -->
+      <div v-if="isLoading" class="flex justify-center py-10">
+        <div class="flex items-center gap-1">
+          <div class="w-2 h-2 bg-zinc-400 rounded-full animate-bounce" style="animation-delay: 0ms"></div>
+          <div class="w-2 h-2 bg-zinc-400 rounded-full animate-bounce" style="animation-delay: 150ms"></div>
+          <div class="w-2 h-2 bg-zinc-400 rounded-full animate-bounce" style="animation-delay: 300ms"></div>
+        </div>
+      </div>
+
+      <!-- Result Card -->
+      <div v-else-if="result" class="animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div class="flex items-start gap-4">
+          <div :class="`mt-1 w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${result.is_conflict ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`">
+            <Sparkles class="w-5 h-5" />
+          </div>
+          
+          <div class="flex-1 space-y-3">
+            <div class="flex items-center gap-3">
+              <span class="font-semibold text-zinc-900">Analysis Result</span>
+              <span 
+                v-if="result.is_conflict" 
+                class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700 border border-red-200"
+              >
+                <AlertCircle class="w-3 h-3" />
+                Conflict Detected
+              </span>
+              <span 
+                v-else 
+                class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700 border border-emerald-200"
+              >
+                <CheckCircle2 class="w-3 h-3" />
+                Compatible
+              </span>
+            </div>
+            
+            <div class="p-6 bg-zinc-50 rounded-2xl border border-zinc-100 text-zinc-700 leading-relaxed shadow-sm">
+              {{ result.raw_response }}
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
 </template>
 
 <style scoped>
-/* Scoped styles can override global or add component specific styles */
-.layout {
-  display: flex;
-  height: 100vh;
-  overflow: hidden;
-  background-color: var(--bg-color);
-  color: var(--text-primary);
-}
-
-.footer-info {
-    border-top: 1px solid rgba(255,255,255,0.1);
-    padding-top: 10px;
-    font-size: 0.8em;
-    color: var(--text-secondary);
-}
-
-.messages-list {
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-}
-
-.disclaimer {
-    text-align: center;
-    color: var(--text-secondary);
-    font-size: 0.75rem;
-    margin-top: 10px;
-    position: absolute;
-    bottom: 10px;
-}
+/* Scoped styles overrides if needed, but Tailwind handles most */
 </style>
