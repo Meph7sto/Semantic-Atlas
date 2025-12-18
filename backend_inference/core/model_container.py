@@ -1,4 +1,4 @@
-from core.engine import DeepSeekEngine
+from core.engine_tr import DeepSeekEngine
 from core.config import settings
 
 # 全局模型容器
