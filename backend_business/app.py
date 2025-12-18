@@ -1,30 +1,54 @@
-from flask import Flask, jsonify
+import os
+import sys
+
+from flask import Flask
 from flask_cors import CORS
-from routes.conflict_routes import conflict_bp
 
-# 初始化 Flask 应用实例
-app = Flask(__name__)
-# 启用跨域资源共享 (CORS) 支持
-CORS(app)
+# Ensure project root is on sys.path so `python backend_business/app.py` works reliably
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
-# 配置项
-# 定义业务后端服务的运行端口
-BUSINESS_PORT = 5001
+from backend_business.config import settings
+from backend_business.routes.analysis_route import analysis_bp
+from backend_business.routes.conflict_routes import conflict_bp
+from backend_business.routes.file_route import file_bp
 
-@app.route('/health', methods=['GET'])
-def health():
-    """
-    健康检查接口
-    返回服务的运行状态
-    """
-    return jsonify({"status": "business_backend_ok"})
 
-# 注册蓝图 (Blueprints)
-# 将 /api/conflict/check 映射到 conflict_bp.check_conflict
-# url_prefix 设置了该蓝图下所有路由的前缀
-app.register_blueprint(conflict_bp, url_prefix='/api/conflict')
+def create_app() -> Flask:
+    app = Flask(__name__)
 
-if __name__ == '__main__':
-    # 使用 0.0.0.0 监听所有网络接口，使服务在外部可访问
-    # 为了更好的实践移除了 debug=True，如果有需要可以使用环境变量配置
-    app.run(host='0.0.0.0', port=BUSINESS_PORT)
+    # 让 jsonify 直接输出中文（不转义为 \\uXXXX），便于本地 curl / 日志阅读
+    # Flask 2.2+ 使用 app.json；旧版本仍兼容 JSON_AS_ASCII
+    try:
+        app.json.ensure_ascii = False  # type: ignore[attr-defined]
+    except Exception:
+        app.config["JSON_AS_ASCII"] = False
+
+    # CORS
+    if settings.CORS_ORIGINS == "*":
+        CORS(app, resources={r"/api/*": {"origins": "*"}})
+    else:
+        origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
+        CORS(app, resources={r"/api/*": {"origins": origins}})
+
+    # Register blueprints
+    app.register_blueprint(analysis_bp, url_prefix="/api")
+    app.register_blueprint(conflict_bp, url_prefix="/api/conflict")
+    app.register_blueprint(file_bp, url_prefix="/api")
+
+    # 兼容主框架：提供 /health（非 /api/health）
+    @app.get("/health")
+    def root_health():
+        return {"status": "business_backend_ok"}
+
+    return app
+
+
+app = create_app()
+
+
+if __name__ == "__main__":
+    app.run(host=settings.HOST, port=settings.PORT, debug=settings.DEBUG)
+

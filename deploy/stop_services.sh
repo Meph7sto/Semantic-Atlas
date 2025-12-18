@@ -1,5 +1,9 @@
 #!/bin/bash
-set -euo pipefail
+set -eu
+# shellcheck disable=SC3040
+if [ -n "${BASH_VERSION:-}" ]; then
+  set -o pipefail 2>/dev/null || true
+fi
 
 # Base paths
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

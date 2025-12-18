@@ -1,5 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import ConflictDetection from '@/views/ConflictDetection.vue'
+
+import Classification from '../views/Classification.vue'
+import ConflictDetection from '../views/ConflictDetection.vue'
+import Traceability from '../views/Traceability.vue'
 
 const router = createRouter({
     history: createWebHistory(import.meta.env.BASE_URL),
@@ -13,8 +16,20 @@ const router = createRouter({
             path: '/conflict',
             name: 'conflict',
             component: ConflictDetection
+        },
+        {
+            path: '/traceability',
+            name: 'traceability',
+            component: Traceability
+        },
+        {
+            path: '/classification',
+            name: 'classification',
+            component: Classification
         }
     ]
 })
 
 export default router
+
+

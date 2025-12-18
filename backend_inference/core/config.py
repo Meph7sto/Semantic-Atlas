@@ -5,11 +5,11 @@ class Settings:
     # 通过多次调用 os.path.dirname 回溯到根目录
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     
-    # 模型路径配置
-    # 定义模型相对于项目根目录的路径
+    # Model Path
+    # 默认期望一个可用于 AutoModelForCausalLM/Seq2SeqLM 的大模型目录（例如 DeepSeek/Qwen 等）。
+    # 可通过环境变量 INFERENCE_MODEL_PATH 覆盖，便于在不同机器/容器中挂载模型目录。
     MODEL_RELATIVE_PATH = os.path.join("data", "models", "deepseek_conflict")
-    # 拼接绝对路径
-    MODEL_PATH = os.path.join(BASE_DIR, MODEL_RELATIVE_PATH)
+    MODEL_PATH = os.environ.get("INFERENCE_MODEL_PATH") or os.path.join(BASE_DIR, MODEL_RELATIVE_PATH)
     
     # 模型参数默认配置
     DEFAULT_MAX_TOKENS = 128
