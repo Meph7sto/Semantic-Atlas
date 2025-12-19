@@ -51,12 +51,33 @@ EOF
 echo "[start] 生成 Nginx 配置..."
 export FRONTEND_ROOT
 export MIME_TYPES_PATH="${BASE_DIR}/deploy/mime.types"
+NGINX_CONFIG_READY=1
 #如果是MacOS 可能需要 envsubst (gettext)
-envsubst '$FRONTEND_ROOT $MIME_TYPES_PATH' < "${BASE_DIR}/deploy/nginx.conf" > "${BASE_DIR}/deploy/nginx.generated.conf"
+if command -v envsubst >/dev/null 2>&1; then
+  envsubst '$FRONTEND_ROOT $MIME_TYPES_PATH' < "${BASE_DIR}/deploy/nginx_linux.conf" > "${BASE_DIR}/deploy/nginx.generated.conf"
+else
+  # fallback: only replace known placeholders to avoid touching nginx variables like $uri
+  python - <<'PY'
+import os
 
-echo "[start] 启动/重载 Nginx..."
-nginx -c "${BASE_DIR}/deploy/nginx.generated.conf" -p "${BASE_DIR}/deploy" -g "pid logs/nginx.pid;" -s reload 2>/dev/null || \
-nginx -c "${BASE_DIR}/deploy/nginx.generated.conf" -p "${BASE_DIR}/deploy" -g "pid logs/nginx.pid;"
+src = os.path.join(os.environ["BASE_DIR"], "deploy", "nginx_linux.conf")
+dst = os.path.join(os.environ["BASE_DIR"], "deploy", "nginx.generated.conf")
+with open(src, "r", encoding="utf-8") as f:
+    data = f.read()
+data = data.replace("${FRONTEND_ROOT}", os.environ.get("FRONTEND_ROOT", ""))
+data = data.replace("${MIME_TYPES_PATH}", os.environ.get("MIME_TYPES_PATH", ""))
+with open(dst, "w", encoding="utf-8") as f:
+    f.write(data)
+PY
+fi
+
+if command -v nginx >/dev/null 2>&1; then
+  echo "[start] 启动/重载 Nginx..."
+  nginx -c "${BASE_DIR}/deploy/nginx.generated.conf" -p "${BASE_DIR}/deploy" -g "pid logs/nginx.pid;" -s reload 2>/dev/null || \
+  nginx -c "${BASE_DIR}/deploy/nginx.generated.conf" -p "${BASE_DIR}/deploy" -g "pid logs/nginx.pid;"
+else
+  echo "[start] 未检测到 nginx，跳过反向代理启动。"
+fi
 
 # 3) 启动 FastAPI 推理服务
 echo "[start] 启动 FastAPI 推理服务 (8000)..."

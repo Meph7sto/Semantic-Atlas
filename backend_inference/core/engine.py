@@ -1,15 +1,35 @@
+import asyncio
+import json
+from typing import List, Optional
+
+import aiohttp
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForSeq2SeqLM
+
+from core.config import settings
 
 class DeepSeekEngine:
     """
     DeepSeek 模型引擎类
     负责加载模型、Tokenizer 以及执行文本生成任务
     """
-    def __init__(self, model_path: str):
+    def __init__(
+        self,
+        model_path: str,
+        provider: str = "local",
+        chutes_api_url: Optional[str] = None,
+        chutes_api_token: Optional[str] = None,
+        deepseek_api_url: Optional[str] = None,
+        deepseek_api_key: Optional[str] = None,
+    ):
         self.model_path = model_path
         self.model = None
         self.tokenizer = None
+        self.provider = (provider or settings.MODEL_PROVIDER).lower()
+        self.chutes_api_url = chutes_api_url or settings.CHUTES_API_URL
+        self.chutes_api_token = chutes_api_token or settings.CHUTES_API_TOKEN
+        self.deepseek_api_url = deepseek_api_url or settings.DEEPSEEK_API_URL
+        self.deepseek_api_key = deepseek_api_key or settings.DEEPSEEK_API_KEY
         # 如果 CUDA 可用，自动配置 device_map，否则为 None
         self.device_map = "auto" if torch.cuda.is_available() else None
 
@@ -24,10 +44,19 @@ class DeepSeekEngine:
             return torch.bfloat16 if major >= 8 else torch.float16
         return torch.float32
 
+    # ---------------------
+    # 本地模型加载与推理逻辑
+    # ---------------------
     def load_model(self):
         """
         加载 Tokenizer 和模型
         """
+        if self.provider != "local":
+            # API 模式下无需加载本地模型
+            self.model = "api"  # 简单标记可用
+            print(f"Using remote provider '{self.provider}', skip local model loading.")
+            return
+
         print(f"Loading model from {self.model_path}...")
         # 加载 Tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
@@ -59,18 +88,7 @@ class DeepSeekEngine:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         print("Model loaded successfully.")
 
-    def generate(self, prompt: str, system_prompt: str, max_new_tokens: int = 128) -> str:
-        """
-        根据给定的 prompt 和 system_prompt 生成响应
-
-        Args:
-            prompt (str): 用户输入的提示词
-            system_prompt (str): 系统提示词，用于设定模型行为
-            max_new_tokens (int): 生成的最大 token 数
-
-        Returns:
-            str: 模型生成的文本响应
-        """
+    def _generate_locally(self, prompt: str, system_prompt: str, max_new_tokens: int) -> str:
         if not self.model or not self.tokenizer:
             raise RuntimeError("Model is not loaded. Please call load_model() first.")
 
@@ -111,3 +129,95 @@ class DeepSeekEngine:
         inp_len = inputs["input_ids"].shape[-1]
         gen_ids = out[0][inp_len:]
         return self.tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+
+    # ---------------------
+    # 远程 API 调用逻辑
+    # ---------------------
+    def _extract_stream_content(self, data: str, buffer: List[str]) -> None:
+        """
+        尝试从 SSE 数据块中提取文本内容并写入 buffer。
+        如果解析失败，则直接附加原始字符串，保证不丢失信息。
+        """
+        try:
+            payload = json.loads(data)
+            choices = payload.get("choices") or []
+            if not choices:
+                return
+            delta = choices[0].get("delta") or choices[0].get("message") or {}
+            content_piece = delta.get("content") or delta.get("text") or ""
+            if content_piece:
+                buffer.append(content_piece)
+        except json.JSONDecodeError:
+            # 兼容特殊行：无法解析的块直接拼接
+            buffer.append(data)
+
+    def _generate_via_chutes(self, prompt: str, system_prompt: str, max_new_tokens: int) -> str:
+        """
+        使用 Chutes API 进行推理，采用 requests 进行同步流式解析。
+        """
+        import requests
+        
+        if not self.chutes_api_token:
+            raise RuntimeError("Chutes API token is missing. Set CHUTES_API_TOKEN/CHUTES_API_KEY.")
+
+        headers = {
+            "Authorization": f"Bearer {self.chutes_api_token}",
+            "Content-Type": "application/json",
+        }
+        body = {
+            "model": "deepseek-ai/DeepSeek-V3.1-Terminus",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            "stream": True,
+            "max_tokens": max_new_tokens,
+            "temperature": 0.7,
+        }
+
+        chunks: List[str] = []
+        
+        try:
+            response = requests.post(
+                self.chutes_api_url,
+                headers=headers,
+                json=body,
+                stream=True,
+                timeout=120
+            )
+            
+            if response.status_code != 200:
+                raise RuntimeError(f"Chutes API error {response.status_code}: {response.text}")
+            
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                line_str = line.decode("utf-8").strip()
+                data = line_str[6:] if line_str.startswith("data: ") else line_str
+                if not data:
+                    continue
+                if data == "[DONE]":
+                    break
+                self._extract_stream_content(data, chunks)
+                
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"Chutes API request failed: {e}")
+
+        return "".join(chunks).strip()
+
+    def _generate_via_deepseek(self, prompt: str, system_prompt: str, max_new_tokens: int) -> str:
+        """
+        DeepSeek 官方 API 占位符。
+        在接入真实 DeepSeek API 时，按需实现与 _generate_via_chutes 类似的流式解析逻辑。
+        """
+        raise NotImplementedError("DeepSeek API client is not implemented yet.")
+
+    def generate(self, prompt: str, system_prompt: str, max_new_tokens: int = 128) -> str:
+        """
+        根据给定的 prompt 和 system_prompt 生成响应
+        """
+        if self.provider == "chutes":
+            return self._generate_via_chutes(prompt, system_prompt, max_new_tokens)
+        if self.provider == "deepseek":
+            return self._generate_via_deepseek(prompt, system_prompt, max_new_tokens)
+        return self._generate_locally(prompt, system_prompt, max_new_tokens)

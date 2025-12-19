@@ -22,15 +22,19 @@ async def lifespan(app: FastAPI):
     FastAPI 生命周期管理器
     """
     # 启动时：加载模型
-    print(f"Initializing Model from: {settings.MODEL_PATH}")
-    if os.path.exists(settings.MODEL_PATH):
-        try:
+    print(f"Initializing Model from: {settings.MODEL_PATH} (provider={settings.MODEL_PROVIDER})")
+    try:
+        if settings.MODEL_PROVIDER == "local":
+            if os.path.exists(settings.MODEL_PATH):
+                model_engine.load_model()
+            else:
+                print(f"CRITICAL WARNING: Model directory not found at {settings.MODEL_PATH}")
+        else:
+            # API 模式直接初始化远程客户端
             model_engine.load_model()
-        except Exception as e:
-            print(f"CRITICAL ERROR: Failed to load model files: {e}")
-            # We continue startup so health checks pass, but inference will fail
-    else:
-        print(f"CRITICAL WARNING: Model directory not found at {settings.MODEL_PATH}")
+    except Exception as e:
+        print(f"CRITICAL ERROR: Failed to initialize model provider: {e}")
+        # We continue startup so health checks pass, but inference will fail
     yield
     # 如果需要，可以在此处添加关闭时的逻辑 (Shutdown logic)
 

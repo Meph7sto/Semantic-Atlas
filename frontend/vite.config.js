@@ -16,6 +16,25 @@ export default defineConfig({
             '/api': {
                 target: 'http://localhost:5001',
                 changeOrigin: true
+            },
+            '/inference': {
+                target: 'http://localhost:8000',
+                changeOrigin: true,
+                rewrite: (path) => path.replace(/^\/inference/, '')
+            }
+        }
+    },
+    preview: {
+        port: 8008,
+        proxy: {
+            '/api': {
+                target: 'http://localhost:5001',
+                changeOrigin: true
+            },
+            '/inference': {
+                target: 'http://localhost:8000',
+                changeOrigin: true,
+                rewrite: (path) => path.replace(/^\/inference/, '')
             }
         }
     }
