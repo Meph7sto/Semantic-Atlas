@@ -149,14 +149,24 @@ npm run dev
 
 ## 5. 一键启动（Linux/macOS / 服务器部署形态）
 
-项目提供 `deploy/start.sh`：
+项目提供 `deploy/start.sh`，支持选择启动模式：
 
-- 自动构建前端（`npm install && npm run build`）
-- 生成并启动 Nginx（默认监听 8008）
-- 后台启动 FastAPI（8000）与 Flask（5001）
+- `all`：前端构建 + Nginx + FastAPI + Flask（默认）
+- `backend`：只启动 FastAPI + Flask
+- `inference`：只启动 FastAPI
+- `business`：只启动 Flask
+- `frontend`：前端构建 + Nginx
+
+交互式启动：
 
 ```bash
 bash deploy/start.sh
+```
+
+或直接指定模式：
+
+```bash
+bash deploy/start.sh --mode all --provider chutes
 ```
 
 停止脚本：
@@ -166,6 +176,24 @@ bash deploy/stop_services.sh
 ```
 
 说明：停止脚本依赖 `lsof`，更适用于 Linux/macOS 环境。
+
+---
+
+## 5.1 Windows 一键启动
+
+使用 `deploy/start.ps1`，直接全量启动示例：
+
+- Local：
+
+```powershell
+.\deploy\start.ps1 -Mode all -Provider local
+```
+
+- Chutes：
+
+```powershell
+.\deploy\start.ps1 -Mode all -Provider chutes
+```
 
 ---
 
