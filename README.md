@@ -6,20 +6,20 @@ Semantic-Atlas 是面向需求工程的语义分析原型项目，已打通需�
 
 - [x] 需求冲突检测: 双需求文本 -> 冲突/不冲突 + 解释
 - [x] 需求追溯: 单对/批量分析 + 追溯网络 + 可选 SQLite 存储与下载
-- [ ] 需求分类: 前端占位
+- [x] 需求分类: 文本/CSV 批量分类 + 类别统计可视化
 
 ## 架构
 
 - Frontend: Vue 3 + Vite + Tailwind (`frontend/`), 通过 `/api` 访问业务后端
 - Business Backend: Flask (`backend_business/`), 负责 `/api/*` 编排与存储
-- Inference Backend: FastAPI + Transformers (`backend_inference/`), 负责推理 API
+- Inference Backend: FastAPI + Transformers (`backend_inference/`), 负责推理 API（冲突、追溯、分类）
 - 可选 Nginx: `deploy/nginx*.conf`, 统一入口端口 8008
 
 ## 端口约定
 
 - 前端开发服务器: 5173
 - 业务后端: 5001
-- 推理后端: 8000
+- 推理后端: 8000 (Conflict, Traceability, Classification)
 - Nginx 统一入口: 8008
 
 ## 快速开始（本地开发）
@@ -102,13 +102,14 @@ bash deploy/stop_services.sh
 - POST `/api/conflict/check`: 冲突检测（转发到推理后端）
 - POST `/api/trace-relation`: 单对需求追溯
 - POST `/api/batch-trace-relation`: 批量需求追溯
-- POST `/api/upload_csv`: CSV 批量追溯（字段名: `high_level_requirement`, `low_level_requirement`）
+- POST `/api/upload_csv`: CSV 批量追溯
 - GET `/api/download_result?id=ID`: 下载某条分析记录的 JSON
 - GET `/api/requirements`: 列表分页
 - GET `/api/requirements/{id}`: 详情
 - DELETE `/api/requirements/{id}`: 删除
 - GET `/api/statistics`: 统计
-- POST `/api/trigger_analysis`: 兼容占位接口（复用追溯分析）
+- POST `/api/classification/predict-texts`: 文本批量分类
+- POST `/api/classification/predict-csv`: CSV 批量分类
 
 示例: 冲突检测
 
@@ -138,6 +139,8 @@ POST /api/trace-relation
 - POST `/conflict/check`
 - POST `/traceability/relation`
 - POST `/traceability/batch-relation`
+- POST `/classification/predict-texts`
+- POST `/classification/predict-csv`
 
 ## 配置说明
 
@@ -152,6 +155,7 @@ POST /api/trace-relation
 ### 业务后端
 
 - `INFERENCE_URL` / `INFERENCE_BASE_URL`: 推理后端地址（默认 `http://localhost:8000`）
+- `CLASSIFICATION_URL`: 分类服务地址（默认 `http://localhost:8000`）
 - `BUSINESS_DB_PATH`: SQLite 路径（默认 `backend_business/data/requirement_trace.db`）
 - `BUSINESS_DATA_DIR`: SQLite 目录
 - `BUSINESS_HOST` / `BUSINESS_PORT` / `BUSINESS_DEBUG`
@@ -167,13 +171,14 @@ POST /api/trace-relation
 frontend/                     # Vue 3 + Vite + Tailwind
   src/views/ConflictDetection.vue
   src/views/Traceability.vue
-  src/views/Classification.vue    # 占位
+  src/views/Classification.vue
   src/utils/api.js                # 前端 API 调用
 
 backend_business/              # Flask 业务编排 + 存储
   app.py
   routes/analysis_route.py      # 追溯分析 API
   routes/conflict_routes.py     # 冲突检测代理
+  routes/classification_routes.py # 需求分类代理
   routes/file_route.py          # CSV 上传/结果下载
   services/ai_proxy.py
   services/db_service.py
@@ -182,6 +187,7 @@ backend_inference/             # FastAPI 推理服务
   main.py
   routers/conflict.py
   routers/traceability.py
+  routers/classification.py     # 需求分类路由
   services/conflict_service.py
   services/traceability_service.py
 
