@@ -1,38 +1,28 @@
 from flask import Blueprint, request, jsonify
-import requests
-import os
+
+from backend_business.services.ai_proxy import ai_proxy
 
 # 创建一个 Blueprint (蓝图)，用于组织冲突检测相关的路由
 conflict_bp = Blueprint('conflict', __name__)
 
-# 配置
-# 从环境变量读取推理服务的 URL，默认为 localhost:8000
-INFERENCE_SERVICE_URL = os.getenv("INFERENCE_URL", "http://localhost:8000")
 
 @conflict_bp.route('/check', methods=['POST'])
 def check_conflict():
     """
     检查冲突接口
-    代理请求到推理后端 (Inference Backend)
+    通过 ai_proxy 服务代理请求到推理后端 (Inference Backend)
+    响应格式与追溯接口保持一致：{success, data, record_id}
     """
-    try:
-        # 获取请求的 JSON 数据
-        data = request.json
-        # 转发请求到推理后端
-        # 注意: 推理后端的路径是 /conflict/check
-        # 这里的蓝图前缀处理了 /api/conflict，所以实际请求路径会对应
-        
-        # 向推理服务发起 POST 请求
-        resp = requests.post(f"{INFERENCE_SERVICE_URL}/conflict/check", json=data)
-        
-        # Try to parse JSON, if not, return text
-        try:
-            resp_data = resp.json()
-        except ValueError:
-            resp_data = {"detail": f"Upstream Inference Error: {resp.text}"}
+    payload = request.get_json(silent=True) or {}
+    requirement_a = (payload.get("requirement_a") or "").strip()
+    requirement_b = (payload.get("requirement_b") or "").strip()
 
-        return jsonify(resp_data), resp.status_code
-    except requests.exceptions.ConnectionError:
-        return jsonify({"detail": f"Cannot connect to Inference Service at {INFERENCE_SERVICE_URL}. Is it running?"}), 503
+    if not requirement_a or not requirement_b:
+        return jsonify({"success": False, "error": "请提供 requirement_a 与 requirement_b"}), 400
+
+    try:
+        result = ai_proxy.conflict_check(requirement_a, requirement_b)
+        # 统一响应结构，record_id 为 None（冲突检测暂不持久化）
+        return jsonify({"success": True, "data": result, "record_id": None})
     except Exception as e:
-        return jsonify({"detail": f"Business Backend Error: {str(e)}"}), 500
+        return jsonify({"success": False, "error": str(e)}), 500

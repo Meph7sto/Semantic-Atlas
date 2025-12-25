@@ -1,6 +1,6 @@
 <script setup>
 import { ref } from 'vue'
-import axios from 'axios'
+import { conflictApi } from '../utils/api'
 import { Play, CheckCircle2, AlertCircle, Sparkles } from 'lucide-vue-next'
 
 const reqA = ref('')
@@ -14,18 +14,19 @@ const detectConflict = async () => {
   result.value = null
   
   try {
-    const response = await axios.post('/api/conflict/check', {
-      requirement_a: reqA.value,
-      requirement_b: reqB.value
-    })
-    result.value = response.data
+    const response = await conflictApi.check(reqA.value, reqB.value)
+    // 业务后端返回 {success, data, record_id}，解包 data
+    if (response.success === false) {
+      throw new Error(response.error || '冲突检测失败')
+    }
+    result.value = response.data ?? response
   } catch (e) {
     console.error(e)
     let errorMsg = 'Failed to check conflict.'
     
     if (e.response && e.response.data) {
         // Backend provided detailed error
-        errorMsg += ` Server says: ${e.response.data.detail || JSON.stringify(e.response.data)}`
+        errorMsg += ` Server says: ${e.response.data.error || e.response.data.detail || JSON.stringify(e.response.data)}`
     } else if (e.message) {
         // Network or other generic error
         errorMsg += ` Error: ${e.message}`
