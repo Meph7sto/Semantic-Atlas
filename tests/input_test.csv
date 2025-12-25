@@ -1,0 +1,1001 @@
+Requirement
+The system must authenticate users prior to accessing an application or data.
+The system must prevent access to applications or data to all non-authenticated users.
+The system should provide the ability to implement a Chain of Trust agreement.
+"The system must authenticate users using at least one of the following authentication mechanisms: username/password, digital certificate, secure token or biometrics."
+The system must provide the ability to create and update sets of access-control permissions granted to users.
+The system must record all authorization actions.
+The system must allow security administrators to grant authorization to users.
+"The system could provide the ability to authorize users based on identity, role, work assignment, present condition, location, patient consent, or patients present condition."
+The system must provide the ability to define system and data access rules.
+The system must enforce system and data access rules for all resources.
+"The system must monitor initial entry, modification, or data exchange, and identify the user taking the action."
+The system must provide additional non-repudiation functionality.
+"The system should prevent repudiation of data origination, receipt, or access."
+The system should ensure the integrity of data exchange.
+The system must secure all modes of data exchange.
+The system could provide the ability to obfuscate data.
+The system must encrypt and decrypt data that is exchanged over a non-secure link.
+The system must support standards-based encryption mechanisms for secure data exchange.
+The system must route exchanged data to authenticated sources and destinations.
+The system should provide audit information about additions and changes to the status of destinations and sources.
+The system must provide authentication capabilities.
+The system must provide authorization capabilities.
+The system must provide the ability to associate any attestable content with the contents author.
+The system must indicate the status of attestable data which has not been attested.
+The system must provide the ability for attestation of content by the contents author.
+The system could provide the ability for attestation of content by authenticated and authorized users.
+The system could provide the ability to use digital signatures for attestation.
+The system must comply with the requirements for user privacy and confidentiality.
+The system must provide the ability to maintain varying levels of confidentiality.
+The system must protect user identities from other users.
+The system must provide the ability to store and retrieve user record data.
+The system could provide the ability to identify specific data records for destruction.
+The system could provide the ability to destroy data records so that all traces are removed.
+"The system must record access and usage of systems, data, and organizational resources."
+The system must provide audit capabilities to indicate the timestamp for data deletion.
+The system must indicate the author of a data change.
+The system should indicate the viewer of data.
+The system could provide audit capabilities to capture system events at the hardware and software architecture level.
+The system must limit access to audit record information to appropriate entities.
+The system must provide the ability to generate an audit report to authorized users.
+The system must provide the ability to view the change history of particular data to authorized users.
+The system should provide the ability to record system maintenance events.
+The system should utilize standardized time keeping.
+The system should provide the ability to record and report audit information using a standards-based audit record format.
+The system should enable the use of linked registries and directories.
+The system should provide the ability to link entities to external information.
+The system must provide the ability to extract sensitive record information only to authoried users.
+The system should provide secure data exchange capabilities.
+The system should provide the ability to identify extracted information only to authorized users.
+The system should enable data extraction in standard-based formats.
+The system should provide the ability to extract data for administrative purposes only to authorized users.
+The system should provide the ability to extract data for financial purposes only to authorized users.
+The system could provide the ability to extract data for research purposes only to authorized users.
+The system could provide the ability to extract data for quality analysis purposes to authenticated users only.
+The system should prevent the extraction of data for public health purposes by non-authenticated and non-authorized users.
+The system must provide the ability to update user information.
+The system could track user information over time.
+The system should provide the ability to retrieve user information discretely.
+The system must provide the ability to use secure registry services and directories.
+The system must provide secure data interchange capabilities for using registry services and directories.
+The system should communicate with non-local registry services through standardized secure interfaces.
+The system should communicate with local registry services through standardized secure interfaces.
+The system should provide the ability to use registries or directories to uniquely identify users.
+The system must provide the ability to use standard terminologies to communicate with other systems.
+The system should provide the ability to exchange user data using formal standard information models and standard terminologies.
+The system should provide the ability to use a formal standard terminology model.
+The system should provide the ability to use hierarchical inference searches that were expressed using standard terminology models.
+The system should provide the ability to use a terminology service.
+The system must provide the ability to use different versions of terminology standards.
+The system must provide the ability to update terminology standards.
+The system should interoperate with systems that use different versions of a terminology standard.
+The system should provide the ability to deprecate terminologies.
+The system could provide the ability to deprecate individual codes within a terminology.
+The system must provide the ability to perform interchange operations with other systems in a secure standardized way.
+The system must manage structured documents.
+The system must be able to retrieve and display structured documents from external sources only to authorized users.
+The system must provide the ability to use different versions of data-interchange standards.
+The system must provide the ability to change the way that data is transmitted.
+The system should provide the ability to deprecate an interchange standard.
+The system should provide the ability to interoperate with other systems that use known earlier standard versions.
+The system must provide the ability to support standards-based application integration.
+The system should provide the ability to support CCOW standards for application integration.
+The system could provide the ability to support WfMC standards for application integration.
+The system could provide the ability to support SOA security standards for application integration.
+The system must use interchange agreement standards when exchanging information with partners.
+The system could provide the ability to automatically discover interchange services and capabilities.
+The system could provide the ability to create access privilege rules.
+The system could provide the ability to update access privilege rules.
+The system could provide the ability to customize access privilege rules.
+"The system could provide the ability to inactivate, obsolete, or destroy access privilege rules."
+The system could audit all changes to access privilege rules.
+The system should facilitate login.
+The system should permit local setting of application timeout.
+The system should log a user off a particular workstation if the user logs on to another workstation.
+The system must validate all user input to ensure it does not exceed the specified size.
+The system must authenticate requests that access a restricted Web page.
+The system must determine if a user is authorized to access a restricted Web page.
+The system must have security mechanisms that protect against denial-of-service attacks.
+The system must encrypt sensitive data that are transmitted over the Internet between the server and the browser.
+The system must remain resilient when facing attacks.
+The system must behave reliably under denial-of-service attacks.
+The system must ensure the integrity of a user account information.
+The system must not return a restricted web page to a non-authenticated user.
+The system must not return a restricted web page to a non-authorized user.
+The system must not accept overlong input data.
+The system must not accept invalid URLs.
+The system must be built following SOA web service security standards.
+The development processes must comply with SSE-CMM capability level 3 or above.
+The system shall refresh the display every 60 seconds.
+The application shall match the color of the schema set forth by Department of Homeland Security
+If projected the data must be readable. On a 10x10 projection screen 90% of viewers must be able to read Event / Activity data from a viewing distance of 30
+The product shall be available during normal business hours. As long as the user has access to the client PC the system will be available 99% of the time during the first six months of operation.
+If projected the data must be understandable. On a 10x10 projection screen 90% of viewers must be able to determine that Events or Activities are occuring in current time from a viewing distance of 100
+The product shall ensure that it can only be accessed by authorized users. The product will be able to distinguish between authorized and unauthorized users in all access attempts
+The product shall be intuitive and self-explanatory.
+The product shall respond fast to keep up-to-date data in the display.
+The system shall have a MDI form that allows for the viewing of the graph and the data table.
+The system shall display Events in a vertical table by time.
+The system shall display the Events in a graph by time.
+All business rules specified in the Disputes System shall be in compliance to the guidelines of Regulation E and Regulation Z.
+The Disputes application must maintain a detailed history of every action that a user takes on a dispute case. This ensures a complete audit trail if questions arise later on with regard to a particular dispute case.
+All actions that modify an existing dispute case must be recorded in the case history.
+The Disputes System must be accessible by both internal and external users.
+The Disputes System must prevent users from accessing any dispute cases that do not belong to their cardholder base.
+The Disputes System will facilitate direct data entry of a dispute case via a user interface that supports real time responses to the users.
+The Disputes System must provide different levels of access with regard to disputes case initiation and follow-up actions.
+The Disputes System shall provide view access capability for authorized users of the application.
+The Disputes System shall provide update access capability for authorized users of the application.
+The Disputes System must allow the users to select disputable transactions (based on the age of the transaction) from a user interface and initiate a dispute (ticket retrieval request or chargeback notification) on the selected transaction.
+The Disputes System must provide the user the ability to initiate a single dispute case on multiple transactions that belong to a single merchant.
+The Disputes System will provide the user the ability to create or initiate a ticket retrieval request. As part of ticket retrieval creation process the system must prompt the user to enter all the required information to create the ticket retrieval request. The ticket retrieval request is a document that is sent to merchant inquiring the validity of a transaction.
+The Disputes System must allow the user to create three unique types of ticket retrieval requests. The three types of ticket retrieval requests are (1) Request for original receipt (2) Request for a copy of the receipt or (3) Request for a portfolio. A portfolio consists of documentation that would provide proof of a purchase such as the documentation that is received from a car rental agency that is more than a sales receipt.
+The Disputes System must prevent external users from requesting original receipts. Requests for original receipts are restricted to internal users.
+The Disputes System must provide a confirmation to the user upon the creation of ticket retrieval request that contains the following information; the dispute case number the type of retrieval requested (copy original or portfolio) and the date that the merchant response is due.
+The Disputes System shall allow the user to create or initiate a chargeback request. The system must prompt the user to enter the required information to initiate a chargeback request. The chargeback request results in a printed chargeback notification that is sent to merchant indicating that their account will be charged back if no proof is provided that the disputed transaction is valid.
+The Disputes System must provide a confirmation to the user upon the creation of a chargeback request. The confirmation must contain the following information; the dispute case number the type of chargeback requested (pending or immediate) and the date that the merchant response is due.
+The Disputes System shall prevent the creation of duplicate dispute requests 100% of the time.
+The Disputes System shall accurately provide a list of possible reason codes for a given transaction. The list of possible reason codes must be derived based on the type of transaction and the industry that the merchant belongs to according to the business rules defined for the Disputes System.
+The Disputes System must provide the ability to view existing dispute cases.
+The Disputes System must provide Search functionality. The search method must include the ability to search by (1) the dispute case number (2) the merchant account number (3) the cardmember account number and (4) the issuer number. In addition to the above criteria the search functionality must further allow the user to limit the results of the search by a date range the type of dispute (ticket retrieval request or chargeback notification) the case status (open closed or all) and the dispute reason code.
+A list of all disputes cases that meet the entered search criteria must be provided to the user. The list of cases must differentiate the type and/or status of the case by color -coding the line item in the list. For example all open cases will be yellow and all closed cases will be gray.
+The Disputes System shall provide the users the ability to view the history of all activities that have occurred on the dispute case.
+The Dispute System shall provide the users with the ability to follow up on a dispute case via follow-up actions. The list of available follow up actions for a given dispute case must be filtered by the status of the case and the access level of the user.
+The Disputes System shall record the name of the user and the date for any activity that creates or modifies the disputes case in the system. A detailed history of the actions taken on the case including the date and the user that performed the action must be maintained for auditing purposes.
+For any systematic (non-user initiated) action that occurs on a case such as the disputes aging process a case activity will be generated. Upon the next logon the user that initiated the dispute case must be notified that a systematic action has occurred on the dispute case.
+All letter requests must be formatted according to guidelines specified by the Print Letter Utility system.
+Any disputes cases that have been closed for over 6 months must be purged from the online disputes database.
+The product must support Internet Explorer 5.5 and above.
+The product must support Mozilla Firefox 1.0 and above.
+The product shall interface with the Choice Parts System. This provides the feed of recycled parts data.
+The product shall run on the existing hardware for all environments.
+The product shall adhere to the corporate Architecture guidelines
+The product shall comply with corporate User Interface Guidelines
+The product shall comply with corporate color scheme
+The appearance of the product shall appear professional
+The software product is expected to run on Windows or Linux platforms.
+The product shall be easy to use by Adjusters and Collision Estimators. 95% of Adjusters and Collision Estimators shall find the product easy to use.
+The product shall increase productivity of Collision Estimators. 80% of the Collision Estimators shall agree their productivity has increase within 1 month of using the product.
+Users shall feel satisfied using the product. 85% of all users will be satisfied with the product.
+The product shall be easy to learn by Adjusters and Collision Estimators. The product shall be learned with two days onsite training
+The user shall easily locate instructions while using the product. User help can be found within 90% of the system.
+The search for recycled parts shall take no longer than 15 seconds. The search results shall be returned in under 15 seconds.
+The search for the preferred repair facility shall take no longer than 8 seconds. The preferred repair facility is returned within 8 seconds
+The recycled parts audit report shall be returned to the user within 10 seconds. The audit report shall be returned within 10 seconds.
+The preferred repair facility ratings shall be saved within 5 seconds. The save shall occur within 5 seconds.
+The product shall adhere to the corporate online availability schedule. The application is brought down only within 98% of the scheduled outages per the availability schedule.
+The product shall achieve a 98% uptime. The product shall not fail more than 2% of the available online time.
+The product shall be able to handle up to 1500 simultaneous users. The system shall perform with 1500 users as a time.
+The average number of recycled parts records per day shall be 50 000.
+The product shall be able to handle 10 000 concurrent users within 2 years of the initial launch.
+For estimators the product shall be able to be operated in a repair facility during dirty and noisy conditions.
+The product shall interface with the ChoiceParts system once per day at approximately 1
+The maintenance of the product will fall within the established corporate maintenance windows.
+The product shall be supported using the corporate support center.
+Product installations and upgrades shall be handled by the middleware technology team within established launch time frames.
+Only adjusters can request recycled parts audit reports. No users without an adjuster role shall request recycled parts audits.
+Only adjusters with a supervisor role can update preferred repair facility ratings. Users without the supervisor role cannot access the repair facility ratings.
+Only collision estimators shall search for recycled parts. Users without the collision estimator role shall not have access to the search for recycled parts.
+Only valid data shall be entered into the system. No invalid data shall be entered into the system.
+One insurance company shall not be able to view another insurance companys claim data.
+The product shall free of computer viruses.
+The system shall prevent malicious attacks including denial of service.
+The product must comply with Sarbanes-Oxley.
+The product shall comply with the estimatics laws relating to recycled parts usage.
+The product shall comply with insurance regulations regarding claims processing.
+The user shall search for the preferred repair facility using vehicle vehicle location and radius in miles
+The vehicle data shall include vehicle year make and model
+The vehicle location shall include street address city state and zipcode
+The system shall resolve the zipcode for the street address city and state if zipcode is unknown.
+The search radius shall be between 1 and 30 miles
+The system shall locate the preferred repair facility with the highest ratings for the input criteria
+The adjuster shall enter the preferred repair facility on the estimate assignment.
+The adjuster shall be able to override the preferred repair facitlity on the estimate assignment.
+The preferred repair facility shall be returned to the user.
+The system shall return a list of repair facilities within the radius if the preferred repair facility cannot be determined.
+The estimator shall search for available recycled parts using damaged vehicle parts information.
+The estimator shall search for available recycled parts using a list of preferred parts suppliers.
+The system shall search for available recycled parts for the supplied vehicle parts and suppliers.
+The estimator shall search by zipcode with a radius of 30 miles if no parts are found for the preferred parts suppliers
+The system shall retain the available recycled parts and suppliers returned from the search.
+The available recycled parts information and their suppliers shall be returned to the user.
+The estimator shall apply selected recycled parts to the collision estimate.
+The estimator shall not apply recycled parts to the collision estimate if no available parts are returned.
+The adjuster shall review the collision estimate.
+The adjuster shall request a recycled parts audit of the collision estimate.
+The recycled parts search results provided to the estimator shall be retrieved by the system.
+The system shall generate an audit report based on the available recycled parts and the collision estimate.
+The audit report shall include the total number of recycled parts used in the estimate.
+The audit report shall include the number of available recycled parts from the original search results.
+The audit report shall include the percentage of available recycled parts used in the estimate
+The audit report shall include the total score of the audit which sums the indivual line items.
+The audit report shall be displayed to the user.
+The audit report shall be available to other adjusters at later points in time.
+The user shall select to view the preferred repair facility ratings.
+The current repair facility ratings shall be displayed to the user.
+The system will display a blank set of ratings if there are not ratings yet defined.
+The user shall enter new ratings based on the audit report
+The ratings shall be from a scale of 1-10
+The ratings shall include categories for attempted use of recycled parts and actual use of recycled parts
+The user shall select to save the preferred repair facility ratings.
+The preferred repair facility ratings shall be saved by the system.
+The product must work with most database management systems (DBMS) on the market whether the DBMS is colocated with the product on the same machine or is located on a different machine on the computer network.
+The product will function alongside server software on any operating system where the Java runtime can be installed.
+The product will require collaboration with a database management system (DBMS). The DBMS may be located on the same machine as the product or on a separate machine residing on the same computer network.
+The product must make use of web/application server technology. Open source examples include Apache web server Tomcat and the JBoss application server.
+A database management system such as Oracle DB2 MySql or HSQL will need to be integrated with the product.
+The product s Look and Feel shall be able to incorporate aspects of the customer s organization such as logo branding and identity
+The product shall have a conservative and professional appearance.
+The product shall make the users want to use it. 80% of the users surveyed report they are regularly using the product after the first 2 weeks post-launch.
+The product shall be easy to use. 90% of users will be able to successfully reserve a conference room within 5 minutes of product use.
+The product shall give users feedback when necessary. 80% of the users surveyed report that the product accurately confirms their actions.
+The product shall allow the user to select a chosen language from one of the target market countries.
+The product shall allow for customization of start page and views preferences.
+An employee will be able to successfully use the product within a few minutes. After informally navigating the product for less than 15 minutes users shall be able to successfully setup meetings and reserve conference rooms.
+The product shall use a standard navigation menu familiar to most web users.
+The product shall allow for intuitive searching of available conference rooms.
+The product shall conform to the Americans with Disabilities Act.
+The response shall be fast enough to avoid interrupting the user s flow of thought. 90% of tasks shall complete within 5 seconds. 98% of tasks shall complete within 8 seconds.
+Aside from server failure the software product shall achieve 99.99% up time.
+The product shall create an exception log of problems encountered within the product for transmission to our company for analysis and resolution.
+The product shall be capable of handling up to 1 000 concurrent requests. This number will increase to 2 000 by Release 2. The concurrency capacity must be able to handle peak scheduling times such as early morning and late afternoon hours.
+The product shall be able to process 10 000 transactions per hour within two years of its launch. This number will increase to 20 000 by Release 2.
+The product shall be expected to operate for at least 5 years for each customer installation.
+The product shall be used in office environments.
+The product must be able to interface with any HTML browser. The product shall transmit data between the user and the product without problems. The product shall display HTML properly in 80% of all HTML browsers tested (minimum is to test 8 browsers).
+The product must be able to interface with various database management systems. The product shall communicate successfully with the database management system on 100% of all transactions.
+The product must be able to interface with various email servers. The product shall be able to send email.
+The product shall be available for distribution via the Internet as a binary or ZIP file.
+The product shall be available for distribution as a packaged CD.
+The product will be available for licensing as a one-server two-five servers or five-or-more servers license.
+A new user must be able to be added to the system within 10 minutes. 90% of new users are able to log into the system within 10 minutes.
+The product must be designed using Design Patterns and coding best practices. 90% of maintenance software developers are able to integrate new functionality into the product with 2 working days.
+The product must be highly configurable for use with various database management systems for the end users. 80% of end users are able to integrate new database management systems with the product without changing the product s software code.
+Maintenance releases will be offered to customers once a year. The releases shall take no longer than 5 minutes for 80% of the customer base to install.
+Every registered user will have access to the product s support site via the Internet. 70% of registered users shall find a solution to their problem within 5 minutes of using the support site.
+The customer shall be able to easily integrate new building maps with the product throughout the product s lifecycle. Integration of new maps with the product shall be possible with little to no support from product support staff.
+The product shall be translated into foreign languages other than the target market countries languages in future releases. For each emerging target market it shall take no more than 5 days to configure the product for that market s language.
+The product is expected to integrate with multiple database management systems. The product will operate with Oracle SQL Server DB2 MySQL HSQL and MS Access.
+The product shall be able to be installed in any operating environment within 2 days.
+The product shall ensure that only company employees or external users with company-approved user IDs may have product access. 100% of all logons shall be by either company employees or external users with company-approved user IDs.
+Only managers are able to perform search queries for reservations by user. 100% of all search queries for reservations by user shall be from logons of only management logons.
+The product shall ensure that the database s data corresponds to the data entered by the user. Each conference room reservation in the system will contain the same information as was entered by the user.
+The product shall prevent the input of malicious data. The product and/or adjacent hardware/software systems data shall remain 100% uncorrupted each time malicious data is input into the product.
+The product and/or dependent databases/filesystems shall remain operational as a result of the input of malicious data. The product and/or dependent databases/filesystems shall not crash 100% of the time that malicious data is input into the product.
+The product shall have the ability to receive automatic software updates as new threats emerge. 100% of customers will be able to receive automatic software updates transmitted to the installed product.
+The language of the product shall accommodate all of the target market countries. 90% of survey respondents from each target market country will find that the language of the product is acceptable.
+The product shall be able to display calendar dates and times according to the user s locale. 90% of survey respondents from each target market country will find that the date and time formatting of the product is correct.
+The product must be developed with the J2SE/J2EE programming language libraries
+The product shall record meeting entries.
+The product will notify employees of meeting invitations.
+The product shall have the ability to send meeting reminders to employees.
+The product shall assign the organizers contact information to each meeting they create.
+The product will record meeting acknowledgements.
+The product shall store new conference rooms.
+The product shall update existing conference rooms.
+The product will be able to delete conference rooms.
+The product shall be able to store new room equipment.
+The product will update existing room equipment.
+The product shall be able to delete room equipment.
+The product shall allow an organizer to invite other employees to meetings.
+Each time a conference room is reserved the conference room schedule shall be updated to reflect the time and date of the reservation.
+The product shall record the transportation status of equipment reserved.
+The product shall display a map of the company building showing conference room locations.
+The product shall record updated meeting agendas.
+The product shall send a meeting confirmation to the meeting organizer.
+The product shall display room equipment according to search parameters.
+The product shall display conference rooms according to search parameters.
+The product shall record different meeting types.
+The product shall record all the equipment that has been reserved.
+The product shall notify building personnel of equipment transport requests.
+The product will allow priviledged users to view meeting schedules in multiple reporting views.
+The product shall be able to send meeting notifications via different kinds of end-user specified methods.
+The product shall have a customizable Look and Feel.
+The product shall have an intuitive user interface.
+The product will display an available status for unreserved conference rooms.
+Recreation of Inventory Quantity Adjustment for the period of previous 30 days shall take no more than 30min.
+The System shall allow for a minimum of 6 users to work at the same time.
+The System shall utilize currently owned computer equipment.
+The System shall be able to automatically backup business data and restore them on demand.
+The System shall maintain consistent security. Any changes in user passwords and/or permissions should take affect in all parts of the System.
+The System shall granularly control access rights to all major subsystems. It should be possible to assign access rights to all subsystems independently.
+The System shall meet all applicable accounting standards. The final version of the System must successfully pass independent audit performed by a certified auditor.
+The System shall not require additional third party licenses resulting in royalty fees.
+The System shall allow generation of Inventory Quantity Adjustment documents on demand.
+The System shall allow on demand generation of all Inventory Quantity Adjustment documents since certain point of time.
+The IQA subsystem shall take into account current inventory status and adjust inventory of substitutionary ingredients accordingly.
+The System shall allow entering storing and modifying product formulas.
+Product formulas shall allow use of semi-products which have own formulas.
+Product formula ingredients shall allow defining substitutionary ingredients.
+Product formula substitutionary ingredients shall be entered automatically by the PFE subsystem.
+Formula substitutionary ingredients shall be kept in persisted order
+Product shall allow entering storing and modifying product menus used by POS terminals.
+PME Subsystem shall allow building product menus based on the list of products kept in the accounting system.
+PME Subsystem shall allow keeping submenus within menus and products within submenus in a managed and persisted order.
+PME Subsystem shall allow for a product to exist in more than one submenu
+The RMS System shall have Windows XP look and feel and use GUI futures making its use intuitive.
+The System shall generate Inventory Quantity Adjustment document based on product daily sales data and product formulas.
+The System shall generate Inventory Quantity Adjustment document automatically when daily Product Sales data is available.
+Administrator shall be able to activate a pre-paid card via the Administration section in under 5 seconds.
+Customer shall be able to check the status of their prepaid card by entering in the PIN number in under 5 seconds.
+System shall let customers register on the website as a pay as you go user in under 5 minutes.
+System shall let customers register on the website as a unlimited movie subscriber user in under 10 minutes.
+System shall let existing customers log into the website with their email address and password in under 5 seconds.
+System shall let customers cancel their account process shall take no longer than 2 minutes. Database will mark the account as inactive and user will not be able to log into the website.
+System shall let administrator de-activate a customer account in under 1 minute. Customer will no longer be able to access the website.
+System shall let administrator add/remove movies on the website in under 5 minutes. Entered movie information will be stored in the database and will now be available on the website.
+System shall let the administrator add/remove categories on the website in under 5 minutes.
+System shall let Izogn Manager access sales and usage statistics in under 2 minutes.
+System shall let administrators generate unique pre-paid pins in under 2 minutes and generate an Excel file with the generated PINs.
+The website shall be attractive to all audiences. The website shall appear to be fun and the colors should be bright and vibrant.
+The website should have an African feel but should not alienate non-Africans. The website should use animation on pages which are describing the services to grab the users attention and encourage them to sign up.
+The website design should be modern clean and concise.
+The product should be able to be used by 90% of novice users on the Internet.
+Users should only have to navigate through a maximum of 4 pages to create an account with the website.
+Users should be able to access their streaming movies in under 2 clicks after logging into the website.
+An anonymous survey will show that 70% of customers are comfortable purchasing streaming movies after 2 weeks using the website.
+An anonymous survey will show that 95% of customers are comfortable using and purchasing pre-paid cards after a month of using the system.
+The product shall retain the customer s buying preferences and information.
+The product shall be easy for customers with novice skills on the Internet to purchase and watch streaming movies. Customers should be able to purchase and watch a pre-determined movie in under 3 minutes.
+The product shall use symbols and words that are naturally understandable by users familiar with websites
+The website will use standard Internet conventions when interacting with the user.
+Any interface between a user and the automated system shall have a maximum response time of 5 seconds unless noted by an exception below.
+When purchasing a streaming movie or pre-paid card via credit card the processing time should have a maximum response time of 15 seconds.
+When streaming a movie the buffering time should take no longer than 10 seconds (plus any latency on the user s connection.)
+While streaming a movie buffering should only occur if there is latency in the user s connection.
+All credit card information will be secured on the server and only accessible by authorized Izogn administrators. Information will be encrypted in the database.
+The website shall be available for use 24 hours per day 365 days per year.
+The website shall achieve 99.5% up time.
+All movies shall be streamed on demand at any time of the day.
+The website shall continue to operate if the streaming server goes down.
+The website shall continue to operate if the payment gateway goes down.
+The streaming server will support 50 simultaneous streaming connections.
+The streaming server will support a maximum of 700 movies; new servers can be added to support more movies.
+The server will support a maximum of 1 000 simultaneous users.
+The website shall be capable of supporting 100 000 customers.
+The product shall be expected to operate within the maximum maintenance budget for a minimum of 2 years.
+All aspects of the website shall be accessed by a web browser over the Internet.
+The same hardware supporting the current website will be used to support the new system.
+We must be able to interface with the following browsers
+Website must interface with the CyberSource API to process credit card transactions.
+Website must be fully operational with MSN TV2.
+Movies shall be encoded and streamed via Windows Media Player 9.0.
+Movies shall be encoded for 56k and 256k streams.
+Promotional updates to the website should take a day to update.
+Izogn Administrator must be able to update the category listings on the website within 2 minutes.
+Izogn Administrator must be able to add new products to the website within 2 minutes.
+The system will provide a 24 hour 800 toll free number for support to its customers.
+The website will provide a help section with answers and solutions to common problems.
+Velkat staff will be available for phone support between 7am-7pm M-F to provide technical support to the Izogn administrators.
+The product shall be able to be installed in the specified environment within 1 working day.
+Only registered customers can purchase streaming movies.
+A customer can only stream a movie if they purchased it and are within the 2 day viewing period.
+Only authorized personnel can access customer records in the database.
+Only administrators can activate a pre-paid card.
+Only authorized personnel can access sales information.
+The website shall prevent its data from being corrupted when incorrect data is entered in.
+The website shall protect itself from intentional abuse and notify the administrator at all occurrences.
+Data integrity scripts will be run on a weekly basis to verify the integrity of the database.
+The website shall make its user aware of its information practices before collection data from them via a Privacy Policy accessible on all pages of the website.
+The system shall notify customers of changes to its information policy.
+The system shall reveal private information only in compliance with the organization s information policy.
+All customer information will be stored on a secure database accessible only to authorized personnel.
+All credit card information will be encrypted in the database.
+The streaming server will have anti-virus software to prevent infection of malicious viruses.
+The website should cater to all tribes in Nigeria.
+The website shall not be offensive to religious or ethnic groups.
+The website should appeal to all Africans not only Nigerians.
+The website should use Flash to provide animation on the home page.
+IzognMovies shall meet the licensing requirements set forth by the appropriate organizations in order to stream African movies.
+The website will comply with W3C standards.
+The PHP code will comply with PEAR standards.
+The website will allow customers to search for movies by title actor or director.
+viewing a movie details the website will display the movies description actor and director entered in by the administrator.
+Website shall request and authorize credit card payment before allowing a user to stream a movie.
+shall be able to stream purchased movie via Windows Media Player for up to 2 days aftere purchase date.
+Website shall allow customers to browse movies by categories entered in by izogn administrator.
+Website shall allow customers to view reviews of selected movies by other customers.
+Website shall allow customers to add their own movie review for a selected movie.
+Website shall allow the Izogn administrator to approve a review posted by a customer.
+System will allow customers to pay for a streaming movie with a pre-paid card.
+Website shall allow customers to purchase pre-paid cards of $5 $10 or $20 value either by credit card or mail-in payment option.
+System shall automatically update the main page of the website every Friday and show the 4 latest movies that have been added to the website.
+System shall allow users to update their billing and contact information via the My Account section of the website.
+Pre-paid cards shall be distributed via email or via a printed paper card.
+Only registered customers can purchase streaming movies.
+Movies can only be streamed if the customer has purchased a movie and is within the 2-day time period to stream the movie.
+Website must be able to support free trial periods with various parameters set by the Izogn Manager.
+All streaming movie sales will be logged in the database and accessible by the administrator.
+All registered customer information shall be stored and maintained in the database even after the customer cancels their account.
+Daily usage statistics should be logged and accessible by the administrator.
+The owner shall have free access to all of the streaming movies.
+Total lead cycle time must be completed in 5 minutes for 90% of lead volume between the business hours of 8AM CST to 8PM CST; then 3 minutes for 99% of lead volume during off business hours.
+No lead evaluation will complete in a time period longer than 25 seconds for 97% of all leads processed.
+For leads that process longer than 25 seconds the system will record the event and duration
+The process must fit within the processing time conditions set forth by the Auto Rep Assignment process in which a lead is assigned within 3 minutes of the total life cycle.
+The lead washing process will operate within the established physical web service structure.
+The washing process must use a non binding neutral data format such as xml when receiving and processing lead data.
+Defect reports will be available to technical units on a 24x7 basis.
+Washing parameters will be updated during scheduled maintenance hours.
+The vendor will verify the invalid lead.
+Vendor will submit a credit validation record to be applied to the enterprise billing system.
+If a lead is scored to the high range the system will supply the lead data and score to the enterprise system.
+The leads washing functionality will validate all leads received by the web service for valid data
+The leads washing functionality will insert all leads captured by the web service.
+If the leads score falls within the high average score then it will be process by the ARA functionality.
+If the leads score falls within the medium average then it will be set for manual verification by an Enrollment Coordinator through the eleads system.
+If the leads score falls within the low average then it will be returned to the supplying vendor
+The leads washing functionality will compile both contact and academic scoring information for a total score.
+The leads washing functionality will use the parameters supplied by corporate and schools to score part of the lead.
+The leads washing functionality will return the lead data supplied to the vendor along with the reason of rejection.
+The leads washing functionality will have an interface in which lead data parameters can be maintained.
+The leads washing functionality will verify the users authentication and rights to make parameter updates.
+The leads washing functionality will store any potential lead duplicates returned by the enterprise system.
+Prior to submitting the lead to the enterprise system the leads washing functionality will assign the lead to an admissions rep.
+The leads washing functionality shall receive a period list of available reps from the enterprise system.
+The product shall simulate the look of ships at sea.
+The product shall display the grids within a circle as a view from a periscope.
+The product shall display each type of ship in a grid using an image of the specific type of ship.
+When the offensive player takes a shot the product shall simulate the sound of a ship at sea.
+When a shot is marked as a miss the product shall simulate the sound of a shot missing its target.
+When a shot is marked as a hit the product shall simulate the sound of a shot hitting its target.
+When a ship is sunk the product shall simulate the sound of a sinking ship.
+The product shall be available 24 hours per day seven days per week.
+The product shall able to handle a large number of games simultaneously.
+The response time shall be fast enough to maintain the flow of the game. The response time shall be no more than 2 seconds for 95% of responses and no more than 4% for the remaining responses.
+The product shall protect the identity of the players. The product shall provide players no access to information that might reveal the identity of another player.
+The product shall be intuitive and self-explanatory. Nine out ten users shall be able to successfully complete a game with no training.
+The product shall be available to players who understand English Spanish and French. The product shall allow the user to select the language upon accessing the product.
+The product shall provide players no access to information that might reveal the identity of another player
+The response time shall be fast enough to maintain the flow of the game. The response time shall be no more than 2 seconds for 95% of responses and no more than 4% for the remaining responses.
+The product shall maintain a list of players.
+The product shall allow a user to identify himself or herself as a player.
+Once a game has been initiated the product shall make the players assigned to the game unavailable for selection from the list of players.
+The product shall allow a user to remove himself or herself from the list of players at any time.
+The product shall make inactive players unavailable for selection from the list of players.
+The product shall remove players who have been inactive for 24 hours from the list of players.
+The product shall allow a player to initiate a game by selecting another available player from the list of players.
+Once a game is initiated the product shall display a defensive grid to each player
+Once a game is initiated the product shall display an offensive grid to each player.
+The product shall prevent a player from viewing the offensive or defensive grids of the other player.
+Once a game is initiated the product shall allow each player to position their 5 ships on their respective defensive grids.
+The product shall allow a player to position ships horizontally on their grid.
+The product shall allow the player to position ships vertically on their grid.
+The product shall allow the player to position ships diagonally on their grid
+The product shall prevent the player from overlapping ships on their grid.
+When both players have positioned their 5 ships on their defensive grids the product shall define the status of each player for the first turn.
+For each turn the product shall identify one player as offensive status and one player as defensive status.
+The product shall maintain the status of each player for a turn either offensive or defensive.
+At the start of each turn the product shall notify each player of his or her status.
+For each turn the product shall allow the offensive player to define a shot.
+For each shot the product shall examine the defensive grid of the defensive player to determine whether the shot was a hit or miss.
+For each shot the product shall notify the players whether the shot was a hit or miss.
+For each shot the product shall mark the shot as a hit or miss on the defensive grid of the defensive player.
+For each shot the product shall mark the shot as a hit or miss on the offensive grid of the offensive player.
+When the hit results in sinking a ship the product shall notify the players that the ship was sunk.
+When the hit results in sinking a ship the product shall mark the ship as sunk on the defensive grid of the defensive player.
+When the hit results in sinking a ship the product shall indicate the type of ship sunk on the defensive grid of the defensive player.
+When the hit results in sinking a ship the product shall mark the ship as sunk on the offensive grid of the offensive player.
+If the shot was marked as a hit the product shall allow the offensive player to define a shot.
+If the shot was marked as a miss the product shall change the status of the offensive player to defensive
+If the shot was marked as a miss the product shall change the status of the defensive player to offensive
+The product shall continue to assign turns until the game is ended.
+The product shall end a game when a hit by the offensive player results in sinking the last of the defensive player s ships which had not been previously marked as sunk.
+The product shall allow a player to end a game at any time during the game.
+When a game is ended the product shall notify the players that the game is ended.
+The notification of the game ending will include the reason the game is ended (i.e. a player has won the game or a player has ended the game).
+When a game is ended the product shall allow each player to identify himself or herself as an available player in the list of players.
+When a game is ended the product shall allow each player to remove himself or herself from the list of players.
+The system shall be easy to use by callers and supervisors. Callers and supervisors must be able to accomplish any system task within 2 minutes.
+The system shall be easy to learn by callers and supervisors. Callers and supervisors shall learn how to use the system within 10 minutes.
+The system shall be responsive. At the DePaul TeleServices Center when a supervisor uses the system to view a callers schedule the system response time must be no more than 2 seconds 90% of the time and no more than 5 seconds the rest of the time.
+On a 56k connection the system response time for all operations must be no more than 6 seconds 90% of the time.
+On a 112k connection or faster the system response time for all operations must be no more than 3 seconds 90% of the time.
+The system shall have high availability every day of the year.The system must be available for use between 12
+The system must be available for use between 7
+The product shall be internet browser independent.The product must run using Internet Explorer and Netscape Navigator.
+The product shall ensure that only supervisors can advertise empty time slots.The product must ensure that supervisors are allowed to access advertise empty time slots.
+The product shall ensure that only supervisors can enter a caller s schedule.The product must ensure that supervisors are allowed to access advertise empty time slots.
+The product shall ensure that only supervisors can view schedule of all callers.The product must ensure that supervisors are allowed to access advertise empty time slots.
+The interface shall have a simple look. In the interface and usability survey 90% of beta testers must report that the interface is adequately simple.
+The interface shall be appealing to callers and supervisors. In the interface and usability survey 80% of beta testers must report that the interface is appealing.
+The product shall provide GUI based Monitoring Services.System Administrators shall monitor message exchanges will predict and determine problems and will also provide internal and external support.
+The product shall comply with City of Chicago Application Development Guide Framework.Application Development Framework will provide structured Graphical User Interface.
+The product shall provide Monitoring Services.The product shall be easy for System Administrators and DBAs to use after two weeks of usage.
+The product shall provide Error Tracking Services.The product shall help the System Administrators and DBAs to resolve transaction errors 99% of the time.
+The product shall provide Portals.The product shall help System Administrators to analyze the transactions with ad-hoc reporting and KPIs (Key Performance Indicators)
+The product shall provide Asynchronous Messaging.The product shall provide asynchronous messaging to enable parallel processing and reduce the overhead in communications
+The product shall provide Multi-threading and Load Balancing.The product shall provide multi-threading technology as well as load balancing to overcome data load spikes and traffic.
+The product shall process messages within 2 seconds.The product shall have a maximum message processing time of 2 seconds
+The product shall poll the system for messages every second.The product shall poll the system for new messages at a maximum of every 1 second.
+The product shall provide Dynamic Change Support and Transparent resource addition.The product shall support Transparent Resource addition and Dynamic Change support to provide scalability and avoid service interruptions of more than 1 day.
+The product shall be available 99% of the time. Rationale
+The product shall be robust.The product shall have fault avoidance based on standards adoption.
+The product shall be robust with fault tolerance.The product shall have fault tolerance by using recovery technique compensatory transaction and routing around failures.
+The product shall be able to process all transactions.The product shall process minimum of 1 million transactions per year.
+The product shall be platform independent.The product shall enable access to any type of development environment and platform.
+The product shall interface CSR and Datastream.The product shall exchange messages between CSR and EAM on a real time basis without any direct interfaces between two systems.
+The product shall continue to operate during upgrade change or new resource addition.The product shall be able to continue to operate with no interruption in service due to new resource additions.
+The product shall be updated on a regular basis.The product will have a new major feature introduced every six months and quarterly maintenance releases every six months.
+The product shall operate with every platform.The product shall accommodate any new technology without any change in its architecture.
+The product shall have security.The product shall provide authentication and authorization.
+The product shall information Security. The product shall enable privacy by encryption WS-Security and Integrity Checking.
+The product shall have audit capabilities.The product shall store messages for a minimum of one year for audit and transaction tracking purposes.
+The system shall use IBM and CCR branding standards. The interface must have one IBM logo and one CCR logo.
+The system shall be displayable on any work computer a CCR user may have. The system interface shall be formatted to display at 800 by 600 pixel resolution.
+The system interface will use CCR nomenclature. The system must use the same nomenclature used in the existing WCS system and reports
+The interface must summarize the data in a fashion that s appealing to CCR management. Every report type must have at least one high level summary shown in the results dashboard/interface
+The system must use a point and click interface. 100% of all selection and navigation functionality must be able to be activated/selected by either a mouse or a keyboard
+The interface shall be easy to use. 90% of users should be able to successfully use the system to generate a report on their first use. The interface should adhere to IBM usability standards.
+Rreports must be easy to generate. eports must be generated within one button click and exported within one button click (after selecting the report)
+A user shall be able to use the system without instruction after a short amount of time. After one use a user should understand and remember 90% of the system usage and navigation.
+All CCR users shall receive training before the WCS system is deployed. One training session will be held for 100% of CCR users before system deployment (based on a CCR user being available)
+The WCS system shall use appropriate nomenclature and terminology as defined by the Corporate Community Grants organization. All interfaces and reports will undergo usability tests by CCR users.
+The WCS system shall be available at all times as long as IBM s internal intranet W3 is accessible. The WCS system will be available 95% of the time IBM s internal intranet W3 is available.
+The WCS system shall have the ability to connect other designated WCS databases currently not included in the system.
+The WCS system shall have the ability to include data for regions outside the United States and be accessed by users outside of the United States if approved by CCR management.
+The WCS system shall be run in a Windows environment. The WCS shall be accessed by users through the Internet on an IBM computer running a Windows 2000 or above operating system.
+The Brio portion of the WCS system must be able to export files in spreadsheet form (Microsoft Excel and Lotus 1-2-3 formats). Brio will provide buttons in the user interface that produce/export reports in .xls or .123 file formats.
+The WCS system must run queries to the WCS databases once again (on a specified day) to update the available data available to CCR users. Queries must be made to external databases for data refresh once a week.
+All changes updates and additions to the WCS system shall be updated in the WCS Developer and WCS User Guides. Every change must be reflected in WCS system documentation
+The system shall only be accessed by authorized Corporate Community Grants (CCR) employees. Users must be authenticated using their IBM intranet user name and password.
+The WCS system shall not allow automatic logins by any user. Cookies containing WCS login information about a user will not be stored on a user s computer.
+Each team owner will need to use a username and password in order to be authenticated to reach the team owner s page
+The Commissioner will be the only authorized user per league to adjust league settings.
+Each page shall contain a navigation menu which shows the index into which the current page is contained.
+Each page shall contain a similar format with action items in one location and navigation buttons in a different location.
+The message board shall contain the 5 most recently posted messages on the league page. The messages will contain up to the first 150 characters of the message.
+A new user shall be able to navigate through the league and team pages within 30 seconds of reaching the start-up page.
+Users shall be able to reach the add drop and trade player pages with one click from the team owner s page.
+Users shall be able to view at least 25 NFL player statistics and points on each page.
+The application shall ask the user to confirm dropping a player or trading a player before performing the action.
+The application shall be able to complete every user transaction within one fourth of a second of receiving the request over the network.
+The application shall have a downtime of at most 10 minutes per year.
+The application shall run on a web application server.
+The maximum wait time for a user navigating from one screen to another within the Disputes application shall be no more than 5 seconds.
+The Disputes application shall support 350 concurrent users without any degradation of performance in the application.
+The Disputes application shall be available 24x7x365 with the exception of the following scheduled maintenance windows. Monday Saturday 3
+The Disputes application shall interface with the Statement Database. The Statement Database provides the transaction details to the Disputes System. All transaction details must be obtained from the Statement Database
+A primary database will be used to store cached data for active users.
+The system shall achieve 95% up time.
+The system shall have a professional appearance
+The product shall have a consistent color scheme and fonts.
+The system shall be used by realtors with no training.
+The system shall be intuitive and self explanatory.
+The product shall be easy for a realtor to learn.
+The product shall use symbols and words that are naturally understandable by the realtor community.
+The product shall produce search results in an acceptable time
+The search results shall be returned no later 30 seconds after the user has entered the search criteria
+The product shall generate a CMA report in an acceptable time.
+The CMA report shall be returned no later 60 seconds after the user has entered the CMA report criteria.
+The product shall synchronize contacts and appointments in an acceptable time.
+The product shall synchronize with the office system every hour.
+The product shall be available for use 24 hours per day 365 days per year
+Out of 1000 accesses to the system the system is available 999 times.
+The product shall operate in offline mode whenever internet connection is unavailable.
+The product shall allow the user to view previously downloaded search results CMA reports and appointments.
+The product shall retain user preferences in the event of a failure.
+100% of saved user preferences shall be restored when system comes back online.
+The product shall be able to support multiple remote users
+The product shall be able support 1000 simultaneous users.
+The product shall be capable of handling the existing 1000 users. This number is expected to grow 5 times within the next year.
+The product shall be installed by an untrained realtor without recourse to separately-printed instructions.
+90% of untrained realtors shall be able to install the product on their device without printed instructions
+The product is expected to run on Windows CE and Palm operating systems.
+Only registered realtors shall be able to access the system.
+Every user of the system shall be authenticated and authorized.
+The product shall prevent its data from incorrect data being introduced.
+The system shall allow a real estate agent to query MLS information
+The user shall be able to get driving directions to a selected property
+The user shall be able to download appointments and contact information for clients
+The system shall display clear property images in the search results
+system shall be able to handle all of the user requests/usage during business hours.
+The system shall cater to 10 simultaneous users from 9am to 5pm.
+The system shall be capable of processing 100% of nursing students and their classes for the next 10 years.
+The system shall be expected to manage the nursing program curriculum and class/clinical scheduling for a minimum of 5 years.
+The system shall able to operate within a business office environment typical of the Nursing Department at DePaul University.
+The system shall be used within the specifications defined by the computers used by the Program Administrators/Nursing Staff Members.
+A secondary database will be used to store historical statistics and data.
+The system shall be able to call the seller or buyer to schedule an appointment
+The realtor shall be notified of new client appointments after automatic synchronization with office system
+The realtor shall be able to retrieve a map showing property locations for a specified area
+The system shall notify the realtor when a seller or buyer responds to an appointment request
+The product shall allow the user to save the property search results.
+The system shall be easy to use by the Program Administrators/Nursing Staff Members.
+All of the users shall be able to use the system after one day of training.
+The system shall help the user avoid making mistakes while scheduling classes and clinicals for the nursing students.
+The number of mistakes noted by the students shall be decreased by 50% in the first year.
+The system shall be intuitive to the Program Administrators/Nursing Staff Members.
+2 out of 3 Program Administrators/Nursing Staff Members shall successfully be able to use the system to manage the scheduling of classes and clinicals.
+The system shall use symbols and words that are naturally understandable by the user community.
+The verbiage used within the system shall be consistent with Standard English and the terminology of the national Nursing Community.
+Staff members shall be able to complete a set of tasks in a timely manner.
+The response time of general student management tasks shall take no longer than 5 seconds and the response time of schedule generation shall take no longer than 30 seconds.
+The system shall be available for use between the hours of 8am and 6pm.
+The system shall operate within the Windows XP Professional operating system.
+The system shall interface with CampusConnect s central server
+The system shall interface with the faculty central server.
+The system shall interface with the student master server.
+We must be able to interface with any HTML browser.
+Only authorized users shall have access to clinical site information.
+Program Administrators/Nursing Staff Members are the only people who shall have access to clinical site details.
+Only authorized users shall have access to students personal information.
+Dr Susan Poslusny and Dr Julie Donalek are the only people who shall have access to students personal information.
+Only authorized users shall have access to the portion of the system that interfaces with CampusConnect.
+Fit Criterion
+The system shall have basic data integrity checking to reduce the possibility of incorrect or invalid data being introduced.
+The system shall protect private information in accordance with the organization s information policy.
+The system shall be built such that it is as secure as possible from malicious interference.
+The system shall use the organization s standard virus protection software to help monitor threats to itself.
+A cohort shall be associated to one Program of Study offered by the department.
+Program Administrators and Nursing Staff Members shall be able to add a listing of students to a cohort.
+Program Administrators and Nursing Staff Members shall be able to add a single student to a cohort
+Students added to a cohort shall be eligible for the cohort s Program of Study.
+Program Administrators and Nursing Staff Members shall be able to specify the preferred sequence of classes for a given cohort.
+For each class within a sequence for a cohort Program Administrators and Nursing Staff Members shall be able to specify which quarter that class will be offered.
+Program Administrators and Nursing Staff Members shall be able to add new classes to a sequence of classes
+Application updates shall occur between 3AM and 6 AM CST on Wednesday morning during the middle of the NFL season.
+New System version releases shall be released at the beginning of each NFL season.
+The system shall display data from the Sync Matrix 1.0 and Exercise Management Tool 1.0 applications
+The system shall link Events back to either the Sync Matrix 1.0 or the Exercise Managment Tool 1.0 applications for modifications.
+The system shall allow modification of the display.
+The system shall offer a display of all the Events in the exercise.
+The system shall filter data by
+The system shall allow a user to define the time segments
+The system shall display the local and exercise time in separate clocks
+The system shall offer the ability to pause and resume the refresh of data.
+The system shall provide charts for the Activity or Event actual versus assumed time.
+The RFS system should be available 24/7 especially during the budgeting period. The RFS system shall be available 90% of the time all year and 98% during the budgeting period. 2% of the time the system will become available within 1 hour of the time that the situation is reported.
+98% of the user workstations shall meet the minimum hardware requirements prior to implementation. Minimum Hard Disk Space
+98% of the user workstations shall meet the minimum software requirements prior to implementation
+The RFS system should be able to easily interface with the BDW environment in order to load the data. 7 data files shall be received from the BDW and loaded into the RFS system within 3 hours one day prior to the start of budgeting process every year. The data will be as of October month-end. Test files (7) shall be loaded up to 5 times throughout the year from the BDW.
+Changes to revenue and expense formulae must be applied to the RFS system every year prior to the budgeting process start. Revenue and expense formulae will be updated within one week of their receipt after which 2 weeks will be allotted to testing of the budget calculations to be conducted jointly by the project development team and PCG Finance.
+New branches/complexes/districts/regions and revenue/expense accounts added to the BDW must be reflected in the RFS system. 100% of the entities (mentioned above) available as of October month-end will be loaded into the RFS system prior to the budget start process.
+Only authorized user shall access the RFS system. ONLY users that exist in the UAS system with the RFS system assigned to their role(s) shall access the RFS system and use it.
+User access should be limited to the permissions granted to their role(s) Each level in the PCG hierarchy will be assigned a role and users will be assigned to these roles. Access to functionality within RFS system is dependent on the privileges/permission assigned to the role..
+The product must comply with the intranet page standards and requirements of ENET Securities. 95% of the product look & feel will be approved by the Architecture group prior to implementation. The remaining 5% will be corrected and approved within one month of product release.
+The intranet pages should display appropriately in all resolutions from 800x600 and higher. The display of all the pages will be correct in 95% of the resolutions prior to implementation. The remaining 5% will be corrected within a week of notification of the incorrect display.
+The users should be able to easily use the system to successfully complete their budgets within the stipulated time for completion. With a week of training prior to product implementation 98% of the users shall complete their budgets within the stipulated time.
+The product interface should be fast. The response time of the product interface should not exceed 2 seconds 90% of the time. For 10% of the time the response time should not be more than 10 seconds.not be more than 10 seconds.
+The system will use the stored e-mail addresses as a primary means of communicating information to affected parties.
+The system will notify affected parties for routine communication purposes including but not limited to informing students of upcoming offered classes (timeline) and what their schedule will be/shall be.
+The system will notify affected parties when changes occur affecting clinicals including but not limited to clinical section capacity changes and clinical section cancellations.
+The system will notify affected parties when changes occur affecting classes including but not limited to class cancellations class section detail changes and changes to class offerings for a given quarter.
+The feature of the application shall provide the optimized route for the given addresses
+This feature provides the user to select an optimized route for the addresses given and fixing any path between the desired locations.
+"Fast internet connection is not mandatory, but it would increase the performance of the application"
+"after every user request, new maps are needed to be loaded"
+"As Google Maps API is being used for this application, it is mandatory that we abide by the terms of use specified by Google"
+After installing the Application from iTunes or the App store the user will be asked to login.
+"Upon successful login, the user can select from the following catalogue options: Spring 2013 ,Winter 2013"
+"Based on the selection the product categories will be listed: Outerwear,Soft Shell,Fleece,Knits,Wovens,Active Wear, Safety,Accessories,Team Wear, e.c.o. Collection"
+Once a category is selected the product thumbnail images will appear for selection.
+A user can then select the product and view the details.
+The detail page will contain all the same features and information as the website.
+From the here the user can either proceed to call a rep for an order or proceed to the online checkout process.
+"Upon successful login, the user can select from the following catalogue options or use the search function indicated by the search icon in the top right hand corner of the application."
+Once the icon is selected two open text field will be available to the user to search for the product name - by product ID/SKU or by keyword.
+Following a successful query the search feature will query the application database to display the search results. Following an unsuccessful query the search feature will display an error message that no matches were found
+A user can select the desired product from the results and proceed to the product details.
+From the here the user can either proceed to call a rep for an order or proceed to the online checkout process
+"Upon successful login, the user can select from the following catalogue options, search or use the sub navigation to find the following items: Catalogue ,Videos,Contact Us"
+Should a user select to download the catalogue PDF it will be viewed on their mobile device.
+"Should a user select videos, the 360 video list will display. Upon selecting a video it will play on their device."
+All users shall be able to zoom into images using the standard gestures on mobile devices.
+All Users will be able to view the next product by swiping left to right .
+All users should be able to go back to the product category page via the back button in the top corner.
+All users should be able to search by keyword or product ID.
+"All users should be able to navigate using the sub navigation icons to access the Catalogue PDF, 360 videos, and to contact a rep representative"
+The application itself will only have minimal logic and so there should be little to no issues with the computation required by the phone itself.
+"The only hazard is a user using the device when they should not be, such as while driving."
+The application must be able to link up with the INTERNAL system in order for users to properly log in and be identified.
+This information must be kept secure.
+The data entry should not be that much more difficult than if they were at an actual computer.
+"Because this application will be on a phone, portability is also important. We donâ€™t want it to take up so much space or be too slow causing the userâ€™s to not be able to fit it on the device."
+"When the user fills all necessary fields, an activation mail will be sent to users mail address"
+User will be able to log in and start using the system just after activating his/her account.
+"user enters his/her username or email and his/her password and logs in the
+system"
+"user touches log out button, and logs out of the system. The user will not use
+the system until he/she logs in again."
+"user is able to search items. User can search items according to their price,
+their location, their category."
+"user is able to browse the profiles other users. User can see the other usersâ€™
+user names, profile photos, and the usersâ€™ items."
+"user is able to browse categories according to his/her wishes. User can also see
+how many items each category has."
+"user is able browse items. User can see the itemsâ€™ pictures, prices, and other
+features."
+"If the user changes his/her username or password, a notification mail will be sent to the
+userâ€™s email address."
+The changes will apply if the user clicks on the link in the email.
+"user can buy credits from the system. He/she can use credit card or his/her
+PayPal account."
+"user can add the items he/she likes to his cart by touching â€œAdd to the cartâ€
+button."
+"if the item the user wants is available for exchange, the user can request the
+exchange of items that he/she has with the item he/she wants."
+"the user can approve the exchange that is offered by another user by clicking
+â€œApproveâ€ button."
+"the user can decline the exchange that is offered by another user by clicking
+â€œDeclineâ€ button."
+the user notifies other user that the shipment of the item has started.
+the user can add as many as items he/she wants.
+"The user can also set the price,
+set the amount, upload pictures of the item and add details of the item."
+"the user can edit the items that he/she has already put on the system. The user
+can add/remove pictures, change the price and details of the item."
+"if the user no longer wishes to sell/exchange the item, he/she can remove the
+item from the system by touching â€œRemove the itemâ€ button."
+"if the user no longer wishes to use the system, he/she can click â€œDelete Profileâ€
+button. After deleting the profile, the user will no longer be able to use the system with the
+account details that he entered before."
+"the user can mark an item as a favorite so that he will be notified if any change
+is made to the item"
+the user can rate and comment about the users whom he traded with.
+10000 users should be able to use the system at the same time.
+The response time of the system should be 2 seconds at most.
+Search form should be added to home page
+Sites should be added correctly to the search engine
+Build the search engine based on the search form and sites available
+"User should be able to search by site name, description"
+System should be self capable with feature of Auto Suggest
+System should be able to return the search results in desending order in the form of list of links to the sites
+"System should be able to display "" No results found "" in case no search results found"
+System should have a link back to home in case no results found
+geo-location feature to be able to find a user
+Use Geolocation scripts to locate user
+check if user is within 1 mile of the campus
+"If user within 1 mile of the campus , update location"
+User for permission to use the location service .
+"If the user denies to user the location service , prompt the user to home screen"
+"If user allows location service , create the user"
+"if the system unable to update the location , Show failure msg and return the user to home page."
+Update Page with link to sites nearby
+Build Ajax Response to update home page with a link to nearby site based on user location
+"Application should respond with a list of links to the 3 nearest sites by A-Z, sorted by name"
+"Application should respond with the sites placed on a map with markers that includes name, description and link to site page."
+Application should do the distance calculations and geolocation information for user/site and nearby sites.
+"when user clicks on links to browse sites from home page, the system should respond with a list of links to all the sites by A-Z, sorted on site name"
+Application should collect list of all sites sorted by name
+Application should Build URL to each siteâ€™s page
+"when user clicks on link to map sites from the home page, application should respond with a campus map with all the historical sites placed on it"
+"Each historical site should have a marker for each site placed on map that include the name, shorten description, and link to the site page."
+The siteâ€™s page should contain link to walking directions on tour
+"Application should respond with a list of thumbnail images for the site, listed from oldest to newest by year."
+"In case no image available , application should return ""no image"" flag."
+"when user clicks on a thumbnail image from the siteâ€™s page, the application should replace the siteâ€™s image with the medium sized clicked on image"
+Application should replace the siteâ€™s description with the clicked on image description
+"when the user clicks on the main image on the siteâ€™s page, application should return with a an enlarged version of the image"
+"when User clicks on link to Walking Tour, application should respond with walking tour page"
+"when User clicks on link to About, application should respond with About page"
+No personal data about a user is stored.
+User location information should be deleted nightly via a cron job.
+Project admins will need to be authorized before they can use the admin interface to manage the sites in the project.
+Standard web security measure should be implemented.
+"This application should be easily extendable, maintainable and able to be released as an open-source application"
+The app runs on a smart phone with operating system Android version 2.3.
+"All layout shall be according to the TU/e corporate identity, unless in conflict with the guidelines of requirements UCOR003-UCOR006."
+Icons are according to the Android Icon Guidelines.
+The user interfaces should be according to the Android User Interface Guidelines.
+The Twitter tweet interface should be according to the Twitter Guidelines.
+The Facebook like interface should be according to the Facebook Guidelines.
+The campus map covers the campus of the TU/e.
+The campus map covers the central train station of Eindhoven.
+A new stylistic map has the right dimensions.
+A new stylistic map is geographically correct.
+News is restricted to what is available in the feeds on the list of news RSS-feeds.
+Agenda is restricted to what is available in the feeds on the list of agenda RSS-feeds.
+Information about a certain person is restricted to what is available on the employee pages of the TU/e
+The information and the search methods of the Encyclopedia-app are restricted to the services provided by the MediaWiki of the TU/e Encyclopedia.
+The information and the search methods of the Studenthandbook-app are restricted depending on file format of the handbook-information.
+Response Time GIST: The fastness of the search SCALE: The response time of a search METER: Measurements obtained from 1000 searches during testing. MUST: No more than 2 seconds 100% of the time. WISH: No more than 1 second 100% of the time.
+"System Dependability GIST: The fault tolerance of the system. SCALE: If the system loses the connection to the Internet or to the GPS device or the system gets some strange input, the user should be informed. METER: Measurements obtained from 1000 hours of usage during testing. MUST: 100% of the time."
+Hard Drive Space GIST: Hard drive space. SCALE: The application„¢s need of hard drive space. METER: MB. MUST: No more than 20 MB. PLAN: No more than 15 MB. WISH: No more than 10 MB. MB: DEFINED: Megabyte
+Application Memory Usage GIST: The amount of Operate System memory occupied by the application. SCALE: MB. METER: Observations done from the performance log during testing MUST: No more than 20 MB. PLAN: No more than 16 MB WISH: No more than 10 MB Operate System: DEFINED: The mobile Operate System which the application is running on. MB: DEFINED: Megabyte.
+System Reliability GIST: The reliability of the system. SCALE: The reliability that the system gives the right result on a search. METER: Measurements obtained from 1000 searches during testing. MUST: More than 98% of the searches. PLAN: More than 99% of the searches. WISH: 100% of the searches.
+System Availability GIST: The availability of the system when it is used. SCALE: The average system availability (not considering network failing). METER: Measurements obtained from 1000 hours of usage during testing. MUST: More than 98% of the time. PLAN: More than 99% of the time. WISH: 100% of the time.
+Internet Connection DESC: The application should be connected to the Internet.
+GPS Connection DESC: The application should be connected to the GPS device.
+"Communication Security GIST: Security of the communication between the system and server. SCALE: The messages should be encrypted for log-in communications, so others cannot get user-name and password from those messages. METER: Attempts to get user-name and password through obtained messages on 1000 log-in session during testing. MUST: 100% of the Communication Messages in the communication of a log-in session should be encrypted. Communication Messages: Defined: Every exchanged of information between client and server."
+Restaurant Owner Login Account Security GIST: Security of accounts. SCALE: If a restaurant owner tries to log in to the web portal with a non-existing account then the restaurant owner should not be logged in. The restaurant owner should be notified about log-in failure. METER: 1000 attempts to log-in with a non-existing user account during testing. MUST: 100% of the time.
+Admin Login Account Security GIST: Security of accounts. SCALE: If an admin tries to log in to the web portal with a non-existing account then the admin should not be logged in. The admin should be notified about log-in failure. METER: 1000 attempts to log-in with a non-existing user account during testing. MUST: 100% of the time.
+"Restaurant Owner Account Security GIST: Security of restaurant owners accounts. SCALE: A restaurant owner and IP address should not be able to log-in for a certain time period after three times of failed log-in attempts. METER: 1000 attempts to log-in during the lock period after user account has been locked because of failed log-in attempts of three times. MUST: The locking period should be half an hour, and during that period the log-in function is disabled."
+"Admin Account Security GIST: Security of admin accounts. SCALE: An admin and IP address should not be able to log-in to the web portal for a certain time period after three times of failed log-in attempts. METER: 1000 attempts to log-in during the lock period after user account has been locked because of failed log-in attempts of three times. MUST: The locking period should be half an hour, and during that period the log-in function is disabled."
+"User Create Account Security GIST: The security of creating account for users of the system. SCALE: If a user wants to create an account and the desired user name is occupied, the user should be asked to choose a different user name. METER: Measurements obtained on 1000 hours of usage during testing. MUST: 100% of the time."
+"Restaurant Owner Create Account Security GIST: The security of creating account for restaurant owners of the system. SCALE: If a restaurant owner wants to create an account and the desired user name is occupied, the restaurant owner should be asked to choose a different user name. METER: Measurements obtained on 1000 hours of usage during testing. MUST: 100% of the time."
+Application extendibility DESC: The application should be easy to extend. The code should be written in a way that it favors implementation of new functions.
+Application testability DESC: Test environments should be built for the application to allow testing of the applications different functions.
+Application portability DESC: The application should be portable with iOS and Android.
+Performance Requirements 10000 users should be able to use the system at the same time. The response time of the system should be 2 seconds at most.
+Design Constraints We will use “waterfall method and Object €œ Oriented Programming paradigm. We will use Java as programming language. The Android version of the device should be 2.3 or higher. The system requires Internet connection all the time.
+€ The system will be designed in such a way that the algorithms for the four main units will be able to be easily swapped out.
+The overall accuracy of the Web API’s response will be measured using a developer-made testing set.
+The overall accuracy is calculated by dividing total number of correct answers by the number of questions asked.
+The accuracy of the Generic Question Construction€¹ part will be close to 80%
+Modularity The system will be designed in such a way that the algorithms for the four main units will be able to be easily swapped out.
+ The overall accuracy is calculated by dividing total number of correct answers by the number of questions asked.
+The accuracy of the Generic Question Construction€¹ part will be close to 80%.
+"Fast Response The average time for the server to respond, over the question testing set, will be less than or equal to 2 seconds"
+"Security The connection between the Web API and the programs will use HTTPS, for security."
+Ease of Use A new user will make less than 3 mistakes in 5 minutes after 5 minutes of use.
+The search feature should be prominent and easy to find for the user.
+"The different search options should be evident, simple and easy to understand."
+The results displayed in the list view should be user friendly and easy to understand. Selecting an element in the result list should only take one click.
+The results displayed in the map view should be user friendly and easy to understand. Selecting a pin on the map should only take one click.
+The information link should be prominent and it should be evident that it is a usable link. Selecting the information link should only take one click.
+The user interface must be GUI based.
+The users are required to input the data from cell phone keypad
+User has the options to change the settings locally and remotely.
+Reduce the typing option by giving support for select menus.
+The primary performance requirement is speed of the network. The application itself will only have minimal logic and so there should be little to no issues with the computation required by the phone itself.
+"There are no safety requirements with this application, other than any normal hazards of a mobile device. The only hazard is a user using the device when they should not be, such as while driving."
+The application must be able to link up with the INTERNAL system in order for users to properly log in and be identified. This information must be kept secure.
+"The primary attribute of this application will be usability given the large amounts of data and information that will be presented on such a small screen, as well as the user„¢s ability to input data into the device in a reasonable manner that should not be that much more difficult than if they were at an actual computer."
+"With regards to the intended number of users in the Amsterdam pilot, and the projected load scenarios, the intention is for the system to be able to serve 20.000 queries / day (in large part during the 4 peak traffic hours)."
+"In order to create a viable offering for the user we will have to build a simple, transparent system that can be understood and trusted by the people that are using it."
+"Anonimization & aggregation, so that route information may be shared safely without disclosing personal information."
+"Encryption, for all data that is privacy sensitive, but must be persisted on the server in order for basic functionality."
+Permit the use of unverified (anonymous) avatars / aliases.
+Give control to end-users over private data (at least a delete private repository option)
+"The system should be language agnostic, since portability is a prime goal of the overall project. English, turkish, Finnish, and Italian should be at least be supported because these are the replication partners."
+All text elements in the user interfaces are presented in the selected language English and Dutch.
+Sub-apps and their launchers can be added to the main app by a qualified programmer.
+Sub-apps and their launchers in the main app can be deleted by a qualified programmer.
+"The application maintainer should also be able to change the (lists of) information sources of the sub-applications: agenda, news, Facebook and Twitter"
+"Application maintainers should be able to maintain the application, without having knowledge about Java Android programming. They should be able to modify the approximate appearance of the application. This means the colors, and GUI figures in the applications, but not the addition/deletion of GUI elements."
+"Application will be extendable. This means that a skilled Java Android programmer should be able to easily add a new sub-application to insApption, and add a launcher to it in the main-application."
+Users must be a Radford University student in order to access the automatic class schedule and assignment sharing features of this application Users can authenticate by logging in using their RU username and password.
+Most functionality will not require network connectivity. System components that require authentication through Radford University and network connectivity will function as long as the systems maintained by the University are available.
+The development team will follow best practices for clean code and software modularity in order to make the application as maintainable as possible.
+Users will be able to access this application on or off campus anytime on their mobile device without the need of an internet connection.
+"The application will be highly extensible in terms of adding course and calendar details or views. However, the application in general has low extensibility."
+An application instance shall be able to be reusable every semester for a returning student.The user will be able to update their class schedule by having the application check for a registered schedule set for the next semester and if the current school semester is over.Application components will be able to be integrated into the larger RU Mobile application developed and maintained by Radford University.
+The system will be designed in such a way that the algorithms for the four main units will be able to be easily swapped out.
+The accuracy of the Generic Question Construction€¹ part will be close to 80%.
+The accuracy of the Generic Answer Construction€¹ unit will be close to 70%.
+The accuracy of the Generic Answer Population€¹ unit will be close to 70%.
+"The average time for the server to respond, over the question testing set, will be less than or equal to 2 seconds."
+"The connection between the Web API and the programs will use HTTPS, for security."
+A new user will make less than 3 mistakes in 5 minutes after 5 minutes of use.
+"FAU class contains requirements for recording the occurrence of security relevant events that take place under TSF control. This family identifies the level of auditing, enumerates the types of events that shall be auditable by the TSF, and identifies the minimum set of audit related information that should be provided within various audit record types. The following extended requirement for the FAU class has been included in this ST because the operational environment is capable of providing security audit generation for TSF functions."
+"Performance should not be an issue because all of our server queries involve small pieces of data. Changing screens will require very little computation and thus will occur very quickly. Server updates should only take a few seconds as long as the phone can maintain a steady signal. The cost-division algorithms used by in application will be highly efficient, taking only a fraction of a second to compute."
+SplitPay will not affect data stored outside of its servers nor will it affect any other applications installed on the user„¢s phone. It cannot cause any damage to the phone or its internal components. The only potential safety concern associated with this application applies to virtually all handset apps: SplitPay should not be used while operating a vehicle or in any other situation where the user„¢s attention must be focused elsewhere.
+"This application assumes that only the user or whoever he/she allows will have access to his/her Android handset. With that being said, only a Google email address is required to verify the identity of the user upon opening the app."
+" Since it is not password protected, there is no method to authenticate the user„¢s identity. This could only pose a thread if a user has set up PayPal functionality, however any transaction involving real currency must be authorized and confirmed before becoming final. "
+The PayPal API provides all of the security checks needed to ensure that no fraudulent transactions occur.
+The graphical user interface of SplitPay is to be designed with usability as the first priority. 
+The app will be presented and organized in a manner that is both visually appealing and easy for the user to navigate.
+There will be feedbacks and visual cues such as notifications to inform users of updates and pop-ups to provide users with instructions.
+"To ensure reliability and correctness, there will be zero tolerance for errors in the algorithm that computes and splits expenses between group members."
+"To maintain flexibility and adaptability, the app will take into account situations in which a user loses internet connection or for whatever reason cannot establish a connection with the server. These users will still be able to use the application, but any Bills, transactions, etc. posted while disconnected will be cached until the connection is restored."
+All text elements in the user interfaces are presented in the selected language (for language selection see requirement UCAR101. The available languages are mentioned in UCAR002 and UCAR003)
+The administrator can change the colors used in the user interfaces of the sub-apps and main-app (this does not include the external resources).
+The administrator can change the fonts used in the user interfaces of the sub-apps and main-app (this does not include the external resources).
+The administrator can change icons used in the user interfaces of the sub-apps and main-app (this does not include the external resources).
+The administrator can change buttons used in the user interfaces of the sub-apps and main-app (this does not include the external resources).
+The administrator can change the background used in the user interfaces of the sub- apps and main-app (this does not include the external resources).
+The administrator can change text elements used in the user interfaces of the sub-apps and main-app (this does not include the external resources).
+The language can only be selected in the main app.
+The default language of insApption is English
+The main menu contains a launcher to the Map-app.3.1.3
+The main menu contains a launcher to the News-app.3.1.4
+The main menu contains a launcher to the Agenda-app.3.1.5
+The main menu contains a launcher to the Facebook-app.3.1.9
+The main menu contains a launcher to the Twitter-app.3.1.10
+The main menu contains a launcher to the Employee-finder-app.3.1.6
+"The main menu contains a launcher to the Encyclopedia-app, only if the Dutch language is selected.3.1.7"
+"The main menu contains a launcher to the Student handbook-app, only if the Dutch language is selected.3.1.8"
+It is possible to Ã¢â‚¬Å“likeÃ¢â‚¬Â insApption from within the main menu.
+It is possible to Ã¢â‚¬Å“tweetÃ¢â‚¬Â insApption from within the main menu.
+There is a link to a Twitter settings menu.
+There is a link to a Facebook settings menu.
+"In the settings menu for Twitter the user can save username in combination with password, regarding Twitter."
+"In the settings menu for Facebook the user can save username in combination with password, regarding Facebook."
+"In the settings menu for Twitter there is an option to delete the saved username in combination with the password, regarding Twitter."
+"In the settings menu for Facebook there is an option to delete the saved username in combination with the password, regarding Facebook."
+The application maintainer can modify the appearance of the separate launchers.
+It is possible to search for a certain building on the campus of the TU/e by name.
+It is possible to search for a certain building on the campus of the TU/e by address.
+It is possible to search for a certain POI on the campus of the TU/e by name.
+A search described in requirements UCAR201 and UCAR202 results in a displayed set of buildings that match the search input.
+A search described in requirements UCAR203 results in a displayed set of POIÃ¢â‚¬â„¢s that match the search input.
+"It is possible to view an element from the search result described in UCAR201, UCAR202 and UCAR203 in the map view."
+It is possible to navigate from a building on the campus to another building on the campus.
+It is possible to navigate from a building on the campus to a POI on the campus.
+It is possible to navigate from a POI on the campus to a building on the campus.
+It is possible to navigate from a POI on the campus to a POI on the campus.
+It is possible to navigate from an POI on the campus to another location on the campus.
+It is possible to navigate from a street on the campus to another location on the campus.
+It is possible to switch between different means of transportation in the navigator.
+The from-location can be searched by the name of a building.
+The from-location can be searched by the address of a building.
+The from-location can be searched by the name of a POI.
+The from-location is selected from the search result described in UCAR211 and UCAR212.
+The from-location can be selected on the map.
+The to-location can be searched by the name of a building.
+The to-location can be searched by the address of a building.
+The to-location can be searched by the name of a POI.
+The to-location is selected from the search result described in UCAR215 and UCAR216.
+The to-location can be selected on the map.
+The route planned by the navigator is shown in the map view.
+The application has a map view in stylistic style.
+The application has a map view in satellite style.
+It is possible to switch between stylistic map view and satellite map view.
+It is possible to zoom when in the map view.
+It is possible to pan when in the map view.
+Current location is shown in the map view.
+POIÃ¢â‚¬â„¢s of a building are indicated.
+It is possible to Ã¢â‚¬Å“tweetÃ¢â‚¬Â the userÃ¢â‚¬â„¢s current location.
+It is possible to change the status on Facebook. The new status will indicate the userÃ¢â‚¬â„¢s current location.
+The administrator can change the stylistic map.
+The administrator can add buildings.
+The administrator can remove buildings.
+The administrator can add vertices of a path which is used in the route planner.
+The administrator can remove vertices of a path which is used in the route planner.
+The administrator can remove edges of a path which is used in the route planner.
+The administrator can add edges of a path which is used in the route planner.
+"The administrator can add POIÃ¢â‚¬â„¢s. A POI should belong to a certain building, floor and room number."
+"The administrator can remove POIÃ¢â‚¬â„¢s. A POI should belong to a certain building, floor and room number."
+"The administrator can link a POI to a certain building, floor and room."
+"The administrator can unlink a POI from a certain building, floor and room."
+Titles of all news items available through the news RSS-feeds are shown on the title screen.
+"From the first titles of the news articles, the first lines are shown."
+Full news report is shown after choosing the corresponding news title.
+It is possible to Ã¢â‚¬Å“likeÃ¢â‚¬Â a certain news item.
+It is possible to Ã¢â‚¬Å“tweetÃ¢â‚¬Â a certain news item.
+The administrator can modify the list of news RSS-feeds that are available in English.
+The administrator can modify the list of news RSS-feeds that are available in Dutch.
+"When the agenda-app is started, upcoming events are shown on the title screen."
+There is a calender view.
+It is possible to open calendar view.
+It is possible to close calendar view.
+The user can change the calender to a different month.
+The user is able to see on which days events take place in calendar view.
+The current day is indicated on the calendar.
+By selecting a certain day in the calendar the events for that day are shown.
+It is possible to search for events by date.
+It is possible to search for events by subject.
+A search described in requirements UCAR406 and UCAR407 results in a displayed set of events that match the search input.
+It is possible to Ã¢â‚¬Å“likeÃ¢â‚¬Â a certain event.
+It is possible to Ã¢â‚¬Å“tweetÃ¢â‚¬Â a certain event.
+The only events that are available in the agenda-app are extracted from the agenda RSS-feeds in the selected language.
+The administrator can modify the list of agenda RSS-feeds that are available in English.
+The administrator can modify the list of agenda RSS-feeds that are available in Dutch.
+It is possible to search a person by name.
+It is possible to search a person by department.
+A search described in requirements UCAR501 and UCAR502 results in a displayed set of employees that match the search input.
+It is possible to view all personal info available through the employee pages of a person in the search result set of requirement UCAR503.
+It is possible to show the location of the employeeÃ¢â‚¬â„¢s office in the map view (see 3.1.3).
+It is possible to plan a route to the location of the employeeÃ¢â‚¬â„¢s office (see 3.1.3).
+When the Encyclopedia-app is started the most searched items are shown on the title screen.
+When the Encyclopedia-app is started the most recent items are shown on the title screen.
+It is possible to search the book by a certain word or phrase.
+A search described in requirement UCAR602 results in a displayed set of topics.
+The user can select a topic from the search result list.
+By clicking on a topic the full text regarding that topic is shown.
+It is possible to Ã¢â‚¬Å“likeÃ¢â‚¬Â a certain topic.
+It is possible to Ã¢â‚¬Å“tweetÃ¢â‚¬Â a certain topic.
+When the student handbook-app is started the most searched items are shown on the title screen.
+A search described in requirement UCAR702 results in a displayed set of topics.
+The user can select a topic from the search result described in requirement UCAR703.
+When the Facebook-app is started the page of TU/e on Facebook is shown on the title screen.
+Other TU/e related Facebook-sites can be selected from a list (see for contents of list requirement UCAR803).
+The administrator can modify the list of TU/e related Facebook-sites.
+When the Twitter-app is started the page of TU/e on Twitter is shown on the title screen.
+Other TU/e related Twitter-sites can be selected from a list (see for contents of list requirement UCAR903).
+The administrator can modify the list of TU/e related Twitter-sites.
+Download mobile application DESC: A user should be able to download the mobile application through either an application store or similar service on the mobile phone. The application should be free to download.
+"Download and notify users of new releases DESC: When a new/updated version or release of the software is released, the user should check for these manually. The download of the new release should be done through the mobile phone in the same way as downloading the mobile application."
+"User registration - Mobile application DESC: Given that a user has downloaded the mobile application, then the user should be able to register through the mobile application. The user must provide user-name, password and e-mail address. The user can choose to provide a regularly used phone number."
+"User log-in - Mobile application DESC: Given that a user has registered, then the user should be able to log in to the mobile application. The log-in information will be stored on the phone and in the future the user should be logged in automatically."
+"Retrieve password DESC: Given that a user has registered, then the user should be able to retrieve his/her password by e-mail."
+"Mobile application - Search DESC: Given that a user is logged in to the mobile application, then the first page that is shown should be the search page. The user should be able to search for a restaurant, according to several search options. The search options are Price, Destination, Restaurant type and Specific dish. There should also be a free text search option. A user should be able to select multiple search options in one search."
+"Mobile application - Search result in a map view DESC: Search results can be viewed on a map. On the map, the relevant and closest restaurants according to the userÃ¢â‚¬â„¢s position are shown. A specific pin will represent a specific restaurant location. On each pin there should be an information link. There should be maximally 100 results displayed. The map view should have a default zoom. The map view should include a button that, when selected, should display different filtering options in a filtering menu."
+"Mobile application - Search result in a list view Search results can be viewed in a list. Each element in the list represents a specific restaurant. Each element should include the restaurant name, telephone number, type of food, distance according to the userÃ¢â‚¬â„¢s position, average price, a short two-line description, a link to the restaurantÃ¢â‚¬â„¢s web-page and an information link. There should be maximally 100 results displayed. If the result contains more restaurants than what can be displayed on the screen at one time, the user should be able to scroll through them. When searching by price the restaurants should be sorted according to the following order: 1. average price 2. distance 3. restaurant type 4. specific dish When searching by a search option, other than price, the restaurants should be sorted according to the following order: 1. distance 2. average price 3. restaurant type 4. specific dish The list view should include a header with different selectable sorting options. The list view should include a button that, when selected, should display different filtering options in a filtering menu."
+"Mobile application - Navigation to restaurant DESC: A user should be able to select a pin on a map or an element on a list. When a selection is made, the location of the restaurant should be sent to the mobile phoneÃ¢â‚¬â„¢s GPS-navigation program. The user should then be navigated to the destination. When the destination is reached, a user should be able to go back to the search page on the mobile application."
+Mobile application - Switch result view DESC: A user should be able to switch between a map view and a list view for all search options.
+"Mobile application - Selecting the information link DESC: A user should be able to select the information link, which is included on all result items. The link will direct the user to an information page, which includes a picture of the restaurant, the restaurant name, address, phone number, e-mail address, type of food, average price, restaurant description and a menu with name, description and price of the different dishes."
+Mobile application - Search by price DESC: A user should be able to input a maximum and a minimum price range. The result is displayed in a list view by default.
+"Mobile application - Search by destination DESC: A user should be able to input a maximum and a minimum distance, according to his/her position. By default the minimum distance is set to 0 km and the maximum to 10 km. The user should be able to input a higher or lower maximum distance and a higher minimum distance than set by default. The result is displayed in a map view by default."
