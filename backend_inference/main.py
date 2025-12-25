@@ -40,6 +40,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"CRITICAL ERROR: Failed to initialize model provider: {e}")
         # We continue startup so health checks pass, but inference will fail
+
+    # 分类模型加载（用于需求分类）
+    print(
+        f"Initializing Classification Model from: {settings.CLASSIFICATION_MODEL_PATH}"
+    )
+    try:
+        if os.path.exists(settings.CLASSIFICATION_MODEL_PATH):
+            classification_engine.load()
+        else:
+            print(
+                f"CRITICAL WARNING: Classification model directory not found at {settings.CLASSIFICATION_MODEL_PATH}"
+            )
+    except Exception as e:
+        print(f"CRITICAL ERROR: Failed to load classification model files: {e}")
     yield
     # 如果需要，可以在此处添加关闭时的逻辑 (Shutdown logic)
 
@@ -67,6 +81,7 @@ app.add_middleware(
 app.include_router(conflict.router)
 app.include_router(traceability.router)
 app.include_router(classification.router)
+
 
 
 @app.get("/health")

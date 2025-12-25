@@ -1,7 +1,6 @@
 import os
 import sys
-
-from flask import Flask
+from flask import Flask, jsonify
 from flask_cors import CORS
 
 # Ensure project root is on sys.path so `python backend_business/app.py` works reliably
@@ -14,13 +13,13 @@ from backend_business.config import settings
 from backend_business.routes.analysis_route import analysis_bp
 from backend_business.routes.conflict_routes import conflict_bp
 from backend_business.routes.file_route import file_bp
+from routes.classification_routes import classification_bp
 
 
 def create_app() -> Flask:
     app = Flask(__name__)
 
-    # 让 jsonify 直接输出中文（不转义为 \\uXXXX），便于本地 curl / 日志阅读
-    # Flask 2.2+ 使用 app.json；旧版本仍兼容 JSON_AS_ASCII
+    # 让 jsonify 直接输出中文（不转义为 \uXXXX），便于本地 curl / 日志阅读
     try:
         app.json.ensure_ascii = False  # type: ignore[attr-defined]
     except Exception:
@@ -37,11 +36,18 @@ def create_app() -> Flask:
     app.register_blueprint(analysis_bp, url_prefix="/api")
     app.register_blueprint(conflict_bp, url_prefix="/api/conflict")
     app.register_blueprint(file_bp, url_prefix="/api")
+    app.register_blueprint(classification_bp, url_prefix="/api/classification")
 
     # 兼容主框架：提供 /health（非 /api/health）
     @app.get("/health")
     def root_health():
-        return {"status": "business_backend_ok"}
+        return {
+            "status": "business_backend_ok",
+            "inference_url": os.getenv("INFERENCE_URL", "http://localhost:8000"),
+            "classification_url": os.getenv(
+                "CLASSIFICATION_URL", "http://localhost:8001"
+            ),
+        }
 
     return app
 
@@ -51,4 +57,3 @@ app = create_app()
 
 if __name__ == "__main__":
     app.run(host=settings.HOST, port=settings.PORT, debug=settings.DEBUG)
-

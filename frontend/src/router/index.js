@@ -1,5 +1,4 @@
 import { createRouter, createWebHistory } from 'vue-router'
-
 import Classification from '../views/Classification.vue'
 import ConflictDetection from '../views/ConflictDetection.vue'
 import Traceability from '../views/Traceability.vue'
