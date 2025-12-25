@@ -194,20 +194,20 @@
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <!-- 左侧：输入区域 -->
         <div class="lg:col-span-1">
-          <div class="bg-white rounded-xl border border-zinc-200 p-6 shadow-sm">
+          <div class="bg-white rounded-none border border-zinc-200 p-6 shadow-sm">
             <div class="mb-4">
               <div class="flex gap-2 border-b border-zinc-200 pb-2">
                 <button
                   @click="analysisMode = 'relation'"
                   :class="analysisMode === 'relation' ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-700'"
-                  class="flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                  class="flex-1 px-4 py-2 rounded-none text-sm font-medium transition-colors"
                 >
                   关系追溯
                 </button>
                 <button
                   @click="analysisMode = 'batch'"
                   :class="analysisMode === 'batch' ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-700'"
-                  class="flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                  class="flex-1 px-4 py-2 rounded-none text-sm font-medium transition-colors"
                 >
                   批量分析
                 </button>
@@ -223,21 +223,21 @@
                     <textarea
                       v-model="highLevelRequirements[idx]"
                       :placeholder="`顶层需求 ${idx + 1}`"
-                      class="flex-1 p-3 rounded-lg border border-zinc-200 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-zinc-100"
+                      class="flex-1 p-3 rounded-none border border-zinc-200 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-zinc-100"
                       rows="2"
                       maxlength="1500"
                     />
                     <button
                       @click="removeHighLevelRequirement(idx)"
                       :disabled="highLevelRequirements.length <= 1"
-                      class="p-2 text-red-500 hover:bg-red-50 rounded-lg disabled:opacity-50"
+                      class="p-2 text-red-500 hover:bg-red-50 rounded-none disabled:opacity-50"
                     >
                       <Trash2 class="w-4 h-4" />
                     </button>
                   </div>
                   <button
                     @click="addHighLevelRequirement"
-                    class="w-full px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 rounded-lg border border-blue-200 flex items-center justify-center gap-2"
+                    class="w-full px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 rounded-none border border-blue-200 flex items-center justify-center gap-2"
                   >
                     <Plus class="w-4 h-4" />
                     添加顶层需求
@@ -252,21 +252,21 @@
                     <textarea
                       v-model="lowLevelRequirements[idx]"
                       :placeholder="`底层需求 ${idx + 1}`"
-                      class="flex-1 p-3 rounded-lg border border-zinc-200 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-zinc-100"
+                      class="flex-1 p-3 rounded-none border border-zinc-200 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-zinc-100"
                       rows="2"
                       maxlength="1500"
                     />
                     <button
                       @click="removeLowLevelRequirement(idx)"
                       :disabled="lowLevelRequirements.length <= 1"
-                      class="p-2 text-red-500 hover:bg-red-50 rounded-lg disabled:opacity-50"
+                      class="p-2 text-red-500 hover:bg-red-50 rounded-none disabled:opacity-50"
                     >
                       <Trash2 class="w-4 h-4" />
                     </button>
                   </div>
                   <button
                     @click="addLowLevelRequirement"
-                    class="w-full px-3 py-2 text-sm text-green-600 hover:bg-green-50 rounded-lg border border-green-200 flex items-center justify-center gap-2"
+                    class="w-full px-3 py-2 text-sm text-green-600 hover:bg-green-50 rounded-none border border-green-200 flex items-center justify-center gap-2"
                   >
                     <Plus class="w-4 h-4" />
                     添加底层需求
@@ -282,7 +282,7 @@
                 <textarea
                   v-model="batchHighLevelRequirements"
                   placeholder="请输入多个顶层需求，每行一个..."
-                  class="w-full p-3 rounded-lg border border-zinc-200 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-zinc-100"
+                  class="w-full p-3 rounded-none border border-zinc-200 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-zinc-100"
                   rows="6"
                   maxlength="3000"
                 />
@@ -294,7 +294,7 @@
                 <textarea
                   v-model="batchLowLevelRequirements"
                   placeholder="请输入多个底层需求，每行一个..."
-                  class="w-full p-3 rounded-lg border border-zinc-200 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-zinc-100"
+                  class="w-full p-3 rounded-none border border-zinc-200 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-zinc-100"
                   rows="6"
                   maxlength="3000"
                 />
@@ -305,7 +305,7 @@
             <button
               @click="analysisMode === 'relation' ? analyzeRelation() : analyzeBatch()"
               :disabled="!hasValidRequirements || loading"
-              class="w-full px-6 py-3 bg-zinc-900 text-white rounded-lg font-medium hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              class="w-full px-6 py-3 bg-zinc-900 text-white rounded-none font-medium hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               <Sparkles v-if="!loading" class="w-4 h-4" />
               <span v-if="loading" class="animate-spin">⏳</span>
@@ -320,7 +320,7 @@
                   v-for="example in (analysisMode === 'relation' ? relationExamples : batchExamples)"
                   :key="example.title"
                   @click="selectExample(example)"
-                  class="px-3 py-1.5 text-xs bg-zinc-100 text-zinc-700 rounded-lg hover:bg-zinc-200 transition-colors"
+                  class="px-3 py-1.5 text-xs bg-zinc-100 text-zinc-700 rounded-none hover:bg-zinc-200 transition-colors"
                 >
                   {{ example.title }}
                 </button>
@@ -331,7 +331,7 @@
   
         <!-- 右侧：结果区域 -->
         <div class="lg:col-span-2">
-          <div class="bg-white rounded-xl border border-zinc-200 p-6 shadow-sm">
+          <div class="bg-white rounded-none border border-zinc-200 p-6 shadow-sm">
             <div class="text-lg font-semibold text-zinc-900 mb-4 flex items-center gap-2">
               <FileSearch class="w-5 h-5" />
               分析结果
@@ -345,14 +345,14 @@
   
             <!-- 单对分析结果 -->
             <div v-else-if="analysisResult" class="space-y-6">
-              <div :class="analysisResult.has_relation ? 'bg-green-50 border-green-200' : 'bg-zinc-50 border-zinc-200'" class="p-4 rounded-lg border">
+              <div :class="analysisResult.has_relation ? 'bg-green-50 border-green-200' : 'bg-zinc-50 border-zinc-200'" class="p-4 rounded-none border">
                 <div class="text-sm font-semibold mb-1">{{ analysisResult.summary || (analysisResult.has_relation ? '检测到追溯关系' : '未检测到直接的追溯关系') }}</div>
               </div>
   
               <div class="grid grid-cols-2 gap-4">
                 <div>
                   <div class="text-xs text-zinc-500 mb-1">关系状态</div>
-                  <div :class="analysisResult.has_relation ? 'bg-green-100 text-green-700' : 'bg-zinc-100 text-zinc-700'" class="px-3 py-1 rounded-full text-sm font-medium inline-block">
+                  <div :class="analysisResult.has_relation ? 'bg-green-100 text-green-700' : 'bg-zinc-100 text-zinc-700'" class="px-3 py-1 rounded-none text-sm font-medium inline-block">
                     {{ analysisResult.has_relation ? '存在关系' : '无直接关系' }}
                   </div>
                 </div>
@@ -363,7 +363,7 @@
                 <div>
                   <div class="text-xs text-zinc-500 mb-1">置信度</div>
                   <div class="flex items-center gap-2">
-                    <div class="flex-1 h-2 bg-zinc-200 rounded-full overflow-hidden">
+                    <div class="flex-1 h-2 bg-zinc-200 rounded-none overflow-hidden">
                       <div :class="getConfidenceColor(analysisResult.confidence)" class="h-full" :style="{ width: `${analysisResult.confidence * 100}%` }"></div>
                     </div>
                     <span class="text-sm font-semibold">{{ Math.round(analysisResult.confidence * 100) }}%</span>
@@ -371,7 +371,7 @@
                 </div>
               </div>
   
-              <div v-if="analysisResult.analysis_details" class="p-4 bg-zinc-50 rounded-lg">
+              <div v-if="analysisResult.analysis_details" class="p-4 bg-zinc-50 rounded-none">
                 <div class="text-xs font-semibold text-zinc-500 mb-2 uppercase">详细分析</div>
                 <div class="text-sm text-zinc-700 whitespace-pre-wrap">{{ analysisResult.analysis_details }}</div>
               </div>
@@ -384,7 +384,7 @@
   
             <!-- 批量分析结果 -->
             <div v-else-if="batchResult" class="space-y-6">
-              <div class="bg-blue-50 border border-blue-200 p-4 rounded-lg">
+              <div class="bg-blue-50 border border-blue-200 p-4 rounded-none">
                 <div class="text-sm font-semibold text-blue-900">
                   批量分析了{{ batchResult.high_level_requirements?.length || 0 }}个顶层需求和{{ batchResult.low_level_requirements?.length || 0 }}个底层需求，
                   共{{ batchResult.statistics?.total_combinations || 0 }}个组合，发现{{ batchResult.statistics?.relations_found || 0 }}个追溯关系
@@ -392,18 +392,18 @@
               </div>
   
               <div class="grid grid-cols-3 gap-4">
-                <div class="p-4 bg-zinc-50 rounded-lg">
+                <div class="p-4 bg-zinc-50 rounded-none">
                   <div class="text-xs text-zinc-500 mb-1">分析组合数</div>
                   <div class="text-2xl font-bold text-zinc-900">{{ batchResult.statistics?.total_combinations || 0 }}</div>
                 </div>
-                <div class="p-4 bg-zinc-50 rounded-lg">
+                <div class="p-4 bg-zinc-50 rounded-none">
                   <div class="text-xs text-zinc-500 mb-1">发现关系数</div>
                   <div class="text-2xl font-bold text-green-600">{{ batchResult.statistics?.relations_found || 0 }}</div>
                 </div>
-                <div class="p-4 bg-zinc-50 rounded-lg">
+                <div class="p-4 bg-zinc-50 rounded-none">
                   <div class="text-xs text-zinc-500 mb-1">关系发现率</div>
                   <div class="flex items-center gap-2">
-                    <div class="flex-1 h-2 bg-zinc-200 rounded-full overflow-hidden">
+                    <div class="flex-1 h-2 bg-zinc-200 rounded-none overflow-hidden">
                       <div class="bg-green-500 h-full" :style="{ width: `${(batchResult.statistics?.relation_rate || 0) * 100}%` }"></div>
                     </div>
                     <span class="text-sm font-semibold">{{ Math.round((batchResult.statistics?.relation_rate || 0) * 100) }}%</span>
@@ -415,7 +415,7 @@
               <div v-if="batchResult.relation_types_count && Object.keys(batchResult.relation_types_count).length > 0">
                 <div class="text-sm font-semibold text-zinc-900 mb-3">关系类型统计</div>
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <div v-for="(count, type) in batchResult.relation_types_count" :key="type" class="p-4 bg-white border border-zinc-200 rounded-lg text-center">
+                  <div v-for="(count, type) in batchResult.relation_types_count" :key="type" class="p-4 bg-white border border-zinc-200 rounded-none text-center">
                     <div class="text-2xl font-bold text-zinc-900 mb-1">{{ count }}</div>
                     <div class="text-xs text-zinc-500">{{ getRelationTypeLabel(type) }}</div>
                   </div>
@@ -439,19 +439,19 @@
                     <tbody class="divide-y divide-zinc-200">
                       <tr v-for="(rel, idx) in batchResult.relations.filter(r => r.has_relation)" :key="idx" class="hover:bg-zinc-50">
                         <td class="px-4 py-3">
-                          <span class="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-medium">#{{ rel.high_level_index + 1 }}</span>
+                          <span class="px-2 py-1 bg-blue-100 text-blue-700 rounded-none text-xs font-medium">#{{ rel.high_level_index + 1 }}</span>
                         </td>
                         <td class="px-4 py-3">
-                          <span class="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">#{{ rel.low_level_index + 1 }}</span>
+                          <span class="px-2 py-1 bg-green-100 text-green-700 rounded-none text-xs font-medium">#{{ rel.low_level_index + 1 }}</span>
                         </td>
                         <td class="px-4 py-3">
-                          <span :class="getRelationTypeColor(rel.relation_type)" class="px-2 py-1 rounded text-xs font-medium border">
+                          <span :class="getRelationTypeColor(rel.relation_type)" class="px-2 py-1 rounded-none text-xs font-medium border">
                             {{ getRelationTypeLabel(rel.relation_type) }}
                           </span>
                         </td>
                         <td class="px-4 py-3">
                           <div class="flex items-center gap-2">
-                            <div class="flex-1 h-1.5 bg-zinc-200 rounded-full overflow-hidden">
+                            <div class="flex-1 h-1.5 bg-zinc-200 rounded-none overflow-hidden">
                               <div :class="getConfidenceColor(rel.confidence)" class="h-full" :style="{ width: `${rel.confidence * 100}%` }"></div>
                             </div>
                             <span class="text-xs font-semibold">{{ Math.round(rel.confidence * 100) }}%</span>

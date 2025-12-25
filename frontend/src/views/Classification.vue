@@ -247,13 +247,13 @@ const buildGroupsFromCsv = (text, opts) => {
         </div>
       </header>
 
-      <div v-if="errorMsg" class="mb-4 flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+      <div v-if="errorMsg" class="mb-4 flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-none px-3 py-2">
         <AlertCircle class="w-4 h-4" />
         <span>{{ errorMsg }}</span>
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <section class="p-5 rounded-2xl border border-zinc-100 shadow-sm bg-white">
+        <section class="p-5 rounded-none border border-zinc-100 shadow-sm bg-white">
           <div class="flex items-center gap-2 mb-3">
             <BarChart3 class="w-5 h-5 text-indigo-600" />
             <h2 class="text-lg font-semibold text-zinc-900">文本批量分类</h2>
@@ -262,14 +262,14 @@ const buildGroupsFromCsv = (text, opts) => {
           <textarea
             v-model="textInput"
             rows="10"
-            class="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-800 placeholder-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-200 transition"
+            class="w-full rounded-none border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-800 placeholder-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-200 transition"
             placeholder="例如：系统应在 1 秒内响应用户请求。"
           ></textarea>
           <div class="flex items-center justify-between mt-4">
             <button
               @click="onClassifyTexts"
               :disabled="textLoading"
-              class="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-zinc-900 hover:bg-zinc-800 transition disabled:opacity-60 disabled:cursor-not-allowed"
+              class="inline-flex items-center gap-2 px-4 py-2 rounded-none text-sm font-medium text-white bg-zinc-900 hover:bg-zinc-800 transition disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <span v-if="textLoading" class="flex items-center gap-2">
                 <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
@@ -288,20 +288,20 @@ const buildGroupsFromCsv = (text, opts) => {
 
           <div v-if="predictions.length" class="mt-5 space-y-4">
             <div class="flex flex-wrap gap-2">
-              <span class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100">
+              <span class="inline-flex items-center gap-2 px-3 py-1 rounded-none text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100">
                 <CheckCircle2 class="w-3 h-3" />
                 {{ totalPredictions }} 条已分类
               </span>
               <span
                 v-for="([label, count]) in distributionPairs"
                 :key="label"
-                class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium bg-zinc-50 text-zinc-700 border border-zinc-200"
+                class="inline-flex items-center gap-2 px-3 py-1 rounded-none text-xs font-medium bg-zinc-50 text-zinc-700 border border-zinc-200"
               >
-                <span class="w-2 h-2 rounded-full bg-indigo-500"></span>
+                <span class="w-2 h-2 rounded-none bg-indigo-500"></span>
                 {{ label || '(空类)' }} · {{ count }}
               </span>
             </div>
-            <div class="border border-zinc-100 rounded-xl divide-y divide-zinc-100">
+            <div class="border border-zinc-100 rounded-none divide-y divide-zinc-100">
               <div
                 v-for="item in predictions"
                 :key="item.index"
@@ -310,7 +310,7 @@ const buildGroupsFromCsv = (text, opts) => {
                 <span class="text-xs text-zinc-400 mt-1">#{{ item.index + 1 }}</span>
                 <div class="flex-1 space-y-1">
                   <p class="text-sm text-zinc-800 leading-relaxed">{{ item.requirement }}</p>
-                  <span class="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <span class="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-none text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
                     {{ item.predicted_label || 'N/A' }}
                   </span>
                 </div>
@@ -319,7 +319,7 @@ const buildGroupsFromCsv = (text, opts) => {
           </div>
         </section>
 
-        <section class="p-5 rounded-2xl border border-zinc-100 shadow-sm bg-white">
+        <section class="p-5 rounded-none border border-zinc-100 shadow-sm bg-white">
           <div class="flex items-center gap-2 mb-3">
             <UploadCloud class="w-5 h-5 text-indigo-600" />
             <h2 class="text-lg font-semibold text-zinc-900">CSV 上传分类</h2>
@@ -339,23 +339,23 @@ const buildGroupsFromCsv = (text, opts) => {
             </div>
             <div>
               <p class="text-xs text-zinc-400 mb-1">本地文件预览（前 10 行）</p>
-              <pre class="bg-zinc-50 border border-zinc-100 rounded-lg p-3 text-xs text-zinc-700 max-h-48 overflow-auto whitespace-pre-wrap">{{ filePreview }}</pre>
+              <pre class="bg-zinc-50 border border-zinc-100 rounded-none p-3 text-xs text-zinc-700 max-h-48 overflow-auto whitespace-pre-wrap">{{ filePreview }}</pre>
             </div>
           </div>
 
           <div class="flex flex-wrap gap-3 items-center mt-3">
             <div class="flex items-center gap-2 text-sm text-zinc-600">
-              <input id="hasHeader" type="checkbox" class="rounded border-zinc-300" v-model="hasHeader" />
+              <input id="hasHeader" type="checkbox" class="rounded-none border-zinc-300" v-model="hasHeader" />
               <label for="hasHeader">结果含表头</label>
             </div>
             <div class="flex items-center gap-2 text-sm text-zinc-600">
               <span>每组显示</span>
-              <input type="number" v-model.number="showN" min="1" class="w-16 px-2 py-1 border border-zinc-200 rounded" />
+              <input type="number" v-model.number="showN" min="1" class="w-16 px-2 py-1 border border-zinc-200 rounded-none" />
               <span>条</span>
             </div>
             <div class="flex items-center gap-2 text-sm text-zinc-600">
               <span>占位上限</span>
-              <input type="number" v-model.number="placeholderMax" min="1" class="w-16 px-2 py-1 border border-zinc-200 rounded" />
+              <input type="number" v-model.number="placeholderMax" min="1" class="w-16 px-2 py-1 border border-zinc-200 rounded-none" />
             </div>
           </div>
 
@@ -363,7 +363,7 @@ const buildGroupsFromCsv = (text, opts) => {
             <button
               @click="onUploadCsv"
               :disabled="uploading"
-              class="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 transition disabled:opacity-60 disabled:cursor-not-allowed"
+              class="inline-flex items-center gap-2 px-4 py-2 rounded-none text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 transition disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <span v-if="uploading" class="flex items-center gap-2">
                 <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
@@ -379,7 +379,7 @@ const buildGroupsFromCsv = (text, opts) => {
             </button>
             <button
               @click="resetFile"
-              class="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-zinc-600 border border-zinc-200 hover:border-zinc-300"
+              class="inline-flex items-center gap-2 px-4 py-2 rounded-none text-sm font-medium text-zinc-600 border border-zinc-200 hover:border-zinc-300"
             >
               重置
             </button>
@@ -388,7 +388,7 @@ const buildGroupsFromCsv = (text, opts) => {
 
           <div class="mt-4">
             <p class="text-xs text-zinc-400 mb-1">返回文件预览（前 10 行）</p>
-            <pre class="bg-zinc-50 border border-zinc-100 rounded-lg p-3 text-xs text-zinc-700 max-h-48 overflow-auto whitespace-pre-wrap">{{ resultPreview }}</pre>
+            <pre class="bg-zinc-50 border border-zinc-100 rounded-none p-3 text-xs text-zinc-700 max-h-48 overflow-auto whitespace-pre-wrap">{{ resultPreview }}</pre>
           </div>
 
           <div class="mt-4">
@@ -398,7 +398,7 @@ const buildGroupsFromCsv = (text, opts) => {
             </div>
             <div v-if="!groupedBlocks.length" class="text-xs text-zinc-400">还没有返回文件</div>
             <div v-else class="space-y-3">
-              <div v-for="group in groupedBlocks" :key="group.label" class="border border-zinc-100 rounded-lg p-3 bg-zinc-50">
+              <div v-for="group in groupedBlocks" :key="group.label" class="border border-zinc-100 rounded-none p-3 bg-zinc-50">
                 <div class="flex items-center justify-between mb-2">
                   <div class="text-sm font-semibold text-zinc-800">{{ group.label }}</div>
                   <div class="text-xs text-zinc-500">{{ group.total }} 条</div>
@@ -407,7 +407,7 @@ const buildGroupsFromCsv = (text, opts) => {
                   <p
                     v-for="item in group.first"
                     :key="item.rowIndex"
-                    class="text-xs text-zinc-700 bg-white border border-zinc-100 rounded px-2 py-1"
+                    class="text-xs text-zinc-700 bg-white border border-zinc-100 rounded-none px-2 py-1"
                   >
                     #{{ item.rowIndex }} — {{ item.text }}
                   </p>
@@ -415,7 +415,7 @@ const buildGroupsFromCsv = (text, opts) => {
                     <span
                       v-for="badge in group.rest.slice(0, group.restDisplayCount)"
                       :key="badge.rowIndex"
-                      class="inline-flex items-center px-2 py-0.5 bg-white border border-zinc-200 rounded-full"
+                      class="inline-flex items-center px-2 py-0.5 bg-white border border-zinc-200 rounded-none"
                       :title="badge.text"
                     >
                       #{{ badge.rowIndex }}

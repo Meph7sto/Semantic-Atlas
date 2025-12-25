@@ -57,7 +57,7 @@ const detectConflict = async () => {
         <textarea 
           v-model="reqA"
           placeholder="e.g. The system must respond within 1 second."
-          class="w-full h-40 p-4 rounded-xl bg-white border border-zinc-200 text-zinc-800 placeholder-zinc-300 resize-none focus:outline-none focus:ring-2 focus:ring-zinc-100 focus:border-zinc-300 transition-all shadow-sm group-hover:shadow-md"
+          class="w-full h-40 p-4 rounded-none bg-white border border-zinc-200 text-zinc-800 placeholder-zinc-300 resize-none focus:outline-none focus:ring-2 focus:ring-zinc-100 focus:border-zinc-300 transition-all shadow-sm group-hover:shadow-md"
         ></textarea>
       </div>
 
@@ -67,7 +67,7 @@ const detectConflict = async () => {
         <textarea 
           v-model="reqB"
           placeholder="e.g. The system response time should be at least 2 seconds."
-          class="w-full h-40 p-4 rounded-xl bg-white border border-zinc-200 text-zinc-800 placeholder-zinc-300 resize-none focus:outline-none focus:ring-2 focus:ring-zinc-100 focus:border-zinc-300 transition-all shadow-sm group-hover:shadow-md"
+          class="w-full h-40 p-4 rounded-none bg-white border border-zinc-200 text-zinc-800 placeholder-zinc-300 resize-none focus:outline-none focus:ring-2 focus:ring-zinc-100 focus:border-zinc-300 transition-all shadow-sm group-hover:shadow-md"
         ></textarea>
       </div>
     </div>
@@ -77,7 +77,7 @@ const detectConflict = async () => {
       <button 
         @click="detectConflict"
         :disabled="isLoading || !reqA || !reqB"
-        class="flex items-center gap-2 bg-zinc-900 text-white px-8 py-3 rounded-full font-medium hover:bg-zinc-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95 shadow-lg shadow-zinc-200"
+        class="flex items-center gap-2 bg-zinc-900 text-white px-8 py-3 rounded-none font-medium hover:bg-zinc-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95 shadow-lg shadow-zinc-200"
       >
         <span v-if="isLoading" class="flex items-center gap-2">
            <svg class="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
