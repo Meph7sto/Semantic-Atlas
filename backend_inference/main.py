@@ -11,7 +11,7 @@ if current_dir not in sys.path:
 
 from core.model_container import model_engine
 from core.config import settings
-from routers import conflict
+from routers import conflict, traceability
 
 # 未来可以在此处轻松导入其他路由模块
 # from routers import classification, traceability
@@ -60,7 +60,7 @@ app.add_middleware(
 # 注册路由 (Routers)
 app.include_router(conflict.router)
 # app.include_router(classification.router)
-# app.include_router(traceability.router)
+app.include_router(traceability.router)
 
 @app.get("/health")
 def health_check():
