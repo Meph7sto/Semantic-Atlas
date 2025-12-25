@@ -24,14 +24,6 @@ class Settings:
     # 拼接绝对路径
     MODEL_PATH = os.path.join(BASE_DIR, MODEL_RELATIVE_PATH)
     
-    # Chutes API 配置
-    CHUTES_API_URL = os.getenv("CHUTES_API_URL", "https://llm.chutes.ai/v1/chat/completions")
-    CHUTES_API_TOKEN = os.getenv("CHUTES_API_TOKEN") or os.getenv("CHUTES_API_KEY")
-
-    # DeepSeek API 占位配置
-    DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL", "https://api.deepseek.com/v1/chat/completions")
-    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-
     # 模型参数默认配置
     DEFAULT_MAX_TOKENS = 8096
     DEFAULT_SYSTEM_PROMPT = "你是一个有用的中文助手。"

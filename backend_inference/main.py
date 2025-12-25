@@ -9,12 +9,13 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
-from core.model_container import model_engine
+from core.model_container import classification_engine, model_engine
 from core.config import settings
-from routers import conflict, traceability
+from routers import conflict, traceability, classification
 
 # 未来可以在此处轻松导入其他路由模块
 # from routers import classification, traceability
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -22,13 +23,17 @@ async def lifespan(app: FastAPI):
     FastAPI 生命周期管理器
     """
     # 启动时：加载模型
-    print(f"Initializing Model from: {settings.MODEL_PATH} (provider={settings.MODEL_PROVIDER})")
+    print(
+        f"Initializing Model from: {settings.MODEL_PATH} (provider={settings.MODEL_PROVIDER})"
+    )
     try:
         if settings.MODEL_PROVIDER == "local":
             if os.path.exists(settings.MODEL_PATH):
                 model_engine.load_model()
             else:
-                print(f"CRITICAL WARNING: Model directory not found at {settings.MODEL_PATH}")
+                print(
+                    f"CRITICAL WARNING: Model directory not found at {settings.MODEL_PATH}"
+                )
         else:
             # API 模式直接初始化远程客户端
             model_engine.load_model()
@@ -38,12 +43,13 @@ async def lifespan(app: FastAPI):
     yield
     # 如果需要，可以在此处添加关闭时的逻辑 (Shutdown logic)
 
+
 # 创建 FastAPI 应用实例
 app = FastAPI(
-    title="Semantic Atlas Inference API", 
+    title="Semantic Atlas Inference API",
     version="1.0",
     description="Backend inference service for requirement analysis.",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -59,8 +65,9 @@ app.add_middleware(
 
 # 注册路由 (Routers)
 app.include_router(conflict.router)
-# app.include_router(classification.router)
 app.include_router(traceability.router)
+app.include_router(classification.router)
+
 
 @app.get("/health")
 def health_check():
@@ -68,9 +75,15 @@ def health_check():
     健康检查接口
     检查模型是否已加载
     """
-    return {"status": "ok", "model_loaded": model_engine.model is not None}
+    return {
+        "status": "ok",
+        "model_loaded": model_engine.model is not None,
+        "classifier_loaded": classification_engine.is_ready,
+    }
+
 
 if __name__ == "__main__":
     import uvicorn
+
     # 启动 uvicorn 服务器
     uvicorn.run(app, host="0.0.0.0", port=8000)
