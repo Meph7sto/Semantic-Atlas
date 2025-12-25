@@ -1,3 +1,4 @@
+import json
 import os
 
 # 尝试自动加载项目根目录的 .env，便于本地开发/测试
@@ -23,6 +24,7 @@ class Settings:
 
     # 模型提供方，local 使用本地权重；chutes / deepseek 为 API 调用
     MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "local").lower()
+    CLASSIFICATION_PROVIDER = os.getenv("CLASSIFICATION_PROVIDER", MODEL_PROVIDER).lower()
 
     # 生成式模型（冲突/追溯等）路径配置
     MODEL_RELATIVE_PATH = os.getenv(
@@ -51,6 +53,19 @@ class Settings:
     )
     CLASSIFICATION_BATCH_SIZE = int(os.getenv("CLASSIFICATION_BATCH_SIZE", "32"))
     CLASSIFICATION_MAX_SEQ_LEN = int(os.getenv("CLASSIFICATION_MAX_SEQ_LEN", "256"))
+    CLASSIFICATION_LABELS = []
+    CLASSIFICATION_OTHER_LABEL = os.getenv("CLASSIFICATION_OTHER_LABEL", "其他")
+
+    _labels_raw = os.getenv("CLASSIFICATION_LABELS", "")
+    if _labels_raw:
+        try:
+            parsed = json.loads(_labels_raw)
+            if isinstance(parsed, list):
+                CLASSIFICATION_LABELS = [str(item).strip() for item in parsed if str(item).strip()]
+            else:
+                CLASSIFICATION_LABELS = [s.strip() for s in _labels_raw.split(",") if s.strip()]
+        except json.JSONDecodeError:
+            CLASSIFICATION_LABELS = [s.strip() for s in _labels_raw.split(",") if s.strip()]
 
     # 模型参数默认配置
     DEFAULT_MAX_TOKENS = 8096

@@ -43,15 +43,18 @@ async def lifespan(app: FastAPI):
 
     # 分类模型加载（用于需求分类）
     print(
-        f"Initializing Classification Model from: {settings.CLASSIFICATION_MODEL_PATH}"
+        f"Initializing Classification Model from: {settings.CLASSIFICATION_MODEL_PATH} (provider={settings.CLASSIFICATION_PROVIDER})"
     )
     try:
-        if os.path.exists(settings.CLASSIFICATION_MODEL_PATH):
-            classification_engine.load()
+        if settings.CLASSIFICATION_PROVIDER == "local":
+            if os.path.exists(settings.CLASSIFICATION_MODEL_PATH):
+                classification_engine.load()
+            else:
+                print(
+                    f"CRITICAL WARNING: Classification model directory not found at {settings.CLASSIFICATION_MODEL_PATH}"
+                )
         else:
-            print(
-                f"CRITICAL WARNING: Classification model directory not found at {settings.CLASSIFICATION_MODEL_PATH}"
-            )
+            classification_engine.load()
     except Exception as e:
         print(f"CRITICAL ERROR: Failed to load classification model files: {e}")
     yield

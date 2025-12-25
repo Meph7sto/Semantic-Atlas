@@ -45,7 +45,7 @@ def create_app() -> Flask:
             "status": "business_backend_ok",
             "inference_url": os.getenv("INFERENCE_URL", "http://localhost:8000"),
             "classification_url": os.getenv(
-                "CLASSIFICATION_URL", "http://localhost:8001"
+                "CLASSIFICATION_URL", "http://localhost:8000"
             ),
         }
 

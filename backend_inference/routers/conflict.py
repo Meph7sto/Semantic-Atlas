@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, HTTPException
 from core.model_container import model_engine
 from schemas.conflict_report import ConflictCheckRequest, ConflictCheckResponse
@@ -8,6 +10,8 @@ router = APIRouter(prefix="/conflict", tags=["Conflict Detection"])
 
 # 初始化冲突检测服务
 conflict_service = ConflictService(model_engine)
+
+logger = logging.getLogger(__name__)
 
 
 @router.post("/check", response_model=ConflictCheckResponse)
@@ -24,8 +28,10 @@ async def check_conflict(request: ConflictCheckRequest):
         return result
             
     except RuntimeError as e:
+        logger.exception("Conflict check failed with RuntimeError.")
         # 如果模型服务未初始化或不可用，抛出 503 错误
         raise HTTPException(status_code=503, detail="Model service not initialized or unavailable.")
     except Exception as e:
+        logger.exception("Conflict check failed with unexpected exception.")
         # 捕获其他异常，抛出 500 错误
         raise HTTPException(status_code=500, detail=str(e))

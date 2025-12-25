@@ -21,4 +21,11 @@ classification_engine = RequirementClassificationEngine(
     label_encoder_path=settings.CLASSIFICATION_LABEL_ENCODER_PATH,
     batch_size=settings.CLASSIFICATION_BATCH_SIZE,
     max_seq_len=settings.CLASSIFICATION_MAX_SEQ_LEN,
+    provider=settings.CLASSIFICATION_PROVIDER,
+    chutes_api_url=settings.CHUTES_API_URL,
+    chutes_api_token=settings.CHUTES_API_TOKEN,
+    deepseek_api_url=settings.DEEPSEEK_API_URL,
+    deepseek_api_key=settings.DEEPSEEK_API_KEY,
+    labels=settings.CLASSIFICATION_LABELS,
+    other_label=settings.CLASSIFICATION_OTHER_LABEL,
 )

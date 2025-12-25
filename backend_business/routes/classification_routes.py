@@ -5,7 +5,7 @@ import os
 classification_bp = Blueprint("classification", __name__)
 
 # Allow separating classification service port; default 8001
-CLASSIFICATION_SERVICE_URL = os.getenv("CLASSIFICATION_URL", "http://localhost:8001")
+CLASSIFICATION_SERVICE_URL = os.getenv("CLASSIFICATION_URL", "http://localhost:8000")
 
 
 @classification_bp.route("/predict-texts", methods=["POST"])
