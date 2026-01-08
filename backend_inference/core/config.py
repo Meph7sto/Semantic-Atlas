@@ -36,8 +36,12 @@ class Settings:
     # 远程 API（可选）——用于 provider=chutes/deepseek 时
     CHUTES_API_URL = os.getenv("CHUTES_API_URL", "")
     CHUTES_API_TOKEN = os.getenv("CHUTES_API_TOKEN", "")
-    DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL", "")
+    DEEPSEEK_API_URL = os.getenv(
+        "DEEPSEEK_API_URL",
+        "https://api.deepseek.com/v1/chat/completions",
+    )
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+    DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
     # 需求分类模型配置（本地 encoder 模型）
     CLASSIFICATION_MODEL_RELATIVE_PATH = os.getenv(

@@ -61,6 +61,7 @@ class RequirementClassificationEngine:
         chutes_api_token: Optional[str] = None,
         deepseek_api_url: Optional[str] = None,
         deepseek_api_key: Optional[str] = None,
+        deepseek_model: Optional[str] = None,
         labels: Optional[List[str]] = None,
         other_label: str = "其他",
     ) -> None:
@@ -73,6 +74,7 @@ class RequirementClassificationEngine:
         self.chutes_api_token = chutes_api_token
         self.deepseek_api_url = deepseek_api_url or ""
         self.deepseek_api_key = deepseek_api_key
+        self.deepseek_model = deepseek_model or "deepseek-chat"
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model: Optional[AutoModelForSequenceClassification] = None
         self.tokenizer: Optional[AutoTokenizer] = None
@@ -190,7 +192,11 @@ class RequirementClassificationEngine:
             return self._remote_client
         if self.provider == "deepseek":
             if not isinstance(self._remote_client, DeepSeekClient):
-                self._remote_client = DeepSeekClient(self.deepseek_api_url, self.deepseek_api_key)
+                self._remote_client = DeepSeekClient(
+                    self.deepseek_api_url,
+                    self.deepseek_api_key,
+                    model=self.deepseek_model,
+                )
             return self._remote_client
         raise RuntimeError(f"Unsupported classification provider: {self.provider}")
 

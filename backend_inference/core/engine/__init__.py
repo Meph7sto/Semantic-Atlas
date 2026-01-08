@@ -21,6 +21,7 @@ class DeepSeekEngine:
         chutes_api_token: Optional[str] = None,
         deepseek_api_url: Optional[str] = None,
         deepseek_api_key: Optional[str] = None,
+        deepseek_model: Optional[str] = None,
     ):
         self.model_path = model_path
         self.model = None
@@ -30,6 +31,7 @@ class DeepSeekEngine:
         self.chutes_api_token = chutes_api_token or settings.CHUTES_API_TOKEN
         self.deepseek_api_url = deepseek_api_url or settings.DEEPSEEK_API_URL
         self.deepseek_api_key = deepseek_api_key or settings.DEEPSEEK_API_KEY
+        self.deepseek_model = deepseek_model or getattr(settings, "DEEPSEEK_MODEL", "deepseek-chat")
         # 如果 CUDA 可用，自动配置 device_map，否则为 None
         self.device_map = "auto" if torch.cuda.is_available() else None
         self._local_engine = None
@@ -47,7 +49,11 @@ class DeepSeekEngine:
             return self._remote_client
         if self.provider == "deepseek":
             if not isinstance(self._remote_client, DeepSeekClient):
-                self._remote_client = DeepSeekClient(self.deepseek_api_url, self.deepseek_api_key)
+                self._remote_client = DeepSeekClient(
+                    self.deepseek_api_url,
+                    self.deepseek_api_key,
+                    model=self.deepseek_model,
+                )
             return self._remote_client
         return None
 

@@ -56,6 +56,13 @@ if ($Provider -eq "chutes" -and -not $env:CHUTES_API_TOKEN) {
   if ($token) { $env:CHUTES_API_TOKEN = $token }
 }
 
+if ($Provider -eq "deepseek" -and -not $env:DEEPSEEK_API_KEY) {
+  Write-Host "检测到使用 deepseek 模式，但未设置 DEEPSEEK_API_KEY。" -ForegroundColor Yellow
+  $key = Read-Host "请输入 DeepSeek API Key（留空则跳过）"
+  if ($key) { $env:DEEPSEEK_API_KEY = $key }
+  else { Write-Host "未输入 Key，后续调用将失败。" -ForegroundColor Yellow }
+}
+
 # 项目根目录（脚本位于 deploy/ 下）
 $BASE_DIR = Split-Path -Parent $PSScriptRoot
 Set-Location $BASE_DIR
