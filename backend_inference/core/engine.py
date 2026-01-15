@@ -62,7 +62,7 @@ class DeepSeekEngine:
             inputs = self.tokenizer(text, return_tensors="pt")
 
         if torch.cuda.is_available():
-            inputs = {k: v.cuda() for k, v in inputs.items()}
+            inputs = inputs.to("cuda")
 
         with torch.inference_mode():
             out = self.model.generate(
