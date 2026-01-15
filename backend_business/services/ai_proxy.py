@@ -68,6 +68,31 @@ class AIProxy:
         resp.raise_for_status()
         return resp.json()
 
+    def extract_requirements(
+        self,
+        text: str,
+        chunk_size: int = 3600,
+        overlap: int = 500,
+        clean_model: str = "deepseek-chat",
+        extract_model: str = "deepseek-reasoner",
+    ) -> Dict[str, Any]:
+        """
+        调用推理后端进行需求抽取 (L1/L2/L3)
+        """
+        resp = requests.post(
+            f"{self.base_url}/acquisition/extract",
+            json={
+                "text": text,
+                "chunk_size": chunk_size,
+                "overlap": overlap,
+                "clean_model": clean_model,
+                "extract_model": extract_model,
+            },
+            timeout=900,  # 抽取过程可能较慢，给足超时
+        )
+        resp.raise_for_status()
+        return resp.json()
+
 
 ai_proxy = AIProxy(settings.INFERENCE_BASE_URL)
 

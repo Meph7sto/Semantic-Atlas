@@ -255,14 +255,14 @@ const buildGroupsFromCsv = (text, opts) => {
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <section class="p-5 rounded-none border border-zinc-100 shadow-sm bg-white">
           <div class="flex items-center gap-2 mb-3">
-            <BarChart3 class="w-5 h-5 text-indigo-600" />
+            <BarChart3 class="w-5 h-5 text-black" />
             <h2 class="text-lg font-semibold text-zinc-900">文本批量分类</h2>
           </div>
           <p class="text-sm text-zinc-500 mb-4">每行一条需求，点击分类获取标签与分布。</p>
           <textarea
             v-model="textInput"
             rows="10"
-            class="w-full rounded-none border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-800 placeholder-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-200 transition"
+            class="w-full rounded-none border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-800 placeholder-zinc-300 focus:outline-none focus:ring-2 focus:ring-zinc-200 focus:border-zinc-300 transition"
             placeholder="例如：系统应在 1 秒内响应用户请求。"
           ></textarea>
           <div class="flex items-center justify-between mt-4">
@@ -288,7 +288,7 @@ const buildGroupsFromCsv = (text, opts) => {
 
           <div v-if="predictions.length" class="mt-5 space-y-4">
             <div class="flex flex-wrap gap-2">
-              <span class="inline-flex items-center gap-2 px-3 py-1 rounded-none text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100">
+              <span class="inline-flex items-center gap-2 px-3 py-1 rounded-none text-xs font-medium bg-zinc-100 text-zinc-700 border border-zinc-200">
                 <CheckCircle2 class="w-3 h-3" />
                 {{ totalPredictions }} 条已分类
               </span>
@@ -297,7 +297,7 @@ const buildGroupsFromCsv = (text, opts) => {
                 :key="label"
                 class="inline-flex items-center gap-2 px-3 py-1 rounded-none text-xs font-medium bg-zinc-50 text-zinc-700 border border-zinc-200"
               >
-                <span class="w-2 h-2 rounded-none bg-indigo-500"></span>
+                <span class="w-2 h-2 rounded-none bg-black"></span>
                 {{ label || '(空类)' }} · {{ count }}
               </span>
             </div>
@@ -321,7 +321,7 @@ const buildGroupsFromCsv = (text, opts) => {
 
         <section class="p-5 rounded-none border border-zinc-100 shadow-sm bg-white">
           <div class="flex items-center gap-2 mb-3">
-            <UploadCloud class="w-5 h-5 text-indigo-600" />
+            <UploadCloud class="w-5 h-5 text-black" />
             <h2 class="text-lg font-semibold text-zinc-900">CSV 上传分类</h2>
           </div>
           <p class="text-sm text-zinc-500 mb-4">第一列为需求文本，返回的 CSV 第二列为预测标签。</p>
@@ -363,7 +363,7 @@ const buildGroupsFromCsv = (text, opts) => {
             <button
               @click="onUploadCsv"
               :disabled="uploading"
-              class="inline-flex items-center gap-2 px-4 py-2 rounded-none text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 transition disabled:opacity-60 disabled:cursor-not-allowed"
+              class="inline-flex items-center gap-2 px-4 py-2 rounded-none text-sm font-medium text-white bg-black hover:bg-zinc-800 transition disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <span v-if="uploading" class="flex items-center gap-2">
                 <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
@@ -393,7 +393,7 @@ const buildGroupsFromCsv = (text, opts) => {
 
           <div class="mt-4">
             <div class="flex items-center gap-2 mb-2">
-              <BarChart3 class="w-4 h-4 text-indigo-600" />
+              <BarChart3 class="w-4 h-4 text-black" />
               <span class="text-sm text-zinc-700 font-semibold">按类别分组</span>
             </div>
             <div v-if="!groupedBlocks.length" class="text-xs text-zinc-400">还没有返回文件</div>

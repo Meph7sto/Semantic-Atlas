@@ -9,3 +9,5 @@ python-dotenv==1.0.1
 aiohttp
 pandas==2.2.2
 joblib==1.3.2
+openai>=1.0.0
+python-multipart
