@@ -1,6 +1,6 @@
 <script setup>
 import { ref } from 'vue'
-import axios from 'axios'
+import { conflictApi } from '../utils/api'
 import { Play, CheckCircle2, AlertCircle, Sparkles } from 'lucide-vue-next'
 
 const reqA = ref('')
@@ -14,18 +14,19 @@ const detectConflict = async () => {
   result.value = null
   
   try {
-    const response = await axios.post('/api/conflict/check', {
-      requirement_a: reqA.value,
-      requirement_b: reqB.value
-    })
-    result.value = response.data
+    const response = await conflictApi.check(reqA.value, reqB.value)
+    // 业务后端返回 {success, data, record_id}，解包 data
+    if (response.success === false) {
+      throw new Error(response.error || '冲突检测失败')
+    }
+    result.value = response.data ?? response
   } catch (e) {
     console.error(e)
     let errorMsg = 'Failed to check conflict.'
     
     if (e.response && e.response.data) {
         // Backend provided detailed error
-        errorMsg += ` Server says: ${e.response.data.detail || JSON.stringify(e.response.data)}`
+        errorMsg += ` Server says: ${e.response.data.error || e.response.data.detail || JSON.stringify(e.response.data)}`
     } else if (e.message) {
         // Network or other generic error
         errorMsg += ` Error: ${e.message}`
@@ -56,7 +57,7 @@ const detectConflict = async () => {
         <textarea 
           v-model="reqA"
           placeholder="e.g. The system must respond within 1 second."
-          class="w-full h-40 p-4 rounded-xl bg-white border border-zinc-200 text-zinc-800 placeholder-zinc-300 resize-none focus:outline-none focus:ring-2 focus:ring-zinc-100 focus:border-zinc-300 transition-all shadow-sm group-hover:shadow-md"
+          class="w-full h-40 p-4 rounded-none bg-white border border-zinc-200 text-zinc-800 placeholder-zinc-300 resize-none focus:outline-none focus:ring-2 focus:ring-zinc-100 focus:border-zinc-300 transition-all shadow-sm group-hover:shadow-md"
         ></textarea>
       </div>
 
@@ -66,7 +67,7 @@ const detectConflict = async () => {
         <textarea 
           v-model="reqB"
           placeholder="e.g. The system response time should be at least 2 seconds."
-          class="w-full h-40 p-4 rounded-xl bg-white border border-zinc-200 text-zinc-800 placeholder-zinc-300 resize-none focus:outline-none focus:ring-2 focus:ring-zinc-100 focus:border-zinc-300 transition-all shadow-sm group-hover:shadow-md"
+          class="w-full h-40 p-4 rounded-none bg-white border border-zinc-200 text-zinc-800 placeholder-zinc-300 resize-none focus:outline-none focus:ring-2 focus:ring-zinc-100 focus:border-zinc-300 transition-all shadow-sm group-hover:shadow-md"
         ></textarea>
       </div>
     </div>
@@ -76,7 +77,7 @@ const detectConflict = async () => {
       <button 
         @click="detectConflict"
         :disabled="isLoading || !reqA || !reqB"
-        class="flex items-center gap-2 bg-zinc-900 text-white px-8 py-3 rounded-full font-medium hover:bg-zinc-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95 shadow-lg shadow-zinc-200"
+        class="flex items-center gap-2 bg-zinc-900 text-white px-8 py-3 rounded-none font-medium hover:bg-zinc-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95 shadow-lg shadow-zinc-200"
       >
         <span v-if="isLoading" class="flex items-center gap-2">
            <svg class="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">

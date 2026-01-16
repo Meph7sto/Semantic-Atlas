@@ -1,37 +1,114 @@
 #!/bin/bash
-# 兼容某些环境下 pipefail 不可用（或脚本带 CRLF 导致 pipefail\r 解析失败）
-set -eu
-# shellcheck disable=SC3040
-if [ -n "${BASH_VERSION:-}" ]; then
-  set -o pipefail 2>/dev/null || true
-fi
+set -euo pipefail
 
 # 项目根目录
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$BASE_DIR"
 
-# Python venv（推理/业务都依赖 venv；如果不激活，python/uvicorn 可能来自 conda/system 导致启动失败）
-# 允许通过环境变量 VENV_DIR 显式指定；否则自动探测常见路径。
-PYTHON_BIN="python"
-if [ -z "${VENV_DIR:-}" ]; then
-  for cand in "${BASE_DIR}/.venv" "${BASE_DIR}/../.venv" "/root/autodl-tmp/.venv" "${HOME:-/root}/autodl-tmp/.venv"; do
-    if [ -f "${cand}/bin/python" ]; then
-      VENV_DIR="${cand}"
-      break
-    fi
-  done
+MODE=""
+PROVIDER=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -m|--mode)
+      if [[ -z "${2:-}" ]]; then
+        echo "[start] Missing value for --mode"
+        exit 1
+      fi
+      MODE="$2"
+      shift 2
+      ;;
+    -p|--provider)
+      if [[ -z "${2:-}" ]]; then
+        echo "[start] Missing value for --provider"
+        exit 1
+      fi
+      PROVIDER="$2"
+      shift 2
+      ;;
+    *)
+      if [[ -z "$MODE" ]]; then
+        MODE="$1"
+      elif [[ -z "$PROVIDER" ]]; then
+        PROVIDER="$1"
+      else
+        echo "[start] Unknown argument: $1"
+        exit 1
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$MODE" ]]; then
+  echo "请选择启动模式: 1=all(前端构建+nginx+全部后端) 2=backend(两个后端) 3=inference 4=business 5=frontend"
+  read -r -p "输入编号或模式名 (默认 all): " choice
+  case "$choice" in
+    2|backend) MODE="backend" ;;
+    3|inference) MODE="inference" ;;
+    4|business) MODE="business" ;;
+    5|frontend) MODE="frontend" ;;
+    ""|1|all) MODE="all" ;;
+    *) MODE="all" ;;
+  esac
 fi
 
-if [ -n "${VENV_DIR:-}" ] && [ -f "${VENV_DIR}/bin/activate" ]; then
-  # shellcheck disable=SC1090
-  source "${VENV_DIR}/bin/activate"
-  PYTHON_BIN="${VENV_DIR}/bin/python"
-  echo "[start] 已激活虚拟环境: ${VENV_DIR}"
-else
-  echo "[start] 警告：未找到虚拟环境（可设置 VENV_DIR=/path/to/.venv），将使用当前 python：$(command -v python || echo python)"
+if [[ -z "$PROVIDER" ]]; then
+  default_provider="${MODEL_PROVIDER:-local}"
+  echo "请选择模型模式: 1=local(本地模型) 2=chutes(API) 3=deepseek(API占位)"
+  read -r -p "输入编号或模式名 (默认 ${default_provider}): " choice
+  case "$choice" in
+    2|chutes) PROVIDER="chutes" ;;
+    3|deepseek) PROVIDER="deepseek" ;;
+    1|local|"") PROVIDER="${default_provider}" ;;
+    *) PROVIDER="${default_provider}" ;;
+  esac
 fi
 
-echo "[start] 使用 Python: $(${PYTHON_BIN} -c 'import sys; print(sys.executable)' 2>/dev/null || echo ${PYTHON_BIN})"
+export MODEL_PROVIDER="$PROVIDER"
+
+if [[ "$PROVIDER" == "chutes" && -z "${CHUTES_API_TOKEN:-}" && -z "${CHUTES_API_KEY:-}" ]]; then
+  echo "检测到使用 chutes 模式，但未设置 CHUTES_API_TOKEN。"
+  read -r -p "请输入 Chutes API Token（留空则跳过）: " token
+  if [[ -n "$token" ]]; then
+    export CHUTES_API_TOKEN="$token"
+  fi
+fi
+
+do_frontend=0
+do_nginx=0
+do_inference=0
+do_business=0
+
+case "$MODE" in
+  all)
+    do_frontend=1
+    do_nginx=1
+    do_inference=1
+    do_business=1
+    ;;
+  backend)
+    do_inference=1
+    do_business=1
+    ;;
+  inference)
+    do_inference=1
+    ;;
+  business)
+    do_business=1
+    ;;
+  frontend)
+    do_frontend=1
+    do_nginx=1
+    ;;
+  *)
+    MODE="all"
+    do_frontend=1
+    do_nginx=1
+    do_inference=1
+    do_business=1
+    ;;
+esac
 
 # 默认前端打包路径，可通过环境变量覆盖
 FRONTEND_ROOT="${FRONTEND_ROOT:-${BASE_DIR}/frontend/dist}"
@@ -40,35 +117,20 @@ FRONTEND_ROOT="${FRONTEND_ROOT:-${BASE_DIR}/frontend/dist}"
 mkdir -p "${BASE_DIR}/deploy/logs"
 PID_PATH="${BASE_DIR}/deploy/logs/nginx.pid"
 
-echo "[start] 使用前端目录: ${FRONTEND_ROOT}"
-
-# 1) 前端构建（若 npm 来自 nvm，需要在非交互脚本里手动加载 nvm）
-# 如需跳过前端构建：export SKIP_FRONTEND_BUILD=1
-if [ "${SKIP_FRONTEND_BUILD:-0}" = "1" ]; then
-  echo "[start] SKIP_FRONTEND_BUILD=1，跳过前端构建。"
-else
-  if ! command -v npm >/dev/null 2>&1; then
-    # 尝试加载 nvm（nvm 安装时默认写入 ~/.bashrc，但脚本不会自动 source）
-    export NVM_DIR="${NVM_DIR:-${HOME:-/root}/.nvm}"
-    if [ -s "${NVM_DIR}/nvm.sh" ]; then
-      # shellcheck disable=SC1090
-      . "${NVM_DIR}/nvm.sh"
-      nvm use --lts >/dev/null 2>&1 || true
-    fi
-  fi
-
-  if ! command -v npm >/dev/null 2>&1; then
-    echo "[start] 未检测到 npm（可能是 nvm 未加载或未安装 Node.js），跳过前端构建。NVM_DIR=${NVM_DIR:-unset}"
-  else
-    echo "[start] 开始前端构建 (npm install & npm run build)..."
-    # 清理旧的 dist 以防万一
-    rm -rf "$FRONTEND_ROOT"
-  fi
+echo "[start] Mode: ${MODE}; Model provider: ${PROVIDER}"
+if [[ "$do_frontend" -eq 1 ]]; then
+  echo "[start] 使用前端目录: ${FRONTEND_ROOT}"
 fi
 
-# 为了防止服务器缺失配置文件，在此处自动生成
-echo "Generating tailwind.config.js..."
-cat > "${BASE_DIR}/frontend/tailwind.config.js" <<EOF
+if [[ "$do_frontend" -eq 1 ]]; then
+  # 1) 执行前端构建，确保代码更新生效
+  echo "[start] 开始前端构建 (npm install & npm run build)..."
+  # 清理旧的 dist 以防万一
+  rm -rf "$FRONTEND_ROOT"
+
+  # 为了防止服务器缺失配置文件，在此处自动生成
+  echo "Generating tailwind.config.js..."
+  cat > "${BASE_DIR}/frontend/tailwind.config.js" <<EOF
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [
@@ -82,8 +144,8 @@ module.exports = {
 }
 EOF
 
-echo "Generating postcss.config.js..."
-cat > "${BASE_DIR}/frontend/postcss.config.js" <<EOF
+  echo "Generating postcss.config.js..."
+  cat > "${BASE_DIR}/frontend/postcss.config.js" <<EOF
 module.exports = {
   plugins: {
     tailwindcss: {},
@@ -92,30 +154,57 @@ module.exports = {
 }
 EOF
 
-if [ "${SKIP_FRONTEND_BUILD:-0}" != "1" ] && command -v npm >/dev/null 2>&1; then
   (cd frontend && npm install && npm run build)
+
+  # 2) 生成 Nginx 配置
+  echo "[start] 生成 Nginx 配置..."
+  export FRONTEND_ROOT
+  export MIME_TYPES_PATH="${BASE_DIR}/deploy/mime.types"
+  export BASE_DIR
+  NGINX_CONFIG_READY=1
+  #如果是MacOS 可能需要 envsubst (gettext)
+  if command -v envsubst >/dev/null 2>&1; then
+    envsubst '$FRONTEND_ROOT $MIME_TYPES_PATH' < "${BASE_DIR}/deploy/nginx_linux.conf" > "${BASE_DIR}/deploy/nginx.generated.conf"
+  else
+    # fallback: only replace known placeholders to avoid touching nginx variables like $uri
+    python - <<'PY'
+import os
+
+src = os.path.join(os.environ["BASE_DIR"], "deploy", "nginx_linux.conf")
+dst = os.path.join(os.environ["BASE_DIR"], "deploy", "nginx.generated.conf")
+with open(src, "r", encoding="utf-8") as f:
+    data = f.read()
+data = data.replace("${FRONTEND_ROOT}", os.environ.get("FRONTEND_ROOT", ""))
+data = data.replace("${MIME_TYPES_PATH}", os.environ.get("MIME_TYPES_PATH", ""))
+with open(dst, "w", encoding="utf-8") as f:
+    f.write(data)
+PY
+  fi
 fi
 
-# 2) 生成 Nginx 配置并重载
-echo "[start] 生成 Nginx 配置..."
-export FRONTEND_ROOT
-export MIME_TYPES_PATH="${BASE_DIR}/deploy/mime.types"
-#如果是MacOS 可能需要 envsubst (gettext)
-envsubst '$FRONTEND_ROOT $MIME_TYPES_PATH' < "${BASE_DIR}/deploy/nginx.conf" > "${BASE_DIR}/deploy/nginx.generated.conf"
+if [[ "$do_nginx" -eq 1 ]]; then
+  if command -v nginx >/dev/null 2>&1; then
+    echo "[start] 启动/重载 Nginx..."
+    nginx -c "${BASE_DIR}/deploy/nginx.generated.conf" -p "${BASE_DIR}/deploy" -g "pid logs/nginx.pid;" -s reload 2>/dev/null || \
+    nginx -c "${BASE_DIR}/deploy/nginx.generated.conf" -p "${BASE_DIR}/deploy" -g "pid logs/nginx.pid;"
+  else
+    echo "[start] 未检测到 nginx，跳过反向代理启动。"
+  fi
+fi
 
-echo "[start] 启动/重载 Nginx..."
-nginx -c "${BASE_DIR}/deploy/nginx.generated.conf" -p "${BASE_DIR}/deploy" -g "pid logs/nginx.pid;" -s reload 2>/dev/null || \
-nginx -c "${BASE_DIR}/deploy/nginx.generated.conf" -p "${BASE_DIR}/deploy" -g "pid logs/nginx.pid;"
+if [[ "$do_inference" -eq 1 ]]; then
+  # 3) 启动 FastAPI 推理服务
+  echo "[start] 启动 FastAPI 推理服务 (8000)..."
+  nohup uvicorn backend_inference.main:app --host 0.0.0.0 --port 8000 \
+    > "${BASE_DIR}/deploy/logs/inference.log" 2>&1 &
+fi
 
-# 3) 启动 FastAPI 推理服务
-echo "[start] 启动 FastAPI 推理服务 (8000)..."
-nohup "${PYTHON_BIN}" -m uvicorn backend_inference.main:app --host 0.0.0.0 --port 8000 \
-  > "${BASE_DIR}/deploy/logs/inference.log" 2>&1 &
+if [[ "$do_business" -eq 1 ]]; then
+  # 4) 启动 Flask 业务服务
+  echo "[start] 启动 Flask 业务服务 (5001)..."
+  nohup python backend_business/app.py \
+    > "${BASE_DIR}/deploy/logs/business.log" 2>&1 &
+fi
 
-# 4) 启动 Flask 业务服务
-echo "[start] 启动 Flask 业务服务 (5001)..."
-nohup "${PYTHON_BIN}" backend_business/app.py \
-  > "${BASE_DIR}/deploy/logs/business.log" 2>&1 &
-
-echo "[start] 全部服务已尝试启动。Nginx 监听 8008，Flask 5001，FastAPI 8000。"
-echo "[start] 查看日志: tail -f deploy/logs/*.log"
+echo "[start] Done. Mode=${MODE}; Model provider=${PROVIDER}; Nginx 8008 (if enabled), FastAPI 8000 (if enabled), Flask 5001 (if enabled)."
+echo "[start] Logs located in ${BASE_DIR}/deploy/logs"

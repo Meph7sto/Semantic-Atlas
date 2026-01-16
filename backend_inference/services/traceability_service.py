@@ -87,6 +87,7 @@ def _extract_first_json_object(text: str) -> Optional[Dict[str, Any]]:
                     return None
     return None
 
+
 def _extract_json_like_ai_tracer(text: str) -> Optional[Dict[str, Any]]:
     """
     与 ai-requirement-tracer 对齐的兜底策略：
@@ -104,6 +105,7 @@ def _extract_json_like_ai_tracer(text: str) -> Optional[Dict[str, Any]]:
         return obj if isinstance(obj, dict) else None
     except Exception:
         return None
+
 
 def _safe_float(x: Any, default: float = 0.5) -> float:
     try:
@@ -194,15 +196,22 @@ class TraceabilityService:
 5. 严格输出JSON格式，不要添加其他文字
 """
 
-        raw = self.model_engine.generate(
-            prompt=prompt,
-            system_prompt=SYSTEM_PROMPT_TRACEABILITY,
-            max_new_tokens=max_new_tokens,
-            temperature=0.1,
-            top_p=0.8,
-            do_sample=True,
-            min_new_tokens=16,
-        )
+        try:
+            raw = self.model_engine.generate(
+                prompt=prompt,
+                system_prompt=SYSTEM_PROMPT_TRACEABILITY,
+                max_new_tokens=max_new_tokens,
+                temperature=0.1,
+                top_p=0.8,
+                do_sample=True,
+                min_new_tokens=16,
+            )
+        except TypeError:
+            raw = self.model_engine.generate(
+                prompt=prompt,
+                system_prompt=SYSTEM_PROMPT_TRACEABILITY,
+                max_new_tokens=max_new_tokens,
+            )
 
         parsed = _extract_first_json_object(raw) or _extract_json_like_ai_tracer(raw)
         if not parsed:
@@ -302,6 +311,7 @@ class TraceabilityService:
 
         for i, high in enumerate(highs):
             for j, low in enumerate(lows):
+                single = None
                 try:
                     single = self.analyze_relation(high, low, max_new_tokens=max_new_tokens)
                     rec = BatchRelationRecord(
@@ -334,7 +344,7 @@ class TraceabilityService:
                     )
                     relations.append(rec)
 
-                if single.has_relation:
+                if single and single.has_relation:
                     rel_type = (single.relation_type or "unknown").strip() or "unknown"
                     relation_type_count[rel_type] = relation_type_count.get(rel_type, 0) + 1
                     links.append(
