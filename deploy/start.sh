@@ -75,6 +75,23 @@ if [[ "$PROVIDER" == "chutes" && -z "${CHUTES_API_TOKEN:-}" && -z "${CHUTES_API_
   fi
 fi
 
+# Ensure a compatible Python version for psycopg2 wheels
+if command -v python >/dev/null 2>&1; then
+  py_version="$(python - <<'PY'
+import sys
+print(f"{sys.version_info.major}.{sys.version_info.minor}")
+PY
+)"
+  if [[ "$py_version" =~ ^([0-9]+)\.([0-9]+)$ ]]; then
+    py_major="${BASH_REMATCH[1]}"
+    py_minor="${BASH_REMATCH[2]}"
+    if [[ "$py_major" -gt 3 || ( "$py_major" -eq 3 && "$py_minor" -ge 13 ) ]]; then
+      echo "[start] Detected Python ${py_major}.${py_minor} which is not supported by psycopg2-binary. Please use Python 3.12."
+      exit 1
+    fi
+  fi
+fi
+
 do_frontend=0
 do_nginx=0
 do_inference=0
@@ -120,6 +137,33 @@ PID_PATH="${BASE_DIR}/deploy/logs/nginx.pid"
 echo "[start] Mode: ${MODE}; Model provider: ${PROVIDER}"
 if [[ "$do_frontend" -eq 1 ]]; then
   echo "[start] 使用前端目录: ${FRONTEND_ROOT}"
+fi
+
+if [[ "$do_business" -eq 1 ]]; then
+  : "${POSTGRES_HOST:=127.0.0.1}"
+  : "${POSTGRES_PORT:=5432}"
+  : "${POSTGRES_USER:=semantic}"
+  : "${POSTGRES_PASSWORD:=semantic_dev}"
+  : "${POSTGRES_DB:=semantic_atlas}"
+  export POSTGRES_HOST POSTGRES_PORT POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB
+
+  if [[ -f "${BASE_DIR}/docker-compose.yml" ]]; then
+    if command -v docker >/dev/null 2>&1; then
+      echo "[start] 启动 PostgreSQL (docker compose)..."
+      if ! docker compose -f "${BASE_DIR}/docker-compose.yml" up -d postgres; then
+        echo "[start] 启动 PostgreSQL 失败，继续执行。"
+      fi
+    elif command -v docker-compose >/dev/null 2>&1; then
+      echo "[start] 启动 PostgreSQL (docker-compose)..."
+      if ! docker-compose -f "${BASE_DIR}/docker-compose.yml" up -d postgres; then
+        echo "[start] 启动 PostgreSQL 失败，继续执行。"
+      fi
+    else
+      echo "[start] 未检测到 Docker，跳过 PostgreSQL 启动。"
+    fi
+  else
+    echo "[start] 未找到 docker-compose.yml，跳过 PostgreSQL 启动。"
+  fi
 fi
 
 if [[ "$do_frontend" -eq 1 ]]; then

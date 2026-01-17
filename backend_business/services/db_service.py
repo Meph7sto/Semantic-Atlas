@@ -1,10 +1,10 @@
-# PostgreSQL 增删改查逻辑占位符
-# 此模块将来用于处理所有与 PostgreSQL 数据库交互的操作
 import json
 import os
-import sqlite3
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
+
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 from backend_business.config import settings
 
@@ -15,38 +15,35 @@ def _utc_now_iso() -> str:
 
 class DBService:
     """
-    轻量级 SQLite 存储：
+    轻量级 PostgreSQL 存储：
     - 保存追溯分析（单对、批量）的输入与输出 JSON
     - 提供列表/详情/统计
     """
 
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+    def __init__(self, dsn: str):
+        self.dsn = dsn
         self._init_db()
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+    def _connect(self) -> psycopg2.extensions.connection:
+        return psycopg2.connect(self.dsn)
 
     def _init_db(self) -> None:
         with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS trace_analysis (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    analysis_type TEXT NOT NULL,              -- relation | batch
-                    title TEXT NOT NULL,
-                    description TEXT NOT NULL,
-                    input_json TEXT NOT NULL,
-                    output_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS trace_analysis (
+                        id SERIAL PRIMARY KEY,
+                        analysis_type TEXT NOT NULL,              -- relation | batch
+                        title TEXT NOT NULL,
+                        description TEXT NOT NULL,
+                        input_json TEXT NOT NULL,
+                        output_json TEXT NOT NULL,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
                 )
-                """
-            )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_trace_created_at ON trace_analysis(created_at)")
-            conn.commit()
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_trace_created_at ON trace_analysis(created_at)")
 
     def save_relation(
         self,
@@ -65,22 +62,23 @@ class DBService:
         desc = f"顶层需求: {high_level_requirement}\n\n底层需求: {low_level_requirement}"
 
         with self._connect() as conn:
-            cur = conn.execute(
-                """
-                INSERT INTO trace_analysis(analysis_type, title, description, input_json, output_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    "relation",
-                    str(title)[:200],
-                    desc,
-                    json.dumps(input_payload, ensure_ascii=False),
-                    json.dumps(output, ensure_ascii=False),
-                    _utc_now_iso(),
-                ),
-            )
-            conn.commit()
-            return int(cur.lastrowid)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO trace_analysis(analysis_type, title, description, input_json, output_json, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        "relation",
+                        str(title)[:200],
+                        desc,
+                        json.dumps(input_payload, ensure_ascii=False),
+                        json.dumps(output, ensure_ascii=False),
+                        _utc_now_iso(),
+                    ),
+                )
+                return int(cur.fetchone()[0])
 
     def save_batch(
         self,
@@ -99,22 +97,23 @@ class DBService:
         desc = f"批量分析：顶层 {len(high_level_requirements)} 个，底层 {len(low_level_requirements)} 个"
 
         with self._connect() as conn:
-            cur = conn.execute(
-                """
-                INSERT INTO trace_analysis(analysis_type, title, description, input_json, output_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    "batch",
-                    str(title)[:200],
-                    desc,
-                    json.dumps(input_payload, ensure_ascii=False),
-                    json.dumps(output, ensure_ascii=False),
-                    _utc_now_iso(),
-                ),
-            )
-            conn.commit()
-            return int(cur.lastrowid)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO trace_analysis(analysis_type, title, description, input_json, output_json, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        "batch",
+                        str(title)[:200],
+                        desc,
+                        json.dumps(input_payload, ensure_ascii=False),
+                        json.dumps(output, ensure_ascii=False),
+                        _utc_now_iso(),
+                    ),
+                )
+                return int(cur.fetchone()[0])
 
     def list_requirements(self, page: int = 1, per_page: int = 10) -> Dict[str, Any]:
         page = max(1, int(page))
@@ -122,19 +121,22 @@ class DBService:
         offset = (page - 1) * per_page
 
         with self._connect() as conn:
-            total = conn.execute("SELECT COUNT(1) AS c FROM trace_analysis").fetchone()["c"]
-            rows = conn.execute(
-                """
-                SELECT id, title, description, created_at
-                FROM trace_analysis
-                ORDER BY id DESC
-                LIMIT ? OFFSET ?
-                """,
-                (per_page, offset),
-            ).fetchall()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT COUNT(1) AS c FROM trace_analysis")
+                total = cur.fetchone()["c"]
+                cur.execute(
+                    """
+                    SELECT id, title, description, created_at::text AS created_at
+                    FROM trace_analysis
+                    ORDER BY id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (per_page, offset),
+                )
+                rows = cur.fetchall()
 
         return {
-            "requirements": [dict(r) for r in rows],
+            "requirements": rows,
             "total": total,
             "pages": (total + per_page - 1) // per_page,
             "current_page": page,
@@ -142,14 +144,16 @@ class DBService:
 
     def get_requirement_detail(self, requirement_id: int) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT id, analysis_type, title, description, input_json, output_json, created_at
-                FROM trace_analysis
-                WHERE id = ?
-                """,
-                (int(requirement_id),),
-            ).fetchone()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT id, analysis_type, title, description, input_json, output_json, created_at::text AS created_at
+                    FROM trace_analysis
+                    WHERE id = %s
+                    """,
+                    (int(requirement_id),),
+                )
+                row = cur.fetchone()
         if not row:
             return None
 
@@ -166,16 +170,17 @@ class DBService:
 
     def delete_requirement(self, requirement_id: int) -> bool:
         with self._connect() as conn:
-            cur = conn.execute("DELETE FROM trace_analysis WHERE id = ?", (int(requirement_id),))
-            conn.commit()
-            return cur.rowcount > 0
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM trace_analysis WHERE id = %s", (int(requirement_id),))
+                return cur.rowcount > 0
 
     def statistics(self) -> Dict[str, Any]:
         with self._connect() as conn:
-            total = conn.execute("SELECT COUNT(1) AS c FROM trace_analysis").fetchone()["c"]
-            type_rows = conn.execute(
-                "SELECT analysis_type, COUNT(1) AS c FROM trace_analysis GROUP BY analysis_type"
-            ).fetchall()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT COUNT(1) AS c FROM trace_analysis")
+                total = cur.fetchone()["c"]
+                cur.execute("SELECT analysis_type, COUNT(1) AS c FROM trace_analysis GROUP BY analysis_type")
+                type_rows = cur.fetchall()
 
         return {
             "total_requirements": total,
@@ -183,4 +188,7 @@ class DBService:
         }
 
 
-db_service = DBService(db_path=settings.DB_PATH)
+if os.environ.get("SKIP_DB_INIT") == "1":
+    db_service = None
+else:
+    db_service = DBService(dsn=settings.POSTGRES_DSN)
