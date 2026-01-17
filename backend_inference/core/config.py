@@ -38,10 +38,17 @@ class Settings:
     CHUTES_API_TOKEN = os.getenv("CHUTES_API_TOKEN", "")
     DEEPSEEK_API_URL = os.getenv(
         "DEEPSEEK_API_URL",
-        "https://api.deepseek.com/v1/chat/completions",
+        "https://api.deepseek.com/v1",
     )
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
     DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+
+    # OpenAI / Compatibility config
+    # 显式优先读取 OPENAI_API_KEY，如果没有设置，则回退使用 DEEPSEEK_API_KEY
+    # 这样用户如果只配置了 DEEPSEEK_API_KEY，OPENAI_API_KEY 也会自动拥有相同的值
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or DEEPSEEK_API_KEY
+    OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL") or DEEPSEEK_API_URL
 
     # 需求分类模型配置（本地 encoder 模型）
     CLASSIFICATION_MODEL_RELATIVE_PATH = os.getenv(

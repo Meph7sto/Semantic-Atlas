@@ -1,5 +1,7 @@
 import os
 import sys
+import os
+import sys
 from flask import Flask, jsonify
 from flask_cors import CORS
 
@@ -13,7 +15,8 @@ from backend_business.config import settings
 from backend_business.routes.analysis_route import analysis_bp
 from backend_business.routes.conflict_routes import conflict_bp
 from backend_business.routes.file_route import file_bp
-from routes.classification_routes import classification_bp
+from backend_business.routes.requirements_route import requirements_bp
+from backend_business.routes.classification_routes import classification_bp
 
 
 def create_app() -> Flask:
@@ -36,6 +39,7 @@ def create_app() -> Flask:
     app.register_blueprint(analysis_bp, url_prefix="/api")
     app.register_blueprint(conflict_bp, url_prefix="/api/conflict")
     app.register_blueprint(file_bp, url_prefix="/api")
+    app.register_blueprint(requirements_bp, url_prefix="/api")
     app.register_blueprint(classification_bp, url_prefix="/api/classification")
 
     # 兼容主框架：提供 /health（非 /api/health）

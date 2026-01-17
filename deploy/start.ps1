@@ -74,6 +74,13 @@ $FRONTEND_ROOT = if ($env:FRONTEND_ROOT) { $env:FRONTEND_ROOT } else { Join-Path
 $LogsDir = Join-Path $BASE_DIR "deploy/logs"
 New-Item -ItemType Directory -Force -Path $LogsDir | Out-Null
 
+# 0) 先执行停止脚本清理环境
+$stopScript = Join-Path $PSScriptRoot "stop_services.ps1"
+if (Test-Path $stopScript) {
+  Write-Host "[start] Auto-running stop_services.ps1 to clean environment..." -ForegroundColor Cyan
+  & $stopScript
+}
+
 Write-Host "[start] Mode: $Mode; Model provider: $Provider"
 if ($doFrontend) { Write-Host "[start] Using frontend directory: $FRONTEND_ROOT" }
 
@@ -178,6 +185,14 @@ if ($doNginx -and $doFrontend) {
 
 # 获取当前环境 python 绝对路径，确保 Start-Process 继承正确的环境
 $PythonExe = (Get-Command python).Source
+
+# 3.5) 安装/更新依赖
+if ($doInference -or $doBusiness) {
+  if (Test-Path "requirements.txt") {
+    Write-Host "[start] Installing/Updating Python dependencies..."
+    Start-Process -FilePath $PythonExe -ArgumentList "-m pip install -r requirements.txt" -WorkingDirectory $BASE_DIR -NoNewWindow -Wait
+  }
+}
 
 # 4) 启动 FastAPI 推理服务
 if ($doInference) {

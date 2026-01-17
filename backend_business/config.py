@@ -1,6 +1,20 @@
-# 数据库连接、端口等配置占位符
-# 此文件用于存放数据库连接字符串、端口号等配置信息
+"""
+业务后端（backend_business）配置：
+- 支持从环境变量读取
+- 也支持自动加载项目根目录的 .env（便于本地开发）
+"""
+
 import os
+
+# 尝试自动加载项目根目录的 .env，便于本地开发/测试
+try:
+    from dotenv import load_dotenv  # type: ignore
+except ImportError:
+    load_dotenv = None
+
+if load_dotenv:
+    _ROOT_ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    load_dotenv(_ROOT_ENV_PATH, override=False)
 
 
 class Settings:
@@ -25,6 +39,11 @@ class Settings:
     # Storage (SQLite)
     DATA_DIR = os.environ.get("BUSINESS_DATA_DIR", os.path.join(BASE_DIR, "data"))
     DB_PATH = os.environ.get("BUSINESS_DB_PATH", os.path.join(DATA_DIR, "requirement_trace.db"))
+
+    # DOORS-style MySQL storage (optional)
+    # 例：mysql+pymysql://user:password@127.0.0.1:3306/semantic_atlas?charset=utf8mb4
+    DOORS_DB_URL = os.environ.get("DOORS_DB_URL", "")
+    DOORS_PROJECT_NAME = os.environ.get("DOORS_PROJECT_NAME", "default")
 
     # CORS
     CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*")  # 生产建议配置为具体域名
