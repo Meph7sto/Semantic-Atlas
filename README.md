@@ -5,7 +5,7 @@ Semantic-Atlas 是面向需求工程的语义分析原型项目，已打通需�
 ## 功能概览
 
 - [x] 需求冲突检测: 双需求文本 -> 冲突/不冲突 + 解释
-- [x] 需求追溯: 单对/批量分析 + 追溯网络 + 可选 SQLite 存储与下载
+- [x] 需求追溯: 单对/批量分析 + 追溯网络 + PostgreSQL 存储与下载
 - [x] 需求分类: 文本/CSV 批量分类 + 类别统计可视化
 
 ## 架构
@@ -37,19 +37,25 @@ cd frontend
 npm install
 ```
 
-3) 启动推理后端（FastAPI）
+3) 启动 PostgreSQL（Docker）
+
+```bash
+docker compose up -d
+```
+
+4) 启动推理后端（FastAPI）
 
 ```bash
 uvicorn backend_inference.main:app --host 0.0.0.0 --port 8000
 ```
 
-4) 启动业务后端（Flask）
+5) 启动业务后端（Flask）
 
 ```bash
 python backend_business/app.py
 ```
 
-5) 启动前端（Vite Dev Server）
+6) 启动前端（Vite Dev Server）
 
 ```bash
 cd frontend
@@ -156,10 +162,35 @@ POST /api/trace-relation
 
 - `INFERENCE_URL` / `INFERENCE_BASE_URL`: 推理后端地址（默认 `http://localhost:8000`）
 - `CLASSIFICATION_URL`: 分类服务地址（默认 `http://localhost:8000`）
-- `BUSINESS_DB_PATH`: SQLite 路径（默认 `backend_business/data/requirement_trace.db`）
-- `BUSINESS_DATA_DIR`: SQLite 目录
+- `DATABASE_URL`: PostgreSQL 连接串（优先）
+- `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB`
 - `BUSINESS_HOST` / `BUSINESS_PORT` / `BUSINESS_DEBUG`
 - `CORS_ORIGINS`: 默认 `*`
+
+### PostgreSQL（Docker，本地开发）
+
+启动数据库容器:
+
+```bash
+docker compose up -d
+```
+
+默认连接信息:
+
+- Host: `localhost`
+- Port: `5432`（可通过 `POSTGRES_PORT` 覆盖）
+- User: `semantic`
+- Password: `semantic_dev`
+- Database: `semantic_atlas`
+
+可通过环境变量覆盖:
+
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+- `POSTGRES_DB`
+- `POSTGRES_PORT`
+
+说明: 业务后端默认使用 PostgreSQL，连接参数与 Docker 默认一致。
 
 ### 一键脚本
 

@@ -4,7 +4,7 @@ param(
   [ValidateSet("all", "backend", "inference", "business", "frontend")]
   [string]$Mode,
 
-  # 模型提供方：local=本地模型，chutes=Chutes API，deepseek=DeepSeek API（占位）
+  # 模型提供方：local=本地模型，chutes=Chutes API，deepseek=DeepSeek API
   [ValidateSet("local", "chutes", "deepseek")]
   [string]$Provider
 )
@@ -35,10 +35,11 @@ $doBusiness = $Mode -in @("all", "backend", "business")
 
 # 模型提供方选择
 if (-not $Provider) {
-  $defaultProvider = if ($env:MODEL_PROVIDER) { $env:MODEL_PROVIDER } else { "local" }
-  Write-Host "请选择模型模式: 1=local(本地模型) 2=chutes(API) 3=deepseek(API占位)" -ForegroundColor Cyan
+  $defaultProvider = if ($env:MODEL_PROVIDER) { $env:MODEL_PROVIDER } else { "deepseek" }
+  Write-Host "请选择模型模式: 1=local(本地模型) 2=chutes(API) 3=deepseek" -ForegroundColor Cyan
   $choice = Read-Host "输入编号或模式名 (默认 $defaultProvider)"
   switch ($choice) {
+    "1" { $Provider = "local" }
     "2" { $Provider = "chutes" }
     "3" { $Provider = "deepseek" }
     "local" { $Provider = "local" }
@@ -66,6 +67,314 @@ if ($Provider -eq "deepseek" -and -not $env:DEEPSEEK_API_KEY) {
 # 项目根目录（脚本位于 deploy/ 下）
 $BASE_DIR = Split-Path -Parent $PSScriptRoot
 Set-Location $BASE_DIR
+
+# Conda env setup for Python services
+$CondaEnv = "semantic-Atlas"
+$CondaPythonVersion = "3.12"
+
+function Initialize-Conda {
+  $condaExe = $env:CONDA_EXE
+  if (-not $condaExe) {
+    $condaCmd = Get-Command conda -ErrorAction SilentlyContinue
+    if ($condaCmd) { $condaExe = $condaCmd.Source }
+  }
+
+  if (-not $condaExe) {
+    return $null
+  }
+
+  $hook = & $condaExe "shell.powershell" "hook" 2>$null | Out-String
+  if (-not $hook) {
+    return $null
+  }
+
+  Invoke-Expression $hook
+  return $condaExe
+}
+
+$condaExe = Initialize-Conda
+if ($condaExe) {
+  $envExists = $false
+  try {
+    $envJson = conda env list --json | ConvertFrom-Json
+    if ($envJson -and $envJson.envs) {
+      $envExists = $envJson.envs |
+      ForEach-Object { Split-Path $_ -Leaf } |
+      Where-Object { $_ -eq $CondaEnv } |
+      Select-Object -First 1
+    }
+  }
+  catch {
+    Write-Warning "[start] Failed to list conda envs: $_"
+  }
+
+  if (-not $envExists) {
+    Write-Host "[start] Conda env '$CondaEnv' not found. Creating..." -ForegroundColor Yellow
+    conda create -n $CondaEnv python=$CondaPythonVersion -y
+  }
+
+  Write-Host "[start] Activating conda env '$CondaEnv'..."
+  conda activate $CondaEnv
+}
+else {
+  Write-Warning "[start] Conda not found or hook failed; skipping conda activation."
+}
+
+function Escape-PostgresLiteral {
+  param([string]$Value)
+  if ($null -eq $Value) { return "" }
+  return $Value.Replace("'", "''")
+}
+
+function Invoke-PostgresSql {
+  param(
+    [string]$DockerExe,
+    [string]$ContainerName,
+    [string]$Sql,
+    [string[]]$Users,
+    [string]$Database,
+    [string]$Password
+  )
+
+  $lastOutput = $null
+  foreach ($user in $Users) {
+    if (-not $user) { continue }
+    $args = @("exec", $ContainerName, "psql", "-v", "ON_ERROR_STOP=1", "-U", $user, "-d", $Database, "-c", $Sql)
+    $lastOutput = & $DockerExe @args 2>&1
+    if ($LASTEXITCODE -eq 0) {
+      return @{ Success = $true; Output = $lastOutput }
+    }
+
+    if ($Password) {
+      $args = @("exec", "-e", "PGPASSWORD=$Password", $ContainerName, "psql", "-v", "ON_ERROR_STOP=1", "-U", $user, "-d", $Database, "-c", $Sql)
+      $lastOutput = & $DockerExe @args 2>&1
+      if ($LASTEXITCODE -eq 0) {
+        return @{ Success = $true; Output = $lastOutput }
+      }
+    }
+  }
+
+  return @{ Success = $false; Output = $lastOutput }
+}
+
+function Ensure-PostgresAccess {
+  param(
+    [string]$DockerExe,
+    [string]$ContainerName,
+    [string]$DbUser,
+    [string]$DbPassword,
+    [string]$DbName
+  )
+
+  $dbUserEsc = Escape-PostgresLiteral $DbUser
+  $dbPasswordEsc = Escape-PostgresLiteral $DbPassword
+  $dbNameEsc = Escape-PostgresLiteral $DbName
+
+  $sqlTemplate = @'
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '__DB_USER__') THEN
+    EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', '__DB_USER__', '__DB_PASS__');
+  ELSE
+    EXECUTE format('ALTER ROLE %I WITH LOGIN PASSWORD %L', '__DB_USER__', '__DB_PASS__');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '__DB_NAME__') THEN
+    EXECUTE format('CREATE DATABASE %I OWNER %I', '__DB_NAME__', '__DB_USER__');
+  END IF;
+END
+$$;
+'@
+
+  $sql = $sqlTemplate.Replace("__DB_USER__", $dbUserEsc).Replace("__DB_PASS__", $dbPasswordEsc).Replace("__DB_NAME__", $dbNameEsc)
+  $adminUsers = @("postgres", $DbUser) | Where-Object { $_ } | Select-Object -Unique
+
+  for ($i = 1; $i -le 8; $i++) {
+    $result = Invoke-PostgresSql -DockerExe $DockerExe -ContainerName $ContainerName -Sql $sql -Users $adminUsers -Database "postgres" -Password $DbPassword
+    if ($result.Success) {
+      Write-Host "[start] PostgreSQL role/database ensured." -ForegroundColor Green
+      return $true
+    }
+    Write-Host "[start] PostgreSQL not ready, retry $i/8..." -ForegroundColor Yellow
+    Start-Sleep -Seconds 2
+  }
+
+  Write-Warning "[start] Failed to ensure PostgreSQL user/database in container."
+  return $false
+}
+
+function Test-LocalPortOpen {
+  param([int]$Port)
+  try {
+    $result = Test-NetConnection -ComputerName "127.0.0.1" -Port $Port -WarningAction SilentlyContinue
+    return [bool]$result.TcpTestSucceeded
+  }
+  catch {
+    return $false
+  }
+}
+
+function Test-PostgresPortConflict {
+  param([int]$Port)
+  if (-not (Test-LocalPortOpen -Port $Port)) {
+    return $false
+  }
+  try {
+    $listeners = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop
+    foreach ($listener in $listeners) {
+      try {
+        $proc = Get-Process -Id $listener.OwningProcess -ErrorAction Stop
+        if ($proc.ProcessName -match "postgres") {
+          return $true
+        }
+      }
+      catch {
+        continue
+      }
+    }
+  }
+  catch {
+    return $true
+  }
+  return $true
+}
+
+function Get-ContainerHostPort {
+  param(
+    [string]$DockerExe,
+    [string]$ContainerName,
+    [string]$ContainerPort
+  )
+  try {
+    $format = '{{(index (index .NetworkSettings.Ports "' + $ContainerPort + '") 0).HostPort}}'
+    $hostPort = & $DockerExe inspect -f $format $ContainerName 2>$null
+    if ($LASTEXITCODE -eq 0 -and $hostPort -and $hostPort -ne "<no value>") {
+      return $hostPort
+    }
+  }
+  catch {
+    return $null
+  }
+  return $null
+}
+
+function Select-PostgresPort {
+  param(
+    [int]$DefaultPort,
+    [string]$DockerExe,
+    [string]$ContainerName
+  )
+
+  if ($DockerExe) {
+    $existingPort = Get-ContainerHostPort -DockerExe $DockerExe -ContainerName $ContainerName -ContainerPort "5432/tcp"
+    if ($existingPort) {
+      return [int]$existingPort
+    }
+  }
+
+  if (-not (Test-LocalPortOpen -Port $DefaultPort)) {
+    return $DefaultPort
+  }
+
+  for ($p = $DefaultPort + 1; $p -le ($DefaultPort + 10); $p++) {
+    if (-not (Test-LocalPortOpen -Port $p)) {
+      return $p
+    }
+  }
+
+  return $DefaultPort
+}
+
+# Start PostgreSQL via Docker Compose (if business backend enabled)
+if ($doBusiness) {
+  if (-not $env:POSTGRES_HOST -or $env:POSTGRES_HOST -in @("localhost", "::1")) {
+    $env:POSTGRES_HOST = "127.0.0.1"
+  }
+  $portExplicit = [bool]$env:POSTGRES_PORT
+  if (-not $env:POSTGRES_PORT) { $env:POSTGRES_PORT = "5433" }
+  if (-not $env:POSTGRES_PORT_LOCK) { $env:POSTGRES_PORT_LOCK = "1" }
+  if (-not $env:POSTGRES_USER) { $env:POSTGRES_USER = "semantic" }
+  if (-not $env:POSTGRES_PASSWORD) { $env:POSTGRES_PASSWORD = "semantic_dev" }
+  if (-not $env:POSTGRES_DB) { $env:POSTGRES_DB = "semantic_atlas" }
+
+  $composeFile = Join-Path $BASE_DIR "docker-compose.yml"
+  if (Test-Path $composeFile) {
+    $dockerCmd = Get-Command docker -ErrorAction SilentlyContinue
+    $dockerComposeCmd = Get-Command docker-compose -ErrorAction SilentlyContinue
+    $portLocked = $env:POSTGRES_PORT_LOCK -in @("1", "true", "True")
+    $needsOverride = $false
+    if (-not $portLocked) {
+      if (-not $portExplicit) {
+        $needsOverride = $true
+      }
+      elseif ($env:POSTGRES_PORT -eq "5432" -and (Test-PostgresPortConflict -Port ([int]$env:POSTGRES_PORT))) {
+        $needsOverride = $true
+      }
+    }
+    if ($needsOverride) {
+      $selectedPort = Select-PostgresPort -DefaultPort ([int]$env:POSTGRES_PORT) -DockerExe ($dockerCmd ? $dockerCmd.Source : $null) -ContainerName "semantic-atlas-postgres"
+      if ($selectedPort -ne [int]$env:POSTGRES_PORT) {
+        Write-Warning "[start] Port $($env:POSTGRES_PORT) is in use. Switching PostgreSQL host port to $selectedPort."
+        $env:POSTGRES_PORT = "$selectedPort"
+      }
+    }
+    $forceRecreate = $false
+    if ($dockerCmd) {
+      $existingContainer = & $dockerCmd.Source ps -a -q -f "name=semantic-atlas-postgres"
+      if ($existingContainer) {
+        $publishedPort = Get-ContainerHostPort -DockerExe $dockerCmd.Source -ContainerName "semantic-atlas-postgres" -ContainerPort "5432/tcp"
+        if (-not $publishedPort) {
+          Write-Warning "[start] PostgreSQL container has no published host port. Forcing recreate."
+          $forceRecreate = $true
+        }
+        elseif ([int]$publishedPort -ne [int]$env:POSTGRES_PORT) {
+          Write-Warning "[start] PostgreSQL container is bound to host port $publishedPort, expected $($env:POSTGRES_PORT). Forcing recreate."
+          $forceRecreate = $true
+        }
+      }
+    }
+    if ($dockerCmd) {
+      try {
+        Write-Host "[start] Starting PostgreSQL via docker compose..." -ForegroundColor Cyan
+        $composeArgs = @("compose", "-f", $composeFile, "up", "-d")
+        if ($forceRecreate) { $composeArgs += "--force-recreate" }
+        $composeArgs += "postgres"
+        Start-Process -FilePath $dockerCmd.Source -ArgumentList $composeArgs -NoNewWindow -Wait
+        $containerId = & $dockerCmd.Source ps -q -f "name=semantic-atlas-postgres"
+        if ($containerId) {
+          Ensure-PostgresAccess -DockerExe $dockerCmd.Source -ContainerName "semantic-atlas-postgres" -DbUser $env:POSTGRES_USER -DbPassword $env:POSTGRES_PASSWORD -DbName $env:POSTGRES_DB | Out-Null
+        }
+      }
+      catch {
+        Write-Warning "[start] Failed to start PostgreSQL via docker compose: $_"
+      }
+    }
+    elseif ($dockerComposeCmd) {
+      try {
+        Write-Host "[start] Starting PostgreSQL via docker-compose..." -ForegroundColor Cyan
+        $composeArgs = @("-f", $composeFile, "up", "-d")
+        if ($forceRecreate) { $composeArgs += "--force-recreate" }
+        $composeArgs += "postgres"
+        Start-Process -FilePath $dockerComposeCmd.Source -ArgumentList $composeArgs -NoNewWindow -Wait
+        if ($dockerCmd) {
+          $containerId = & $dockerCmd.Source ps -q -f "name=semantic-atlas-postgres"
+          if ($containerId) {
+            Ensure-PostgresAccess -DockerExe $dockerCmd.Source -ContainerName "semantic-atlas-postgres" -DbUser $env:POSTGRES_USER -DbPassword $env:POSTGRES_PASSWORD -DbName $env:POSTGRES_DB | Out-Null
+          }
+        }
+      }
+      catch {
+        Write-Warning "[start] Failed to start PostgreSQL via docker-compose: $_"
+      }
+    }
+    else {
+      Write-Warning "[start] Docker not found; skipping PostgreSQL startup."
+    }
+  }
+  else {
+    Write-Warning "[start] docker-compose.yml not found; skipping PostgreSQL startup."
+  }
+}
 
 # 前端产物目录，可通过环境变量 FRONTEND_ROOT 覆盖
 $FRONTEND_ROOT = if ($env:FRONTEND_ROOT) { $env:FRONTEND_ROOT } else { Join-Path $BASE_DIR "frontend/dist" }
@@ -186,11 +495,41 @@ if ($doNginx -and $doFrontend) {
 # 获取当前环境 python 绝对路径，确保 Start-Process 继承正确的环境
 $PythonExe = (Get-Command python).Source
 
+# Ensure a compatible Python version for psycopg2 wheels
+try {
+  $pyVersionText = & $PythonExe -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
+  if ($pyVersionText -match '^(\d+)\.(\d+)$') {
+    $pyMajor = [int]$matches[1]
+    $pyMinor = [int]$matches[2]
+    if ($pyMajor -gt 3 -or ($pyMajor -eq 3 -and $pyMinor -ge 13)) {
+      throw "[start] Detected Python $pyMajor.$pyMinor which is not supported by psycopg2-binary. Please use Python $CondaPythonVersion."
+    }
+  }
+}
+catch {
+  throw $_
+}
+
 # 3.5) 安装/更新依赖
 if ($doInference -or $doBusiness) {
   if (Test-Path "requirements.txt") {
     Write-Host "[start] Installing/Updating Python dependencies..."
     Start-Process -FilePath $PythonExe -ArgumentList "-m pip install -r requirements.txt" -WorkingDirectory $BASE_DIR -NoNewWindow -Wait
+  }
+}
+
+# 3.6) PostgreSQL smoke test (default when business enabled)
+if ($doBusiness) {
+  $TestScript = Join-Path $BASE_DIR "backend_business/scripts/test_postgres.py"
+  if (Test-Path $TestScript) {
+    Write-Host "[start] Running PostgreSQL smoke test..." -ForegroundColor Cyan
+    & $PythonExe $TestScript
+    if ($LASTEXITCODE -ne 0) {
+      throw "[start] PostgreSQL smoke test failed with exit code $LASTEXITCODE."
+    }
+  }
+  else {
+    Write-Warning "[start] PostgreSQL test script not found; skipping smoke test."
   }
 }
 
