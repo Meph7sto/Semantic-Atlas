@@ -11,27 +11,55 @@ const result = ref(null)
 const detectConflict = async () => {
   if (!reqA.value || !reqB.value) return
   isLoading.value = true
-  result.value = null
+  // 初始化结果对象，这时 is_conflict 为 null，表示正在分析中
+  result.value = { raw_response: '', is_conflict: null }
   
   try {
-    const response = await conflictApi.check(reqA.value, reqB.value)
-    // 业务后端返回 {success, data, record_id}，解包 data
-    if (response.success === false) {
-      throw new Error(response.error || '冲突检测失败')
+    const stream = await conflictApi.streamCheck(reqA.value, reqB.value)
+    
+    // 建立流读取器
+    const reader = stream.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      
+      const chunk = decoder.decode(value, { stream: true })
+      buffer += chunk
+      
+      // 按行分割并解析 JSON
+      const lines = buffer.split('\n')
+      // 最后一个可能不完整，保留在 buffer 中
+      buffer = lines.pop()
+      
+      for (const line of lines) {
+        if (!line.trim()) continue
+        try {
+          const msg = JSON.parse(line)
+          
+          if (msg.type === 'token') {
+             // 实时追加 token
+             result.value.raw_response += msg.content
+          } else if (msg.type === 'result') {
+             // 收到最终判定结果
+             result.value.is_conflict = msg.data.is_conflict
+             // 可选：覆盖一次完整文本以确保一致性
+             // result.value.raw_response = msg.data.raw_response 
+          }
+        } catch (err) {
+          console.error('JSON parse error', err)
+        }
+      }
     }
-    result.value = response.data ?? response
   } catch (e) {
     console.error(e)
     let errorMsg = 'Failed to check conflict.'
-    
-    if (e.response && e.response.data) {
-        // Backend provided detailed error
-        errorMsg += ` Server says: ${e.response.data.error || e.response.data.detail || JSON.stringify(e.response.data)}`
-    } else if (e.message) {
-        // Network or other generic error
+    // ... 简化的错误处理 ...
+    if (e.message) {
         errorMsg += ` Error: ${e.message}`
     }
-    
     alert(errorMsg)
   } finally {
     isLoading.value = false
@@ -94,29 +122,35 @@ const detectConflict = async () => {
     </div>
 
     <!-- Results Area -->
-    <div v-if="isLoading || result" class="max-w-3xl mx-auto w-full">
+    <div v-if="result" class="max-w-3xl mx-auto w-full">
       
-      <!-- Loading State (Breathing dots) -->
-      <div v-if="isLoading" class="flex justify-center py-10">
-        <div class="flex items-center gap-1">
-          <div class="w-2 h-2 bg-zinc-400 rounded-full animate-bounce" style="animation-delay: 0ms"></div>
-          <div class="w-2 h-2 bg-zinc-400 rounded-full animate-bounce" style="animation-delay: 150ms"></div>
-          <div class="w-2 h-2 bg-zinc-400 rounded-full animate-bounce" style="animation-delay: 300ms"></div>
-        </div>
-      </div>
-
       <!-- Result Card -->
-      <div v-else-if="result" class="animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div class="animate-in fade-in slide-in-from-bottom-4 duration-500">
         <div class="flex items-start gap-4">
-          <div :class="`mt-1 w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${result.is_conflict ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`">
-            <Sparkles class="w-5 h-5" />
+          <!-- Icon Status -->
+          <div :class="`mt-1 w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${result.is_conflict === null ? 'bg-zinc-100 text-zinc-500' : result.is_conflict ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`">
+            <svg v-if="result.is_conflict === null" class="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <Sparkles v-else class="w-5 h-5" />
           </div>
           
           <div class="flex-1 space-y-3">
             <div class="flex items-center gap-3">
               <span class="font-semibold text-zinc-900">Analysis Result</span>
+              
+              <!-- Analyzing Badge -->
               <span 
-                v-if="result.is_conflict" 
+                v-if="result.is_conflict === null" 
+                class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-zinc-100 text-zinc-600 border border-zinc-200"
+              >
+                Analyzing...
+              </span>
+
+              <!-- Result Badges -->
+              <span 
+                v-else-if="result.is_conflict" 
                 class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700 border border-red-200"
               >
                 <AlertCircle class="w-3 h-3" />
@@ -131,8 +165,10 @@ const detectConflict = async () => {
               </span>
             </div>
             
-            <div class="p-6 bg-zinc-50 rounded-2xl border border-zinc-100 text-zinc-700 leading-relaxed shadow-sm">
+            <!-- Streaming Text Area -->
+            <div class="p-6 bg-zinc-50 rounded-2xl border border-zinc-100 text-zinc-700 leading-relaxed shadow-sm min-h-[100px]">
               {{ result.raw_response }}
+              <span v-if="isLoading" class="inline-block w-2 h-4 bg-zinc-400 animate-pulse ml-1 align-middle"></span>
             </div>
           </div>
         </div>

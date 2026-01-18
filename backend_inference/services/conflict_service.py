@@ -47,7 +47,7 @@ class ConflictService:
             ConflictCheckResponse: 包含冲突检测结果的响应对象
         """
         # 构造用户提示词
-        prompt = f"需求A：{requirement_a}\n需求B：{requirement_b}\n这两个需求冲突吗？"
+        prompt = f"需求A：{requirement_a}\n需求B：{requirement_b}\n这两个需求冲突吗？给出原因"
         
         # 使用共享的模型引擎生成回答
         answer = self.model_engine.generate(
@@ -75,3 +75,55 @@ class ConflictService:
             is_conflict=is_conflict,
             raw_response=answer
         )
+
+    def check_conflict_stream(
+        self,
+        requirement_a: str,
+        requirement_b: str,
+    ):
+        """
+        流式分析两个需求是否存在潜在冲突
+        Yields:
+            str: JSON strings representing tokens or final result
+        """
+        import json
+        
+        # 构造用户提示词
+        prompt = f"需求A：{requirement_a}\n需求B：{requirement_b}\n这两个需求冲突吗？"
+        
+        # 获取流式生成器
+        stream = self.model_engine.generate_stream(
+            prompt=prompt,
+            system_prompt=SYSTEM_PROMPT_CONFLICT,
+            max_new_tokens=256
+        )
+        
+        full_response = ""
+        
+        # 逐个 Yield Token
+        for token in stream:
+            full_response += token
+            yield json.dumps({"type": "token", "content": token}, ensure_ascii=False) + "\n"
+            
+        # 鲁棒的解析逻辑 (复用 check_conflict 的逻辑)
+        clean_answer = full_response.strip()
+        if clean_answer.startswith("不冲突"):
+            is_conflict = False
+        elif clean_answer.startswith("冲突"):
+            is_conflict = True
+        else:
+            # 回退方案
+            if "不冲突" in clean_answer:
+                is_conflict = False
+            elif "冲突" in clean_answer:
+                is_conflict = True
+            else:
+                is_conflict = False
+        
+        result = ConflictCheckResponse(
+            is_conflict=is_conflict,
+            raw_response=full_response
+        )
+        
+        # Yield 最终结果
+        yield json.dumps({"type": "result", "data": result.model_dump()}, ensure_ascii=False) + "\n"

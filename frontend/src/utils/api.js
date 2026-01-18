@@ -54,6 +54,49 @@ export const conflictApi = {
         })
         return resp.data
     },
+
+    // 流式检测，直接连接推理服务
+    async streamCheck(requirementA, requirementB) {
+        const response = await fetch('/inference/conflict/stream_check', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                requirement_a: requirementA,
+                requirement_b: requirementB,
+            }),
+        })
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        return response.body;
+    },
+}
+
+// 通用问答 API
+export const chatApi = {
+    async streamAsk(prompt, maxNewTokens = 800, systemPrompt = '') {
+        const response = await fetch('/inference/chat/stream', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                prompt,
+                system_prompt: systemPrompt,
+                max_new_tokens: maxNewTokens,
+            }),
+        })
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`)
+        }
+
+        return response.body
+    },
 }
 
 // 需求分类 API

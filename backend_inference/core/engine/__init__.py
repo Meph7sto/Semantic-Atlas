@@ -91,5 +91,26 @@ class DeepSeekEngine:
         local_engine = self._get_local_engine()
         return local_engine.generate(prompt, system_prompt, max_new_tokens)
 
+    def generate_stream(self, prompt: str, system_prompt: str, max_new_tokens: int = 128):
+        """
+        流式生成响应
+        """
+        if self.provider == "deepseek":
+            client = self._get_remote_client()
+            return client.generate_stream(prompt, system_prompt, max_new_tokens)
+        
+        # Fallback for other providers if not implemented (e.g. local/chutes)
+        # return a simulated stream from the full generation
+        full_text = self.generate(prompt, system_prompt, max_new_tokens)
+        
+        # Generator for fallback
+        def _simulated_stream():
+            # simulate chunks
+            chunk_size = 4
+            for i in range(0, len(full_text), chunk_size):
+                yield full_text[i:i+chunk_size]
+        
+        return _simulated_stream()
+
 
 __all__ = ["DeepSeekEngine"]

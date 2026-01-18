@@ -104,3 +104,69 @@ class DeepSeekClient:
                 pass
 
         return "".join(chunks).strip()
+
+    def generate_stream(self, prompt: str, system_prompt: str, max_new_tokens: int):
+        """Yield content chunks from DeepSeek chat completions."""
+        if not self.api_key:
+            raise RuntimeError("DeepSeek API key is missing. Set DEEPSEEK_API_KEY.")
+
+        endpoint = self._resolve_endpoint()
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        body = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": max_new_tokens,
+            "stream": True,
+            "temperature": 0.3,
+        }
+
+        try:
+            response = requests.post(
+                endpoint,
+                headers=headers,
+                json=body,
+                stream=True,
+                timeout=self.timeout,
+            )
+        except requests.exceptions.RequestException as exc:
+            raise RuntimeError(f"DeepSeek API request failed: {exc}") from exc
+
+        if response.status_code != 200:
+            try:
+                err_payload = response.json()
+            except Exception:
+                err_payload = response.text
+            raise RuntimeError(f"DeepSeek API error {response.status_code}: {err_payload}")
+
+        for line in response.iter_lines():
+            if not line:
+                continue
+            line_str = line.decode("utf-8").strip()
+            data = line_str[5:] if line_str.startswith("data:") else line_str
+            data = data[1:].strip() if data.startswith(" ") else data
+            if not data:
+                continue
+            if data == "[DONE]":
+                break
+            
+            # Re-use the logic from sse.extract_stream_content but yield directly
+            # Since extract_stream_content appends to a list, we can just reproduce the logic here simply
+            # or modify extract_stream_content. 
+            # Looking at sse.py (not visible but imported), assuming simple structure:
+            try:
+                import json
+                chunk_json = json.loads(data)
+                choices = chunk_json.get("choices", [])
+                if choices:
+                    delta = choices[0].get("delta", {})
+                    content = delta.get("content", "")
+                    if content:
+                        yield content
+            except Exception:
+                pass
