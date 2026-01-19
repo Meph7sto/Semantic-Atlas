@@ -1,7 +1,12 @@
-from flask import Blueprint, jsonify, request
+import json
+import os
+from uuid import uuid4
+
+from flask import Blueprint, Response, jsonify, request, stream_with_context
 
 from backend_business.services.ai_proxy import ai_proxy
 from backend_business.services.db_service import db_service
+from backend_business.services.transcript_parser import parse_transcript_to_spans
 
 
 analysis_bp = Blueprint("analysis_api", __name__)
@@ -18,6 +23,134 @@ def health():
     except Exception as e:
         data["inference"] = {"status": "error", "detail": str(e)}
     return jsonify({"success": True, "data": data})
+
+
+def _build_ingest_options(payload: dict) -> dict:
+    options = payload.get("options") or {}
+    estimate_missing = options.get("estimate_timestamps_if_missing", True)
+    default_span_ms = options.get("default_span_ms", 8000)
+    max_spans_returned = options.get("max_spans_returned", 200)
+    return {
+        "estimate_timestamps_if_missing": bool(estimate_missing),
+        "default_span_ms": int(default_span_ms) if str(default_span_ms).isdigit() else 8000,
+        "max_spans_returned": int(max_spans_returned) if str(max_spans_returned).isdigit() else 200,
+    }
+
+
+def _sse_event(payload: dict) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+@analysis_bp.route("/analysis/ingest_transcript", methods=["POST"])
+def ingest_transcript():
+    payload = request.get_json(silent=True) or {}
+    transcript_text = (payload.get("transcript_text") or "").strip()
+    if not transcript_text:
+        return jsonify({"success": False, "error": "transcript_text 不能为空"}), 400
+
+    session_id = (payload.get("session_id") or "").strip() or str(uuid4())
+    options = _build_ingest_options(payload)
+    max_spans_returned = options.pop("max_spans_returned")
+
+    spans, warnings, stats = parse_transcript_to_spans(transcript_text, session_id, options)
+    upsert_result = db_service.upsert_spans(spans)
+    conflict_warnings = [
+        f"span_id conflict: {conflict['span_id']}" for conflict in upsert_result["conflicts"]
+    ]
+    all_warnings = warnings + conflict_warnings
+
+    return jsonify(
+        {
+            "success": True,
+            "data": {
+                "session_id": session_id,
+                "span_total": len(spans),
+                "warnings": all_warnings,
+                "spans_preview": spans[:max_spans_returned],
+                "stats": stats,
+            },
+        }
+    )
+
+
+@analysis_bp.route("/analysis/ingest_transcript/stream", methods=["POST"])
+def ingest_transcript_stream():
+    payload = request.get_json(silent=True) or {}
+    transcript_text = (payload.get("transcript_text") or "").strip()
+    if not transcript_text:
+        return jsonify({"success": False, "error": "transcript_text 不能为空"}), 400
+
+    session_id = (payload.get("session_id") or "").strip() or str(uuid4())
+    options = _build_ingest_options(payload)
+    max_spans_returned = options.pop("max_spans_returned")
+
+    def generate():
+        received_chars = len(transcript_text)
+        received_lines = len(transcript_text.splitlines())
+        yield _sse_event(
+            {
+                "event": "init",
+                "session_id": session_id,
+                "received_chars": received_chars,
+                "received_lines": received_lines,
+            }
+        )
+
+        spans, warnings, stats = parse_transcript_to_spans(transcript_text, session_id, options)
+        yield _sse_event(
+            {
+                "event": "parsed",
+                "session_id": session_id,
+                "span_total": len(spans),
+                "warnings": warnings,
+                "stats": stats,
+            }
+        )
+
+        upsert_result = db_service.upsert_spans(spans)
+        yield _sse_event(
+            {
+                "event": "db_upserted",
+                "session_id": session_id,
+                "upserted_count": upsert_result["upserted_count"],
+            }
+        )
+
+        conflict_warnings = [
+            f"span_id conflict: {conflict['span_id']}" for conflict in upsert_result["conflicts"]
+        ]
+        all_warnings = warnings + conflict_warnings
+        yield _sse_event(
+            {
+                "event": "final",
+                "data": {
+                    "session_id": session_id,
+                    "span_total": len(spans),
+                    "warnings": all_warnings,
+                    "spans_preview": spans[:max_spans_returned],
+                    "stats": stats,
+                },
+            }
+        )
+
+    headers = {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    }
+    return Response(stream_with_context(generate()), headers=headers)
+
+
+@analysis_bp.route("/analysis/sample_transcript", methods=["GET"])
+def get_sample_transcript():
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
+    sample_path = os.path.join(project_root, "tests", "sample_transcript.txt")
+    if not os.path.exists(sample_path):
+        return jsonify({"success": False, "error": "sample transcript not found"}), 404
+    with open(sample_path, "r", encoding="utf-8") as handle:
+        content = handle.read()
+    return Response(content, content_type="text/plain; charset=utf-8")
 
 
 @analysis_bp.route("/trace-relation", methods=["POST"])

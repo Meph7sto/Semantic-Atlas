@@ -1,0 +1,216 @@
+ 预处理与解析 (Frontend -> Backend)
+
+动作: 你的点击触发 /api/analysis/analyze_transcript/stream 接口请求。
+
+处理: 后端接收文本，调用 
+
+parse_transcript_to_spans
+
+ 将原始文本解析为“片段 (Spans)”。
+
+这会处理 [start-end] speaker content 格式，如果没有时间戳则自动估算。
+
+存储: 这些基础片段会被立即存入数据库 (upsert_spans)，作为后续分析的原子单位。
+
+上下文构建 (Context Building)
+
+关系构建: 系统会分析片段间的逻辑关联 (build_relations)。
+
+打包 (Bundling): 根据上下文窗口限制和逻辑关系，将多个片段组合成一个 Bundle (处理包)。这就解释了为什么前端进度条会显示 "Bundle x/Total"。
+
+AI 推理与抽取 (Inference Loop)
+
+流式请求: 系统按顺序处理每个 Bundle。
+
+模型调用: 对于每个 Bundle，调用 AI 模型 (
+
+generate_toolcalls
+
+)。
+
+指令生成: 模型不是直接返回“需求文本”，而是返回一系列 Tool Calls (工具调用指令)。
+
+例如：create_requirement(title="...", statement="...", level="L2")
+
+例如：link_requirement_evidence(requirement_id="...", span_id="...")
+
+执行与存储 (Execution & Storage)
+
+指令解析: 
+
+ToolCallExecutor
+
+ 接收 AI 返回的指令。
+
+原子化写入: 执行器将这些指令转化为数据库操作：
+
+创建需求: 在数据库中插入新的需求记录。
+
+建立溯源: 将需求与原始的文本片段 (Span) 建立外键关联 (link_requirement_evidence)，实现“需求-原文”的可追溯性。
+
+标记状态: 记录哪些片段已被处理 (mark_span_processed)。
+
+结果反馈 (Feedback)
+
+流式推送: 在上述执行过程中，后端通过 Server-Sent Events (SSE) 实时将进度（chunks, bundle_done）推送到前端。
+
+最终渲染: 所有 Bundle 处理完成后，前端收到完整的结构化数据（包含需求列表、原文佐证、覆盖率），并在右侧面板渲染出来。 
+你是 Codex（代码生成/改造助手）。请在仓库 Semantic-Atlas（Vue3 + Flask + PostgreSQL）里，按“只做第一阶段：预处理与解析（Transcript -> Spans -> DB）”重写/补齐端到端能力：前端输入会议转写文本，后端解析成 spans 并立即落库（幂等 upsert），前端通过 SSE 看进度并展示 spans 列表。不要做后续阶段（关系构建、bundling、AI toolcalls、需求落库等），先把证据层 Span 固化跑通。
+
+========================
+0. 背景与约束
+========================
+- 目标阶段：第 1 阶段“不可变切片层（Span Layer）”落地：把 transcript_text 解析为 spans，生成稳定 span_id，写入 spans 表。Span/原文作为证据层不允许覆盖式改写（只允许新增或标记元信息）。
+- 必须实现：前端 -> 业务后端 -> PostgreSQL 三者打通；提供非流式 + SSE 流式两个接口；前端能显示解析进度和解析结果。
+- 非目标：不要调用推理后端（backend_inference）；不要 build_relations、build_bundles；不要生成 toolcalls；不要写 requirements 表。
+- 兼容现有工程结构：尽量复用 backend_business/services/transcript_parser.py（如存在），但如果它不可靠就重写一个“可测试、可维护”的解析器模块。
+
+========================
+1) 要实现的后端 API（Flask）
+========================
+1.1 非流式接口（用于简单调试）
+POST /api/analysis/ingest_transcript
+Request JSON:
+{
+  "session_id": "可选；不传则后端生成",
+  "transcript_text": "必填，会议转写全文",
+  "options": {
+     "estimate_timestamps_if_missing": true,
+     "default_span_ms": 8000,
+     "max_spans_returned": 200
+  }
+}
+
+Response JSON:
+{
+  "success": true,
+  "data": {
+    "session_id": "...",
+    "span_total": 123,
+    "warnings": [ ... ],
+    "spans_preview": [ 前 max_spans_returned 条 span ],
+    "stats": { "has_timestamp_ratio": 0.7, "speaker_count": 3 }
+  }
+}
+
+1.2 SSE 流式接口（前端正式用）
+POST /api/analysis/ingest_transcript/stream
+- Content-Type: application/json
+- 响应为 text/event-stream
+- 事件（event 字段统一放在 data JSON 里）：
+  a) init：{event:"init", session_id, received_chars, received_lines}
+  b) parsed：{event:"parsed", session_id, span_total, warnings, stats}
+  c) db_upserted：{event:"db_upserted", session_id, upserted_count}
+  d) final：{event:"final", data:{session_id, span_total, warnings, spans_preview, stats}}
+
+注意：SSE 事件格式使用
+data: <json>\n\n
+并设置 headers: Cache-Control=no-cache, X-Accel-Buffering=no
+
+========================
+2) Transcript -> Spans 解析器规范（核心）
+========================
+2.1 输入允许的格式（至少支持两类）
+A. 带时间戳 + 说话人（推荐）
+[00:00:03-00:00:12] 张三: 我们要支持手机端上传音频
+[1200-2400] 李四 需求要可追溯到原文
+
+B. 无时间戳 + 说话人轮次（常见）
+张三：我们要支持手机端上传音频
+李四：需求要可追溯到原文
+
+额外容错：
+- 时间戳分隔符可能是 "-"、"~"、"—"
+- 说话人后可能是 ":" / "：" / 空格
+- 有的行可能只有文本没有 speaker：当 speaker 缺失时 speaker="unknown"
+- 空行、无意义行（只含标点）应跳过
+- 文本过长可以按句号/分号拆成多个 span（可选，但要稳定）
+
+2.2 Span 输出字段（写入 DB）
+每条 span 至少包含：
+{
+  "span_id": "<稳定唯一>",
+  "session_id": "<session_id>",
+  "start_ms": int | null,
+  "end_ms": int | null,
+  "speaker": string | null,
+  "text": string,
+  "asr_confidence": null,
+  "meta_json": "<json string，可存 warnings/parse_source/line_no 等>"
+}
+
+2.3 稳定 span_id（幂等关键）
+- span_id 必须对“同一个 session_id + 同一份 transcript_text”重复解析时稳定不变
+- 推荐：sha256( session_id + "|" + start_ms + "|" + end_ms + "|" + speaker + "|" + normalized_text )
+- normalized_text 至少做：trim、连续空白归一、全角冒号归一等（保证稳定）
+
+2.4 时间戳缺失时的估算策略（要稳定）
+- 若 estimate_timestamps_if_missing=true：
+  - 使用 span_index * default_span_ms 作为 start_ms
+  - end_ms = start_ms + default_span_ms
+- 若 estimate_timestamps_if_missing=false：start_ms/end_ms 置 null
+- 估算策略必须只依赖输入文本顺序，保证每次解析一致
+
+2.5 解析 warnings
+- 如：某行无法解析时间戳、speaker 缺失、发现重叠时间窗、出现 start_ms>end_ms 等
+- warnings 既要返回给前端，也要存入 meta_json（便于审计/回放）
+
+========================
+3) 数据库（PostgreSQL）
+========================
+3.1 表结构
+- 至少确保 spans 表存在（span_id 主键；session_id 索引）
+- 可以复用已有 DDL，但要保证“启动即自动建表（只执行一次）”，不要让用户手工跑 SQL
+
+3.2 Upsert 语义
+- 以 span_id 为主键 upsert
+- 同 span_id 再次写入时允许更新 text/speaker/start_ms/end_ms/meta_json（但不改变证据文本除非完全相同；建议：若 text 不同则记录冲突并拒绝更新，避免证据被覆盖）
+- 返回 upserted_count（插入+更新数量）
+
+========================
+4) 前端（Vue3）
+========================
+4.1 使用折叠页面的第一个空白页面
+页面要有：
+- session_id 输入框（可空）
+- transcript_text 大文本输入框（textarea）
+- “开始解析并入库”按钮
+- 进度区：显示 init/parsed/db_upserted/final 的状态与 span_total
+- 结果区：用表格/列表展示 spans_preview（span_id / start-end / speaker / text），并显示 warnings
+
+4.2 调用方式
+- 使用 fetch 以 POST 调用 /api/analysis/ingest_transcript/stream
+- 前端实现一个轻量 SSE 解析器（读取 ReadableStream，按 \n\n 分割，取 data: 后 JSON.parse）
+- UI 在收到事件后实时更新（特别是 span_total、upserted_count）
+
+4.3 代理与路径
+- 确保 dev 环境下 /api 仍然走 Vite proxy 到 Flask 业务后端
+- SSE 不要被前端代理缓冲（必要时在后端加 X-Accel-Buffering=no）
+
+========================
+5) 验收标准（你必须提供“可复现的验证步骤”）
+========================
+5.1 提供一个 sample transcript（放到tests），例如：
+[00:00:03-00:00:12] 张三: 我们要支持手机端上传音频和图片。
+[00:00:12-00:00:21] 李四: 每条需求要能追溯到原话。
+王五：我担心隐私问题，录音文件要鉴权访问。
+
+5.2 本地运行验证
+- docker compose up -d 启动 postgres
+- 启动 Flask 后端
+- 启动 Vue 前端
+- 打开页面粘贴 sample transcript，点击开始
+- 前端应显示 parsed 与 db_upserted，最终展示 spans_preview
+- 用 psql 查询 spans 表能看到对应 session_id 的记录
+以上部分内容可以通过一键启动脚本实现，你就无需额外再做
+
+========================
+6) 你输出给我的东西（Codex 交付格式）
+========================
+- 你改了哪些文件、为什么（按模块分组）
+- 新增/修改的 API 路由清单
+- 数据库表/DDL 处理方式
+- 如何运行与如何验证（含命令）
+- 如果你写了 tests：如何跑 tests
+
+开始执行：先扫描当前仓库结构，确认现有 analysis_route / transcript_parser / span_pipeline_db 等是否存在；在不引入第2-5阶段逻辑的前提下，完成上述第1阶段端到端落地。
