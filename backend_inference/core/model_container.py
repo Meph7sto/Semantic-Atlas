@@ -1,6 +1,6 @@
-from core.engine import DeepSeekEngine
-from core.classification_engine import RequirementClassificationEngine
-from core.config import settings
+from .engine import DeepSeekEngine
+from .classification_engine import RequirementClassificationEngine
+from .config import settings
 
 
 # 全局模型容器，支持本地模型或远程 API 模式

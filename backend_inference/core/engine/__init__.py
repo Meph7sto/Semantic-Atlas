@@ -2,7 +2,7 @@ from typing import Optional
 
 import torch
 
-from core.config import settings
+from ..config import settings
 from .local import LocalHFEngine
 from .remote import ChutesClient, DeepSeekClient
 

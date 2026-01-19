@@ -7,7 +7,7 @@ import joblib
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-from core.engine.remote import ChutesClient, DeepSeekClient
+from .engine.remote import ChutesClient, DeepSeekClient
 
 DEFAULT_CLASSIFICATION_LABELS = [
     "功能性需求",

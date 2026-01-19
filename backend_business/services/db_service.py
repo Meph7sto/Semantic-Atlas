@@ -94,8 +94,8 @@ class DBService:
                     CREATE TABLE IF NOT EXISTS span_links (
                         id SERIAL PRIMARY KEY,
                         context_run_id TEXT NOT NULL REFERENCES context_runs(context_run_id) ON DELETE CASCADE,
-                        source_span_id TEXT NOT NULL,
-                        target_span_id TEXT NOT NULL,
+                        source_span_id TEXT NOT NULL REFERENCES spans(span_id) ON DELETE CASCADE,
+                        target_span_id TEXT NOT NULL REFERENCES spans(span_id) ON DELETE CASCADE,
                         relation_type TEXT NOT NULL CHECK (relation_type IN ('continuation', 'elaboration', 'dependency', 'same_topic', 'conflict')),
                         strength REAL NOT NULL CHECK (strength >= 0 AND strength <= 1),
                         note TEXT,
@@ -123,6 +123,32 @@ class DBService:
                     )
                     """
                 )
+                cur.execute("ALTER TABLE bundles ADD COLUMN IF NOT EXISTS context_run_id TEXT")
+                cur.execute("ALTER TABLE bundles ADD COLUMN IF NOT EXISTS session_id TEXT")
+                cur.execute("ALTER TABLE bundles ADD COLUMN IF NOT EXISTS order_index INTEGER")
+                cur.execute("ALTER TABLE bundles ADD COLUMN IF NOT EXISTS status TEXT")
+                cur.execute("ALTER TABLE bundles ADD COLUMN IF NOT EXISTS context_summary TEXT")
+                cur.execute("ALTER TABLE bundles ADD COLUMN IF NOT EXISTS meta JSONB")
+                cur.execute(
+                    "ALTER TABLE bundles ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+                )
+                cur.execute(
+                    """
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_name = 'bundles'
+                              AND column_name = 'bundle_type'
+                              AND is_nullable = 'NO'
+                        ) THEN
+                            ALTER TABLE bundles
+                                ALTER COLUMN bundle_type DROP NOT NULL;
+                        END IF;
+                    END $$;
+                    """
+                )
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_bundles_context_run ON bundles(context_run_id)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_bundles_session_id ON bundles(session_id)")
 
@@ -132,7 +158,7 @@ class DBService:
                     CREATE TABLE IF NOT EXISTS bundle_items (
                         id SERIAL PRIMARY KEY,
                         bundle_id TEXT NOT NULL REFERENCES bundles(bundle_id) ON DELETE CASCADE,
-                        span_id TEXT NOT NULL,
+                        span_id TEXT NOT NULL REFERENCES spans(span_id) ON DELETE CASCADE,
                         span_ref TEXT NOT NULL,
                         order_index INTEGER NOT NULL,
                         UNIQUE(bundle_id, span_ref),
@@ -142,6 +168,67 @@ class DBService:
                 )
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_bundle_items_bundle ON bundle_items(bundle_id)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_bundle_items_span ON bundle_items(span_id)")
+
+                # 兼容旧表结构：补齐 spans 外键
+                cur.execute(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_constraint c
+                            JOIN pg_attribute a
+                                ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+                            WHERE c.conrelid = 'span_links'::regclass
+                              AND c.contype = 'f'
+                              AND a.attname = 'source_span_id'
+                        ) THEN
+                            ALTER TABLE span_links
+                                ADD CONSTRAINT fk_span_links_source_span
+                                FOREIGN KEY (source_span_id) REFERENCES spans(span_id) ON DELETE CASCADE;
+                        END IF;
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_constraint c
+                            JOIN pg_attribute a
+                                ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+                            WHERE c.conrelid = 'span_links'::regclass
+                              AND c.contype = 'f'
+                              AND a.attname = 'target_span_id'
+                        ) THEN
+                            ALTER TABLE span_links
+                                ADD CONSTRAINT fk_span_links_target_span
+                                FOREIGN KEY (target_span_id) REFERENCES spans(span_id) ON DELETE CASCADE;
+                        END IF;
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_constraint c
+                            JOIN pg_attribute a
+                                ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+                            WHERE c.conrelid = 'bundle_items'::regclass
+                              AND c.contype = 'f'
+                              AND a.attname = 'span_id'
+                        ) THEN
+                            ALTER TABLE bundle_items
+                                ADD CONSTRAINT fk_bundle_items_span
+                                FOREIGN KEY (span_id) REFERENCES spans(span_id) ON DELETE CASCADE;
+                        END IF;
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_constraint c
+                            JOIN pg_attribute a
+                                ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+                            WHERE c.conrelid = 'bundles'::regclass
+                              AND c.contype = 'f'
+                              AND a.attname = 'context_run_id'
+                        ) THEN
+                            ALTER TABLE bundles
+                                ADD CONSTRAINT fk_bundles_context_run
+                                FOREIGN KEY (context_run_id) REFERENCES context_runs(context_run_id) ON DELETE CASCADE;
+                        END IF;
+                    END $$;
+                    """
+                )
 
     def save_relation(
         self,

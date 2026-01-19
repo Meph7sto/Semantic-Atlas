@@ -3,6 +3,7 @@ import os
 from uuid import uuid4
 
 from flask import Blueprint, Response, jsonify, request, stream_with_context
+from psycopg2.extras import RealDictCursor
 
 from backend_business.services.ai_proxy import ai_proxy
 from backend_business.services.db_service import db_service
@@ -252,4 +253,248 @@ def trigger_analysis():
         return jsonify({"success": True, "data": result})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+# ========================
+# Phase 2: Context Building APIs
+# ========================
+
+@analysis_bp.route("/analysis/build_context", methods=["POST"])
+def build_context():
+    """
+    Phase 2: 构建上下文（非流式）
+    POST /api/analysis/build_context
+    
+    Request:
+    {
+        "session_id": "...",
+        "options": {
+            "window_size": 8,
+            "step_size": 7,
+            "tau": 0.6,
+            "top_k": 3,
+            "max_edges_per_window": 24,
+            "token_limit_per_bundle": 4000,
+            "mock_llm": false
+        }
+    }
+    """
+    from backend_business.services.context_builder import context_builder
+    
+    payload = request.get_json(silent=True) or {}
+    session_id = (payload.get("session_id") or "").strip()
+    
+    if not session_id:
+        return jsonify({"success": False, "error": "session_id 不能为空"}), 400
+    
+    options = payload.get("options") or {}
+    
+    try:
+        result = context_builder.build_context(session_id, options)
+        return jsonify({"success": True, "data": result})
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@analysis_bp.route("/analysis/build_context/stream", methods=["POST"])
+def build_context_stream():
+    """
+    Phase 2: 构建上下文（SSE流式）
+    POST /api/analysis/build_context/stream
+    
+    返回 text/event-stream
+    """
+    from backend_business.services.context_builder import context_builder
+    
+    payload = request.get_json(silent=True) or {}
+    session_id = (payload.get("session_id") or "").strip()
+    
+    if not session_id:
+        return jsonify({"success": False, "error": "session_id 不能为空"}), 400
+    
+    options = payload.get("options") or {}
+    
+    def generate():
+        try:
+            for event in context_builder.build_context_stream(session_id, options):
+                event_data = {
+                    "event": event.event,
+                    **event.data
+                }
+                yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            error_data = {"event": "error", "message": str(e)}
+            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+    
+    headers = {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    }
+    return Response(stream_with_context(generate()), headers=headers)
+
+
+@analysis_bp.route("/analysis/context_runs", methods=["GET"])
+def list_context_runs():
+    """
+    获取context_runs列表
+    GET /api/analysis/context_runs?session_id=xxx
+    """
+    from backend_business.services.db_service import db_service
+    
+    session_id = request.args.get("session_id", "").strip()
+    
+    with db_service._connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if session_id:
+                cur.execute(
+                    """
+                    SELECT context_run_id, session_id, options_snapshot, status, stats, created_at::text
+                    FROM context_runs
+                    WHERE session_id = %s
+                    ORDER BY created_at DESC
+                    """,
+                    (session_id,)
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT context_run_id, session_id, options_snapshot, status, stats, created_at::text
+                    FROM context_runs
+                    ORDER BY created_at DESC
+                    LIMIT 50
+                    """
+                )
+            rows = cur.fetchall()
+    
+    return jsonify({"success": True, "data": rows})
+
+
+@analysis_bp.route("/analysis/bundles/<context_run_id>", methods=["GET"])
+def get_bundles(context_run_id: str):
+    """
+    获取指定context_run下的bundles和bundle_items
+    GET /api/analysis/bundles/<context_run_id>
+    """
+    from backend_business.services.db_service import db_service
+    from psycopg2.extras import RealDictCursor
+    
+    with db_service._connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # 获取bundles
+            cur.execute(
+                """
+                SELECT bundle_id, context_run_id, session_id, order_index, status, context_summary, meta, created_at::text
+                FROM bundles
+                WHERE context_run_id = %s
+                ORDER BY order_index
+                """,
+                (context_run_id,)
+            )
+            bundles = cur.fetchall()
+            
+            if not bundles:
+                return jsonify({"success": False, "error": "No bundles found"}), 404
+            
+            # 获取bundle_items
+            bundle_ids = [b["bundle_id"] for b in bundles]
+            cur.execute(
+                """
+                SELECT bi.bundle_id, bi.span_id, bi.span_ref, bi.order_index, s.text, s.speaker, s.start_ms, s.end_ms
+                FROM bundle_items bi
+                JOIN spans s ON bi.span_id = s.span_id
+                WHERE bi.bundle_id = ANY(%s)
+                ORDER BY bi.bundle_id, bi.order_index
+                """,
+                (bundle_ids,)
+            )
+            items = cur.fetchall()
+    
+    # 组织数据
+    items_by_bundle = {}
+    for item in items:
+        bid = item["bundle_id"]
+        if bid not in items_by_bundle:
+            items_by_bundle[bid] = []
+        items_by_bundle[bid].append(dict(item))
+    
+    result = []
+    for bundle in bundles:
+        bundle_data = dict(bundle)
+        bundle_data["items"] = items_by_bundle.get(bundle["bundle_id"], [])
+        
+        # 生成bundle_text（使用短引用）
+        bundle_text_lines = []
+        for item in bundle_data["items"]:
+            time_info = f"{item['start_ms']}-{item['end_ms']}" if item['start_ms'] is not None else "?"
+            speaker = item['speaker'] or 'unknown'
+            bundle_text_lines.append(f"[{item['span_ref']}] [{time_info}] [{speaker}]: {item['text']}")
+        bundle_data["bundle_text"] = "\n".join(bundle_text_lines)
+        
+        result.append(bundle_data)
+    
+    return jsonify({"success": True, "data": result})
+
+
+@analysis_bp.route("/analysis/span_links/<context_run_id>", methods=["GET"])
+def get_span_links(context_run_id: str):
+    """
+    获取指定context_run下的边列表
+    GET /api/analysis/span_links/<context_run_id>
+    """
+    from backend_business.services.db_service import db_service
+    from psycopg2.extras import RealDictCursor
+    
+    with db_service._connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT id, context_run_id, source_span_id, target_span_id, relation_type, strength, note, created_at::text
+                FROM span_links
+                WHERE context_run_id = %s
+                ORDER BY strength DESC
+                """,
+                (context_run_id,)
+            )
+            rows = cur.fetchall()
+    
+    return jsonify({"success": True, "data": rows})
+
+
+@analysis_bp.route("/analysis/spans/<session_id>", methods=["GET"])
+def get_spans_by_session(session_id: str):
+    """
+    获取指定session下的spans（按时间顺序），带短引用序号
+    GET /api/analysis/spans/<session_id>
+    """
+    from backend_business.services.db_service import db_service
+    from psycopg2.extras import RealDictCursor
+
+    session_id = (session_id or "").strip()
+    if not session_id:
+        return jsonify({"success": False, "error": "session_id 不能为空"}), 400
+
+    with db_service._connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT span_id, session_id, start_ms, end_ms, speaker, text, created_at::text
+                FROM spans
+                WHERE session_id = %s
+                ORDER BY COALESCE(start_ms, 0), created_at
+                """,
+                (session_id,),
+            )
+            rows = cur.fetchall()
+
+    spans = []
+    for idx, row in enumerate(rows, start=1):
+        span = dict(row)
+        span["order_index"] = idx
+        span["span_ref"] = f"S{idx}"
+        spans.append(span)
+
+    return jsonify({"success": True, "data": spans})
 
