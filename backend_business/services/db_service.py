@@ -230,6 +230,28 @@ class DBService:
                     """
                 )
 
+                # ========================
+                # Phase 3: Requirements L123 Table
+                # ========================
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS requirements_l123 (
+                        req_id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        level TEXT NOT NULL CHECK (level IN ('L1', 'L2', 'L3')),
+                        text TEXT NOT NULL CHECK (char_length(text) >= 10 AND char_length(text) <= 500),
+                        fingerprint TEXT NOT NULL UNIQUE,
+                        anchor_span_id TEXT REFERENCES spans(span_id) ON DELETE CASCADE,
+                        r INTEGER,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_requirements_l123_session ON requirements_l123(session_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_requirements_l123_level ON requirements_l123(level)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_requirements_l123_fingerprint ON requirements_l123(fingerprint)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_requirements_l123_anchor_span ON requirements_l123(anchor_span_id)")
+
     def save_relation(
         self,
         high_level_requirement: str,

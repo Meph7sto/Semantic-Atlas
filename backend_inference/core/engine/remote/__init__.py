@@ -1,4 +1,4 @@
 from .chutes import ChutesClient
-from .deepseek import DeepSeekClient
+from .deepseek import DeepSeekClient, ToolCallResult
 
-__all__ = ["ChutesClient", "DeepSeekClient"]
+__all__ = ["ChutesClient", "DeepSeekClient", "ToolCallResult"]

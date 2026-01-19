@@ -93,6 +93,39 @@ class AIProxy:
         resp.raise_for_status()
         return resp.json()
 
+    def chat_completion(
+        self,
+        messages: List[Dict[str, str]],
+        model: str = "deepseek-chat",
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        调用推理后端的聊天补全接口
+        用于需求抽取等任务
+
+        Args:
+            messages: 消息列表 [{"role": "system|user|assistant", "content": "..."}]
+            model: 模型名称
+            temperature: 温度参数
+            max_tokens: 最大生成 token 数
+
+        Returns:
+            响应内容 {"content": "...", "usage": {...}}
+        """
+        resp = requests.post(
+            f"{self.base_url}/chat/completions",
+            json={
+                "messages": messages,
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens or 2000,
+            },
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
 
 ai_proxy = AIProxy(settings.INFERENCE_BASE_URL)
 

@@ -4,8 +4,8 @@ import ConflictDetection from '../views/ConflictDetection.vue'
 import Traceability from '../views/Traceability.vue'
 import RequirementsAcquisition from '../views/RequirementsAcquisition.vue'
 import GeneralChat from '../views/GeneralChat.vue'
-import BlankPage1 from '../views/BlankPage1.vue'
-import BlankPage2 from '../views/BlankPage2.vue'
+import TranscriptIngestion from '../views/TranscriptIngestion.vue'
+import ContextBuilder from '../views/ContextBuilder.vue'
 import BlankPage3 from '../views/BlankPage3.vue'
 
 const router = createRouter({
@@ -22,14 +22,14 @@ const router = createRouter({
             component: ConflictDetection
         },
         {
-            path: '/blank-1',
-            name: 'blank-1',
-            component: BlankPage1
+            path: '/transcript-ingestion',
+            name: 'transcript-ingestion',
+            component: TranscriptIngestion
         },
         {
-            path: '/blank-2',
-            name: 'blank-2',
-            component: BlankPage2
+            path: '/context-builder',
+            name: 'context-builder',
+            component: ContextBuilder
         },
         {
             path: '/blank-3',

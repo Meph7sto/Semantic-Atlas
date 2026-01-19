@@ -66,7 +66,7 @@ const isTopGroupOpen = ref(true)
 
           <div v-show="isTopGroupOpen" class="pl-4 ml-3 border-l border-zinc-200 space-y-1">
             <RouterLink
-              to="/blank-1"
+              to="/transcript-ingestion"
               active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
               class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
             >
@@ -74,7 +74,7 @@ const isTopGroupOpen = ref(true)
             </RouterLink>
 
             <RouterLink
-              to="/blank-2"
+              to="/context-builder"
               active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
               class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
             >

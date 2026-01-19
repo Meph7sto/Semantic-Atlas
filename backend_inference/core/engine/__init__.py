@@ -1,10 +1,10 @@
-from typing import Optional
+from typing import Any, Dict, Generator, List, Optional
 
 import torch
 
 from ..config import settings
 from .local import LocalHFEngine
-from .remote import ChutesClient, DeepSeekClient
+from .remote import ChutesClient, DeepSeekClient, ToolCallResult
 
 
 class DeepSeekEngine:
@@ -112,5 +112,81 @@ class DeepSeekEngine:
         
         return _simulated_stream()
 
+    def generate_with_tools(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        max_new_tokens: int = 4096,
+        tool_choice: Optional[str] = None,
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+    ) -> ToolCallResult:
+        """
+        使用工具定义生成响应（仅支持 deepseek provider）
+        
+        Args:
+            messages: 消息列表，支持 system/user/assistant/tool 角色
+            tools: 工具定义列表
+            max_new_tokens: 最大生成 token 数
+            tool_choice: "none" | "auto" | "required"
+            model: 模型覆盖
+            temperature: 温度参数
+            
+        Returns:
+            ToolCallResult 包含 content, tool_calls, reasoning_content, finish_reason
+        """
+        if self.provider != "deepseek":
+            raise NotImplementedError(f"Tool calls not supported for provider: {self.provider}")
+        
+        client = self._get_remote_client()
+        return client.generate_with_tools(
+            messages=messages,
+            tools=tools,
+            max_new_tokens=max_new_tokens,
+            tool_choice=tool_choice,
+            model_override=model,
+            temperature=temperature,
+        )
 
-__all__ = ["DeepSeekEngine"]
+    def generate_with_tools_stream(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        max_new_tokens: int = 4096,
+        tool_choice: Optional[str] = None,
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+    ) -> Generator[Dict[str, Any], None, None]:
+        """
+        流式生成带工具调用的响应（仅支持 deepseek provider）
+        
+        Args:
+            messages: 消息列表
+            tools: 工具定义列表
+            max_new_tokens: 最大生成 token 数
+            tool_choice: "none" | "auto" | "required"
+            model: 模型覆盖
+            temperature: 温度参数
+            
+        Yields:
+            包含 type 和相关数据的字典:
+            - {"type": "thinking", "delta": str}
+            - {"type": "content", "delta": str}
+            - {"type": "tool_call", "index": int, "id": str, "function": {...}}
+            - {"type": "finish", "finish_reason": str}
+        """
+        if self.provider != "deepseek":
+            raise NotImplementedError(f"Tool calls not supported for provider: {self.provider}")
+        
+        client = self._get_remote_client()
+        return client.generate_with_tools_stream(
+            messages=messages,
+            tools=tools,
+            max_new_tokens=max_new_tokens,
+            tool_choice=tool_choice,
+            model_override=model,
+            temperature=temperature,
+        )
+
+
+__all__ = ["DeepSeekEngine", "ToolCallResult"]
