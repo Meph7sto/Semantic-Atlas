@@ -44,6 +44,10 @@ async def stream_check_conflict(request: ConflictCheckRequest):
     流式冲突检测接口
     """
     return StreamingResponse(
-        conflict_service.check_conflict_stream(request.requirement_a, request.requirement_b),
+        conflict_service.check_conflict_stream(
+            request.requirement_a, 
+            request.requirement_b,
+            use_thinking_mode=request.use_thinking_mode
+        ),
         media_type="application/x-ndjson"
     )

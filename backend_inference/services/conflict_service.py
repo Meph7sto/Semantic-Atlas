@@ -53,7 +53,7 @@ class ConflictService:
         answer = self.model_engine.generate(
             prompt=prompt,
             system_prompt=SYSTEM_PROMPT_CONFLICT,
-            max_new_tokens=256
+            max_new_tokens=2048
         )
         
         # 鲁棒的解析逻辑
@@ -80,6 +80,7 @@ class ConflictService:
         self,
         requirement_a: str,
         requirement_b: str,
+        use_thinking_mode: bool = False,
     ):
         """
         流式分析两个需求是否存在潜在冲突
@@ -91,19 +92,39 @@ class ConflictService:
         # 构造用户提示词
         prompt = f"需求A：{requirement_a}\n需求B：{requirement_b}\n这两个需求冲突吗？"
         
+        # Determine model
+        model_name = "deepseek-reasoner" if use_thinking_mode else None
+
         # 获取流式生成器
         stream = self.model_engine.generate_stream(
             prompt=prompt,
             system_prompt=SYSTEM_PROMPT_CONFLICT,
-            max_new_tokens=256
+            max_new_tokens=2048,
+            model=model_name
         )
         
         full_response = ""
         
         # 逐个 Yield Token
-        for token in stream:
-            full_response += token
-            yield json.dumps({"type": "token", "content": token}, ensure_ascii=False) + "\n"
+        # 逐个 Yield Token
+        for chunk in stream:
+            # 兼容旧版(str)和新版(dict)
+            if isinstance(chunk, dict):
+                msg_type = chunk.get("type", "content")
+                content = chunk.get("delta", "")
+                
+                if msg_type == "thinking":
+                    # 直接透传思维链
+                    yield json.dumps({"type": "thinking", "content": content}, ensure_ascii=False) + "\n"
+                else:
+                    # 内容部分，累积并输出
+                    full_response += content
+                    yield json.dumps({"type": "token", "content": content}, ensure_ascii=False) + "\n"
+            else:
+                # 假设是字符串
+                token = str(chunk)
+                full_response += token
+                yield json.dumps({"type": "token", "content": token}, ensure_ascii=False) + "\n"
             
         # 鲁棒的解析逻辑 (复用 check_conflict 的逻辑)
         clean_answer = full_response.strip()

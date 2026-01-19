@@ -69,6 +69,80 @@ class DBService:
                 )
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_spans_session_id ON spans(session_id)")
 
+                # ========================
+                # Phase 2 Tables
+                # ========================
+
+                # context_runs: 记录一次 Phase2 运行
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS context_runs (
+                        context_run_id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        options_snapshot JSONB,
+                        status TEXT NOT NULL DEFAULT 'RUNNING',
+                        stats JSONB,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_context_runs_session_id ON context_runs(session_id)")
+
+                # span_links: 稀疏关联矩阵（边表）
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS span_links (
+                        id SERIAL PRIMARY KEY,
+                        context_run_id TEXT NOT NULL REFERENCES context_runs(context_run_id) ON DELETE CASCADE,
+                        source_span_id TEXT NOT NULL,
+                        target_span_id TEXT NOT NULL,
+                        relation_type TEXT NOT NULL CHECK (relation_type IN ('continuation', 'elaboration', 'dependency', 'same_topic', 'conflict')),
+                        strength REAL NOT NULL CHECK (strength >= 0 AND strength <= 1),
+                        note TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        UNIQUE(context_run_id, source_span_id, target_span_id, relation_type)
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_span_links_context_run ON span_links(context_run_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_span_links_source ON span_links(source_span_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_span_links_target ON span_links(target_span_id)")
+
+                # bundles: 上下文包
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS bundles (
+                        bundle_id TEXT PRIMARY KEY,
+                        context_run_id TEXT NOT NULL REFERENCES context_runs(context_run_id) ON DELETE CASCADE,
+                        session_id TEXT NOT NULL,
+                        order_index INTEGER NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'READY',
+                        context_summary TEXT,
+                        meta JSONB,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_bundles_context_run ON bundles(context_run_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_bundles_session_id ON bundles(session_id)")
+
+                # bundle_items: bundle 内 span 映射
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS bundle_items (
+                        id SERIAL PRIMARY KEY,
+                        bundle_id TEXT NOT NULL REFERENCES bundles(bundle_id) ON DELETE CASCADE,
+                        span_id TEXT NOT NULL,
+                        span_ref TEXT NOT NULL,
+                        order_index INTEGER NOT NULL,
+                        UNIQUE(bundle_id, span_ref),
+                        UNIQUE(bundle_id, span_id)
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_bundle_items_bundle ON bundle_items(bundle_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_bundle_items_span ON bundle_items(span_id)")
+
     def save_relation(
         self,
         high_level_requirement: str,

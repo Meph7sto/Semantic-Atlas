@@ -4,6 +4,7 @@ import { chatApi } from '../utils/api'
 import { MessageSquare, Send, Sparkles } from 'lucide-vue-next'
 
 const question = ref('')
+const useThinking = ref(false)
 const isLoading = ref(false)
 const result = ref(null)
 const error = ref(null)
@@ -12,10 +13,10 @@ const askQuestion = async () => {
   if (!question.value.trim()) return
   isLoading.value = true
   error.value = null
-  result.value = { raw_response: '' }
+  result.value = { raw_response: '', thinking_content: '' }
 
   try {
-    const stream = await chatApi.streamAsk(question.value.trim())
+    const stream = await chatApi.streamAsk(question.value.trim(), useThinking.value)
     if (!stream) {
       throw new Error('Empty response body')
     }
@@ -38,6 +39,8 @@ const askQuestion = async () => {
           const msg = JSON.parse(line)
           if (msg.type === 'token') {
             result.value.raw_response += msg.content
+          } else if (msg.type === 'thinking') {
+             result.value.thinking_content = (result.value.thinking_content || '') + msg.content
           } else if (msg.type === 'result') {
             result.value.raw_response = msg.data?.answer || result.value.raw_response
           }
@@ -75,7 +78,16 @@ const askQuestion = async () => {
         ></textarea>
       </div>
 
-      <div class="flex justify-center">
+      <div class="flex flex-col items-center gap-4 justify-center">
+        
+        <div class="flex items-center gap-3">
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" v-model="useThinking" class="sr-only peer">
+            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-zinc-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-zinc-900"></div>
+            <span class="ml-3 text-sm font-medium text-zinc-600">DeepSeek R1 (Reasoning Mode)</span>
+          </label>
+        </div>
+
         <button
           @click="askQuestion"
           :disabled="isLoading || !question"
@@ -116,6 +128,19 @@ const askQuestion = async () => {
                 </span>
               </div>
               <div class="p-6 bg-zinc-50 rounded-2xl border border-zinc-100 text-zinc-700 leading-relaxed shadow-sm min-h-[120px]">
+                
+                 <!-- Thinking Process Area -->
+                <div v-if="result.thinking_content" class="mb-6">
+                  <div class="text-xs font-semibold text-zinc-400 mb-2 uppercase tracking-wider flex items-center gap-2">
+                    <Sparkles class="w-3 h-3" />
+                    DeepSeek Thought Process
+                  </div>
+                  <div class="p-4 bg-zinc-100/50 rounded-xl border border-zinc-200/50 text-zinc-600 text-sm leading-relaxed whitespace-pre-wrap font-mono relative">
+                    {{ result.thinking_content }}
+                    <div v-if="isLoading && !result.raw_response" class="inline-block w-1.5 h-3 bg-zinc-400 animate-pulse ml-1 align-middle"></div>
+                  </div>
+                </div>
+
                 {{ result.raw_response }}
                 <span v-if="isLoading" class="inline-block w-2 h-4 bg-zinc-400 animate-pulse ml-1 align-middle"></span>
               </div>

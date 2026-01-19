@@ -24,6 +24,7 @@ async def stream_chat(request: ChatRequest):
                 prompt=request.prompt,
                 system_prompt=request.system_prompt,
                 max_new_tokens=request.max_new_tokens,
+                use_thinking_mode=request.use_thinking_mode,
             ),
             media_type="application/x-ndjson",
         )

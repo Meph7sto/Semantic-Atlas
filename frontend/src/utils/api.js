@@ -56,7 +56,7 @@ export const conflictApi = {
     },
 
     // 流式检测，直接连接推理服务
-    async streamCheck(requirementA, requirementB) {
+    async streamCheck(requirementA, requirementB, useThinking = false) {
         const response = await fetch('/inference/conflict/stream_check', {
             method: 'POST',
             headers: {
@@ -65,6 +65,7 @@ export const conflictApi = {
             body: JSON.stringify({
                 requirement_a: requirementA,
                 requirement_b: requirementB,
+                use_thinking_mode: useThinking,
             }),
         })
 
@@ -78,7 +79,7 @@ export const conflictApi = {
 
 // 通用问答 API
 export const chatApi = {
-    async streamAsk(prompt, maxNewTokens = 800, systemPrompt = '') {
+    async streamAsk(prompt, useThinking = false, maxNewTokens = 800, systemPrompt = '') {
         const response = await fetch('/inference/chat/stream', {
             method: 'POST',
             headers: {
@@ -88,6 +89,7 @@ export const chatApi = {
                 prompt,
                 system_prompt: systemPrompt,
                 max_new_tokens: maxNewTokens,
+                use_thinking_mode: useThinking,
             }),
         })
 
