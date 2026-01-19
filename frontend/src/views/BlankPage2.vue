@@ -96,6 +96,19 @@
           />
         </div>
 
+        <!-- LLM Model -->
+        <div class="col-span-full flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
+          <div>
+            <div class="text-sm font-medium text-zinc-700">DeepSeek 模型</div>
+            <div class="text-xs text-zinc-500">当前: {{ llmModel }}</div>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" v-model="useThinking" class="sr-only peer">
+            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-zinc-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-zinc-900"></div>
+            <span class="ml-3 text-sm font-medium text-zinc-600">Reasoner 模式</span>
+          </label>
+        </div>
+
         <!-- Mock LLM -->
         <div class="flex items-center gap-2">
           <input
@@ -375,6 +388,7 @@ const matrixRelationFilter = ref('all')
 const matrixShowStrength = ref(true)
 const matrixLoading = ref(false)
 const matrixError = ref('')
+const useThinking = ref(false)
 
 const relationLabels = {
   continuation: '延续',
@@ -420,6 +434,7 @@ const options = reactive({
 })
 
 const canStart = computed(() => !isLoading.value && sessionId.value.trim().length > 0)
+const llmModel = computed(() => (useThinking.value ? 'deepseek-reasoner' : 'deepseek-chat'))
 const filteredLinks = computed(() => {
   if (matrixRelationFilter.value === 'all') {
     return spanLinks.value
@@ -582,7 +597,7 @@ async function startBuildContext() {
 
   const payload = {
     session_id: sessionId.value.trim(),
-    options: { ...options }
+    options: { ...options, llm_model: llmModel.value }
   }
 
   try {

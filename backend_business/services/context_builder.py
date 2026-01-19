@@ -49,7 +49,17 @@ DEFAULT_OPTIONS = {
     "max_edges_per_window": 24,
     "token_limit_per_bundle": 4000,
     "mock_llm": False,
+    "llm_model": None,
 }
+
+
+def _resolve_llm_model(options: Dict[str, Any]) -> Optional[str]:
+    raw_model = options.get("llm_model")
+    if isinstance(raw_model, str) and raw_model.strip():
+        return raw_model.strip()
+    if options.get("use_thinking_mode"):
+        return "deepseek-reasoner"
+    return None
 
 
 @dataclass
@@ -156,8 +166,45 @@ class LLMClient:
             from backend_inference.core.model_container import model_engine
             self._engine = model_engine
         return self._engine
+
+    def _collect_stream_text(self, stream) -> str:
+        chunks = []
+        for event in stream:
+            if isinstance(event, dict):
+                if event.get("type") == "thinking":
+                    continue
+                delta = event.get("delta") or event.get("content")
+                if delta:
+                    chunks.append(str(delta))
+            elif isinstance(event, (bytes, bytearray)):
+                chunks.append(event.decode("utf-8", errors="ignore"))
+            elif isinstance(event, str):
+                chunks.append(event)
+        return "".join(chunks).strip()
+
+    def _generate_text(self, engine, prompt: str, model_name: Optional[str]) -> str:
+        if model_name:
+            stream = engine.generate_stream(
+                prompt=prompt,
+                system_prompt=SYSTEM_PROMPT_LINK,
+                max_new_tokens=1500,
+                model=model_name
+            )
+            text = self._collect_stream_text(stream)
+            if text:
+                return text
+        return engine.generate(
+            prompt=prompt,
+            system_prompt=SYSTEM_PROMPT_LINK,
+            max_new_tokens=1500
+        )
     
-    def generate_links(self, spans: List[Span], ref_map: Dict[str, str]) -> Tuple[List[Dict], List[str]]:
+    def generate_links(
+        self,
+        spans: List[Span],
+        ref_map: Dict[str, str],
+        model_name: Optional[str] = None
+    ) -> Tuple[List[Dict], List[str]]:
         """
         调用LLM生成边列表
         
@@ -171,11 +218,7 @@ class LLMClient:
         engine = self._get_engine()
         
         try:
-            response = engine.generate(
-                prompt=prompt,
-                system_prompt=SYSTEM_PROMPT_LINK,
-                max_new_tokens=1500
-            )
+            response = self._generate_text(engine, prompt, model_name)
             return self._parse_llm_response(response)
         except Exception as e:
             print(f"[LLMClient] Error calling LLM: {e}")
@@ -859,6 +902,7 @@ class ContextBuilder:
         max_edges_per_window = max(window_size, opts.get("max_edges_per_window", window_size * 3))
         token_limit = max(1000, opts.get("token_limit_per_bundle", 4000))
         mock_llm = opts.get("mock_llm", False)
+        llm_model = _resolve_llm_model(opts)
         
         # 1. 加载spans
         spans = self.load_spans(session_id)
@@ -878,7 +922,7 @@ class ContextBuilder:
             
             for window_spans, ref_map in self.generate_windows(spans, window_size, step_size):
                 # LLM产边
-                raw_links, noise_refs = llm.generate_links(window_spans, ref_map)
+                raw_links, noise_refs = llm.generate_links(window_spans, ref_map, llm_model)
                 
                 # 解析并清洗
                 window_edges = self.parse_window_edges(raw_links, ref_map, window_spans)
@@ -996,6 +1040,7 @@ class ContextBuilder:
         max_edges_per_window = max(window_size, opts.get("max_edges_per_window", window_size * 3))
         token_limit = max(1000, opts.get("token_limit_per_bundle", 4000))
         mock_llm = opts.get("mock_llm", False)
+        llm_model = _resolve_llm_model(opts)
         
         # 1. 加载spans
         spans = self.load_spans(session_id)
@@ -1031,7 +1076,7 @@ class ContextBuilder:
                 })
                 
                 # LLM产边
-                raw_links, noise_refs = llm.generate_links(window_spans, ref_map)
+                raw_links, noise_refs = llm.generate_links(window_spans, ref_map, llm_model)
                 
                 yield SSEEvent("llm_edges", {
                     "window_index": window_index,
