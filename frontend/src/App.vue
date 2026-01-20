@@ -1,7 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import { RouterView, RouterLink } from 'vue-router'
-import { LayoutDashboard, GitCompare, FileSearch, PanelLeftClose, PanelLeftOpen } from 'lucide-vue-next'
+import { LayoutDashboard, GitCompare, FileSearch, PanelLeftClose, PanelLeftOpen, FileText, Network } from 'lucide-vue-next'
 
 const isSidebarOpen = ref(true)
 </script>
@@ -70,6 +70,15 @@ const isSidebarOpen = ref(true)
         >
           <FileText class="w-4 h-4" />
           <span class="whitespace-nowrap">Acquisition</span>
+        </RouterLink>
+
+        <RouterLink 
+          to="/acquisition-trace" 
+          active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
+          class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+        >
+          <Network class="w-4 h-4" />
+          <span class="whitespace-nowrap">Acquisition + Trace</span>
         </RouterLink>
 
       </nav>

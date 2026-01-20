@@ -5,7 +5,7 @@ import axios from 'axios'
 // - 生产环境由 Nginx 反代 /api 到后端
 const api = axios.create({
     baseURL: '/api',
-    timeout: 600000, // 批量分析可能较慢，预留较长超时
+    timeout: 1800000, // 30分钟超时，批量分析需要较长时间
     headers: { 'Content-Type': 'application/json' },
 })
 

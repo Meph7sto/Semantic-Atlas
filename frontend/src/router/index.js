@@ -3,6 +3,7 @@ import Classification from '../views/Classification.vue'
 import ConflictDetection from '../views/ConflictDetection.vue'
 import Traceability from '../views/Traceability.vue'
 import RequirementsAcquisition from '../views/RequirementsAcquisition.vue'
+import AcquisitionTraceability from '../views/AcquisitionTraceability.vue'
 
 const router = createRouter({
     history: createWebHistory(import.meta.env.BASE_URL),
@@ -31,6 +32,11 @@ const router = createRouter({
             path: '/acquisition',
             name: 'acquisition',
             component: RequirementsAcquisition
+        },
+        {
+            path: '/acquisition-trace',
+            name: 'acquisition-trace',
+            component: AcquisitionTraceability
         }
     ]
 })
