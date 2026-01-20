@@ -55,6 +55,12 @@ def extract_l123_requirements():
     anchor_strategy = data.get("anchor_strategy", "informative")  # all | keyword | informative
     r = data.get("r", 2)
     model_name = data.get("model", "deepseek-chat")
+    use_toolcall = bool(data.get("use_toolcall", True))
+    adaptive_retry_r2 = bool(data.get("adaptive_retry_r2", False))
+    max_spans_per_bundle = data.get("max_spans_per_bundle")
+    token_limit = data.get("token_limit")
+    top_m_2hop = data.get("top_m_2hop")
+    keywords = data.get("keywords")
 
     try:
         result = requirements_service.extract_requirements_for_session(
@@ -64,6 +70,12 @@ def extract_l123_requirements():
             anchor_strategy=anchor_strategy,
             r=r,
             model_name=model_name,
+            use_toolcall=use_toolcall,
+            adaptive_retry_r2=adaptive_retry_r2,
+            max_spans_per_bundle=max_spans_per_bundle,
+            token_limit=token_limit,
+            top_m_2hop=top_m_2hop,
+            keywords=keywords,
         )
         return jsonify(result)
     except Exception as e:

@@ -126,6 +126,53 @@ class AIProxy:
         resp.raise_for_status()
         return resp.json()
 
+    def chat_completion_with_tools(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        model: str = "deepseek-chat",
+        temperature: float = 0.3,
+        max_tokens: Optional[int] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        调用推理后端的带工具定义的聊天补全接口
+        支持 DeepSeek API tool call 格式
+
+        Args:
+            messages: 消息列表 [{"role": "system|user|assistant|tool", "content": "...", ...}]
+            tools: 工具定义列表
+            model: 模型名称
+            temperature: 温度参数
+            max_tokens: 最大生成 token 数
+            tool_choice: 工具选择策略 "none" | "auto" | "required"
+
+        Returns:
+            响应内容 {
+                "content": "..." (可能为 None),
+                "tool_calls": [...] (工具调用列表),
+                "reasoning_content": "..." (可能为 None),
+                "finish_reason": "stop" | "tool_calls" | "length"
+            }
+        """
+        payload = {
+            "messages": messages,
+            "tools": tools,
+            "model": model,
+            "temperature": temperature,
+            "max_tokens": max_tokens or 4096,
+        }
+        if tool_choice:
+            payload["tool_choice"] = tool_choice
+
+        resp = requests.post(
+            f"{self.base_url}/chat/completions/tools",
+            json=payload,
+            timeout=180,  # 工具调用可能需要更长时间
+        )
+        resp.raise_for_status()
+        return resp.json()
+
 
 ai_proxy = AIProxy(settings.INFERENCE_BASE_URL)
 

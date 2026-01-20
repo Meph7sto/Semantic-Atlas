@@ -68,7 +68,7 @@ bundle = generator.generate_graph_bundle(
 - level 必须属于 {L1, L2, L3}
 - text 长度限制 10-500 字
 - 每个 EgoBundle 的产出上限：L1 ≤ 2，L2 ≤ 5，L3 ≤ 8
-- L3 必须包含"系统必须/应当/shall/must/should"之一
+- L3 建议使用"系统必须/应当/shall/must/should"等可验证措辞，但不强制
 - 自动去重（基于 fingerprint）
 
 ### 4. 需求抽取服务
@@ -300,7 +300,7 @@ python test_requirements_extraction.py
 ### 2. 防幻觉机制
 - 使用短引用（S1..Sn）降低 UUID 幻觉风险
 - 严格的参数校验（level、text 长度、数量上限）
-- L3 句式约束（必须包含"系统必须/应当/shall"）
+- L3 引导性措辞（建议使用"系统必须/应当/shall"等）
 - 自动去重（fingerprint）
 
 ### 3. 可复现性

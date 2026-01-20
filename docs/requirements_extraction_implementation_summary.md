@@ -29,7 +29,7 @@
   - level 枚举校验（L1/L2/L3）
   - text 长度校验（10-500 字）
   - 数量上限（L1≤2, L2≤5, L3≤8）
-  - L3 句式约束（必须包含"系统必须/应当/shall"）
+  - L3 引导性措辞（建议使用"系统必须/应当/shall"等）
 
 ### 4. 执行器和校验器
 **文件**: `backend_business/services/requirements_executor.py`

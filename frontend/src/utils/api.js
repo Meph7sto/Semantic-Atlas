@@ -101,6 +101,78 @@ export const chatApi = {
     },
 }
 
+// Phase 2 (Context Building) / Phase 1 spans查询
+export const analysisApi = {
+    async listContextRuns(sessionId = '') {
+        const resp = await api.get('/analysis/context_runs', {
+            params: sessionId ? { session_id: sessionId } : undefined,
+        })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '加载 context_runs 失败')
+        }
+        return resp.data?.data ?? resp.data
+    },
+
+    async getSpans(sessionId) {
+        const resp = await api.get(`/analysis/spans/${encodeURIComponent(sessionId)}`)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '加载 spans 失败')
+        }
+        return resp.data?.data ?? resp.data
+    },
+
+    async getSpanLinks(contextRunId) {
+        const resp = await api.get(`/analysis/span_links/${encodeURIComponent(contextRunId)}`)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '加载 span_links 失败')
+        }
+        return resp.data?.data ?? resp.data
+    },
+}
+
+// Phase 3 (L1-L3) 需求抽取
+export const requirementsL123Api = {
+    async extract(payload) {
+        const resp = await api.post('/requirements/extract_l123', payload)
+        if (resp.data?.error) {
+            throw new Error(resp.data.error)
+        }
+        return resp.data
+    },
+
+    async listBySession(sessionId, { level = null, page = 1, perPage = 50 } = {}) {
+        const params = {
+            page,
+            per_page: perPage,
+        }
+        if (level) params.level = level
+
+        const resp = await api.get(`/requirements/session/${encodeURIComponent(sessionId)}`, { params })
+        if (resp.data?.error) {
+            throw new Error(resp.data.error)
+        }
+        return resp.data
+    },
+
+    async stats(sessionId = null) {
+        const resp = await api.get('/requirements/stats', {
+            params: sessionId ? { session_id: sessionId } : undefined,
+        })
+        if (resp.data?.error) {
+            throw new Error(resp.data.error)
+        }
+        return resp.data
+    },
+
+    async delete(reqId) {
+        const resp = await api.delete(`/requirements/${encodeURIComponent(reqId)}`)
+        if (resp.data?.error) {
+            throw new Error(resp.data.error)
+        }
+        return resp.data
+    },
+}
+
 // 需求分类 API
 export const classifyTexts = (payload) => api.post('/classification/predict-texts', payload)
 

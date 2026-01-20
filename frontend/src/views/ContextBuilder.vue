@@ -190,7 +190,15 @@
             <div class="text-xs text-zinc-500">Bundle 数</div>
           </div>
           <div class="text-center p-3 bg-zinc-50 rounded-lg">
-            <div class="text-2xl font-semibold text-green-600">{{ finalStats.context_run_id?.slice(0, 8) }}...</div>
+            <button
+              type="button"
+              class="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50 text-sm font-medium disabled:opacity-50"
+              :disabled="!finalStats?.context_run_id"
+              @click="copyContextRunId"
+              :title="finalStats?.context_run_id || ''"
+            >
+              {{ copyStatusText }}
+            </button>
             <div class="text-xs text-zinc-500">Context Run ID</div>
           </div>
         </div>
@@ -389,6 +397,7 @@ const matrixShowStrength = ref(true)
 const matrixLoading = ref(false)
 const matrixError = ref('')
 const useThinking = ref(false)
+const copyStatusText = ref('复制')
 
 const relationLabels = {
   continuation: '延续',
@@ -487,6 +496,32 @@ function formatTime(ms) {
   const minutes = Math.floor(seconds / 60)
   const secs = seconds % 60
   return `${minutes}:${secs.toString().padStart(2, '0')}`
+}
+
+async function copyContextRunId() {
+  const id = finalStats.value?.context_run_id
+  if (!id) return
+
+  try {
+    await navigator.clipboard.writeText(id)
+    copyStatusText.value = '已复制'
+  } catch (err) {
+    try {
+      const input = document.createElement('input')
+      input.value = id
+      document.body.appendChild(input)
+      input.select()
+      document.execCommand('copy')
+      document.body.removeChild(input)
+      copyStatusText.value = '已复制'
+    } catch (e2) {
+      copyStatusText.value = '复制失败'
+    }
+  }
+
+  window.setTimeout(() => {
+    copyStatusText.value = '复制'
+  }, 1200)
 }
 
 function addProgressEvent(type, message) {

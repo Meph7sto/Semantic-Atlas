@@ -6,7 +6,7 @@ import RequirementsAcquisition from '../views/RequirementsAcquisition.vue'
 import GeneralChat from '../views/GeneralChat.vue'
 import TranscriptIngestion from '../views/TranscriptIngestion.vue'
 import ContextBuilder from '../views/ContextBuilder.vue'
-import BlankPage3 from '../views/BlankPage3.vue'
+import RequirementsExtraction from '../views/RequirementsExtraction.vue'
 
 const router = createRouter({
     history: createWebHistory(import.meta.env.BASE_URL),
@@ -32,9 +32,9 @@ const router = createRouter({
             component: ContextBuilder
         },
         {
-            path: '/blank-3',
-            name: 'blank-3',
-            component: BlankPage3
+            path: '/requirements-extraction',
+            name: 'requirements-extraction',
+            component: RequirementsExtraction
         },
         {
             path: '/traceability',
