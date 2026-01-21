@@ -1368,7 +1368,7 @@ onMounted(async () => {
 
           <button
             @click="loadMockLowLevelRequirements"
-            :disabled="allHighLevelRequirements.length === 0"
+            :disabled="!canLoadRequirements"
             class="w-full py-2 px-4 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 font-medium rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-zinc-300 border-dashed text-sm"
           >
             <Layers class="w-4 h-4" />
@@ -1812,12 +1812,13 @@ onMounted(async () => {
               </div>
               <draggable
                 v-model="backlogRequirements"
-                group="requirements"
+                :group="{ name: 'requirements', pull: true, put: true }"
                 item-key="id"
+                :animation="200"
                 class="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar min-h-[200px]"
-                ghost-class="opacity-50"
-                chosen-class="ring-2 ring-blue-500"
-                drag-class="rotate-2 scale-105"
+                ghost-class="drag-ghost"
+                chosen-class="drag-chosen"
+                drag-class="drag-active"
                 @change="onDragChange($event, 'backlog')"
               >
                 <template #item="{ element }">
@@ -1882,12 +1883,13 @@ onMounted(async () => {
               </div>
               <draggable
                 v-model="inProgressRequirements"
-                group="requirements"
+                :group="{ name: 'requirements', pull: true, put: true }"
                 item-key="id"
+                :animation="200"
                 class="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar min-h-[200px]"
-                ghost-class="opacity-50"
-                chosen-class="ring-2 ring-blue-500"
-                drag-class="rotate-2 scale-105"
+                ghost-class="drag-ghost"
+                chosen-class="drag-chosen"
+                drag-class="drag-active"
                 @change="onDragChange($event, 'in_progress')"
               >
                 <template #item="{ element }">
@@ -1952,12 +1954,13 @@ onMounted(async () => {
               </div>
               <draggable
                 v-model="completedRequirements"
-                group="requirements"
+                :group="{ name: 'requirements', pull: true, put: true }"
                 item-key="id"
+                :animation="200"
                 class="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar min-h-[200px]"
-                ghost-class="opacity-50"
-                chosen-class="ring-2 ring-blue-500"
-                drag-class="rotate-2 scale-105"
+                ghost-class="drag-ghost"
+                chosen-class="drag-chosen"
+                drag-class="drag-active"
                 @change="onDragChange($event, 'completed')"
               >
                 <template #item="{ element }">
@@ -2172,5 +2175,17 @@ onMounted(async () => {
 .custom-scrollbar::-webkit-scrollbar-thumb {
   background-color: #d4d4d8;
   border-radius: 20px;
+}
+
+/* 拖拽样式 */
+.drag-ghost {
+  opacity: 0.5;
+}
+.drag-chosen {
+  box-shadow: 0 0 0 2px #3b82f6;
+  border-radius: 8px;
+}
+.drag-active {
+  transform: rotate(2deg) scale(1.05);
 }
 </style>
