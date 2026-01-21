@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { traceabilityApi, conflictApi, classifyTexts, analysisApi, requirementsL123Api } from '../utils/api'
+import draggable from 'vuedraggable'
 import {
   FileText,
   Loader2,
@@ -22,7 +23,18 @@ import {
   BarChart3,
   RefreshCw,
   Play,
-  Database
+  Database,
+  Table2,
+  LayoutGrid,
+  Search,
+  Filter,
+  GripVertical,
+  Eye,
+  EyeOff,
+  ChevronUp,
+  Circle,
+  Clock,
+  CheckCircle
 } from 'lucide-vue-next'
 import * as echarts from 'echarts'
 
@@ -85,6 +97,33 @@ const isAnalyzing = ref(false)
 const analysisStep = ref(0) // 0: 未开始, 1: 追溯中, 2: 冲突检测中, 3: 分类中, 4: 完成
 const analysisError = ref(null)
 
+// ========== 需求管理状态（表格视图+卡片视图） ==========
+// 需求状态定义
+const requirementStatuses = [
+  { id: 'backlog', name: '待处理', color: 'zinc', icon: Circle },
+  { id: 'in_progress', name: '进行中', color: 'blue', icon: Clock },
+  { id: 'completed', name: '已完成', color: 'emerald', icon: CheckCircle }
+]
+
+// 为需求添加状态（响应式状态映射）
+const requirementStatusMap = ref({}) // { reqId: 'backlog' | 'in_progress' | 'completed' }
+
+// 表格视图配置
+const tableSearchQuery = ref('')
+const tableVisibleColumns = ref(['name', 'type', 'level', 'status', 'confidence', 'evidence'])
+const tableSortKey = ref('name')
+const tableSortOrder = ref('asc') // 'asc' | 'desc'
+const availableTableColumns = [
+  { key: 'name', label: '需求名称', width: 'flex-1 min-w-[300px]' },
+  { key: 'type', label: '类型', width: 'w-28' },
+  { key: 'level', label: '层级', width: 'w-20' },
+  { key: 'status', label: '状态', width: 'w-28' },
+  { key: 'confidence', label: '置信度', width: 'w-24' },
+  { key: 'evidence', label: '证据', width: 'w-48' },
+  { key: 'rationale', label: '原因', width: 'w-48' }
+]
+const showColumnSelector = ref(false)
+
 // 图表相关
 const chartContainer = ref(null)
 let chart = null
@@ -122,6 +161,69 @@ const allHighLevelRequirements = computed(() => {
 const canTrace = computed(() => {
   return allHighLevelRequirements.value.length > 0 && lowLevelRequirements.value.length > 0
 })
+
+// 所有需求（顶层+底层）合并
+const allRequirements = computed(() => {
+  const high = allHighLevelRequirements.value.map(r => ({
+    ...r,
+    type: '顶层需求',
+    typeColor: 'sky'
+  }))
+  const low = lowLevelRequirements.value.map(r => ({
+    ...r,
+    type: '底层需求',
+    level: 'low',
+    category: 'low',
+    typeColor: 'emerald'
+  }))
+  return [...high, ...low].map(r => ({
+    ...r,
+    status: requirementStatusMap.value[r.id] || 'backlog'
+  }))
+})
+
+// 筛选后的需求（表格用）
+const filteredRequirements = computed(() => {
+  let result = allRequirements.value
+  
+  // 搜索筛选
+  if (tableSearchQuery.value.trim()) {
+    const query = tableSearchQuery.value.toLowerCase()
+    result = result.filter(r => 
+      (r.statement || r.text || '').toLowerCase().includes(query) ||
+      (r.type || '').toLowerCase().includes(query) ||
+      (r.level || r.category || '').toLowerCase().includes(query) ||
+      (requirementStatuses.find(s => s.id === r.status)?.name || '').toLowerCase().includes(query)
+    )
+  }
+  
+  // 排序
+  result = [...result].sort((a, b) => {
+    let aVal = a[tableSortKey.value] || ''
+    let bVal = b[tableSortKey.value] || ''
+    if (tableSortKey.value === 'name') {
+      aVal = a.statement || a.text || ''
+      bVal = b.statement || b.text || ''
+    }
+    if (tableSortOrder.value === 'asc') {
+      return String(aVal).localeCompare(String(bVal))
+    }
+    return String(bVal).localeCompare(String(aVal))
+  })
+  
+  return result
+})
+
+// 按状态分组的需求列表（卡片视图用）
+const backlogRequirements = computed(() => 
+  allRequirements.value.filter(r => (requirementStatusMap.value[r.id] || 'backlog') === 'backlog')
+)
+const inProgressRequirements = computed(() => 
+  allRequirements.value.filter(r => requirementStatusMap.value[r.id] === 'in_progress')
+)
+const completedRequirements = computed(() => 
+  allRequirements.value.filter(r => requirementStatusMap.value[r.id] === 'completed')
+)
 
 // 看板列配置
 const baseColumns = [
@@ -216,6 +318,69 @@ function normalizeKeywords(raw) {
   const text = (raw || '').trim()
   if (!text) return null
   return text.split(/[,，;\n|]+/g).map((s) => s.trim()).filter(Boolean)
+}
+
+// 切换列排序
+function toggleSort(key) {
+  if (tableSortKey.value === key) {
+    tableSortOrder.value = tableSortOrder.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    tableSortKey.value = key
+    tableSortOrder.value = 'asc'
+  }
+}
+
+// 切换列可见性
+function toggleColumn(key) {
+  const idx = tableVisibleColumns.value.indexOf(key)
+  if (idx >= 0) {
+    tableVisibleColumns.value.splice(idx, 1)
+  } else {
+    tableVisibleColumns.value.push(key)
+  }
+}
+
+// 更新需求状态
+function updateRequirementStatus(reqId, newStatus) {
+  requirementStatusMap.value[reqId] = newStatus
+}
+
+// 拖拽改变状态处理
+function onDragChange(evt, targetStatus) {
+  if (evt.added) {
+    const item = evt.added.element
+    if (item && item.id) {
+      requirementStatusMap.value[item.id] = targetStatus
+    }
+  }
+}
+
+// 获取状态颜色类
+function getStatusColorClass(statusId, variant = 'bg') {
+  const status = requirementStatuses.find(s => s.id === statusId)
+  const color = status?.color || 'zinc'
+  const colorMap = {
+    zinc: { bg: 'bg-zinc-100', text: 'text-zinc-700', border: 'border-zinc-200', dot: 'bg-zinc-400' },
+    blue: { bg: 'bg-blue-100', text: 'text-blue-700', border: 'border-blue-200', dot: 'bg-blue-500' },
+    emerald: { bg: 'bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-200', dot: 'bg-emerald-500' }
+  }
+  return colorMap[color]?.[variant] || colorMap.zinc[variant]
+}
+
+// 获取层级标签样式
+function getLevelBadgeClass(level) {
+  const map = {
+    L1: 'bg-sky-100 text-sky-700 border-sky-200',
+    L2: 'bg-violet-100 text-violet-700 border-violet-200',
+    L3: 'bg-amber-100 text-amber-700 border-amber-200',
+    low: 'bg-emerald-100 text-emerald-700 border-emerald-200'
+  }
+  return map[level] || 'bg-zinc-100 text-zinc-700 border-zinc-200'
+}
+
+// 获取状态对应的需求列表（用于拖拽）
+function getRequirementsForStatus(statusId) {
+  return allRequirements.value.filter(r => (requirementStatusMap.value[r.id] || 'backlog') === statusId)
 }
 
 // ========== API 调用 ==========
@@ -324,47 +489,104 @@ async function extractLowLevelRequirements() {
 }
 
 // 加载示例底层需求（用于测试/演示）
+// 这些底层需求对应会议记录中的技术实现细节
 function loadMockLowLevelRequirements() {
   const mockLowLevel = [
     {
       id: 'low-1',
       category: 'low',
-      statement: '实现用户认证模块，支持用户名密码登录',
-      rationale: '满足用户登录功能的基础实现',
-      evidence: '系统登录',
-      confidence: 0.92
+      statement: '实现银行流水解析模块，支持Excel和CSV格式文件解析',
+      rationale: '满足财务部门导入银行流水的数据格式需求',
+      evidence: '主要是Excel和CSV格式，因为银行通常提供这两种格式的流水文件',
+      confidence: 0.95
     },
     {
       id: 'low-2',
       category: 'low',
-      statement: '设计数据库表结构，包含用户表、权限表、日志表',
-      rationale: '数据持久化的基础设施',
-      evidence: '数据存储',
-      confidence: 0.88
+      statement: '开发智能匹配算法，基于金额、日期、摘要进行多维匹配',
+      rationale: '实现自动对账的核心算法，提高匹配准确率',
+      evidence: '我们需要设计一个智能匹配算法，基于金额、日期、摘要等多个维度进行匹配',
+      confidence: 0.92
     },
     {
       id: 'low-3',
       category: 'low',
-      statement: '开发RESTful API接口，响应时间小于200ms',
-      rationale: '满足性能需求的技术实现',
-      evidence: '性能要求',
-      confidence: 0.85
+      statement: '实现差异标记功能，支持红色高亮显示和批注',
+      rationale: '帮助财务人员快速定位需要人工复核的异常记录',
+      evidence: '匹配不上的记录需要高亮显示，这样财务人员可以快速定位需要人工复核的异常记录',
+      confidence: 0.93
     },
     {
       id: 'low-4',
       category: 'low',
-      statement: '实现数据导入导出功能，支持Excel和CSV格式',
-      rationale: '满足数据交互需求',
-      evidence: '导入导出',
-      confidence: 0.90
+      statement: '采用批量处理和分页加载机制，确保大数据量下的响应速度',
+      rationale: '满足1万条数据1分钟内处理完成的性能要求',
+      evidence: '我们每个月大概有1万条左右的流水记录，希望系统能在1分钟内完成匹配处理',
+      confidence: 0.88
     },
     {
       id: 'low-5',
       category: 'low',
-      statement: '集成消息队列，实现异步任务处理',
-      rationale: '提升系统并发处理能力',
-      evidence: '异步处理',
-      confidence: 0.78
+      statement: '实现用户权限管理和会话管理模块，支持多用户并发操作',
+      rationale: '满足财务部门多人同时使用的并发需求',
+      evidence: '系统需要支持多用户并发操作，因为财务部门有多个人会同时使用',
+      confidence: 0.90
+    },
+    {
+      id: 'low-6',
+      category: 'low',
+      statement: '开发PDF报告导出功能，包含匹配结果统计和异常记录明细',
+      rationale: '满足财务部门导出对账报告的需求',
+      evidence: '系统需要能够导出对账报告，格式要求是PDF，包含匹配结果统计和异常记录明细',
+      confidence: 0.91
+    },
+    {
+      id: 'low-7',
+      category: 'low',
+      statement: '实现数据库加密存储和审计日志功能，记录所有操作',
+      rationale: '保障财务数据安全，满足审计追踪要求',
+      evidence: '财务数据非常敏感，需要加密存储，并且要有操作日志记录，方便审计追踪',
+      confidence: 0.94
+    },
+    {
+      id: 'low-8',
+      category: 'low',
+      statement: '设计数据库表结构，包含银行流水表、内部单据表、匹配结果表、操作日志表',
+      rationale: '数据持久化的基础设施，支持对账业务的数据存储',
+      evidence: '数据存储需求',
+      confidence: 0.87
+    },
+    {
+      id: 'low-9',
+      category: 'low',
+      statement: '实现定期数据备份机制，防止数据丢失',
+      rationale: '保障数据安全，满足审计要求',
+      evidence: '建议定期备份数据，防止数据丢失',
+      confidence: 0.89
+    },
+    {
+      id: 'low-10',
+      category: 'low',
+      statement: '开发RESTful API接口，响应时间小于200ms，支持Chrome和Edge浏览器',
+      rationale: '满足性能要求和浏览器兼容性需求',
+      evidence: '主要是Chrome和Edge，财务部门统一使用这两个浏览器',
+      confidence: 0.86
+    },
+    {
+      id: 'low-11',
+      category: 'low',
+      statement: '实现模糊匹配和相似度算法，匹配准确率达到95%以上',
+      rationale: '提高自动匹配的准确率，减少人工复核工作量',
+      evidence: '匹配的准确率至少要达到95%以上',
+      confidence: 0.92
+    },
+    {
+      id: 'low-12',
+      category: 'low',
+      statement: '集成第三方PDF生成库，实现标准报告模板',
+      rationale: '满足PDF报告导出功能的技术实现',
+      evidence: 'PDF导出功能我们可以集成第三方库来实现',
+      confidence: 0.88
     }
   ]
 
@@ -1273,42 +1495,66 @@ onMounted(async () => {
       <!-- 右侧：输出面板 -->
       <div class="flex-1 flex flex-col overflow-hidden">
         <!-- Tab 切换 -->
-        <div class="bg-white border-b border-zinc-200 px-6 py-2 flex gap-1 shrink-0">
-          <button
-            @click="activeTab = 'board'"
-            class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
-            :class="activeTab === 'board' ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
-          >
-            <Layers class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
-            看板
-          </button>
-          <button
-            @click="activeTab = 'network'"
-            class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
-            :class="activeTab === 'network' ? 'bg-blue-600 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
-          >
-            <Network class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
-            追溯
-          </button>
-          <button
-            @click="activeTab = 'conflict'"
-            class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
-            :class="activeTab === 'conflict' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
-          >
-            <AlertTriangle class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
-            冲突
-            <span v-if="conflictStats && conflictStats.conflicts > 0" class="ml-1 px-1.5 py-0.5 bg-red-100 text-red-700 rounded-full text-xs">
-              {{ conflictStats.conflicts }}
-            </span>
-          </button>
-          <button
-            @click="activeTab = 'classification'"
-            class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
-            :class="activeTab === 'classification' ? 'bg-emerald-600 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
-          >
-            <Tags class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
-            分类
-          </button>
+        <div class="bg-white border-b border-zinc-200 px-6 py-2 flex items-center justify-between shrink-0">
+          <div class="flex gap-1">
+            <button
+              @click="activeTab = 'board'"
+              class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+              :class="activeTab === 'board' ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
+            >
+              <Layers class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+              看板
+            </button>
+            <button
+              @click="activeTab = 'table'"
+              class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+              :class="activeTab === 'table' ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
+            >
+              <Table2 class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+              表格
+            </button>
+            <button
+              @click="activeTab = 'kanban'"
+              class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+              :class="activeTab === 'kanban' ? 'bg-indigo-600 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
+            >
+              <LayoutGrid class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+              卡片
+            </button>
+            <div class="w-px h-6 bg-zinc-200 mx-1 self-center"></div>
+            <button
+              @click="activeTab = 'network'"
+              class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+              :class="activeTab === 'network' ? 'bg-blue-600 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
+            >
+              <Network class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+              追溯
+            </button>
+            <button
+              @click="activeTab = 'conflict'"
+              class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+              :class="activeTab === 'conflict' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
+            >
+              <AlertTriangle class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+              冲突
+              <span v-if="conflictStats && conflictStats.conflicts > 0" class="ml-1 px-1.5 py-0.5 bg-red-100 text-red-700 rounded-full text-xs">
+                {{ conflictStats.conflicts }}
+              </span>
+            </button>
+            <button
+              @click="activeTab = 'classification'"
+              class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+              :class="activeTab === 'classification' ? 'bg-emerald-600 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
+            >
+              <Tags class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+              分类
+            </button>
+          </div>
+          
+          <!-- 需求统计 -->
+          <div class="flex items-center gap-4 text-xs text-zinc-500">
+            <span>共 <span class="font-semibold text-zinc-900">{{ allRequirements.length }}</span> 条需求</span>
+          </div>
         </div>
 
         <!-- 看板视图 -->
@@ -1387,6 +1633,368 @@ onMounted(async () => {
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 表格视图 -->
+        <div v-show="activeTab === 'table'" class="flex-1 flex flex-col overflow-hidden bg-white">
+          <!-- 工具栏 -->
+          <div class="px-6 py-3 border-b border-zinc-200 flex items-center justify-between gap-4">
+            <!-- 搜索框 -->
+            <div class="relative flex-1 max-w-md">
+              <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+              <input
+                v-model="tableSearchQuery"
+                type="text"
+                placeholder="搜索需求名称、类型、状态..."
+                class="w-full pl-10 pr-4 py-2 text-sm border border-zinc-300 rounded-lg focus:border-black focus:ring-1 focus:ring-black"
+              />
+            </div>
+            
+            <!-- 列配置 -->
+            <div class="relative">
+              <button
+                @click="showColumnSelector = !showColumnSelector"
+                class="inline-flex items-center gap-2 px-3 py-2 text-sm border border-zinc-300 rounded-lg hover:bg-zinc-50"
+              >
+                <Filter class="w-4 h-4" />
+                设置展示列
+                <ChevronDown class="w-4 h-4 transition-transform" :class="showColumnSelector ? 'rotate-180' : ''" />
+              </button>
+              
+              <!-- 列选择下拉框 -->
+              <div
+                v-if="showColumnSelector"
+                class="absolute right-0 top-full mt-1 w-56 bg-white border border-zinc-200 rounded-lg shadow-lg z-50 py-2"
+              >
+                <div
+                  v-for="col in availableTableColumns"
+                  :key="col.key"
+                  @click="toggleColumn(col.key)"
+                  class="flex items-center gap-2 px-3 py-2 hover:bg-zinc-50 cursor-pointer"
+                >
+                  <div class="w-4 h-4 border rounded flex items-center justify-center"
+                       :class="tableVisibleColumns.includes(col.key) ? 'bg-black border-black' : 'border-zinc-300'">
+                    <CheckCircle2 v-if="tableVisibleColumns.includes(col.key)" class="w-3 h-3 text-white" />
+                  </div>
+                  <span class="text-sm">{{ col.label }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 表格 -->
+          <div class="flex-1 overflow-auto">
+            <table class="w-full">
+              <thead class="bg-zinc-50 sticky top-0 z-10">
+                <tr>
+                  <th
+                    v-for="col in availableTableColumns.filter(c => tableVisibleColumns.includes(c.key))"
+                    :key="col.key"
+                    class="px-4 py-3 text-left text-xs font-semibold text-zinc-600 uppercase tracking-wider border-b border-zinc-200 cursor-pointer hover:bg-zinc-100"
+                    :class="col.width"
+                    @click="toggleSort(col.key)"
+                  >
+                    <div class="flex items-center gap-1">
+                      {{ col.label }}
+                      <div class="flex flex-col -space-y-1">
+                        <ChevronUp class="w-3 h-3" :class="tableSortKey === col.key && tableSortOrder === 'asc' ? 'text-black' : 'text-zinc-300'" />
+                        <ChevronDown class="w-3 h-3" :class="tableSortKey === col.key && tableSortOrder === 'desc' ? 'text-black' : 'text-zinc-300'" />
+                      </div>
+                    </div>
+                  </th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-zinc-100">
+                <tr
+                  v-for="req in filteredRequirements"
+                  :key="req.id"
+                  class="hover:bg-zinc-50 transition-colors"
+                >
+                  <!-- 需求名称 -->
+                  <td v-if="tableVisibleColumns.includes('name')" class="px-4 py-3">
+                    <p class="text-sm text-zinc-900 font-medium">{{ req.statement || req.text }}</p>
+                  </td>
+                  
+                  <!-- 类型 -->
+                  <td v-if="tableVisibleColumns.includes('type')" class="px-4 py-3">
+                    <span class="text-xs px-2 py-1 rounded-full" :class="req.typeColor === 'sky' ? 'bg-sky-100 text-sky-700' : 'bg-emerald-100 text-emerald-700'">
+                      {{ req.type }}
+                    </span>
+                  </td>
+                  
+                  <!-- 层级 -->
+                  <td v-if="tableVisibleColumns.includes('level')" class="px-4 py-3">
+                    <span class="text-xs px-2 py-0.5 rounded border font-medium" :class="getLevelBadgeClass(req.level || req.category)">
+                      {{ req.level || req.category }}
+                    </span>
+                  </td>
+                  
+                  <!-- 状态 -->
+                  <td v-if="tableVisibleColumns.includes('status')" class="px-4 py-3">
+                    <select
+                      :value="req.status"
+                      @change="updateRequirementStatus(req.id, $event.target.value)"
+                      class="text-xs px-2 py-1 rounded-lg border border-zinc-200 focus:border-black focus:ring-1 focus:ring-black"
+                      :class="getStatusColorClass(req.status, 'bg')"
+                    >
+                      <option v-for="s in requirementStatuses" :key="s.id" :value="s.id">
+                        {{ s.name }}
+                      </option>
+                    </select>
+                  </td>
+                  
+                  <!-- 置信度 -->
+                  <td v-if="tableVisibleColumns.includes('confidence')" class="px-4 py-3">
+                    <span v-if="req.confidence" class="text-xs px-2 py-0.5 rounded-full border" :class="getConfidenceColor(req.confidence)">
+                      {{ (req.confidence * 100).toFixed(0) }}%
+                    </span>
+                    <span v-else class="text-zinc-400">-</span>
+                  </td>
+                  
+                  <!-- 证据 -->
+                  <td v-if="tableVisibleColumns.includes('evidence')" class="px-4 py-3">
+                    <p class="text-xs text-zinc-500 truncate max-w-[200px]" :title="req.evidence || req.anchor_span_id">
+                      {{ req.evidence || req.anchor_span_id || '-' }}
+                    </p>
+                  </td>
+                  
+                  <!-- 原因 -->
+                  <td v-if="tableVisibleColumns.includes('rationale')" class="px-4 py-3">
+                    <p class="text-xs text-zinc-500 truncate max-w-[200px]" :title="req.rationale">
+                      {{ req.rationale || '-' }}
+                    </p>
+                  </td>
+                </tr>
+                
+                <tr v-if="filteredRequirements.length === 0">
+                  <td :colspan="tableVisibleColumns.length" class="px-4 py-12 text-center text-zinc-400">
+                    <FileText class="w-10 h-10 mx-auto mb-2 opacity-20" />
+                    <p>暂无需求数据</p>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          
+          <!-- 分页信息 -->
+          <div class="px-6 py-3 border-t border-zinc-200 flex items-center justify-between text-sm text-zinc-600">
+            <span>共 {{ filteredRequirements.length }} 条</span>
+          </div>
+        </div>
+
+        <!-- 卡片视图（可拖拽看板） -->
+        <div v-show="activeTab === 'kanban'" class="flex-1 overflow-x-auto bg-zinc-100 p-6">
+          <div class="flex gap-4 h-full min-w-[900px]">
+            <!-- 待处理列 -->
+            <div class="flex-1 min-w-[300px] flex flex-col bg-zinc-50 rounded-xl border border-zinc-200 shadow-sm overflow-hidden">
+              <div class="px-4 py-3 border-b bg-zinc-100 border-zinc-200 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <Circle class="w-4 h-4 text-zinc-500" />
+                  <h3 class="font-semibold text-zinc-800 text-sm">待处理</h3>
+                </div>
+                <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-zinc-200 text-zinc-700">
+                  {{ backlogRequirements.length }}
+                </span>
+              </div>
+              <draggable
+                :list="backlogRequirements"
+                group="requirements"
+                item-key="id"
+                class="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar min-h-[200px]"
+                ghost-class="opacity-50"
+                chosen-class="ring-2 ring-blue-500"
+                drag-class="rotate-2 scale-105"
+                @change="onDragChange($event, 'backlog')"
+              >
+                <template #item="{ element }">
+                  <div
+                    class="p-3 rounded-lg border bg-white shadow-sm hover:shadow-md transition-all cursor-grab active:cursor-grabbing group"
+                    :class="element.type === '顶层需求' ? 'border-sky-100 hover:border-sky-200' : 'border-emerald-100 hover:border-emerald-200'"
+                  >
+                    <div class="flex items-start gap-2">
+                      <GripVertical class="w-4 h-4 text-zinc-300 shrink-0 mt-0.5 group-hover:text-zinc-400" />
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 mb-2">
+                          <span class="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                                :class="element.type === '顶层需求' ? 'bg-sky-100 text-sky-700' : 'bg-emerald-100 text-emerald-700'">
+                            {{ element.type }}
+                          </span>
+                          <span v-if="element.level && element.level !== 'low'" 
+                                class="text-[10px] px-1.5 py-0.5 rounded border font-medium"
+                                :class="getLevelBadgeClass(element.level)">
+                            {{ element.level }}
+                          </span>
+                        </div>
+                        <p class="text-sm text-zinc-900 font-medium leading-snug">
+                          {{ (element.statement || element.text).length > 80 
+                             ? (element.statement || element.text).slice(0, 80) + '...' 
+                             : (element.statement || element.text) }}
+                        </p>
+                        <div class="flex items-center justify-between mt-2 pt-2 border-t border-zinc-100">
+                          <div v-if="element.evidence || element.anchor_span_id" 
+                               class="flex items-center gap-1 text-xs text-zinc-400 max-w-[60%] truncate">
+                            <Quote class="w-3 h-3 shrink-0" />
+                            <span class="truncate">"{{ element.evidence || element.anchor_span_id }}"</span>
+                          </div>
+                          <span v-if="element.confidence" 
+                                class="text-[10px] px-1.5 py-0.5 rounded-full border"
+                                :class="getConfidenceColor(element.confidence)">
+                            {{ (element.confidence * 100).toFixed(0) }}%
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+                <template #footer>
+                  <div v-if="!backlogRequirements.length" 
+                       class="text-center py-8 text-zinc-400 text-sm border-2 border-dashed border-zinc-200 rounded-lg">
+                    拖拽需求到此处
+                  </div>
+                </template>
+              </draggable>
+            </div>
+
+            <!-- 进行中列 -->
+            <div class="flex-1 min-w-[300px] flex flex-col bg-blue-50/50 rounded-xl border border-blue-200 shadow-sm overflow-hidden">
+              <div class="px-4 py-3 border-b bg-blue-100/50 border-blue-200 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <Clock class="w-4 h-4 text-blue-600" />
+                  <h3 class="font-semibold text-zinc-800 text-sm">进行中</h3>
+                </div>
+                <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                  {{ inProgressRequirements.length }}
+                </span>
+              </div>
+              <draggable
+                :list="inProgressRequirements"
+                group="requirements"
+                item-key="id"
+                class="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar min-h-[200px]"
+                ghost-class="opacity-50"
+                chosen-class="ring-2 ring-blue-500"
+                drag-class="rotate-2 scale-105"
+                @change="onDragChange($event, 'in_progress')"
+              >
+                <template #item="{ element }">
+                  <div
+                    class="p-3 rounded-lg border bg-white shadow-sm hover:shadow-md transition-all cursor-grab active:cursor-grabbing group"
+                    :class="element.type === '顶层需求' ? 'border-sky-100 hover:border-sky-200' : 'border-emerald-100 hover:border-emerald-200'"
+                  >
+                    <div class="flex items-start gap-2">
+                      <GripVertical class="w-4 h-4 text-zinc-300 shrink-0 mt-0.5 group-hover:text-zinc-400" />
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 mb-2">
+                          <span class="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                                :class="element.type === '顶层需求' ? 'bg-sky-100 text-sky-700' : 'bg-emerald-100 text-emerald-700'">
+                            {{ element.type }}
+                          </span>
+                          <span v-if="element.level && element.level !== 'low'" 
+                                class="text-[10px] px-1.5 py-0.5 rounded border font-medium"
+                                :class="getLevelBadgeClass(element.level)">
+                            {{ element.level }}
+                          </span>
+                        </div>
+                        <p class="text-sm text-zinc-900 font-medium leading-snug">
+                          {{ (element.statement || element.text).length > 80 
+                             ? (element.statement || element.text).slice(0, 80) + '...' 
+                             : (element.statement || element.text) }}
+                        </p>
+                        <div class="flex items-center justify-between mt-2 pt-2 border-t border-zinc-100">
+                          <div v-if="element.evidence || element.anchor_span_id" 
+                               class="flex items-center gap-1 text-xs text-zinc-400 max-w-[60%] truncate">
+                            <Quote class="w-3 h-3 shrink-0" />
+                            <span class="truncate">"{{ element.evidence || element.anchor_span_id }}"</span>
+                          </div>
+                          <span v-if="element.confidence" 
+                                class="text-[10px] px-1.5 py-0.5 rounded-full border"
+                                :class="getConfidenceColor(element.confidence)">
+                            {{ (element.confidence * 100).toFixed(0) }}%
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+                <template #footer>
+                  <div v-if="!inProgressRequirements.length" 
+                       class="text-center py-8 text-zinc-400 text-sm border-2 border-dashed border-blue-200 rounded-lg">
+                    拖拽需求到此处
+                  </div>
+                </template>
+              </draggable>
+            </div>
+
+            <!-- 已完成列 -->
+            <div class="flex-1 min-w-[300px] flex flex-col bg-emerald-50/50 rounded-xl border border-emerald-200 shadow-sm overflow-hidden">
+              <div class="px-4 py-3 border-b bg-emerald-100/50 border-emerald-200 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <CheckCircle class="w-4 h-4 text-emerald-600" />
+                  <h3 class="font-semibold text-zinc-800 text-sm">已完成</h3>
+                </div>
+                <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                  {{ completedRequirements.length }}
+                </span>
+              </div>
+              <draggable
+                :list="completedRequirements"
+                group="requirements"
+                item-key="id"
+                class="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar min-h-[200px]"
+                ghost-class="opacity-50"
+                chosen-class="ring-2 ring-blue-500"
+                drag-class="rotate-2 scale-105"
+                @change="onDragChange($event, 'completed')"
+              >
+                <template #item="{ element }">
+                  <div
+                    class="p-3 rounded-lg border bg-white shadow-sm hover:shadow-md transition-all cursor-grab active:cursor-grabbing group"
+                    :class="element.type === '顶层需求' ? 'border-sky-100 hover:border-sky-200' : 'border-emerald-100 hover:border-emerald-200'"
+                  >
+                    <div class="flex items-start gap-2">
+                      <GripVertical class="w-4 h-4 text-zinc-300 shrink-0 mt-0.5 group-hover:text-zinc-400" />
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 mb-2">
+                          <span class="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                                :class="element.type === '顶层需求' ? 'bg-sky-100 text-sky-700' : 'bg-emerald-100 text-emerald-700'">
+                            {{ element.type }}
+                          </span>
+                          <span v-if="element.level && element.level !== 'low'" 
+                                class="text-[10px] px-1.5 py-0.5 rounded border font-medium"
+                                :class="getLevelBadgeClass(element.level)">
+                            {{ element.level }}
+                          </span>
+                        </div>
+                        <p class="text-sm text-zinc-900 font-medium leading-snug line-through opacity-70">
+                          {{ (element.statement || element.text).length > 80 
+                             ? (element.statement || element.text).slice(0, 80) + '...' 
+                             : (element.statement || element.text) }}
+                        </p>
+                        <div class="flex items-center justify-between mt-2 pt-2 border-t border-zinc-100">
+                          <div v-if="element.evidence || element.anchor_span_id" 
+                               class="flex items-center gap-1 text-xs text-zinc-400 max-w-[60%] truncate">
+                            <Quote class="w-3 h-3 shrink-0" />
+                            <span class="truncate">"{{ element.evidence || element.anchor_span_id }}"</span>
+                          </div>
+                          <span v-if="element.confidence" 
+                                class="text-[10px] px-1.5 py-0.5 rounded-full border"
+                                :class="getConfidenceColor(element.confidence)">
+                            {{ (element.confidence * 100).toFixed(0) }}%
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+                <template #footer>
+                  <div v-if="!completedRequirements.length" 
+                       class="text-center py-8 text-zinc-400 text-sm border-2 border-dashed border-emerald-200 rounded-lg">
+                    拖拽需求到此处
+                  </div>
+                </template>
+              </draggable>
             </div>
           </div>
         </div>
