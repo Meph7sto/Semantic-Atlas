@@ -252,6 +252,23 @@ class DBService:
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_requirements_l123_fingerprint ON requirements_l123(fingerprint)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_requirements_l123_anchor_span ON requirements_l123(anchor_span_id)")
 
+                # ========================
+                # Low-level Requirements Table (底层需求占位表)
+                # ========================
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS low_level_requirements (
+                        req_id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        text TEXT NOT NULL,
+                        source TEXT,
+                        meta JSONB,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_low_level_requirements_session ON low_level_requirements(session_id)")
+
     def save_relation(
         self,
         high_level_requirement: str,

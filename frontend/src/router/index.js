@@ -3,6 +3,7 @@ import Classification from '../views/Classification.vue'
 import ConflictDetection from '../views/ConflictDetection.vue'
 import Traceability from '../views/Traceability.vue'
 import RequirementsAcquisition from '../views/RequirementsAcquisition.vue'
+import AcquisitionTraceability from '../views/AcquisitionTraceability.vue'
 import GeneralChat from '../views/GeneralChat.vue'
 import TranscriptIngestion from '../views/TranscriptIngestion.vue'
 import ContextBuilder from '../views/ContextBuilder.vue'
@@ -50,6 +51,11 @@ const router = createRouter({
             path: '/acquisition',
             name: 'acquisition',
             component: RequirementsAcquisition
+        },
+        {
+            path: '/acquisition-trace',
+            name: 'acquisition-trace',
+            component: AcquisitionTraceability
         },
         {
             path: '/chat',

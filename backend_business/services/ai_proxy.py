@@ -28,7 +28,7 @@ class AIProxy:
                 "low_level_requirement": low,
                 "max_new_tokens": max_new_tokens,
             },
-            timeout=60,
+            timeout=300,  # 5分钟
         )
         resp.raise_for_status()
         return resp.json()
@@ -41,8 +41,8 @@ class AIProxy:
     ) -> Dict[str, Any]:
         # 批量分析可能需要更长时间，根据组合数量动态调整超时
         total_combinations = len(highs) * len(lows)
-        timeout = max(120, total_combinations * 10)  # 每个组合至少10秒
-        timeout = min(timeout, 600)  # 最多10分钟
+        timeout = max(300, total_combinations * 30)  # 每个组合至少30秒
+        timeout = min(timeout, 1800)  # 最多30分钟
         
         resp = requests.post(
             f"{self.base_url}/traceability/batch-relation",
@@ -63,7 +63,7 @@ class AIProxy:
         resp = requests.post(
             f"{self.base_url}/conflict/check",
             json={"requirement_a": requirement_a, "requirement_b": requirement_b},
-            timeout=60,
+            timeout=300,  # 5分钟
         )
         resp.raise_for_status()
         return resp.json()

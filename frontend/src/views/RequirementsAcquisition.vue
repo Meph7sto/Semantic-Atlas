@@ -23,8 +23,8 @@ const dragState = ref({
 const extractModel = ref('deepseek-reasoner')
 const cleanModel = ref('deepseek-chat')
 
-// Configure base URL roughly based on dev setup
-const INFERENCE_BASE = '/inference'
+// 通过业务后端代理推理后端（保留 SSE 进度流，并在后端自动入库）
+const INFERENCE_BASE = '/api/requirements'
 
 const cleanPercent = computed(() => {
   const total = progress.value.clean.total
@@ -229,7 +229,7 @@ async function analyzeRequirements() {
   }
   
   try {
-    const response = await fetch(`${INFERENCE_BASE}/acquisition/extract/stream`, {
+    const response = await fetch(`${INFERENCE_BASE}/extract/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'

@@ -2,10 +2,15 @@
 需求相关路由
 包含传统需求抽取和基于 EgoBundle 的 L1-L3 需求抽取
 """
-from flask import Blueprint, request, jsonify
+import json
+from typing import Any, Dict, List, Optional, Tuple
+
+import requests
+from flask import Blueprint, Response, jsonify, request, stream_with_context
+
+from backend_business.config import settings
 from backend_business.services.ai_proxy import ai_proxy
 from backend_business.services.requirements_extraction_service import RequirementsExtractionService
-from backend_business.config import settings
 
 requirements_bp = Blueprint("requirements", __name__)
 
@@ -34,9 +39,61 @@ def extract_requirements():
             clean_model=clean_model, 
             extract_model=extract_model
         )
-        return jsonify(result)
+        return jsonify({"success": True, "data": result})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        # Proxy or backend error
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@requirements_bp.post("/requirements/extract/stream")
+def extract_requirements_stream():
+    """
+    代理推理后端的 SSE 流式需求抽取
+    """
+    data = request.get_json(silent=True) or {}
+    if "text" not in data:
+        return jsonify({"success": False, "error": "Missing 'text' field"}), 400
+
+    base_url = settings.INFERENCE_BASE_URL.rstrip("/")
+    url = f"{base_url}/acquisition/extract/stream"
+
+    upstream = requests.post(url, json=data, stream=True, timeout=900)
+
+    if upstream.status_code != 200:
+        return jsonify({"success": False, "error": upstream.text}), upstream.status_code
+
+    def _iter_events():
+        buf: List[str] = []
+
+        def _flush_block(block_lines: List[str]) -> Optional[Tuple[str, str]]:
+            if not block_lines:
+                return None
+            event = "message"
+            payload = ""
+            for line in block_lines:
+                if line.startswith("event:"):
+                    event = line[len("event:"):].strip() or "message"
+                elif line.startswith("data:"):
+                    payload += line[len("data:"):].strip()
+            return event, payload
+
+        for raw in upstream.iter_lines(decode_unicode=True):
+            if raw is None:
+                continue
+            line = str(raw)
+            if line == "":
+                parsed = _flush_block(buf)
+                buf = []
+                if not parsed:
+                    yield "\n"
+                    continue
+                ev, payload = parsed
+                yield f"event: {ev}\n"
+                yield f"data: {payload}\n\n"
+                continue
+            buf.append(line)
+
+    return Response(stream_with_context(_iter_events()), mimetype="text/event-stream")
 
 
 @requirements_bp.post("/requirements/extract_l123")
