@@ -214,16 +214,18 @@ const filteredRequirements = computed(() => {
   return result
 })
 
-// 按状态分组的需求列表（卡片视图用）
-const backlogRequirements = computed(() => 
-  allRequirements.value.filter(r => (requirementStatusMap.value[r.id] || 'backlog') === 'backlog')
-)
-const inProgressRequirements = computed(() => 
-  allRequirements.value.filter(r => requirementStatusMap.value[r.id] === 'in_progress')
-)
-const completedRequirements = computed(() => 
-  allRequirements.value.filter(r => requirementStatusMap.value[r.id] === 'completed')
-)
+// 按状态分组的需求列表（卡片视图用 - 使用 ref 以支持拖拽）
+const backlogRequirements = ref([])
+const inProgressRequirements = ref([])
+const completedRequirements = ref([])
+
+// 同步需求到各状态列表
+function syncRequirementLists() {
+  const all = allRequirements.value
+  backlogRequirements.value = all.filter(r => (requirementStatusMap.value[r.id] || 'backlog') === 'backlog')
+  inProgressRequirements.value = all.filter(r => requirementStatusMap.value[r.id] === 'in_progress')
+  completedRequirements.value = all.filter(r => requirementStatusMap.value[r.id] === 'completed')
+}
 
 // 看板列配置
 const baseColumns = [
@@ -1145,8 +1147,18 @@ watch(contextRunId, (rid) => {
   }
 })
 
+// 监听需求数据变化，同步到各状态列表
+watch(
+  () => [allRequirements.value, requirementStatusMap.value],
+  () => {
+    syncRequirementLists()
+  },
+  { deep: true, immediate: true }
+)
+
 onMounted(async () => {
   await loadContextRuns({ useSessionFilter: false })
+  syncRequirementLists()
 })
 </script>
 
@@ -1799,7 +1811,7 @@ onMounted(async () => {
                 </span>
               </div>
               <draggable
-                :list="backlogRequirements"
+                v-model="backlogRequirements"
                 group="requirements"
                 item-key="id"
                 class="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar min-h-[200px]"
@@ -1869,7 +1881,7 @@ onMounted(async () => {
                 </span>
               </div>
               <draggable
-                :list="inProgressRequirements"
+                v-model="inProgressRequirements"
                 group="requirements"
                 item-key="id"
                 class="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar min-h-[200px]"
@@ -1939,7 +1951,7 @@ onMounted(async () => {
                 </span>
               </div>
               <draggable
-                :list="completedRequirements"
+                v-model="completedRequirements"
                 group="requirements"
                 item-key="id"
                 class="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar min-h-[200px]"
