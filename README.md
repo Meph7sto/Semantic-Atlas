@@ -1,28 +1,43 @@
 # Semantic-Atlas
 
-Semantic-Atlas 是面向需求工程的语义分析原型项目，已打通需求冲突检测与需求追溯的端到端链路（前端 UI + 业务后端 + 推理后端）。需求分类保留工程结构与前端入口，尚未实现。
+Semantic-Atlas 是面向需求工程的语义分析原型平台，覆盖会议转写解析、上下文构建、L1/L2/L3 需求抽取、追溯关系分析、冲突检测、需求分类与通用对话等场景。前端提供可视化工作台，业务后端负责编排与数据落库，推理后端负责模型调用与推理服务。
 
 ## 功能概览
 
-- [x] 需求冲突检测: 双需求文本 -> 冲突/不冲突 + 解释
-- [x] 需求追溯: 单对/批量分析 + 追溯网络 + PostgreSQL 存储与下载
-- [x] 需求分类: 文本/CSV 批量分类 + 类别统计可视化
+- 会议转写解析（Phase 1）：转写文本 -> spans 写入数据库，支持 SSE 进度流
+- 上下文构建（Phase 2）：基于 spans 生成关联图、bundles 与 context_run_id
+- L1/L2/L3 需求抽取（Phase 3）：EgoBundle + tool-call 写入 `requirements_l123`
+- 需求获取：原始文本清洗 + 抽取为 L1/L2/L3 卡片（流式进度）
+- 需求追溯：单对/批量关系分析、追溯网络可视化、结果入库/下载
+- 冲突检测：单对/流式冲突识别
+- 需求分类：文本/CSV 批量分类与统计
+- 通用对话：流式 chat、工具调用接口（DeepSeek tool call 兼容）
+
+## 核心流程（Phase 1-3）
+
+1) `/analysis/ingest_transcript`：会议转写解析 -> spans
+2) `/analysis/build_context`：构建关联图 -> bundles/context_run_id
+3) `/requirements/extract_l123`：EgoBundle 抽取 L1/L2/L3 需求 -> PostgreSQL
 
 ## 架构
 
-- Frontend: Vue 3 + Vite + Tailwind (`frontend/`), 通过 `/api` 访问业务后端
-- Business Backend: Flask (`backend_business/`), 负责 `/api/*` 编排与存储
-- Inference Backend: FastAPI + Transformers (`backend_inference/`), 负责推理 API（冲突、追溯、分类）
-- 可选 Nginx: `deploy/nginx*.conf`, 统一入口端口 8008
+- Frontend: Vue 3 + Vite + Tailwind (`frontend/`)，通过 `/api` 访问业务后端，`/inference` 直连推理后端
+- Business Backend: Flask (`backend_business/`)，负责 `/api/*` 编排、存储与推理代理
+- Inference Backend: FastAPI + Transformers (`backend_inference/`)，负责冲突/追溯/分类/需求抽取/对话
+- 可选 Nginx: `deploy/nginx*.conf`，统一入口端口 8008
 
 ## 端口约定
 
-- 前端开发服务器: 5173
+- 前端开发服务器（Vite）: 8008
 - 业务后端: 5001
-- 推理后端: 8000 (Conflict, Traceability, Classification)
+- 推理后端: 8000
+- PostgreSQL: 5432
+- Adminer: 8080
 - Nginx 统一入口: 8008
 
 ## 快速开始（本地开发）
+
+> 建议使用 Python 3.12（`psycopg2-binary` 依赖版本要求）。
 
 1) 安装 Python 依赖
 
@@ -62,7 +77,7 @@ cd frontend
 npm run dev
 ```
 
-访问: `http://localhost:5173`
+访问: `http://localhost:8008`
 
 ## 前端开发代理
 
@@ -95,68 +110,23 @@ bash deploy/stop_services.sh
 
 说明:
 
-- `deploy/start.sh` 和 `deploy/start.ps1` 会执行前端构建，并生成 `deploy/nginx.generated.conf`
+- `deploy/start.sh` 与 `deploy/start.ps1` 会执行前端构建并生成 `deploy/nginx.generated.conf`
 - Windows 脚本会尝试下载 `deploy/nginx-1.26.1`（若本地不存在）
 - 日志默认输出在 `deploy/logs/`
 
-## 已实现接口
-
-### 业务后端（Flask, `/api`）
-
-- GET `/health`: 业务后端健康检查
-- GET `/api/health`: 业务后端 + 推理后端健康检查
-- POST `/api/conflict/check`: 冲突检测（转发到推理后端）
-- POST `/api/trace-relation`: 单对需求追溯
-- POST `/api/batch-trace-relation`: 批量需求追溯
-- POST `/api/upload_csv`: CSV 批量追溯
-- GET `/api/download_result?id=ID`: 下载某条分析记录的 JSON
-- GET `/api/requirements`: 列表分页
-- GET `/api/requirements/{id}`: 详情
-- DELETE `/api/requirements/{id}`: 删除
-- GET `/api/statistics`: 统计
-- POST `/api/classification/predict-texts`: 文本批量分类
-- POST `/api/classification/predict-csv`: CSV 批量分类
-
-示例: 冲突检测
-
-```json
-POST /api/conflict/check
-{
-  "requirement_a": "系统响应时间小于 1s",
-  "requirement_b": "系统响应时间大于 2s"
-}
-```
-
-示例: 单对追溯
-
-```json
-POST /api/trace-relation
-{
-  "high_level_requirement": "系统应提供用户登录功能。",
-  "low_level_requirement": "实现用户名密码校验与会话管理。",
-  "max_new_tokens": 800,
-  "save_to_db": false
-}
-```
-
-### 推理后端（FastAPI）
-
-- GET `/health`
-- POST `/conflict/check`
-- POST `/traceability/relation`
-- POST `/traceability/batch-relation`
-- POST `/classification/predict-texts`
-- POST `/classification/predict-csv`
-
 ## 配置说明
 
-### 模型与推理
+推理与业务后端都会自动读取项目根目录的 `.env`。
+
+### 推理后端
 
 - `MODEL_PROVIDER`: `local` | `chutes` | `deepseek`
+- `LLM_MODEL_RELATIVE_PATH`: 本地 LLM 权重路径（默认 `data/models/deepseek_conflict`）
 - `CHUTES_API_TOKEN` / `CHUTES_API_KEY`: chutes 模式必填
 - `DEEPSEEK_API_KEY`: deepseek 模式必填
-- 本地模型默认路径: `data/models/deepseek_conflict`（见 `backend_inference/core/config.py`）
-- 推理后端会自动读取项目根目录的 `.env`
+- `OPENAI_API_KEY` / `OPENAI_BASE_URL`: OpenAI 兼容接口（默认复用 DeepSeek）
+- `CLASSIFICATION_MODEL_RELATIVE_PATH`: 分类模型路径（默认 `data/models/deberta-v3-large`）
+- `CLASSIFICATION_LABELS`: JSON 数组或逗号分隔文本
 
 ### 业务后端
 
@@ -165,63 +135,89 @@ POST /api/trace-relation
 - `DATABASE_URL`: PostgreSQL 连接串（优先）
 - `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB`
 - `BUSINESS_HOST` / `BUSINESS_PORT` / `BUSINESS_DEBUG`
-- `CORS_ORIGINS`: 默认 `*`
 
-### PostgreSQL（Docker，本地开发）
-
-启动数据库容器:
+### 示例 `.env`
 
 ```bash
-docker compose up -d
+MODEL_PROVIDER=local
+LLM_MODEL_RELATIVE_PATH=data/models/deepseek_conflict
+CLASSIFICATION_MODEL_RELATIVE_PATH=data/models/deberta-v3-large
+DEEPSEEK_API_KEY=your_key_here
+POSTGRES_HOST=127.0.0.1
+POSTGRES_PORT=5432
+POSTGRES_USER=semantic
+POSTGRES_PASSWORD=semantic_dev
+POSTGRES_DB=semantic_atlas
 ```
 
-默认连接信息:
+## API 概览
 
-- Host: `localhost`
-- Port: `5432`（可通过 `POSTGRES_PORT` 覆盖）
-- User: `semantic`
-- Password: `semantic_dev`
-- Database: `semantic_atlas`
+### 业务后端（Flask）
 
-可通过环境变量覆盖:
+除 `/health` 外，其余接口默认挂载在 `/api` 前缀下。
 
-- `POSTGRES_USER`
-- `POSTGRES_PASSWORD`
-- `POSTGRES_DB`
-- `POSTGRES_PORT`
+- GET `/health`（业务后端根路径）
+- GET `/api/health`（业务后端 + 推理后端健康检查）
+- POST `/conflict/check`
+- POST `/trace-relation`
+- POST `/batch-trace-relation`
+- POST `/upload_csv` / GET `/download_result?id=ID`
+- POST `/analysis/ingest_transcript` / `/analysis/ingest_transcript/stream`
+- POST `/analysis/build_context` / `/analysis/build_context/stream`
+- GET `/analysis/context_runs`
+- GET `/analysis/bundles/<context_run_id>`
+- GET `/analysis/span_links/<context_run_id>`
+- GET `/analysis/spans/<session_id>`
+- POST `/requirements/extract`（传统需求抽取）
+- POST `/requirements/extract/stream`（SSE 代理）
+- POST `/requirements/extract_l123`
+- GET `/requirements/session/<session_id>` / `/requirements/stats`
+- GET `/requirements/<req_id>` / DELETE `/requirements/<req_id>`
+- POST `/classification/predict-texts` / `/classification/predict-csv`
 
-说明: 业务后端默认使用 PostgreSQL，连接参数与 Docker 默认一致。
+### 推理后端（FastAPI）
 
-### 一键脚本
-
-- `FRONTEND_ROOT`: 前端构建输出目录（默认 `frontend/dist`）
+- GET `/health`
+- POST `/conflict/check` / `/conflict/stream_check`
+- POST `/traceability/relation` / `/traceability/batch-relation`
+- POST `/classification/predict-texts` / `/classification/predict-csv`
+- POST `/acquisition/extract` / `/acquisition/extract/stream`
+- POST `/chat/stream` / `/chat/completions` / `/chat/completions/tools`
 
 ## 目录结构（关键部分）
 
 ```
 frontend/                     # Vue 3 + Vite + Tailwind
   src/views/ConflictDetection.vue
+  src/views/TranscriptIngestion.vue
+  src/views/ContextBuilder.vue
+  src/views/RequirementsExtraction.vue
+  src/views/RequirementsAcquisition.vue
   src/views/Traceability.vue
+  src/views/AcquisitionTraceability.vue
   src/views/Classification.vue
-  src/utils/api.js                # 前端 API 调用
+  src/views/GeneralChat.vue
+  src/utils/api.js
 
 backend_business/              # Flask 业务编排 + 存储
   app.py
-  routes/analysis_route.py      # 追溯分析 API
-  routes/conflict_routes.py     # 冲突检测代理
-  routes/classification_routes.py # 需求分类代理
-  routes/file_route.py          # CSV 上传/结果下载
-  services/ai_proxy.py
-  services/db_service.py
+  routes/analysis_route.py
+  routes/requirements_route.py
+  routes/conflict_routes.py
+  routes/classification_routes.py
+  routes/file_route.py
+  services/
 
 backend_inference/             # FastAPI 推理服务
   main.py
   routers/conflict.py
   routers/traceability.py
-  routers/classification.py     # 需求分类路由
-  services/conflict_service.py
-  services/traceability_service.py
+  routers/classification.py
+  routers/requirements_acquisition.py
+  routers/chat.py
+  services/
 
 deploy/                        # Nginx 与一键启动脚本
 data/models/                   # 本地模型目录
+tests/                         # 测试用例与示例文本
 ```
