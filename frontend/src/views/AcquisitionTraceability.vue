@@ -1,6 +1,6 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
-import { traceabilityApi, conflictApi, classifyTexts } from '../utils/api'
+import { ref, computed, watch, onMounted } from 'vue'
+import { traceabilityApi, conflictApi, classifyTexts, analysisApi, requirementsL123Api } from '../utils/api'
 import {
   FileText,
   Loader2,
@@ -19,7 +19,10 @@ import {
   AlertTriangle,
   CheckCircle2,
   AlertCircle,
-  BarChart3
+  BarChart3,
+  RefreshCw,
+  Play,
+  Database
 } from 'lucide-vue-next'
 import * as echarts from 'echarts'
 
@@ -27,20 +30,35 @@ import * as echarts from 'echarts'
 const currentStep = ref(1) // 1: 需求获取, 2: 追溯分析, 3: 冲突检测, 4: 需求分类
 const activeTab = ref('board') // 'board' | 'network' | 'conflict' | 'classification'
 
-// 需求获取相关状态
-const inputText = ref('')
+// Session 和 Context Run 相关状态
+const sessionId = ref('')
+const contextRunId = ref('')
+const contextRuns = ref([])
+const isLoadingRuns = ref(false)
+const runsError = ref('')
+
+// 需求获取相关状态 (从数据库加载)
 const isLoading = ref(false)
 const error = ref(null)
-const result = ref(null)
-const progress = ref({
-  stage: '',
-  clean: { current: 0, total: 0 },
-  extract: { current: 0, total: 0 }
-})
+const highLevelRequirements = ref([]) // L1/L2/L3 需求
+const reqStats = ref(null)
 
-// 模型设置
-const extractModel = ref('deepseek-reasoner')
-const cleanModel = ref('deepseek-chat')
+// 抽取参数
+const extractionForm = ref({
+  bundleStrategy: 'graph',
+  anchorStrategy: 'informative',
+  maxR: 2,
+  adaptiveRetryR2: true,
+  useToolcall: true,
+  model: 'deepseek-chat',
+  maxSpansPerBundle: 12,
+  tokenLimit: 1500,
+  topM2Hop: 5,
+  keywords: '要,需要,必须,应该,决定,改成,提升,优化,实现'
+})
+const isExtracting = ref(false)
+const extractionError = ref('')
+const extractionResult = ref(null)
 
 // 底层需求（预留）
 const lowLevelRequirements = ref([])
@@ -72,37 +90,32 @@ const chartContainer = ref(null)
 let chart = null
 
 // ========== 计算属性 ==========
-const INFERENCE_BASE = '/api/requirements'
-
-const cleanPercent = computed(() => {
-  const total = progress.value.clean.total
-  if (!total) return 0
-  return Math.round((progress.value.clean.current / total) * 100)
+const selectedRun = computed(() => {
+  return contextRuns.value.find((run) => run.context_run_id === contextRunId.value) || null
 })
 
-const extractPercent = computed(() => {
-  const total = progress.value.extract.total
-  if (!total) return 0
-  return Math.round((progress.value.extract.current / total) * 100)
+const canLoadRequirements = computed(() => {
+  return sessionId.value.trim().length > 0
+})
+
+const canExtract = computed(() => {
+  if (isExtracting.value) return false
+  if (!sessionId.value.trim()) return false
+  if (extractionForm.value.bundleStrategy === 'graph' && !contextRunId.value.trim()) return false
+  return true
 })
 
 // 所有顶层需求（L1 + L2 + L3）
 const allHighLevelRequirements = computed(() => {
-  if (!result.value) return []
-  const all = []
-  const addItems = (items, category) => {
-    ;(items || []).forEach((item, idx) => {
-      all.push({
-        id: `${category}-${idx}`,
-        category,
-        ...item
-      })
-    })
-  }
-  addItems(result.value.business_requirements, 'L1')
-  addItems(result.value.stakeholder_requirements, 'L2')
-  addItems(result.value.system_requirements, 'L3')
-  return all
+  return highLevelRequirements.value.map((req, idx) => ({
+    id: `${req.level}-${idx}`,
+    category: req.level,
+    statement: req.text,
+    rationale: '',
+    evidence: req.anchor_span_id || '',
+    confidence: 0.9,
+    ...req
+  }))
 })
 
 // 是否可以进行追溯分析
@@ -147,29 +160,14 @@ const baseColumns = [
 ]
 
 const boardColumns = computed(() => {
-  if (!result.value) {
-    return baseColumns.map((col) => ({ ...col, items: [] }))
-  }
-
-  let counter = 0
-  const toItems = (items, category) =>
-    (items || []).map((item) => ({
-      id: `${category}-${++counter}`,
-      category,
-      ...item
-    }))
+  const l1Items = allHighLevelRequirements.value.filter(r => r.category === 'L1')
+  const l2Items = allHighLevelRequirements.value.filter(r => r.category === 'L2')
+  const l3Items = allHighLevelRequirements.value.filter(r => r.category === 'L3')
 
   return baseColumns.map((col) => {
-    if (col.id === 'L1') {
-      return { ...col, items: toItems(result.value.business_requirements, 'L1') }
-    }
-    if (col.id === 'L2') {
-      return { ...col, items: toItems(result.value.stakeholder_requirements, 'L2') }
-    }
-    if (col.id === 'L3') {
-      return { ...col, items: toItems(result.value.system_requirements, 'L3') }
-    }
-    // 底层需求列
+    if (col.id === 'L1') return { ...col, items: l1Items }
+    if (col.id === 'L2') return { ...col, items: l2Items }
+    if (col.id === 'L3') return { ...col, items: l3Items }
     return { ...col, items: lowLevelRequirements.value }
   })
 })
@@ -214,143 +212,96 @@ function getCategoryColor(category) {
   return colors[category] || '#6b7280'
 }
 
+function normalizeKeywords(raw) {
+  const text = (raw || '').trim()
+  if (!text) return null
+  return text.split(/[,，;\n|]+/g).map((s) => s.trim()).filter(Boolean)
+}
+
 // ========== API 调用 ==========
-async function readResponsePayload(response) {
-  const contentType = response.headers.get('content-type') || ''
-  const text = await response.text()
-  if (!text) {
-    return { data: null, text: '' }
-  }
-  if (contentType.includes('application/json')) {
-    try {
-      return { data: JSON.parse(text), text }
-    } catch {
-      return { data: null, text }
-    }
-  }
+
+// 加载 Context Runs 列表
+async function loadContextRuns({ useSessionFilter = true } = {}) {
+  runsError.value = ''
+  isLoadingRuns.value = true
   try {
-    return { data: JSON.parse(text), text }
-  } catch {
-    return { data: null, text }
+    const sid = sessionId.value.trim()
+    const runs = await analysisApi.listContextRuns(useSessionFilter ? sid : '')
+    contextRuns.value = Array.isArray(runs) ? runs : []
+  } catch (err) {
+    runsError.value = err?.message || '加载 context_runs 失败'
+  } finally {
+    isLoadingRuns.value = false
   }
 }
 
-async function analyzeRequirements() {
-  if (!inputText.value.trim()) return
+// 从数据库加载已抽取的需求
+async function loadRequirementsFromDB() {
+  if (!sessionId.value.trim()) {
+    error.value = '请先输入 Session ID'
+    return
+  }
 
   isLoading.value = true
   error.value = null
-  result.value = null
-  lowLevelRequirements.value = []
-  traceResult.value = null
-  progress.value = {
-    stage: '',
-    clean: { current: 0, total: 0 },
-    extract: { current: 0, total: 0 }
-  }
+  highLevelRequirements.value = []
 
   try {
-    const response = await fetch(`${INFERENCE_BASE}/extract/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: inputText.value,
-        chunk_size: 3600,
-        overlap: 500,
-        clean_model: cleanModel.value,
-        extract_model: extractModel.value
-      })
+    const data = await requirementsL123Api.listBySession(sessionId.value.trim(), {
+      page: 1,
+      perPage: 200
     })
-
-    if (!response.ok) {
-      const { data, text } = await readResponsePayload(response)
-      const message = data?.error || data?.detail || `HTTP ${response.status}`
-      const snippet = text ? text.replace(/\s+/g, ' ').slice(0, 200) : ''
-      throw new Error(snippet ? `${message}: ${snippet}` : message)
-    }
-
-    if (!response.body) {
-      throw new Error('Empty response body')
-    }
-
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let streamError = null
-    let gotResult = false
-
-    const handleEvent = (event, payload) => {
-      if (event === 'progress') {
-        if (payload.stage === 'clean_polish') {
-          progress.value.stage = 'clean_polish'
-          progress.value.clean.current = payload.current || 0
-          progress.value.clean.total = payload.total || 0
-        } else if (payload.stage === 'extract') {
-          progress.value.stage = 'extract'
-          progress.value.extract.current = payload.current || 0
-          progress.value.extract.total = payload.total || 0
-        } else if (payload.stage === 'done') {
-          progress.value.stage = 'done'
-        }
-        return
-      }
-      if (event === 'error') {
-        streamError = payload?.error || 'Server error'
-        return
-      }
-      if (event === 'result') {
-        result.value = payload
-        gotResult = true
-      }
-    }
-
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      let splitIdx = buffer.indexOf('\n\n')
-      while (splitIdx !== -1) {
-        const rawEvent = buffer.slice(0, splitIdx)
-        buffer = buffer.slice(splitIdx + 2)
-        splitIdx = buffer.indexOf('\n\n')
-
-        const lines = rawEvent.split('\n')
-        let event = 'message'
-        let data = ''
-        for (const line of lines) {
-          if (line.startsWith('event:')) {
-            event = line.slice(6).trim()
-          } else if (line.startsWith('data:')) {
-            data += line.slice(5).trim()
-          }
-        }
-        if (!data) continue
-        try {
-          const payload = JSON.parse(data)
-          handleEvent(event, payload)
-        } catch {
-          streamError = 'Invalid stream payload'
-        }
-        if (streamError || gotResult) {
-          await reader.cancel()
-          break
-        }
-      }
-      if (streamError || gotResult) {
-        break
-      }
-    }
-
-    if (streamError) {
-      throw new Error(streamError)
-    }
-    if (!gotResult) {
-      throw new Error('Stream ended without result')
+    highLevelRequirements.value = data.requirements || []
+    reqStats.value = await requirementsL123Api.stats(sessionId.value.trim())
+    
+    if (highLevelRequirements.value.length > 0) {
+      currentStep.value = 1
     }
   } catch (err) {
-    error.value = err.message
+    error.value = err?.message || '加载需求失败'
   } finally {
     isLoading.value = false
+  }
+}
+
+// 执行 L1-L3 需求抽取
+async function startExtraction() {
+  extractionError.value = ''
+  extractionResult.value = null
+
+  const sid = sessionId.value.trim()
+  if (!sid) {
+    extractionError.value = '请先填写 session_id'
+    return
+  }
+  if (extractionForm.value.bundleStrategy === 'graph' && !contextRunId.value.trim()) {
+    extractionError.value = 'graph 策略需要 context_run_id'
+    return
+  }
+
+  isExtracting.value = true
+  try {
+    const payload = {
+      session_id: sid,
+      context_run_id: contextRunId.value.trim() || null,
+      bundle_strategy: extractionForm.value.bundleStrategy,
+      anchor_strategy: extractionForm.value.anchorStrategy,
+      r: Number(extractionForm.value.maxR) || 2,
+      adaptive_retry_r2: !!extractionForm.value.adaptiveRetryR2,
+      model: extractionForm.value.model,
+      use_toolcall: !!extractionForm.value.useToolcall,
+      max_spans_per_bundle: Number(extractionForm.value.maxSpansPerBundle) || 12,
+      token_limit: Number(extractionForm.value.tokenLimit) || 0,
+      top_m_2hop: Number(extractionForm.value.topM2Hop) || 5,
+      keywords: normalizeKeywords(extractionForm.value.keywords)
+    }
+
+    extractionResult.value = await requirementsL123Api.extract(payload)
+    await loadRequirementsFromDB()
+  } catch (err) {
+    extractionError.value = err?.message || '抽取失败'
+  } finally {
+    isExtracting.value = false
   }
 }
 
@@ -363,12 +314,6 @@ async function extractLowLevelRequirements() {
 
   try {
     // TODO: 调用底层需求提取接口
-    // const response = await api.post('/api/requirements/extract-low-level', {
-    //   high_level_requirements: allHighLevelRequirements.value.map(r => r.statement)
-    // })
-    // lowLevelRequirements.value = response.data.low_level_requirements
-
-    // 暂时模拟：显示功能开发中提示
     await new Promise((resolve) => setTimeout(resolve, 500))
     alert('功能开发中：底层需求提取接口尚未实现\n\n请使用「加载示例底层需求」按钮测试追溯功能')
   } catch (err) {
@@ -427,257 +372,6 @@ function loadMockLowLevelRequirements() {
   currentStep.value = 2
 }
 
-// 加载完整的模拟数据（顶层需求 + 底层需求 + 追溯结果）用于完全离线测试
-function loadFullMockData() {
-  // 模拟顶层需求抽取结果
-  result.value = {
-    business_requirements: [
-      {
-        statement: '实现自动对账功能，提升财务效率',
-        rationale: '解决人工对账慢、易出错的问题',
-        evidence: '财务那边希望...',
-        confidence: 0.95
-      },
-      {
-        statement: '系统必须在下月底前上线，满足审计要求',
-        rationale: '时间约束，影响审计',
-        evidence: '下个月底上线',
-        confidence: 0.88
-      }
-    ],
-    stakeholder_requirements: [
-      {
-        statement: '支持导入银行流水并与内部单据自动匹配',
-        rationale: '用户核心使用场景',
-        evidence: '导入银行流水',
-        confidence: 0.92
-      },
-      {
-        statement: '匹配不上的记录需要高亮显示',
-        rationale: '便于人工复核',
-        evidence: '高亮显示',
-        confidence: 0.90
-      }
-    ],
-    system_requirements: [
-      {
-        statement: '系统需支持处理1万条数据，耗时不超过1分钟',
-        rationale: '性能基线要求',
-        evidence: '一万条数据一分钟',
-        confidence: 0.87
-      },
-      {
-        statement: '支持Excel和CSV格式的数据导入',
-        rationale: '兼容常见数据格式',
-        evidence: '导入',
-        confidence: 0.85
-      }
-    ]
-  }
-
-  // 模拟底层需求
-  lowLevelRequirements.value = [
-    {
-      id: 'low-1',
-      category: 'low',
-      statement: '实现银行流水解析模块，支持主流银行格式',
-      rationale: '数据导入的技术实现',
-      evidence: '银行流水',
-      confidence: 0.91
-    },
-    {
-      id: 'low-2',
-      category: 'low',
-      statement: '开发智能匹配算法，基于金额、日期、摘要进行多维匹配',
-      rationale: '自动匹配的核心算法',
-      evidence: '自动匹配',
-      confidence: 0.89
-    },
-    {
-      id: 'low-3',
-      category: 'low',
-      statement: '实现差异标记功能，支持红色高亮和批注',
-      rationale: '匹配失败的可视化展示',
-      evidence: '高亮显示',
-      confidence: 0.93
-    },
-    {
-      id: 'low-4',
-      category: 'low',
-      statement: '采用批量处理和分页加载，确保大数据量下的响应速度',
-      rationale: '性能优化措施',
-      evidence: '一万条',
-      confidence: 0.86
-    }
-  ]
-
-  // 模拟追溯分析结果
-  const mockHighReqs = [
-    ...result.value.business_requirements,
-    ...result.value.stakeholder_requirements,
-    ...result.value.system_requirements
-  ]
-
-  traceResult.value = {
-    summary: `批量分析了 ${mockHighReqs.length} 个顶层需求和 ${lowLevelRequirements.value.length} 个底层需求`,
-    statistics: {
-      total_combinations: mockHighReqs.length * lowLevelRequirements.value.length,
-      relations_found: 8,
-      relation_rate: 0.33
-    },
-    high_level_requirements: mockHighReqs.map((r) => r.statement),
-    low_level_requirements: lowLevelRequirements.value.map((r) => r.statement),
-    relations: [
-      // L1[0] 自动对账 -> low[1] 智能匹配算法
-      {
-        high_level_index: 0,
-        low_level_index: 1,
-        has_relation: true,
-        relation_type: 'decomposition',
-        confidence: 0.92,
-        summary: '自动对账功能需要智能匹配算法作为核心实现'
-      },
-      // L2[0] 导入银行流水 -> low[0] 银行流水解析
-      {
-        high_level_index: 2,
-        low_level_index: 0,
-        has_relation: true,
-        relation_type: 'implementation',
-        confidence: 0.95,
-        summary: '导入银行流水功能由解析模块直接实现'
-      },
-      // L2[0] 导入银行流水 -> low[1] 智能匹配
-      {
-        high_level_index: 2,
-        low_level_index: 1,
-        has_relation: true,
-        relation_type: 'support',
-        confidence: 0.78,
-        summary: '导入后的数据需要智能匹配处理'
-      },
-      // L2[1] 高亮显示 -> low[2] 差异标记
-      {
-        high_level_index: 3,
-        low_level_index: 2,
-        has_relation: true,
-        relation_type: 'implementation',
-        confidence: 0.97,
-        summary: '高亮显示需求由差异标记功能直接实现'
-      },
-      // L3[0] 性能要求 -> low[3] 批量处理
-      {
-        high_level_index: 4,
-        low_level_index: 3,
-        has_relation: true,
-        relation_type: 'implementation',
-        confidence: 0.88,
-        summary: '性能要求通过批量处理技术满足'
-      },
-      // L3[1] Excel/CSV导入 -> low[0] 银行流水解析
-      {
-        high_level_index: 5,
-        low_level_index: 0,
-        has_relation: true,
-        relation_type: 'support',
-        confidence: 0.72,
-        summary: '格式支持需求与解析模块相关'
-      },
-      // L1[0] 自动对账 -> low[0] 银行流水解析
-      {
-        high_level_index: 0,
-        low_level_index: 0,
-        has_relation: true,
-        relation_type: 'dependency',
-        confidence: 0.85,
-        summary: '自动对账依赖银行流水解析'
-      },
-      // L1[0] 自动对账 -> low[2] 差异标记
-      {
-        high_level_index: 0,
-        low_level_index: 2,
-        has_relation: true,
-        relation_type: 'support',
-        confidence: 0.70,
-        summary: '对账结果需要差异标记展示'
-      }
-    ],
-    relation_types_count: {
-      implementation: 3,
-      decomposition: 1,
-      support: 3,
-      dependency: 1
-    }
-  }
-
-  // 模拟冲突检测结果
-  const allMockReqs = [
-    ...result.value.business_requirements.map((r, i) => ({ ...r, id: `L1-${i}`, category: 'L1' })),
-    ...result.value.stakeholder_requirements.map((r, i) => ({ ...r, id: `L2-${i}`, category: 'L2' })),
-    ...result.value.system_requirements.map((r, i) => ({ ...r, id: `L3-${i}`, category: 'L3' })),
-    ...lowLevelRequirements.value
-  ]
-
-  conflictResults.value = [
-    {
-      reqA: allMockReqs[0], // 自动对账
-      reqB: allMockReqs[1], // 下月底上线
-      is_conflict: false,
-      raw_response: '不冲突。这两个需求分别描述功能目标和时间约束，属于不同维度，可以同时满足。'
-    },
-    {
-      reqA: allMockReqs[4], // 1万条数据1分钟
-      reqB: allMockReqs[9], // 批量处理
-      is_conflict: false,
-      raw_response: '不冲突。底层需求"批量处理"正是为了满足顶层性能需求而设计的实现方案。'
-    },
-    {
-      reqA: allMockReqs[1], // 下月底上线
-      reqB: allMockReqs[6], // 银行流水解析
-      is_conflict: true,
-      raw_response: '冲突。下月底上线的紧迫时间约束可能与实现复杂的银行流水解析模块存在冲突，需要评估开发工期。'
-    },
-    {
-      reqA: allMockReqs[2], // 导入银行流水自动匹配
-      reqB: allMockReqs[3], // 高亮显示
-      is_conflict: false,
-      raw_response: '不冲突。这两个需求描述的是同一业务流程的不同阶段：先匹配，匹配失败后高亮显示。'
-    }
-  ]
-
-  // 模拟分类结果
-  classificationResult.value = {
-    total: allMockReqs.length,
-    predictions: [
-      { index: 0, requirement: allMockReqs[0].statement, predicted_label: '功能性需求', originalReq: allMockReqs[0] },
-      { index: 1, requirement: allMockReqs[1].statement, predicted_label: '非功能性需求', originalReq: allMockReqs[1] },
-      { index: 2, requirement: allMockReqs[2].statement, predicted_label: '功能性需求', originalReq: allMockReqs[2] },
-      { index: 3, requirement: allMockReqs[3].statement, predicted_label: '功能性需求', originalReq: allMockReqs[3] },
-      { index: 4, requirement: allMockReqs[4].statement, predicted_label: '非功能性需求', originalReq: allMockReqs[4] },
-      { index: 5, requirement: allMockReqs[5].statement, predicted_label: '功能性需求', originalReq: allMockReqs[5] },
-      { index: 6, requirement: allMockReqs[6].statement, predicted_label: '功能性需求', originalReq: allMockReqs[6] },
-      { index: 7, requirement: allMockReqs[7].statement, predicted_label: '功能性需求', originalReq: allMockReqs[7] },
-      { index: 8, requirement: allMockReqs[8].statement, predicted_label: '功能性需求', originalReq: allMockReqs[8] },
-      { index: 9, requirement: allMockReqs[9].statement, predicted_label: '非功能性需求', originalReq: allMockReqs[9] }
-    ],
-    label_distribution: {
-      '功能性需求': 7,
-      '非功能性需求': 3
-    }
-  }
-
-  currentStep.value = 4
-  activeTab.value = 'network'
-
-  // 延迟更新图表
-  setTimeout(() => {
-    if (chart) {
-      updateChart()
-    } else {
-      initChart()
-    }
-  }, 100)
-}
-
 // 追溯分析
 async function runTraceAnalysis() {
   if (!canTrace.value) return
@@ -687,7 +381,6 @@ async function runTraceAnalysis() {
   traceResult.value = null
 
   try {
-    // 过滤空值并确保所有项都是字符串
     const highReqs = allHighLevelRequirements.value
       .map((r) => r.statement || r.text || '')
       .filter((s) => s && s.trim())
@@ -695,21 +388,16 @@ async function runTraceAnalysis() {
       .map((r) => r.statement || r.text || '')
       .filter((s) => s && s.trim())
 
-    console.log('[Trace] highReqs:', highReqs)
-    console.log('[Trace] lowReqs:', lowReqs)
-
     if (highReqs.length === 0 || lowReqs.length === 0) {
       throw new Error('顶层需求或底层需求为空，请先完成需求抽取和底层需求加载')
     }
 
     const apiResult = await traceabilityApi.batchAnalyzeRelation(highReqs, lowReqs)
-    console.log('[Trace] API result:', apiResult)
     traceResult.value = apiResult
     currentStep.value = 2
     activeTab.value = 'network'
     updateChart()
   } catch (err) {
-    console.error('[Trace] Error:', err)
     const errMsg = err?.response?.data?.error || err?.response?.data?.detail || err.message || '追溯分析失败'
     traceError.value = errMsg
   } finally {
@@ -733,7 +421,6 @@ async function runConflictDetection() {
   conflictError.value = null
   conflictResults.value = []
 
-  // 生成需要检测的需求对（避免重复：只检测 i < j）
   const pairs = []
   for (let i = 0; i < allReqs.length; i++) {
     for (let j = i + 1; j < allReqs.length; j++) {
@@ -809,7 +496,6 @@ async function runClassification() {
     const response = await classifyTexts({ requirements })
     const data = response.data
     
-    // 将分类结果与原始需求关联
     classificationResult.value = {
       predictions: data.predictions.map((pred, idx) => ({
         ...pred,
@@ -870,9 +556,7 @@ async function runFullAnalysis() {
     ]
 
     if (allReqs.length >= 2) {
-      // 选择关键对进行冲突检测（避免组合爆炸）
       const pairs = []
-      // 优先检测有追溯关系的对
       if (traceResult.value?.relations) {
         traceResult.value.relations.forEach((rel) => {
           if (rel.has_relation) {
@@ -884,7 +568,6 @@ async function runFullAnalysis() {
           }
         })
       }
-      // 限制最多检测10对
       const pairsToCheck = pairs.slice(0, 10)
       conflictProgress.value = { current: 0, total: pairsToCheck.length }
 
@@ -926,12 +609,10 @@ async function runFullAnalysis() {
       currentStep.value = 4
     }
 
-    // 完成
     analysisStep.value = 4
     activeTab.value = 'network'
     setTimeout(() => updateChart(), 100)
   } catch (err) {
-    console.error('[FullAnalysis] Error:', err)
     analysisError.value = err?.response?.data?.error || err?.response?.data?.detail || err.message || '分析失败'
   } finally {
     isAnalyzing.value = false
@@ -953,12 +634,11 @@ const analysisStepText = computed(() => {
 const analysisPercent = computed(() => {
   if (analysisStep.value === 0) return 0
   if (analysisStep.value === 4) return 100
-  // 追溯 33%, 冲突 66%, 分类 100%
   const basePercent = (analysisStep.value - 1) * 33
   if (analysisStep.value === 2 && conflictProgress.value.total > 0) {
     return basePercent + Math.round((conflictProgress.value.current / conflictProgress.value.total) * 33)
   }
-  return basePercent + 16 // 进行中显示中间值
+  return basePercent + 16
 })
 
 // 分类结果按标签分组
@@ -996,7 +676,6 @@ function initChart() {
 function updateChart() {
   if (!chart) return
 
-  // 如果没有追溯结果，显示空状态
   if (!traceResult.value) {
     const emptyOption = {
       title: {
@@ -1012,17 +691,14 @@ function updateChart() {
     return
   }
 
-  // 二部图布局：左边顶层需求，右边底层需求
   const highNodes = allHighLevelRequirements.value
   const lowNodes = lowLevelRequirements.value
 
-  // 获取图表容器尺寸
   const containerWidth = chartContainer.value?.clientWidth || 900
   const containerHeight = chartContainer.value?.clientHeight || 500
 
-  // 布局参数
-  const leftX = containerWidth * 0.18   // 左侧 18% 位置
-  const rightX = containerWidth * 0.82  // 右侧 82% 位置
+  const leftX = containerWidth * 0.18
+  const rightX = containerWidth * 0.82
   const topPadding = 80
   const bottomPadding = 60
   const availableHeight = containerHeight - topPadding - bottomPadding
@@ -1036,7 +712,6 @@ function updateChart() {
 
   const categoryMap = { L1: 0, L2: 1, L3: 2, low: 3 }
 
-  // 计算左侧顶层需求节点位置（垂直均匀分布）
   const leftSpacing = highNodes.length > 1 ? availableHeight / (highNodes.length - 1) : 0
   const nodes = highNodes.map((req, idx) => ({
     id: `high_${idx}`,
@@ -1071,7 +746,6 @@ function updateChart() {
     }
   }))
 
-  // 计算右侧底层需求节点位置（垂直均匀分布）
   const rightSpacing = lowNodes.length > 1 ? availableHeight / (lowNodes.length - 1) : 0
   lowNodes.forEach((req, idx) => {
     nodes.push({
@@ -1108,7 +782,6 @@ function updateChart() {
     })
   })
 
-  // 从追溯结果添加边
   const links = []
   if (traceResult.value?.relations) {
     traceResult.value.relations.forEach((rel) => {
@@ -1161,7 +834,7 @@ function updateChart() {
     series: [
       {
         type: 'graph',
-        layout: 'none',  // 使用固定位置布局（二部图）
+        layout: 'none',
         coordinateSystem: null,
         roam: true,
         categories: categories,
@@ -1182,7 +855,6 @@ function updateChart() {
   chart.setOption(option, true)
 }
 
-// 获取类别边框颜色
 function getCategoryBorderColor(category) {
   const colors = {
     L1: '#1d4ed8',
@@ -1193,7 +865,6 @@ function getCategoryBorderColor(category) {
   return colors[category] || '#374151'
 }
 
-// 分类标签样式辅助函数
 function getLabelClass(label) {
   const styles = {
     '功能性需求': 'bg-blue-50 text-blue-700',
@@ -1244,6 +915,17 @@ watch(
   },
   { deep: true }
 )
+
+watch(contextRunId, (rid) => {
+  const run = contextRuns.value.find((r) => r.context_run_id === rid)
+  if (run?.session_id && !sessionId.value.trim()) {
+    sessionId.value = run.session_id
+  }
+})
+
+onMounted(async () => {
+  await loadContextRuns({ useSessionFilter: false })
+})
 </script>
 
 <template>
@@ -1258,7 +940,7 @@ watch(
           需求获取与追溯
         </h2>
         <p class="text-sm text-zinc-500 mt-1">
-          从原始文本抽取需求，建立顶层与底层需求间的追溯关系
+          从数据库加载 L1/L2/L3 需求，建立顶层与底层需求间的追溯关系
         </p>
       </div>
 
@@ -1305,110 +987,143 @@ watch(
     <div class="flex-1 flex overflow-hidden">
       <!-- 左侧：输入面板 -->
       <div
-        class="w-[360px] p-6 flex flex-col border-r border-zinc-200 bg-white min-w-[320px] shrink-0"
+        class="w-[400px] p-6 flex flex-col border-r border-zinc-200 bg-white min-w-[360px] shrink-0 overflow-y-auto"
       >
-        <label class="text-sm font-medium text-zinc-700 mb-2"
-          >原始输入文本 (笔记、访谈记录)</label
-        >
-        <textarea
-          v-model="inputText"
-          class="flex-1 w-full p-4 rounded-lg border border-zinc-300 resize-none focus:ring-2 focus:ring-black focus:border-black transition-all text-sm leading-relaxed"
-          placeholder="在此粘贴原始会议纪要、访谈记录或粗略描述..."
-        ></textarea>
+        <!-- Session 和 Context Run 选择 -->
+        <div class="space-y-4 mb-6">
+          <div>
+            <label class="text-sm font-medium text-zinc-700 mb-2 block">Session ID</label>
+            <input
+              v-model="sessionId"
+              type="text"
+              placeholder="Phase 1 ingest_transcript 返回的 session_id"
+              class="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-black focus:ring-black"
+            />
+          </div>
 
-        <div class="mt-4 flex flex-col gap-3">
-          <!-- 模型设置 -->
-          <details class="group">
-            <summary
-              class="flex items-center justify-between cursor-pointer p-3 bg-zinc-50 rounded-lg border border-zinc-200 hover:bg-zinc-100 transition-colors"
+          <div>
+            <div class="flex items-center justify-between gap-2 mb-2">
+              <label class="text-sm font-medium text-zinc-700">Context Run (Phase 2)</label>
+              <button
+                type="button"
+                class="inline-flex items-center gap-1 text-xs text-zinc-600 hover:text-zinc-900"
+                :disabled="isLoadingRuns"
+                @click="loadContextRuns({ useSessionFilter: true })"
+              >
+                <RefreshCw class="w-3 h-3" :class="isLoadingRuns ? 'animate-spin' : ''" />
+                刷新
+              </button>
+            </div>
+            <select
+              v-model="contextRunId"
+              class="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-black focus:ring-black"
             >
-              <div class="flex items-center gap-2">
-                <Settings2 class="w-4 h-4 text-zinc-500" />
-                <span class="text-xs font-semibold text-zinc-600 uppercase tracking-wider"
-                  >模型设置</span
-                >
-              </div>
-              <ChevronDown
-                class="w-4 h-4 text-zinc-400 transition-transform group-open:rotate-180"
-              />
-            </summary>
-            <div class="mt-2 p-3 bg-zinc-50 rounded-lg border border-zinc-200 space-y-3">
+              <option value="">（可选：graph 策略需要）</option>
+              <option v-for="run in contextRuns" :key="run.context_run_id" :value="run.context_run_id">
+                {{ run.context_run_id.slice(0, 8) }}... · {{ run.session_id?.slice(0, 8) || 'N/A' }}... · {{ run.status }}
+              </option>
+            </select>
+            <p v-if="runsError" class="mt-1 text-xs text-red-600">{{ runsError }}</p>
+          </div>
+        </div>
+
+        <!-- 抽取设置 -->
+        <details class="group mb-4">
+          <summary
+            class="flex items-center justify-between cursor-pointer p-3 bg-zinc-50 rounded-lg border border-zinc-200 hover:bg-zinc-100 transition-colors"
+          >
+            <div class="flex items-center gap-2">
+              <Settings2 class="w-4 h-4 text-zinc-500" />
+              <span class="text-xs font-semibold text-zinc-600 uppercase tracking-wider">抽取设置</span>
+            </div>
+            <ChevronDown class="w-4 h-4 text-zinc-400 transition-transform group-open:rotate-180" />
+          </summary>
+          <div class="mt-2 p-3 bg-zinc-50 rounded-lg border border-zinc-200 space-y-3">
+            <div class="grid grid-cols-2 gap-3">
               <div>
-                <label class="text-xs font-medium text-zinc-600 block mb-1"
-                  >推理模型 (抽取)</label
-                >
+                <label class="text-xs font-medium text-zinc-600 block mb-1">bundle_strategy</label>
                 <select
-                  v-model="extractModel"
-                  class="w-full text-sm border-zinc-300 rounded-md focus:ring-black focus:border-black"
+                  v-model="extractionForm.bundleStrategy"
+                  class="w-full text-xs border-zinc-300 rounded-md focus:ring-black focus:border-black"
                 >
-                  <option value="deepseek-reasoner">deepseek-reasoner</option>
-                  <option value="deepseek-chat">deepseek-chat</option>
+                  <option value="graph">graph</option>
+                  <option value="sequence">sequence</option>
                 </select>
               </div>
               <div>
-                <label class="text-xs font-medium text-zinc-600 block mb-1"
-                  >聊天模型 (清洗)</label
-                >
+                <label class="text-xs font-medium text-zinc-600 block mb-1">anchor_strategy</label>
                 <select
-                  v-model="cleanModel"
-                  class="w-full text-sm border-zinc-300 rounded-md focus:ring-black focus:border-black"
+                  v-model="extractionForm.anchorStrategy"
+                  class="w-full text-xs border-zinc-300 rounded-md focus:ring-black focus:border-black"
+                >
+                  <option value="informative">informative</option>
+                  <option value="keyword">keyword</option>
+                  <option value="all">all</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-xs font-medium text-zinc-600 block mb-1">model</label>
+                <select
+                  v-model="extractionForm.model"
+                  class="w-full text-xs border-zinc-300 rounded-md focus:ring-black focus:border-black"
                 >
                   <option value="deepseek-chat">deepseek-chat</option>
                   <option value="deepseek-reasoner">deepseek-reasoner</option>
                 </select>
               </div>
+              <div>
+                <label class="text-xs font-medium text-zinc-600 block mb-1">r (max)</label>
+                <select
+                  v-model.number="extractionForm.maxR"
+                  class="w-full text-xs border-zinc-300 rounded-md focus:ring-black focus:border-black"
+                >
+                  <option :value="1">1</option>
+                  <option :value="2">2</option>
+                </select>
+              </div>
             </div>
-          </details>
+            <label class="flex items-center gap-2 text-xs text-zinc-600">
+              <input v-model="extractionForm.useToolcall" type="checkbox" class="w-3 h-3 rounded border-zinc-300" />
+              使用 tool-call
+            </label>
+          </div>
+        </details>
 
-          <!-- 错误提示 -->
-          <div
-            v-if="error"
-            class="p-3 text-sm text-red-600 bg-red-50 rounded-md border border-red-200"
-          >
-            Error: {{ error }}
+        <!-- 错误提示 -->
+        <div v-if="error" class="p-3 text-sm text-red-600 bg-red-50 rounded-md border border-red-200 mb-4">
+          Error: {{ error }}
+        </div>
+        <div v-if="extractionError" class="p-3 text-sm text-red-600 bg-red-50 rounded-md border border-red-200 mb-4">
+          抽取错误: {{ extractionError }}
+        </div>
+
+        <!-- 操作按钮组 -->
+        <div class="space-y-3">
+          <div class="flex gap-2">
+            <button
+              @click="loadRequirementsFromDB"
+              :disabled="isLoading || !canLoadRequirements"
+              class="flex-1 py-2.5 px-4 bg-zinc-800 hover:bg-zinc-700 text-white font-medium rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+            >
+              <Loader2 v-if="isLoading" class="w-4 h-4 animate-spin" />
+              <Database v-else class="w-4 h-4" />
+              <span>{{ isLoading ? '加载中...' : '加载已有需求' }}</span>
+            </button>
           </div>
 
-          <!-- 进度条 -->
-          <div
-            v-if="isLoading"
-            class="p-3 bg-zinc-50 rounded-md border border-zinc-200 space-y-2"
-          >
-            <div class="flex items-center justify-between text-xs text-zinc-500">
-              <span>清洗 & 润色</span>
-              <span>{{ progress.clean.current }}/{{ progress.clean.total }}</span>
-            </div>
-            <div class="h-2 bg-zinc-200 rounded">
-              <div
-                class="h-2 bg-black rounded transition-all"
-                :style="{ width: `${cleanPercent}%` }"
-              ></div>
-            </div>
-            <div class="flex items-center justify-between text-xs text-zinc-500 mt-2">
-              <span>抽取</span>
-              <span>{{ progress.extract.current }}/{{ progress.extract.total }}</span>
-            </div>
-            <div class="h-2 bg-zinc-200 rounded">
-              <div
-                class="h-2 bg-amber-500 rounded transition-all"
-                :style="{ width: `${extractPercent}%` }"
-              ></div>
-            </div>
-          </div>
-
-          <!-- 操作按钮组 -->
           <button
-            @click="analyzeRequirements"
-            :disabled="isLoading || !inputText"
+            @click="startExtraction"
+            :disabled="!canExtract"
             class="w-full py-2.5 px-4 bg-black hover:bg-zinc-800 text-white font-medium rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
           >
-            <Loader2 v-if="isLoading" class="w-4 h-4 animate-spin" />
-            <FileText v-else class="w-4 h-4" />
-            <span>{{ isLoading ? '分析中...' : '分析 & 抽取' }}</span>
+            <Loader2 v-if="isExtracting" class="w-4 h-4 animate-spin" />
+            <Play v-else class="w-4 h-4" />
+            <span>{{ isExtracting ? '抽取中...' : '执行 L1-L3 抽取' }}</span>
           </button>
 
           <button
             @click="extractLowLevelRequirements"
-            :disabled="!result || isExtractingLowLevel"
+            :disabled="allHighLevelRequirements.length === 0 || isExtractingLowLevel"
             class="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
           >
             <Loader2 v-if="isExtractingLowLevel" class="w-4 h-4 animate-spin" />
@@ -1417,25 +1132,14 @@ watch(
             <span class="text-xs opacity-70">(预留)</span>
           </button>
 
-          <!-- 测试用：加载示例底层需求 -->
           <button
             @click="loadMockLowLevelRequirements"
-            :disabled="!result"
+            :disabled="allHighLevelRequirements.length === 0"
             class="w-full py-2 px-4 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 font-medium rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-zinc-300 border-dashed text-sm"
           >
             <Layers class="w-4 h-4" />
             <span>加载示例底层需求</span>
             <span class="text-xs text-zinc-500">(测试用)</span>
-          </button>
-
-          <!-- 完整模拟数据（离线测试） -->
-          <button
-            @click="loadFullMockData"
-            class="w-full py-2.5 px-4 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white font-medium rounded-lg flex items-center justify-center gap-2 transition-all shadow-sm text-sm"
-          >
-            <Network class="w-4 h-4" />
-            <span>一键加载完整模拟数据</span>
-            <span class="text-xs opacity-80">(离线验证)</span>
           </button>
 
           <!-- 一键分析按钮 -->
@@ -1454,7 +1158,6 @@ watch(
             v-if="isAnalyzing || analysisStep === 4"
             class="p-4 bg-gradient-to-r from-blue-50 via-amber-50 to-emerald-50 rounded-lg border border-zinc-200 space-y-3"
           >
-            <!-- 进度条 -->
             <div class="h-3 bg-zinc-200 rounded-full overflow-hidden">
               <div
                 class="h-full rounded-full transition-all duration-500 ease-out"
@@ -1467,7 +1170,6 @@ watch(
               ></div>
             </div>
             
-            <!-- 步骤指示 -->
             <div class="flex justify-between text-xs">
               <div class="flex items-center gap-1.5" :class="analysisStep >= 1 ? 'text-blue-600 font-medium' : 'text-zinc-400'">
                 <div class="w-5 h-5 rounded-full flex items-center justify-center text-[10px]" 
@@ -1495,7 +1197,6 @@ watch(
               </div>
             </div>
             
-            <!-- 当前状态文本 -->
             <div class="text-center text-sm font-medium" :class="{
               'text-blue-600': analysisStep === 1,
               'text-amber-600': analysisStep === 2,
@@ -1513,14 +1214,37 @@ watch(
             分析错误: {{ analysisError }}
           </div>
 
+          <!-- 抽取结果 -->
+          <div v-if="extractionResult" class="p-3 bg-emerald-50 rounded-lg border border-emerald-200 text-xs">
+            <div class="font-medium text-emerald-900 mb-2">本次抽取结果</div>
+            <div class="grid grid-cols-2 gap-2 text-emerald-700">
+              <div>anchors: {{ extractionResult.total_anchors }}</div>
+              <div>bundles: {{ extractionResult.bundles_processed }}</div>
+              <div>inserted: {{ extractionResult.total_inserted }}</div>
+              <div>duplicates: {{ extractionResult.total_duplicates }}</div>
+            </div>
+          </div>
+
           <!-- 统计信息 -->
           <div
-            v-if="result"
+            v-if="reqStats || allHighLevelRequirements.length > 0"
             class="p-3 bg-zinc-50 rounded-lg border border-zinc-200 text-xs text-zinc-600 space-y-1"
           >
             <div class="flex justify-between">
               <span>顶层需求</span>
               <span class="font-semibold">{{ allHighLevelRequirements.length }}</span>
+            </div>
+            <div v-if="reqStats" class="flex justify-between text-zinc-400">
+              <span class="ml-2">L1</span>
+              <span>{{ reqStats.by_level?.L1 || 0 }}</span>
+            </div>
+            <div v-if="reqStats" class="flex justify-between text-zinc-400">
+              <span class="ml-2">L2</span>
+              <span>{{ reqStats.by_level?.L2 || 0 }}</span>
+            </div>
+            <div v-if="reqStats" class="flex justify-between text-zinc-400">
+              <span class="ml-2">L3</span>
+              <span>{{ reqStats.by_level?.L3 || 0 }}</span>
             </div>
             <div class="flex justify-between">
               <span>底层需求</span>
@@ -1589,18 +1313,19 @@ watch(
 
         <!-- 看板视图 -->
         <div v-show="activeTab === 'board'" class="flex-1 overflow-x-auto bg-zinc-50 p-6">
-          <div v-if="!result && !isLoading" class="h-full flex flex-col items-center justify-center text-zinc-400">
+          <div v-if="allHighLevelRequirements.length === 0 && !isLoading" class="h-full flex flex-col items-center justify-center text-zinc-400">
             <FileText class="w-12 h-12 mb-3 opacity-20" />
             <p>需求工件将显示在此处</p>
+            <p class="text-sm mt-2">请先输入 Session ID 并点击「加载已有需求」或「执行 L1-L3 抽取」</p>
           </div>
 
           <div v-if="isLoading" class="h-full flex flex-col items-center justify-center text-zinc-500">
             <Loader2 class="w-10 h-10 animate-spin text-black mb-4" />
-            <p>正在清洗文本、润色语义并抽取需求...</p>
+            <p>正在加载需求数据...</p>
           </div>
 
           <!-- 看板 -->
-          <div v-if="result" class="grid grid-cols-4 gap-4 h-full min-w-[1200px]">
+          <div v-if="allHighLevelRequirements.length > 0" class="grid grid-cols-4 gap-4 h-full min-w-[1200px]">
             <div
               v-for="column in boardColumns"
               :key="column.id"
@@ -1626,10 +1351,10 @@ watch(
                   <template v-if="column.items.length > 0">
                     <div
                       v-for="card in column.items"
-                      :key="card.id"
+                      :key="card.id || card.req_id"
                       class="p-3 rounded-lg border border-zinc-200 bg-white shadow-sm hover:shadow-md transition-all"
                     >
-                      <p class="text-zinc-900 font-medium text-sm mb-2">{{ card.statement }}</p>
+                      <p class="text-zinc-900 font-medium text-sm mb-2">{{ card.statement || card.text }}</p>
                       <div v-if="card.rationale" class="text-xs text-zinc-500 mb-2">
                         <span class="font-semibold">Rationale:</span> {{ card.rationale }}
                       </div>
@@ -1637,12 +1362,12 @@ watch(
                         class="flex items-center justify-between mt-2 pt-2 border-t border-zinc-100"
                       >
                         <div
-                          v-if="card.evidence"
+                          v-if="card.evidence || card.anchor_span_id"
                           class="flex items-center gap-1 text-xs text-zinc-400 max-w-[70%] truncate"
-                          :title="card.evidence"
+                          :title="card.evidence || card.anchor_span_id"
                         >
                           <Quote class="w-3 h-3 shrink-0" />
-                          <span class="truncate">"{{ card.evidence }}"</span>
+                          <span class="truncate">"{{ card.evidence || card.anchor_span_id }}"</span>
                         </div>
                         <span
                           v-if="card.confidence !== undefined"
@@ -1678,7 +1403,7 @@ watch(
         <div v-show="activeTab === 'conflict'" class="flex-1 overflow-y-auto bg-zinc-50 p-6">
           <div v-if="!conflictResults.length && !isDetectingConflict" class="h-full flex flex-col items-center justify-center text-zinc-400">
             <AlertTriangle class="w-12 h-12 mb-3 opacity-20" />
-            <p>完成追溯分析后，点击"冲突检测"检查需求冲突</p>
+            <p>完成追溯分析后，点击"一键分析"检查需求冲突</p>
           </div>
 
           <div v-if="isDetectingConflict" class="h-full flex flex-col items-center justify-center text-zinc-500">
@@ -1751,7 +1476,7 @@ watch(
         <div v-show="activeTab === 'classification'" class="flex-1 overflow-y-auto bg-zinc-50 p-6">
           <div v-if="!classificationResult && !isClassifying" class="h-full flex flex-col items-center justify-center text-zinc-400">
             <Tags class="w-12 h-12 mb-3 opacity-20" />
-            <p>完成冲突检测后，点击"需求分类"进行功能/非功能分类</p>
+            <p>完成追溯分析后，点击"一键分析"进行功能/非功能分类</p>
           </div>
 
           <div v-if="isClassifying" class="h-full flex flex-col items-center justify-center text-zinc-500">
@@ -1829,4 +1554,3 @@ watch(
   border-radius: 20px;
 }
 </style>
-

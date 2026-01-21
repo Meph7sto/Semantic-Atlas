@@ -1,8 +1,6 @@
 import os
 import sys
-import os
-import sys
-from flask import Flask, jsonify
+from flask import Flask
 from flask_cors import CORS
 
 # Ensure project root is on sys.path so `python backend_business/app.py` works reliably
