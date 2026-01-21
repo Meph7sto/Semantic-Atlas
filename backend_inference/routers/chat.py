@@ -1,0 +1,203 @@
+import logging
+
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
+from core.model_container import model_engine
+from schemas.chat import ChatRequest
+from services.chat_service import ChatService
+
+router = APIRouter(prefix="/chat", tags=["General Chat"])
+
+chat_service = ChatService(model_engine)
+
+logger = logging.getLogger(__name__)
+
+
+class ChatMessage(BaseModel):
+    role: str = Field(..., description="Role: system, user, or assistant")
+    content: Optional[str] = Field(default=None, description="Message content")
+    tool_call_id: Optional[str] = Field(default=None, description="Tool call ID for tool role")
+    tool_calls: Optional[List[Dict[str, Any]]] = Field(default=None, description="Tool calls from assistant")
+
+
+class ToolFunction(BaseModel):
+    name: str = Field(..., description="Function name")
+    description: Optional[str] = Field(default=None, description="Function description")
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="Function parameters schema")
+
+
+class Tool(BaseModel):
+    type: str = Field(default="function", description="Tool type, always 'function'")
+    function: ToolFunction = Field(..., description="Function definition")
+
+
+class ChatCompletionRequest(BaseModel):
+    messages: List[ChatMessage] = Field(..., description="List of messages")
+    model: str = Field(default="deepseek-chat", description="Model name")
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=2000, ge=1, le=8000)
+
+
+class ChatCompletionWithToolsRequest(BaseModel):
+    """带工具定义的 chat completions 请求"""
+    messages: List[ChatMessage] = Field(..., description="List of messages")
+    tools: List[Dict[str, Any]] = Field(..., description="List of tool definitions")
+    model: str = Field(default="deepseek-chat", description="Model name")
+    temperature: Optional[float] = Field(default=0.3, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=4096, ge=1, le=8000)
+    tool_choice: Optional[str] = Field(default=None, description="Tool choice: none, auto, required")
+
+
+class ToolCallFunction(BaseModel):
+    name: str
+    arguments: str
+
+
+class ToolCallItem(BaseModel):
+    id: str
+    type: str = "function"
+    function: ToolCallFunction
+
+
+class ChatCompletionResponse(BaseModel):
+    content: str = Field(..., description="Generated content")
+    usage: Optional[Dict[str, Any]] = Field(default=None, description="Token usage stats")
+
+
+class ChatCompletionWithToolsResponse(BaseModel):
+    """带工具调用的 chat completions 响应"""
+    content: Optional[str] = Field(default=None, description="Generated content (if any)")
+    tool_calls: Optional[List[Dict[str, Any]]] = Field(default=None, description="Tool calls from model")
+    reasoning_content: Optional[str] = Field(default=None, description="Reasoning content (for reasoner model)")
+    finish_reason: Optional[str] = Field(default=None, description="Finish reason: stop, tool_calls, length")
+
+
+@router.post("/stream")
+async def stream_chat(request: ChatRequest):
+    if not request.prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt is required.")
+
+    try:
+        return StreamingResponse(
+            chat_service.ask_stream(
+                prompt=request.prompt,
+                system_prompt=request.system_prompt,
+                max_new_tokens=request.max_new_tokens,
+                use_thinking_mode=request.use_thinking_mode,
+            ),
+            media_type="application/x-ndjson",
+        )
+    except RuntimeError:
+        logger.exception("Chat stream failed with RuntimeError.")
+        raise HTTPException(status_code=503, detail="Model service not initialized or unavailable.")
+    except Exception as e:
+        logger.exception("Chat stream failed with unexpected exception.")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/completions", response_model=ChatCompletionResponse)
+async def chat_completions(request: ChatCompletionRequest):
+    """
+    标准 chat completions 接口
+    用于需求抽取等任务
+    """
+    if not request.messages:
+        raise HTTPException(status_code=400, detail="Messages list is required.")
+
+    try:
+        # 构建 system prompt 和 user prompt
+        system_prompt = ""
+        user_prompt = ""
+        
+        for msg in request.messages:
+            if msg.role == "system":
+                system_prompt += (msg.content or "") + "\n"
+            elif msg.role == "user":
+                user_prompt += (msg.content or "") + "\n"
+            elif msg.role == "assistant":
+                # 可以支持多轮对话，这里简化处理
+                pass
+
+        system_prompt = system_prompt.strip()
+        user_prompt = user_prompt.strip()
+
+        if not user_prompt:
+            raise HTTPException(status_code=400, detail="User message is required.")
+
+        # 调用模型生成
+        result = model_engine.generate(
+            prompt=user_prompt,
+            system_prompt=system_prompt if system_prompt else None,
+            max_new_tokens=request.max_tokens,
+            temperature=request.temperature,
+        )
+
+        # 返回结果
+        return ChatCompletionResponse(
+            content=result.get("output", ""),
+            usage=result.get("usage"),
+        )
+
+    except RuntimeError:
+        logger.exception("Chat completion failed with RuntimeError.")
+        raise HTTPException(status_code=503, detail="Model service not initialized or unavailable.")
+    except Exception as e:
+        logger.exception("Chat completion failed with unexpected exception.")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/completions/tools", response_model=ChatCompletionWithToolsResponse)
+async def chat_completions_with_tools(request: ChatCompletionWithToolsRequest):
+    """
+    带工具定义的 chat completions 接口
+    支持 DeepSeek API tool call 格式
+    参考: https://api-docs.deepseek.com/zh-cn/guides/tool_calls
+    """
+    if not request.messages:
+        raise HTTPException(status_code=400, detail="Messages list is required.")
+    
+    if not request.tools:
+        raise HTTPException(status_code=400, detail="Tools list is required.")
+
+    try:
+        # 将 Pydantic 模型转换为字典列表
+        messages = []
+        for msg in request.messages:
+            msg_dict = {"role": msg.role}
+            if msg.content is not None:
+                msg_dict["content"] = msg.content
+            if msg.tool_call_id is not None:
+                msg_dict["tool_call_id"] = msg.tool_call_id
+            if msg.tool_calls is not None:
+                msg_dict["tool_calls"] = msg.tool_calls
+            messages.append(msg_dict)
+
+        # 调用带工具的模型生成
+        result = model_engine.generate_with_tools(
+            messages=messages,
+            tools=request.tools,
+            max_new_tokens=request.max_tokens,
+            tool_choice=request.tool_choice,
+            model=request.model,
+            temperature=request.temperature,
+        )
+
+        # 返回结果
+        return ChatCompletionWithToolsResponse(
+            content=result.content,
+            tool_calls=result.tool_calls,
+            reasoning_content=result.reasoning_content,
+            finish_reason=result.finish_reason,
+        )
+
+    except NotImplementedError as e:
+        logger.exception("Tool calls not supported for current provider.")
+        raise HTTPException(status_code=501, detail=str(e))
+    except RuntimeError:
+        logger.exception("Chat completion with tools failed with RuntimeError.")
+        raise HTTPException(status_code=503, detail="Model service not initialized or unavailable.")
+    except Exception as e:
+        logger.exception("Chat completion with tools failed with unexpected exception.")
+        raise HTTPException(status_code=500, detail=str(e))

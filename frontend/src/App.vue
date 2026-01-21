@@ -1,9 +1,22 @@
 <script setup>
 import { ref } from 'vue'
 import { RouterView, RouterLink } from 'vue-router'
-import { LayoutDashboard, GitCompare, FileSearch, PanelLeftClose, PanelLeftOpen, FileText, Network } from 'lucide-vue-next'
+import {
+  LayoutDashboard,
+  GitCompare,
+  FileSearch,
+  PanelLeftClose,
+  PanelLeftOpen,
+  FileText,
+  MessageSquare,
+  Folder,
+  ChevronDown,
+  ChevronRight,
+  Network
+} from 'lucide-vue-next'
 
 const isSidebarOpen = ref(true)
+const isTopGroupOpen = ref(true)
 </script>
 
 <template>
@@ -36,6 +49,49 @@ const isSidebarOpen = ref(true)
       </div>
       
       <nav class="flex-1 px-3 space-y-1 overflow-y-auto">
+        <!-- Collapsible group (top) -->
+        <div class="space-y-1">
+          <button
+            type="button"
+            @click="isTopGroupOpen = !isTopGroupOpen"
+            class="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+            :aria-expanded="isTopGroupOpen"
+          >
+            <span class="flex items-center gap-3 min-w-0">
+              <Folder class="w-4 h-4 flex-shrink-0" />
+              <span class="whitespace-nowrap truncate">需求分析</span>
+            </span>
+            <ChevronDown v-if="isTopGroupOpen" class="w-4 h-4 flex-shrink-0" />
+            <ChevronRight v-else class="w-4 h-4 flex-shrink-0" />
+          </button>
+
+          <div v-show="isTopGroupOpen" class="pl-4 ml-3 border-l border-zinc-200 space-y-1">
+            <RouterLink
+              to="/transcript-ingestion"
+              active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
+              class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+            >
+              <span class="whitespace-nowrap">Phase 1: 录音解析</span>
+            </RouterLink>
+
+            <RouterLink
+              to="/context-builder"
+              active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
+              class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+            >
+              <span class="whitespace-nowrap">Phase 2: 上下文构建</span>
+            </RouterLink>
+
+            <RouterLink
+              to="/requirements-extraction"
+              active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
+              class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+            >
+              <span class="whitespace-nowrap">Phase 3: 需求抽取</span>
+            </RouterLink>
+          </div>
+        </div>
+
         <RouterLink 
           to="/conflict" 
           active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
@@ -81,6 +137,14 @@ const isSidebarOpen = ref(true)
           <span class="whitespace-nowrap">Acquisition + Trace</span>
         </RouterLink>
 
+        <RouterLink 
+          to="/chat" 
+          active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
+          class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+        >
+          <MessageSquare class="w-4 h-4" />
+          <span class="whitespace-nowrap">General Q&amp;A</span>
+        </RouterLink>
       </nav>
 
 

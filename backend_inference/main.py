@@ -11,7 +11,7 @@ if current_dir not in sys.path:
 
 from core.model_container import classification_engine, model_engine
 from core.config import settings
-from routers import conflict, traceability, classification, requirements_acquisition
+from routers import conflict, traceability, classification, requirements_acquisition, chat
 
 # 未来可以在此处轻松导入其他路由模块
 # from routers import classification, traceability
@@ -85,6 +85,7 @@ app.include_router(conflict.router)
 app.include_router(traceability.router)
 app.include_router(classification.router)
 app.include_router(requirements_acquisition.router)
+app.include_router(chat.router)
 
 
 

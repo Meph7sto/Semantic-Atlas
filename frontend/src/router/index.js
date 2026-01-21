@@ -4,6 +4,10 @@ import ConflictDetection from '../views/ConflictDetection.vue'
 import Traceability from '../views/Traceability.vue'
 import RequirementsAcquisition from '../views/RequirementsAcquisition.vue'
 import AcquisitionTraceability from '../views/AcquisitionTraceability.vue'
+import GeneralChat from '../views/GeneralChat.vue'
+import TranscriptIngestion from '../views/TranscriptIngestion.vue'
+import ContextBuilder from '../views/ContextBuilder.vue'
+import RequirementsExtraction from '../views/RequirementsExtraction.vue'
 
 const router = createRouter({
     history: createWebHistory(import.meta.env.BASE_URL),
@@ -17,6 +21,21 @@ const router = createRouter({
             path: '/conflict',
             name: 'conflict',
             component: ConflictDetection
+        },
+        {
+            path: '/transcript-ingestion',
+            name: 'transcript-ingestion',
+            component: TranscriptIngestion
+        },
+        {
+            path: '/context-builder',
+            name: 'context-builder',
+            component: ContextBuilder
+        },
+        {
+            path: '/requirements-extraction',
+            name: 'requirements-extraction',
+            component: RequirementsExtraction
         },
         {
             path: '/traceability',
@@ -37,6 +56,11 @@ const router = createRouter({
             path: '/acquisition-trace',
             name: 'acquisition-trace',
             component: AcquisitionTraceability
+        },
+        {
+            path: '/chat',
+            name: 'chat',
+            component: GeneralChat
         }
     ]
 })

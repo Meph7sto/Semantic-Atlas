@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from core.model_container import model_engine
 from schemas.conflict_report import ConflictCheckRequest, ConflictCheckResponse
 from services.conflict_service import ConflictService
@@ -35,3 +36,18 @@ async def check_conflict(request: ConflictCheckRequest):
         logger.exception("Conflict check failed with unexpected exception.")
         # 捕获其他异常，抛出 500 错误
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/stream_check")
+async def stream_check_conflict(request: ConflictCheckRequest):
+    """
+    流式冲突检测接口
+    """
+    return StreamingResponse(
+        conflict_service.check_conflict_stream(
+            request.requirement_a, 
+            request.requirement_b,
+            use_thinking_mode=request.use_thinking_mode
+        ),
+        media_type="application/x-ndjson"
+    )

@@ -17,6 +17,7 @@ class DBService:
     """
     轻量级 PostgreSQL 存储：
     - 保存追溯分析（单对、批量）的输入与输出 JSON
+    - 保存解析后的 transcript spans
     - 提供列表/详情/统计
     """
 
@@ -44,6 +45,212 @@ class DBService:
                     """
                 )
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_trace_created_at ON trace_analysis(created_at)")
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS spans (
+                        span_id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        start_ms INTEGER,
+                        end_ms INTEGER,
+                        speaker TEXT,
+                        text TEXT NOT NULL,
+                        asr_confidence REAL,
+                        meta_json TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute(
+                    "ALTER TABLE spans ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+                )
+                cur.execute(
+                    "ALTER TABLE spans ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_spans_session_id ON spans(session_id)")
+
+                # ========================
+                # Phase 2 Tables
+                # ========================
+
+                # context_runs: 记录一次 Phase2 运行
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS context_runs (
+                        context_run_id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        options_snapshot JSONB,
+                        status TEXT NOT NULL DEFAULT 'RUNNING',
+                        stats JSONB,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_context_runs_session_id ON context_runs(session_id)")
+
+                # span_links: 稀疏关联矩阵（边表）
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS span_links (
+                        id SERIAL PRIMARY KEY,
+                        context_run_id TEXT NOT NULL REFERENCES context_runs(context_run_id) ON DELETE CASCADE,
+                        source_span_id TEXT NOT NULL REFERENCES spans(span_id) ON DELETE CASCADE,
+                        target_span_id TEXT NOT NULL REFERENCES spans(span_id) ON DELETE CASCADE,
+                        relation_type TEXT NOT NULL CHECK (relation_type IN ('continuation', 'elaboration', 'dependency', 'same_topic', 'conflict')),
+                        strength REAL NOT NULL CHECK (strength >= 0 AND strength <= 1),
+                        note TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        UNIQUE(context_run_id, source_span_id, target_span_id, relation_type)
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_span_links_context_run ON span_links(context_run_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_span_links_source ON span_links(source_span_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_span_links_target ON span_links(target_span_id)")
+
+                # bundles: 上下文包
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS bundles (
+                        bundle_id TEXT PRIMARY KEY,
+                        context_run_id TEXT NOT NULL REFERENCES context_runs(context_run_id) ON DELETE CASCADE,
+                        session_id TEXT NOT NULL,
+                        order_index INTEGER NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'READY',
+                        context_summary TEXT,
+                        meta JSONB,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute("ALTER TABLE bundles ADD COLUMN IF NOT EXISTS context_run_id TEXT")
+                cur.execute("ALTER TABLE bundles ADD COLUMN IF NOT EXISTS session_id TEXT")
+                cur.execute("ALTER TABLE bundles ADD COLUMN IF NOT EXISTS order_index INTEGER")
+                cur.execute("ALTER TABLE bundles ADD COLUMN IF NOT EXISTS status TEXT")
+                cur.execute("ALTER TABLE bundles ADD COLUMN IF NOT EXISTS context_summary TEXT")
+                cur.execute("ALTER TABLE bundles ADD COLUMN IF NOT EXISTS meta JSONB")
+                cur.execute(
+                    "ALTER TABLE bundles ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+                )
+                cur.execute(
+                    """
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_name = 'bundles'
+                              AND column_name = 'bundle_type'
+                              AND is_nullable = 'NO'
+                        ) THEN
+                            ALTER TABLE bundles
+                                ALTER COLUMN bundle_type DROP NOT NULL;
+                        END IF;
+                    END $$;
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_bundles_context_run ON bundles(context_run_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_bundles_session_id ON bundles(session_id)")
+
+                # bundle_items: bundle 内 span 映射
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS bundle_items (
+                        id SERIAL PRIMARY KEY,
+                        bundle_id TEXT NOT NULL REFERENCES bundles(bundle_id) ON DELETE CASCADE,
+                        span_id TEXT NOT NULL REFERENCES spans(span_id) ON DELETE CASCADE,
+                        span_ref TEXT NOT NULL,
+                        order_index INTEGER NOT NULL,
+                        UNIQUE(bundle_id, span_ref),
+                        UNIQUE(bundle_id, span_id)
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_bundle_items_bundle ON bundle_items(bundle_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_bundle_items_span ON bundle_items(span_id)")
+
+                # 兼容旧表结构：补齐 spans 外键
+                cur.execute(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_constraint c
+                            JOIN pg_attribute a
+                                ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+                            WHERE c.conrelid = 'span_links'::regclass
+                              AND c.contype = 'f'
+                              AND a.attname = 'source_span_id'
+                        ) THEN
+                            ALTER TABLE span_links
+                                ADD CONSTRAINT fk_span_links_source_span
+                                FOREIGN KEY (source_span_id) REFERENCES spans(span_id) ON DELETE CASCADE;
+                        END IF;
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_constraint c
+                            JOIN pg_attribute a
+                                ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+                            WHERE c.conrelid = 'span_links'::regclass
+                              AND c.contype = 'f'
+                              AND a.attname = 'target_span_id'
+                        ) THEN
+                            ALTER TABLE span_links
+                                ADD CONSTRAINT fk_span_links_target_span
+                                FOREIGN KEY (target_span_id) REFERENCES spans(span_id) ON DELETE CASCADE;
+                        END IF;
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_constraint c
+                            JOIN pg_attribute a
+                                ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+                            WHERE c.conrelid = 'bundle_items'::regclass
+                              AND c.contype = 'f'
+                              AND a.attname = 'span_id'
+                        ) THEN
+                            ALTER TABLE bundle_items
+                                ADD CONSTRAINT fk_bundle_items_span
+                                FOREIGN KEY (span_id) REFERENCES spans(span_id) ON DELETE CASCADE;
+                        END IF;
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_constraint c
+                            JOIN pg_attribute a
+                                ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+                            WHERE c.conrelid = 'bundles'::regclass
+                              AND c.contype = 'f'
+                              AND a.attname = 'context_run_id'
+                        ) THEN
+                            ALTER TABLE bundles
+                                ADD CONSTRAINT fk_bundles_context_run
+                                FOREIGN KEY (context_run_id) REFERENCES context_runs(context_run_id) ON DELETE CASCADE;
+                        END IF;
+                    END $$;
+                    """
+                )
+
+                # ========================
+                # Phase 3: Requirements L123 Table
+                # ========================
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS requirements_l123 (
+                        req_id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        level TEXT NOT NULL CHECK (level IN ('L1', 'L2', 'L3')),
+                        text TEXT NOT NULL CHECK (char_length(text) >= 10 AND char_length(text) <= 500),
+                        fingerprint TEXT NOT NULL UNIQUE,
+                        anchor_span_id TEXT REFERENCES spans(span_id) ON DELETE CASCADE,
+                        r INTEGER,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_requirements_l123_session ON requirements_l123(session_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_requirements_l123_level ON requirements_l123(level)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_requirements_l123_fingerprint ON requirements_l123(fingerprint)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_requirements_l123_anchor_span ON requirements_l123(anchor_span_id)")
 
     def save_relation(
         self,
@@ -185,6 +392,96 @@ class DBService:
         return {
             "total_requirements": total,
             "analysis_type_stats": {r["analysis_type"]: r["c"] for r in type_rows},
+        }
+
+    def upsert_spans(self, spans: List[Dict[str, Any]]) -> Dict[str, Any]:
+        if not spans:
+            return {"upserted_count": 0, "inserted": 0, "updated": 0, "conflicts": []}
+
+        span_ids = [span["span_id"] for span in spans]
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT span_id, text FROM spans WHERE span_id = ANY(%s)", (span_ids,))
+                existing_rows = cur.fetchall()
+                existing_text = {row[0]: row[1] for row in existing_rows}
+
+                to_insert: List[Dict[str, Any]] = []
+                to_update: List[Dict[str, Any]] = []
+                conflicts: List[Dict[str, Any]] = []
+
+                for span in spans:
+                    current_text = existing_text.get(span["span_id"])
+                    if current_text is None:
+                        to_insert.append(span)
+                    elif current_text == span["text"]:
+                        to_update.append(span)
+                    else:
+                        conflicts.append(
+                            {
+                                "span_id": span["span_id"],
+                                "existing_text": current_text,
+                                "incoming_text": span["text"],
+                            }
+                        )
+
+                if to_insert:
+                    cur.executemany(
+                        """
+                        INSERT INTO spans (
+                            span_id, session_id, start_ms, end_ms, speaker, text,
+                            asr_confidence, meta_json, created_at, updated_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                        """,
+                        [
+                            (
+                                span["span_id"],
+                                span["session_id"],
+                                span["start_ms"],
+                                span["end_ms"],
+                                span["speaker"],
+                                span["text"],
+                                span.get("asr_confidence"),
+                                span.get("meta_json"),
+                            )
+                            for span in to_insert
+                        ],
+                    )
+
+                if to_update:
+                    cur.executemany(
+                        """
+                        UPDATE spans
+                        SET session_id = %s,
+                            start_ms = %s,
+                            end_ms = %s,
+                            speaker = %s,
+                            text = %s,
+                            asr_confidence = %s,
+                            meta_json = %s,
+                            updated_at = NOW()
+                        WHERE span_id = %s
+                        """,
+                        [
+                            (
+                                span["session_id"],
+                                span["start_ms"],
+                                span["end_ms"],
+                                span["speaker"],
+                                span["text"],
+                                span.get("asr_confidence"),
+                                span.get("meta_json"),
+                                span["span_id"],
+                            )
+                            for span in to_update
+                        ],
+                    )
+
+        return {
+            "upserted_count": len(to_insert) + len(to_update),
+            "inserted": len(to_insert),
+            "updated": len(to_update),
+            "conflicts": conflicts,
         }
 
 
