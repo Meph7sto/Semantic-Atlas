@@ -53,11 +53,6 @@ class Settings:
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
 
-    # DOORS-style MySQL storage (optional)
-    # 例：mysql+pymysql://user:password@127.0.0.1:3306/semantic_atlas?charset=utf8mb4
-    DOORS_DB_URL = os.environ.get("DOORS_DB_URL", "")
-    DOORS_PROJECT_NAME = os.environ.get("DOORS_PROJECT_NAME", "default")
-
     # CORS
     CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*")  # 生产建议配置为具体域名
 
