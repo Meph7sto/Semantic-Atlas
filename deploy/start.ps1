@@ -338,7 +338,7 @@ if ($doBusiness) {
         Write-Host "[start] Starting PostgreSQL via docker compose..." -ForegroundColor Cyan
         $composeArgs = @("compose", "-f", $composeFile, "up", "-d")
         if ($forceRecreate) { $composeArgs += "--force-recreate" }
-        $composeArgs += "postgres"
+        $composeArgs += "postgres", "adminer"
         Start-Process -FilePath $dockerCmd.Source -ArgumentList $composeArgs -NoNewWindow -Wait
         $containerId = & $dockerCmd.Source ps -q -f "name=semantic-atlas-postgres"
         if ($containerId) {
@@ -354,7 +354,7 @@ if ($doBusiness) {
         Write-Host "[start] Starting PostgreSQL via docker-compose..." -ForegroundColor Cyan
         $composeArgs = @("-f", $composeFile, "up", "-d")
         if ($forceRecreate) { $composeArgs += "--force-recreate" }
-        $composeArgs += "postgres"
+        $composeArgs += "postgres", "adminer"
         Start-Process -FilePath $dockerComposeCmd.Source -ArgumentList $composeArgs -NoNewWindow -Wait
         if ($dockerCmd) {
           $containerId = & $dockerCmd.Source ps -q -f "name=semantic-atlas-postgres"
