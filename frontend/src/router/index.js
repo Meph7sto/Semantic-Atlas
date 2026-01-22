@@ -9,6 +9,8 @@ import TranscriptIngestion from '../views/TranscriptIngestion.vue'
 import ContextBuilder from '../views/ContextBuilder.vue'
 import RequirementsExtraction from '../views/RequirementsExtraction.vue'
 import L4Testing from '../views/L4Testing.vue'
+import RequirementsManage from '../views/RequirementsManage.vue'
+
 
 const router = createRouter({
     history: createWebHistory(import.meta.env.BASE_URL),
@@ -39,9 +41,9 @@ const router = createRouter({
             component: RequirementsExtraction
         },
         {
-            path: '/l4-testing',
-            name: 'l4-testing',
-            component: L4Testing
+            path: '/requirements-manage',
+            name: 'requirements-manage',
+            component: RequirementsManage
         },
         {
             path: '/traceability',
