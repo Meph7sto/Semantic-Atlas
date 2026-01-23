@@ -11,10 +11,17 @@ if current_dir not in sys.path:
 
 from core.model_container import classification_engine, model_engine
 from core.config import settings
-from routers import conflict, traceability, classification, requirements_acquisition, chat
+from routers import (
+    conflict,
+    traceability,
+    classification,
+    requirements_acquisition,
+    chat,
+)
+from routers import kb, l4_generation, l4_validation
 
-# 未来可以在此处轻松导入其他路由模块
-# from routers import classification, traceability
+# KB Service 导入
+from services.kb_service import get_kb_service
 
 
 @asynccontextmanager
@@ -57,6 +64,17 @@ async def lifespan(app: FastAPI):
             classification_engine.load()
     except Exception as e:
         print(f"CRITICAL ERROR: Failed to load classification model files: {e}")
+
+    # 加载 KB 索引
+    print("Initializing Knowledge Base indexes...")
+    try:
+        kb_service = get_kb_service()
+        kb_version = kb_service.ensure_loaded()
+        print(f"KB indexes loaded successfully, version: {kb_version}")
+    except Exception as e:
+        print(f"WARNING: Failed to load KB indexes: {e}")
+        # KB 加载失败不阻止启动，L4 生成时会重试
+
     yield
     # 如果需要，可以在此处添加关闭时的逻辑 (Shutdown logic)
 
@@ -87,6 +105,12 @@ app.include_router(classification.router)
 app.include_router(requirements_acquisition.router)
 app.include_router(chat.router)
 
+# L4 需求生成相关路由
+app.include_router(kb.router)
+app.include_router(l4_generation.router)
+app.include_router(l4_validation.router)
+app.include_router(l4_generation.root_router)
+app.include_router(l4_validation.root_router)
 
 
 @app.get("/health")

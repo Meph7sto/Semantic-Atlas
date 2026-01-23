@@ -8,6 +8,7 @@ import GeneralChat from '../views/GeneralChat.vue'
 import TranscriptIngestion from '../views/TranscriptIngestion.vue'
 import ContextBuilder from '../views/ContextBuilder.vue'
 import RequirementsExtraction from '../views/RequirementsExtraction.vue'
+import L4Testing from '../views/L4Testing.vue'
 
 const router = createRouter({
     history: createWebHistory(import.meta.env.BASE_URL),
@@ -36,6 +37,11 @@ const router = createRouter({
             path: '/requirements-extraction',
             name: 'requirements-extraction',
             component: RequirementsExtraction
+        },
+        {
+            path: '/l4-testing',
+            name: 'l4-testing',
+            component: L4Testing
         },
         {
             path: '/traceability',

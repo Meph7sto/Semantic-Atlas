@@ -31,7 +31,9 @@ class DeepSeekEngine:
         self.chutes_api_token = chutes_api_token or settings.CHUTES_API_TOKEN
         self.deepseek_api_url = deepseek_api_url or settings.DEEPSEEK_API_URL
         self.deepseek_api_key = deepseek_api_key or settings.DEEPSEEK_API_KEY
-        self.deepseek_model = deepseek_model or getattr(settings, "DEEPSEEK_MODEL", "deepseek-chat")
+        self.deepseek_model = deepseek_model or getattr(
+            settings, "DEEPSEEK_MODEL", "deepseek-chat"
+        )
         # 如果 CUDA 可用，自动配置 device_map，否则为 None
         self.device_map = "auto" if torch.cuda.is_available() else None
         self._local_engine = None
@@ -45,7 +47,9 @@ class DeepSeekEngine:
     def _get_remote_client(self):
         if self.provider == "chutes":
             if not isinstance(self._remote_client, ChutesClient):
-                self._remote_client = ChutesClient(self.chutes_api_url, self.chutes_api_token)
+                self._remote_client = ChutesClient(
+                    self.chutes_api_url, self.chutes_api_token
+                )
             return self._remote_client
         if self.provider == "deepseek":
             if not isinstance(self._remote_client, DeepSeekClient):
@@ -77,7 +81,13 @@ class DeepSeekEngine:
         self.tokenizer = local_engine.tokenizer
         self.device_map = local_engine.device_map
 
-    def generate(self, prompt: str, system_prompt: str, max_new_tokens: int = 128) -> str:
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str,
+        max_new_tokens: int = 128,
+        model: Optional[str] = None,
+    ) -> str:
         """
         根据给定的 prompt 和 system_prompt 生成响应
         """
@@ -86,30 +96,40 @@ class DeepSeekEngine:
             return client.generate(prompt, system_prompt, max_new_tokens)
         if self.provider == "deepseek":
             client = self._get_remote_client()
-            return client.generate(prompt, system_prompt, max_new_tokens)
+            return client.generate(
+                prompt, system_prompt, max_new_tokens, model_override=model
+            )
 
         local_engine = self._get_local_engine()
         return local_engine.generate(prompt, system_prompt, max_new_tokens)
 
-    def generate_stream(self, prompt: str, system_prompt: str, max_new_tokens: int = 128, model: Optional[str] = None):
+    def generate_stream(
+        self,
+        prompt: str,
+        system_prompt: str,
+        max_new_tokens: int = 128,
+        model: Optional[str] = None,
+    ):
         """
         流式生成响应
         """
         if self.provider == "deepseek":
             client = self._get_remote_client()
-            return client.generate_stream(prompt, system_prompt, max_new_tokens, model_override=model)
-        
+            return client.generate_stream(
+                prompt, system_prompt, max_new_tokens, model_override=model
+            )
+
         # Fallback for other providers if not implemented (e.g. local/chutes)
         # return a simulated stream from the full generation
         full_text = self.generate(prompt, system_prompt, max_new_tokens)
-        
+
         # Generator for fallback
         def _simulated_stream():
             # simulate chunks
             chunk_size = 4
             for i in range(0, len(full_text), chunk_size):
-                yield {"type": "content", "delta": full_text[i:i+chunk_size]}
-        
+                yield {"type": "content", "delta": full_text[i : i + chunk_size]}
+
         return _simulated_stream()
 
     def generate_with_tools(
@@ -123,7 +143,7 @@ class DeepSeekEngine:
     ) -> ToolCallResult:
         """
         使用工具定义生成响应（仅支持 deepseek provider）
-        
+
         Args:
             messages: 消息列表，支持 system/user/assistant/tool 角色
             tools: 工具定义列表
@@ -131,13 +151,15 @@ class DeepSeekEngine:
             tool_choice: "none" | "auto" | "required"
             model: 模型覆盖
             temperature: 温度参数
-            
+
         Returns:
             ToolCallResult 包含 content, tool_calls, reasoning_content, finish_reason
         """
         if self.provider != "deepseek":
-            raise NotImplementedError(f"Tool calls not supported for provider: {self.provider}")
-        
+            raise NotImplementedError(
+                f"Tool calls not supported for provider: {self.provider}"
+            )
+
         client = self._get_remote_client()
         return client.generate_with_tools(
             messages=messages,
@@ -159,7 +181,7 @@ class DeepSeekEngine:
     ) -> Generator[Dict[str, Any], None, None]:
         """
         流式生成带工具调用的响应（仅支持 deepseek provider）
-        
+
         Args:
             messages: 消息列表
             tools: 工具定义列表
@@ -167,7 +189,7 @@ class DeepSeekEngine:
             tool_choice: "none" | "auto" | "required"
             model: 模型覆盖
             temperature: 温度参数
-            
+
         Yields:
             包含 type 和相关数据的字典:
             - {"type": "thinking", "delta": str}
@@ -176,8 +198,10 @@ class DeepSeekEngine:
             - {"type": "finish", "finish_reason": str}
         """
         if self.provider != "deepseek":
-            raise NotImplementedError(f"Tool calls not supported for provider: {self.provider}")
-        
+            raise NotImplementedError(
+                f"Tool calls not supported for provider: {self.provider}"
+            )
+
         client = self._get_remote_client()
         return client.generate_with_tools_stream(
             messages=messages,

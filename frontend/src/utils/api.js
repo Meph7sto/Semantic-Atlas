@@ -9,7 +9,18 @@ const api = axios.create({
     headers: { 'Content-Type': 'application/json' },
 })
 
+const inferenceAxios = axios.create({
+    baseURL: '/inference',
+    timeout: 1800000, // 30分钟超时，模型推理可能需要较长时间
+    headers: { 'Content-Type': 'application/json' },
+})
+
 api.interceptors.response.use(
+    (resp) => resp,
+    (err) => Promise.reject(err)
+)
+
+inferenceAxios.interceptors.response.use(
     (resp) => resp,
     (err) => Promise.reject(err)
 )
@@ -237,6 +248,67 @@ export const classifyCsv = (file) => {
         responseType: 'blob',
         headers: { 'Content-Type': 'multipart/form-data' },
     })
+}
+
+// Phase 4 (L4) 软件需求生成与校验
+export const l4Api = {
+    async generate(requirements, config = {}, model = null) {
+        const payload = {
+            requirements,
+            config,
+        }
+        if (model) {
+            payload.model = model
+        }
+        const resp = await inferenceAxios.post('/l4/generate', payload)
+        if (resp.data?.error) {
+            throw new Error(resp.data.error)
+        }
+        return resp.data
+    },
+
+    async validate(l4Requirements, { expectedTopIds = null, openQuestionsByTopId = null, allowedEvidenceIds = null, confidenceThreshold = null } = {}) {
+        const resp = await inferenceAxios.post('/l4/validate', {
+            l4_requirements: l4Requirements,
+            expected_top_ids: expectedTopIds,
+            open_questions_by_top_id: openQuestionsByTopId,
+            allowed_evidence_ids: allowedEvidenceIds,
+            confidence_threshold: confidenceThreshold,
+        })
+        if (resp.data?.error) {
+            throw new Error(resp.data.error)
+        }
+        return resp.data
+    },
+
+    async searchKb(query, kbType = 'all', topK = 5, filters = null) {
+        const resp = await inferenceAxios.post('/kb/search', {
+            query,
+            kb_type: kbType,
+            top_k: topK,
+            filters,
+        })
+        if (resp.data?.error) {
+            throw new Error(resp.data.error)
+        }
+        return resp.data
+    },
+
+    async getKbStatus() {
+        const resp = await inferenceAxios.get('/kb/status')
+        if (resp.data?.error) {
+            throw new Error(resp.data.error)
+        }
+        return resp.data
+    },
+
+    async rebuildKb() {
+        const resp = await inferenceAxios.post('/kb/rebuild')
+        if (resp.data?.error) {
+            throw new Error(resp.data.error)
+        }
+        return resp.data
+    }
 }
 
 export default api
