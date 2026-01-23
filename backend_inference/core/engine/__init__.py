@@ -1,10 +1,13 @@
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, AsyncGenerator, Dict, Generator, List, Optional
 
 import torch
+import asyncio
 
 from ..config import settings
 from .local import LocalHFEngine
 from .remote import ChutesClient, DeepSeekClient, ToolCallResult
+from .remote.async_deepseek import AsyncDeepSeekClient
+from .remote.async_chutes import AsyncChutesClient
 
 
 class DeepSeekEngine:
@@ -38,6 +41,7 @@ class DeepSeekEngine:
         self.device_map = "auto" if torch.cuda.is_available() else None
         self._local_engine = None
         self._remote_client = None
+        self._async_remote_client = None
 
     def _get_local_engine(self) -> LocalHFEngine:
         if self._local_engine is None:
@@ -59,6 +63,26 @@ class DeepSeekEngine:
                     model=self.deepseek_model,
                 )
             return self._remote_client
+        return None
+
+    async def _get_async_remote_client(self):
+        """获取异步远程客户端（复用session以提升性能）"""
+        if self.provider == "chutes":
+            if not isinstance(self._async_remote_client, AsyncChutesClient):
+                self._async_remote_client = AsyncChutesClient(
+                    self.chutes_api_url, self.chutes_api_token
+                )
+                await self._async_remote_client.ensure_session()
+            return self._async_remote_client
+        if self.provider == "deepseek":
+            if not isinstance(self._async_remote_client, AsyncDeepSeekClient):
+                self._async_remote_client = AsyncDeepSeekClient(
+                    self.deepseek_api_url,
+                    self.deepseek_api_key,
+                    model=self.deepseek_model,
+                )
+                await self._async_remote_client.ensure_session()
+            return self._async_remote_client
         return None
 
     # ---------------------
@@ -211,6 +235,165 @@ class DeepSeekEngine:
             model_override=model,
             temperature=temperature,
         )
+
+    # =====================================================
+    # 异步接口（新增）- 使用aiohttp实现高并发性能
+    # =====================================================
+
+    async def generate_async(
+        self,
+        prompt: str,
+        system_prompt: str,
+        max_new_tokens: int = 128,
+        model: Optional[str] = None,
+    ) -> str:
+        """异步生成响应（使用aiohttp，性能更高）
+
+        Args:
+            prompt: 用户提示词
+            system_prompt: 系统提示词
+            max_new_tokens: 最大生成token数
+            model: 可选的模型覆盖
+
+        Returns:
+            生成的完整文本内容
+        """
+        if self.provider == "chutes":
+            client = await self._get_async_remote_client()
+            return await client.generate(prompt, system_prompt, max_new_tokens)
+        if self.provider == "deepseek":
+            client = await self._get_async_remote_client()
+            return await client.generate(
+                prompt, system_prompt, max_new_tokens, model_override=model
+            )
+
+        # 本地引擎在线程池中运行（避免阻塞事件循环）
+        local_engine = self._get_local_engine()
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, lambda: local_engine.generate(prompt, system_prompt, max_new_tokens)
+        )
+
+    async def generate_stream_async(
+        self,
+        prompt: str,
+        system_prompt: str,
+        max_new_tokens: int = 128,
+        model: Optional[str] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """异步流式生成响应
+
+        Args:
+            prompt: 用户提示词
+            system_prompt: 系统提示词
+            max_new_tokens: 最大生成token数
+            model: 可选的模型覆盖
+
+        Yields:
+            字典，包含：
+            - {"type": "thinking", "delta": str} 推理内容
+            - {"type": "content", "delta": str} 最终内容
+        """
+        if self.provider == "deepseek":
+            client = await self._get_async_remote_client()
+            async for chunk in client.generate_stream(
+                prompt, system_prompt, max_new_tokens, model_override=model
+            ):
+                yield chunk
+        else:
+            # Fallback for other providers (chutes, local)
+            # 在线程池中运行同步generate，然后模拟流式输出
+            full_text = await self.generate_async(prompt, system_prompt, max_new_tokens)
+
+            # 模拟分块输出
+            chunk_size = 4
+            for i in range(0, len(full_text), chunk_size):
+                yield {"type": "content", "delta": full_text[i : i + chunk_size]}
+                await asyncio.sleep(0)  # 让出控制权
+
+    async def generate_with_tools_async(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        max_new_tokens: int = 4096,
+        tool_choice: Optional[str] = None,
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+    ) -> ToolCallResult:
+        """异步生成带工具调用的响应（仅支持 deepseek provider）
+
+        Args:
+            messages: 消息列表，支持 system/user/assistant/tool 角色
+            tools: 工具定义列表
+            max_new_tokens: 最大生成 token 数
+            tool_choice: "none" | "auto" | "required"
+            model: 模型覆盖
+            temperature: 温度参数
+
+        Returns:
+            ToolCallResult 包含 content, tool_calls, reasoning_content, finish_reason
+        """
+        if self.provider != "deepseek":
+            raise NotImplementedError(
+                f"Tool calls not supported for provider: {self.provider}"
+            )
+
+        client = await self._get_async_remote_client()
+        return await client.generate_with_tools(
+            messages=messages,
+            tools=tools,
+            max_new_tokens=max_new_tokens,
+            tool_choice=tool_choice,
+            model_override=model,
+            temperature=temperature,
+        )
+
+    async def generate_with_tools_stream_async(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        max_new_tokens: int = 4096,
+        tool_choice: Optional[str] = None,
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """异步流式生成带工具调用的响应（仅支持 deepseek provider）
+
+        Args:
+            messages: 消息列表
+            tools: 工具定义列表
+            max_new_tokens: 最大生成 token 数
+            tool_choice: "none" | "auto" | "required"
+            model: 模型覆盖
+            temperature: 温度参数
+
+        Yields:
+            包含 type 和相关数据的字典:
+            - {"type": "thinking", "delta": str}
+            - {"type": "content", "delta": str}
+            - {"type": "tool_call", "index": int, "id": str, "function": {...}}
+            - {"type": "finish", "finish_reason": str}
+        """
+        if self.provider != "deepseek":
+            raise NotImplementedError(
+                f"Tool calls not supported for provider: {self.provider}"
+            )
+
+        client = await self._get_async_remote_client()
+        async for chunk in client.generate_with_tools_stream(
+            messages=messages,
+            tools=tools,
+            max_new_tokens=max_new_tokens,
+            tool_choice=tool_choice,
+            model_override=model,
+            temperature=temperature,
+        ):
+            yield chunk
+
+    async def close_async(self):
+        """关闭异步资源（session等）"""
+        if self._async_remote_client:
+            await self._async_remote_client.close()
 
 
 __all__ = ["DeepSeekEngine", "ToolCallResult"]
