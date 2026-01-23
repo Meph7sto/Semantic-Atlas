@@ -266,12 +266,67 @@ class TraceabilityService:
             extra=extra,
         )
 
+    def _analyze_with_retry(
+        self,
+        high: str,
+        low: str,
+        high_idx: int,
+        low_idx: int,
+        max_new_tokens: int,
+        max_retries: int = 3,
+    ) -> TraceRelationResponse:
+        """
+        带重试机制的单对追溯分析
+        - 最多重试 max_retries 次
+        - 使用指数退避策略
+        - 超时/网络错误才重试，其他错误直接抛出
+        """
+        import time
+        import requests
+
+        last_error = None
+        # 指数退避：2s, 4s, 8s
+        for attempt in range(max_retries):
+            try:
+                return self.analyze_relation(high, low, max_new_tokens=max_new_tokens)
+            except (
+                requests.exceptions.Timeout,
+                requests.exceptions.ReadTimeout,
+                requests.exceptions.ConnectionError,
+                TimeoutError,
+            ) as e:
+                last_error = e
+                wait_time = 2 ** (attempt + 1)  # 2, 4, 8 秒
+                print(f"[重试 {attempt + 1}/{max_retries}] 组合 (high[{high_idx}], low[{low_idx}]) 超时，等待 {wait_time}s 后重试...")
+                time.sleep(wait_time)
+            except Exception as e:
+                # 非超时错误（如解析错误），尝试一次重试
+                if attempt == 0:
+                    last_error = e
+                    print(f"[重试 1/{max_retries}] 组合 (high[{high_idx}], low[{low_idx}]) 失败: {e}，尝试重试...")
+                    time.sleep(2)
+                else:
+                    raise e
+
+        # 所有重试都失败
+        raise last_error or Exception("未知错误")
+
     def batch_analyze(
         self,
         high_level_requirements: List[str],
         low_level_requirements: List[str],
-        max_new_tokens: int = 1600,
+        max_new_tokens: int = 800,  # 降低默认值，减少推理时间
     ) -> BatchTraceRelationResponse:
+        """
+        批量追溯分析（带重试和优化）
+        
+        算法改进：
+        1. 重试机制：超时/网络错误自动重试最多3次
+        2. 指数退避：重试间隔逐次增加（2s, 4s, 8s）
+        3. 降低 max_new_tokens：从 1600 降到 800，减少推理时间
+        4. 进度打印：输出当前处理进度
+        5. 错误隔离：单对失败不影响其他组合
+        """
         highs = [str(s).strip() for s in high_level_requirements if str(s).strip()]
         lows = [str(s).strip() for s in low_level_requirements if str(s).strip()]
 
@@ -309,11 +364,23 @@ class TraceabilityService:
         relations: List[BatchRelationRecord] = []
         relation_type_count: Dict[str, int] = {}
 
+        total_combinations = len(highs) * len(lows)
+        completed = 0
+        failed_count = 0
+
+        print(f"[批量追溯] 开始分析 {len(highs)} 个顶层需求 × {len(lows)} 个底层需求 = {total_combinations} 个组合")
+
         for i, high in enumerate(highs):
             for j, low in enumerate(lows):
+                completed += 1
                 single = None
                 try:
-                    single = self.analyze_relation(high, low, max_new_tokens=max_new_tokens)
+                    # 使用带重试的分析方法
+                    single = self._analyze_with_retry(
+                        high, low, i, j,
+                        max_new_tokens=max_new_tokens,
+                        max_retries=3
+                    )
                     rec = BatchRelationRecord(
                         high_level_index=i,
                         low_level_index=j,
@@ -327,9 +394,15 @@ class TraceabilityService:
                         keywords=single.keywords,
                     )
                     relations.append(rec)
+                    
+                    # 输出进度
+                    if completed % 5 == 0 or completed == total_combinations:
+                        print(f"[批量追溯] 进度: {completed}/{total_combinations} ({100*completed//total_combinations}%)")
+                        
                 except Exception as e:
-                    # 如果某个单对分析失败，记录错误但继续处理其他组合
-                    print(f"警告: 分析组合 (high[{i}], low[{j}]) 失败: {e}")
+                    # 所有重试都失败后，记录错误但继续处理其他组合
+                    failed_count += 1
+                    print(f"[批量追溯] 组合 (high[{i}], low[{j}]) 最终失败: {e}")
                     rec = BatchRelationRecord(
                         high_level_index=i,
                         low_level_index=j,
@@ -338,7 +411,7 @@ class TraceabilityService:
                         has_relation=False,
                         relation_type="unknown",
                         confidence=0.0,
-                        analysis_details=f"分析失败: {str(e)}",
+                        analysis_details=f"分析失败(已重试): {str(e)}",
                         summary="分析失败",
                         keywords=[],
                     )
@@ -356,6 +429,8 @@ class TraceabilityService:
                             confidence=single.confidence,
                         )
                     )
+
+        print(f"[批量追溯] 完成! 成功: {total_combinations - failed_count}/{total_combinations}, 失败: {failed_count}")
 
         expected = len(highs) * len(lows)
         relations_found = len([r for r in relations if r.has_relation])

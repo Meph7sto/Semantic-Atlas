@@ -269,6 +269,46 @@ class DBService:
                 )
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_low_level_requirements_session ON low_level_requirements(session_id)")
 
+                # ========================
+                # Conflict Analysis Table (冲突检测结果表)
+                # ========================
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS conflict_analysis (
+                        id SERIAL PRIMARY KEY,
+                        session_id TEXT,
+                        requirement_a TEXT NOT NULL,
+                        requirement_b TEXT NOT NULL,
+                        is_conflict BOOLEAN NOT NULL,
+                        raw_response TEXT,
+                        result_json JSONB,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_conflict_analysis_session ON conflict_analysis(session_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_conflict_analysis_created_at ON conflict_analysis(created_at)")
+
+                # ========================
+                # Classification Analysis Table (需求分类结果表)
+                # ========================
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS classification_analysis (
+                        id SERIAL PRIMARY KEY,
+                        session_id TEXT,
+                        requirements JSONB NOT NULL,
+                        predictions JSONB NOT NULL,
+                        label_distribution JSONB,
+                        total INTEGER,
+                        result_json JSONB,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_classification_analysis_session ON classification_analysis(session_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_classification_analysis_created_at ON classification_analysis(created_at)")
+
     def save_relation(
         self,
         high_level_requirement: str,
@@ -410,6 +450,100 @@ class DBService:
             "total_requirements": total,
             "analysis_type_stats": {r["analysis_type"]: r["c"] for r in type_rows},
         }
+
+    def save_conflict_batch(
+        self,
+        session_id: Optional[str],
+        conflicts: List[Dict[str, Any]],
+    ) -> List[int]:
+        """
+        批量保存冲突检测结果
+        conflicts: List[{
+            'requirement_a': str,
+            'requirement_b': str,
+            'is_conflict': bool,
+            'raw_response': str,
+            'data': dict (可选，完整的响应数据)
+        }]
+        """
+        if not conflicts:
+            return []
+
+        record_ids = []
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                for conflict in conflicts:
+                    result_json = conflict.get("data") or conflict.get("raw_response") or {}
+                    if isinstance(result_json, str):
+                        try:
+                            result_json = json.loads(result_json)
+                        except Exception:
+                            result_json = {"raw": result_json}
+
+                    cur.execute(
+                        """
+                        INSERT INTO conflict_analysis (
+                            session_id, requirement_a, requirement_b,
+                            is_conflict, raw_response, result_json, created_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                        """,
+                        (
+                            session_id,
+                            conflict.get("requirement_a", ""),
+                            conflict.get("requirement_b", ""),
+                            bool(conflict.get("is_conflict", False)),
+                            conflict.get("raw_response", ""),
+                            json.dumps(result_json, ensure_ascii=False),
+                            _utc_now_iso(),
+                        ),
+                    )
+                    record_ids.append(int(cur.fetchone()[0]))
+
+        return record_ids
+
+    def save_classification(
+        self,
+        session_id: Optional[str],
+        requirements: List[str],
+        predictions: List[Dict[str, Any]],
+        label_distribution: Optional[Dict[str, Any]] = None,
+        total: Optional[int] = None,
+        result_json: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """
+        保存需求分类结果
+        """
+        if result_json is None:
+            result_json = {
+                "predictions": predictions,
+                "label_distribution": label_distribution,
+                "total": total,
+            }
+
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO classification_analysis (
+                        session_id, requirements, predictions,
+                        label_distribution, total, result_json, created_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        session_id,
+                        json.dumps(requirements, ensure_ascii=False),
+                        json.dumps(predictions, ensure_ascii=False),
+                        json.dumps(label_distribution, ensure_ascii=False) if label_distribution else None,
+                        total,
+                        json.dumps(result_json, ensure_ascii=False),
+                        _utc_now_iso(),
+                    ),
+                )
+                return int(cur.fetchone()[0])
 
     def upsert_spans(self, spans: List[Dict[str, Any]]) -> Dict[str, Any]:
         if not spans:

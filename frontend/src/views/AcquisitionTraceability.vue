@@ -491,104 +491,56 @@ async function extractLowLevelRequirements() {
 }
 
 // 加载示例底层需求（用于测试/演示）
-// 这些底层需求对应会议记录中的技术实现细节
+// 对应会议记录：员工考勤系统需求讨论
+// 会议内容：
+// PM: 我们需要开发一个员工考勤系统，支持手机打卡。
+// HR: 打卡要支持GPS定位，防止员工在家打卡。定位精度要在50米以内。
+// DEV: 那如果GPS信号不好怎么办？
+// HR: 可以用WiFi辅助定位，公司WiFi连上了也算有效打卡。
+// PM: 系统要能自动生成月度考勤报表，HR每月要统计。
+// HR: 对，报表要支持导出Excel，还要能看到迟到早退的明细。
+// DEV: 好的，我们一周内出原型。
 function loadMockLowLevelRequirements() {
   const mockLowLevel = [
     {
       id: 'low-1',
       category: 'low',
-      statement: '实现银行流水解析模块，支持Excel和CSV格式文件解析',
-      rationale: '满足财务部门导入银行流水的数据格式需求',
-      evidence: '主要是Excel和CSV格式，因为银行通常提供这两种格式的流水文件',
+      statement: '开发手机端打卡模块，支持iOS和Android双平台',
+      rationale: '实现员工移动端打卡功能',
+      evidence: '我们需要开发一个员工考勤系统，支持手机打卡',
       confidence: 0.95
     },
     {
       id: 'low-2',
       category: 'low',
-      statement: '开发智能匹配算法，基于金额、日期、摘要进行多维匹配',
-      rationale: '实现自动对账的核心算法，提高匹配准确率',
-      evidence: '我们需要设计一个智能匹配算法，基于金额、日期、摘要等多个维度进行匹配',
-      confidence: 0.92
+      statement: '集成GPS定位SDK，定位精度控制在50米以内',
+      rationale: '防止员工虚假打卡，确保打卡位置真实性',
+      evidence: '打卡要支持GPS定位，防止员工在家打卡。定位精度要在50米以内',
+      confidence: 0.93
     },
     {
       id: 'low-3',
       category: 'low',
-      statement: '实现差异标记功能，支持红色高亮显示和批注',
-      rationale: '帮助财务人员快速定位需要人工复核的异常记录',
-      evidence: '匹配不上的记录需要高亮显示，这样财务人员可以快速定位需要人工复核的异常记录',
-      confidence: 0.93
+      statement: '实现WiFi辅助定位功能，连接公司WiFi视为有效打卡',
+      rationale: '解决GPS信号弱时的定位问题',
+      evidence: '可以用WiFi辅助定位，公司WiFi连上了也算有效打卡',
+      confidence: 0.91
     },
     {
       id: 'low-4',
       category: 'low',
-      statement: '采用批量处理和分页加载机制，确保大数据量下的响应速度',
-      rationale: '满足1万条数据1分钟内处理完成的性能要求',
-      evidence: '我们每个月大概有1万条左右的流水记录，希望系统能在1分钟内完成匹配处理',
-      confidence: 0.88
+      statement: '开发月度考勤报表自动生成模块',
+      rationale: '满足HR每月统计考勤的需求',
+      evidence: '系统要能自动生成月度考勤报表，HR每月要统计',
+      confidence: 0.92
     },
     {
       id: 'low-5',
       category: 'low',
-      statement: '实现用户权限管理和会话管理模块，支持多用户并发操作',
-      rationale: '满足财务部门多人同时使用的并发需求',
-      evidence: '系统需要支持多用户并发操作，因为财务部门有多个人会同时使用',
+      statement: '实现Excel导出功能，包含迟到早退明细数据',
+      rationale: '方便HR导出数据进行分析和存档',
+      evidence: '报表要支持导出Excel，还要能看到迟到早退的明细',
       confidence: 0.90
-    },
-    {
-      id: 'low-6',
-      category: 'low',
-      statement: '开发PDF报告导出功能，包含匹配结果统计和异常记录明细',
-      rationale: '满足财务部门导出对账报告的需求',
-      evidence: '系统需要能够导出对账报告，格式要求是PDF，包含匹配结果统计和异常记录明细',
-      confidence: 0.91
-    },
-    {
-      id: 'low-7',
-      category: 'low',
-      statement: '实现数据库加密存储和审计日志功能，记录所有操作',
-      rationale: '保障财务数据安全，满足审计追踪要求',
-      evidence: '财务数据非常敏感，需要加密存储，并且要有操作日志记录，方便审计追踪',
-      confidence: 0.94
-    },
-    {
-      id: 'low-8',
-      category: 'low',
-      statement: '设计数据库表结构，包含银行流水表、内部单据表、匹配结果表、操作日志表',
-      rationale: '数据持久化的基础设施，支持对账业务的数据存储',
-      evidence: '数据存储需求',
-      confidence: 0.87
-    },
-    {
-      id: 'low-9',
-      category: 'low',
-      statement: '实现定期数据备份机制，防止数据丢失',
-      rationale: '保障数据安全，满足审计要求',
-      evidence: '建议定期备份数据，防止数据丢失',
-      confidence: 0.89
-    },
-    {
-      id: 'low-10',
-      category: 'low',
-      statement: '开发RESTful API接口，响应时间小于200ms，支持Chrome和Edge浏览器',
-      rationale: '满足性能要求和浏览器兼容性需求',
-      evidence: '主要是Chrome和Edge，财务部门统一使用这两个浏览器',
-      confidence: 0.86
-    },
-    {
-      id: 'low-11',
-      category: 'low',
-      statement: '实现模糊匹配和相似度算法，匹配准确率达到95%以上',
-      rationale: '提高自动匹配的准确率，减少人工复核工作量',
-      evidence: '匹配的准确率至少要达到95%以上',
-      confidence: 0.92
-    },
-    {
-      id: 'low-12',
-      category: 'low',
-      statement: '集成第三方PDF生成库，实现标准报告模板',
-      rationale: '满足PDF报告导出功能的技术实现',
-      evidence: 'PDF导出功能我们可以集成第三方库来实现',
-      confidence: 0.88
     }
   ]
 
@@ -749,8 +701,11 @@ async function runFullAnalysis() {
   analysisError.value = null
   analysisStep.value = 1
 
+  // 获取当前 session_id 用于保存到数据库
+  const currentSessionId = sessionId.value?.trim() || null
+
   try {
-    // Step 1: 追溯分析
+    // Step 1: 追溯分析（保存到数据库）
     traceError.value = null
     traceResult.value = null
     
@@ -765,11 +720,18 @@ async function runFullAnalysis() {
       throw new Error('顶层需求或底层需求为空')
     }
 
-    const traceApiResult = await traceabilityApi.batchAnalyzeRelation(highReqs, lowReqs)
+    // 启用保存到数据库（max_new_tokens=800 减少推理时间，降低超时概率）
+    const traceApiResult = await traceabilityApi.batchAnalyzeRelation(
+      highReqs, 
+      lowReqs, 
+      800, 
+      true,  // save_to_db = true
+      currentSessionId
+    )
     traceResult.value = traceApiResult
     currentStep.value = 2
 
-    // Step 2: 冲突检测
+    // Step 2: 冲突检测（保存到数据库）
     analysisStep.value = 2
     conflictError.value = null
     conflictResults.value = []
@@ -795,23 +757,53 @@ async function runFullAnalysis() {
       const pairsToCheck = pairs.slice(0, 10)
       conflictProgress.value = { current: 0, total: pairsToCheck.length }
 
-      for (let i = 0; i < pairsToCheck.length; i++) {
-        const { reqA, reqB } = pairsToCheck[i]
-        conflictProgress.value.current = i + 1
+      // 准备批量检测的数据
+      const conflictPairs = pairsToCheck.map(({ reqA, reqB }) => ({
+        requirement_a: reqA.statement || reqA.text || '',
+        requirement_b: reqB.statement || reqB.text || '',
+      }))
+
+      // 尝试批量检测并保存
+      if (conflictPairs.length > 0) {
         try {
-          const res = await conflictApi.check(
-            reqA.statement || reqA.text || '',
-            reqB.statement || reqB.text || ''
+          const conflictBatchResult = await conflictApi.checkBatch(
+            conflictPairs,
+            true,  // save_to_db = true
+            currentSessionId
           )
-          conflictResults.value.push({ reqA, reqB, ...res })
+          
+          if (conflictBatchResult.success && conflictBatchResult.data) {
+            conflictResults.value = conflictBatchResult.data.map((result, idx) => ({
+              reqA: pairsToCheck[idx].reqA,
+              reqB: pairsToCheck[idx].reqB,
+              ...result
+            }))
+            conflictProgress.value.current = pairsToCheck.length
+          }
         } catch (e) {
-          console.warn('冲突检测单对失败:', e)
+          console.warn('批量冲突检测失败，尝试单对检测:', e)
+          // 降级到单对检测
+          for (let i = 0; i < pairsToCheck.length; i++) {
+            const { reqA, reqB } = pairsToCheck[i]
+            conflictProgress.value.current = i + 1
+            try {
+              const res = await conflictApi.check(
+                reqA.statement || reqA.text || '',
+                reqB.statement || reqB.text || '',
+                true,  // save_to_db = true
+                currentSessionId
+              )
+              conflictResults.value.push({ reqA, reqB, ...(res.data || res) })
+            } catch (innerErr) {
+              console.warn('冲突检测单对失败:', innerErr)
+            }
+          }
         }
       }
       currentStep.value = 3
     }
 
-    // Step 3: 需求分类
+    // Step 3: 需求分类（保存到数据库）
     analysisStep.value = 3
     classificationError.value = null
     classificationResult.value = null
@@ -819,7 +811,11 @@ async function runFullAnalysis() {
     const classifyReqs = [...allHighLevelRequirements.value, ...lowLevelRequirements.value]
     if (classifyReqs.length > 0) {
       const requirements = classifyReqs.map((r) => r.statement || r.text || '')
-      const response = await classifyTexts({ requirements })
+      const response = await classifyTexts(
+        { requirements },
+        true,  // save_to_db = true
+        currentSessionId
+      )
       const data = response.data
       
       classificationResult.value = {

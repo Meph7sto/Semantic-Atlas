@@ -31,13 +31,17 @@ export const traceabilityApi = {
         return resp.data?.data ?? resp.data
     },
 
-    async batchAnalyzeRelation(highLevelReqs, lowLevelReqs, maxNewTokens = 1200) {
-        const resp = await api.post('/batch-trace-relation', {
+    async batchAnalyzeRelation(highLevelReqs, lowLevelReqs, maxNewTokens = 800, saveToDb = false, sessionId = null) {
+        const payload = {
             high_level_requirements: highLevelReqs,
             low_level_requirements: lowLevelReqs,
             max_new_tokens: maxNewTokens,
-            save_to_db: false,
-        })
+            save_to_db: saveToDb,
+        }
+        if (sessionId) {
+            payload.session_id = sessionId
+        }
+        const resp = await api.post('/batch-trace-relation', payload)
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '批量分析失败')
         }
@@ -47,11 +51,28 @@ export const traceabilityApi = {
 
 // 冲突检测 API
 export const conflictApi = {
-    async check(requirementA, requirementB) {
-        const resp = await api.post('/conflict/check', {
+    async check(requirementA, requirementB, saveToDb = false, sessionId = null) {
+        const payload = {
             requirement_a: requirementA,
             requirement_b: requirementB,
-        })
+            save_to_db: saveToDb,
+        }
+        if (sessionId) {
+            payload.session_id = sessionId
+        }
+        const resp = await api.post('/conflict/check', payload)
+        return resp.data
+    },
+
+    async checkBatch(pairs, saveToDb = false, sessionId = null) {
+        const payload = {
+            pairs: pairs,
+            save_to_db: saveToDb,
+        }
+        if (sessionId) {
+            payload.session_id = sessionId
+        }
+        const resp = await api.post('/conflict/check/batch', payload)
         return resp.data
     },
 
@@ -174,7 +195,16 @@ export const requirementsL123Api = {
 }
 
 // 需求分类 API
-export const classifyTexts = (payload) => api.post('/classification/predict-texts', payload)
+export const classifyTexts = (payload, saveToDb = false, sessionId = null) => {
+    const finalPayload = {
+        ...payload,
+        save_to_db: saveToDb,
+    }
+    if (sessionId) {
+        finalPayload.session_id = sessionId
+    }
+    return api.post('/classification/predict-texts', finalPayload)
+}
 
 export const classifyCsv = (file) => {
     const formData = new FormData()
