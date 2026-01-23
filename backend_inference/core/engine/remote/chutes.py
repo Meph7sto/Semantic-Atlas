@@ -44,7 +44,7 @@ class ChutesClient:
                 headers=headers,
                 json=body,
                 stream=True,
-                timeout=120,
+                timeout=600,
             )
 
             if response.status_code != 200:
