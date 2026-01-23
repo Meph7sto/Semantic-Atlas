@@ -257,21 +257,47 @@ class DBService:
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_requirements_l123_anchor_span ON requirements_l123(anchor_span_id)")
 
                 # ========================
-                # Low-level Requirements Table (底层需求占位表)
+                # Low-level Requirements Table (L4 底层需求表)
                 # ========================
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS low_level_requirements (
                         req_id TEXT PRIMARY KEY,
                         session_id TEXT NOT NULL,
+                        source_top_id TEXT,
+                        source_top_text TEXT,
                         text TEXT NOT NULL,
+                        component TEXT,
+                        acceptance_criteria JSONB,
+                        test_method TEXT,
+                        interfaces JSONB,
+                        data_contracts JSONB,
+                        error_handling JSONB,
+                        nfr JSONB,
+                        open_questions JSONB,
+                        evidence_ids JSONB,
+                        confidence REAL,
                         source TEXT,
                         meta JSONB,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                     )
                     """
                 )
+                # 扩展旧表字段（必须先补齐字段，再建索引）
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS source_top_id TEXT")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS source_top_text TEXT")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS component TEXT")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS acceptance_criteria JSONB")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS test_method TEXT")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS interfaces JSONB")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS data_contracts JSONB")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS error_handling JSONB")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS nfr JSONB")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS open_questions JSONB")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS evidence_ids JSONB")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS confidence REAL")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_low_level_requirements_session ON low_level_requirements(session_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_low_level_requirements_source_top ON low_level_requirements(source_top_id)")
 
                 # ========================
                 # Conflict Analysis Table (冲突检测结果表)
@@ -636,6 +662,160 @@ class DBService:
                     ),
                 )
                 return int(cur.fetchone()[0])
+
+    # ========================
+    # L4 低层需求 (low_level_requirements) 相关方法
+    # ========================
+
+    def save_l4_requirements(
+        self,
+        session_id: str,
+        l4_requirements: List[Dict[str, Any]],
+    ) -> List[str]:
+        """
+        保存 L4 需求到数据库
+        
+        Args:
+            session_id: 会话 ID
+            l4_requirements: L4 需求列表，每个包含:
+                - l4_id / req_id
+                - source_top_id
+                - source_top_text (可选)
+                - shall_statement / text
+                - component
+                - acceptance_criteria
+                - test_method
+                - interfaces
+                - data_contracts
+                - error_handling
+                - nfr
+                - open_questions
+                - evidence_ids
+                - confidence
+        
+        Returns:
+            插入的 req_id 列表
+        """
+        if not l4_requirements:
+            return []
+
+        inserted_ids = []
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                for req in l4_requirements:
+                    req_id = req.get("l4_id") or req.get("req_id") or f"L4-{_utc_now_iso()}"
+                    text = req.get("shall_statement") or req.get("text") or ""
+                    
+                    # 如果 req_id 已存在，则生成新的唯一 ID，避免跨 session 冲突
+                    cur.execute(
+                        "SELECT 1 FROM low_level_requirements WHERE req_id = %s",
+                        (req_id,)
+                    )
+                    if cur.fetchone():
+                        req_id = f"{req_id}-{uuid.uuid4().hex[:6]}"
+                    
+                    cur.execute(
+                        """
+                        INSERT INTO low_level_requirements (
+                            req_id, session_id, source_top_id, source_top_text,
+                            text, component, acceptance_criteria, test_method,
+                            interfaces, data_contracts, error_handling, nfr,
+                            open_questions, evidence_ids, confidence, source, meta, created_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            req_id,
+                            session_id,
+                            req.get("source_top_id"),
+                            req.get("source_top_text"),
+                            text,
+                            req.get("component"),
+                            json.dumps(req.get("acceptance_criteria", []), ensure_ascii=False),
+                            req.get("test_method"),
+                            json.dumps(req.get("interfaces", []), ensure_ascii=False),
+                            json.dumps(req.get("data_contracts", []), ensure_ascii=False),
+                            json.dumps(req.get("error_handling", []), ensure_ascii=False),
+                            json.dumps(req.get("nfr", []), ensure_ascii=False),
+                            json.dumps(req.get("open_questions", []), ensure_ascii=False),
+                            json.dumps(req.get("evidence_ids", []), ensure_ascii=False),
+                            req.get("confidence"),
+                            "l4_generation",
+                            json.dumps(req, ensure_ascii=False),
+                            _utc_now_iso(),
+                        ),
+                    )
+                    inserted_ids.append(req_id)
+
+        return inserted_ids
+
+    def get_l4_requirements_by_session(
+        self,
+        session_id: str,
+        page: int = 1,
+        per_page: int = 100,
+    ) -> Dict[str, Any]:
+        """
+        查询指定 session 的 L4 底层需求
+        """
+        page = max(1, int(page))
+        per_page = max(1, min(500, int(per_page)))
+        offset = (page - 1) * per_page
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT COUNT(1) AS c FROM low_level_requirements WHERE session_id = %s",
+                    (session_id,)
+                )
+                total = cur.fetchone()["c"]
+                
+                cur.execute(
+                    """
+                    SELECT 
+                        req_id, session_id, source_top_id, source_top_text,
+                        text, component, acceptance_criteria, test_method,
+                        interfaces, data_contracts, error_handling, nfr,
+                        open_questions, evidence_ids, confidence, source,
+                        created_at::text AS created_at
+                    FROM low_level_requirements
+                    WHERE session_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (session_id, per_page, offset),
+                )
+                rows = cur.fetchall()
+
+        # 解析 JSONB 字段
+        requirements = []
+        for row in rows:
+            req = dict(row)
+            for key in ("acceptance_criteria", "interfaces", "data_contracts", 
+                        "error_handling", "nfr", "open_questions", "evidence_ids"):
+                if req.get(key) and isinstance(req[key], str):
+                    try:
+                        req[key] = json.loads(req[key])
+                    except Exception:
+                        pass
+            requirements.append(req)
+
+        return {
+            "requirements": requirements,
+            "total": total,
+            "pages": (total + per_page - 1) // per_page if total else 0,
+            "current_page": page,
+        }
+
+    def has_l4_requirements(self, session_id: str) -> bool:
+        """检查指定 session 是否有 L4 需求"""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM low_level_requirements WHERE session_id = %s LIMIT 1",
+                    (session_id,)
+                )
+                return cur.fetchone() is not None
 
     def upsert_spans(self, spans: List[Dict[str, Any]]) -> Dict[str, Any]:
         if not spans:

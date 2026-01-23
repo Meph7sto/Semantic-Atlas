@@ -222,6 +222,55 @@ export const requirementsL123Api = {
     },
 }
 
+// L4 底层需求 API
+export const l4RequirementsApi = {
+    /**
+     * 获取指定 session 的 L4 底层需求
+     */
+    async getBySession(sessionId, { page = 1, perPage = 100 } = {}) {
+        const resp = await api.get(`/requirements/l4/${encodeURIComponent(sessionId)}`, {
+            params: { page, per_page: perPage },
+        })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '加载 L4 需求失败')
+        }
+        return resp.data
+    },
+
+    /**
+     * 检查指定 session 是否有 L4 底层需求缓存
+     */
+    async checkExists(sessionId) {
+        const resp = await api.get(`/requirements/l4/${encodeURIComponent(sessionId)}/exists`)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '检查 L4 缓存失败')
+        }
+        return resp.data.exists
+    },
+
+    /**
+     * 生成 L4 底层需求
+     * 如有缓存直接返回，否则调用推理后端生成
+     */
+    async generate(sessionId, requirements, { config = {}, model = null, forceRegenerate = false } = {}) {
+        const payload = {
+            session_id: sessionId,
+            requirements,
+            config,
+            force_regenerate: forceRegenerate,
+        }
+        if (model) {
+            payload.model = model
+        }
+        
+        const resp = await api.post('/requirements/l4/generate', payload)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || 'L4 需求生成失败')
+        }
+        return resp.data
+    },
+}
+
 // 需求分类 API
 export const classifyTexts = (payload, saveToDb = false, sessionId = null) => {
     const finalPayload = {

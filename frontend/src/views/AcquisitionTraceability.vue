@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { traceabilityApi, conflictApi, classifyTexts, analysisApi, requirementsL123Api, getLatestClassification } from '../utils/api'
+import { traceabilityApi, conflictApi, classifyTexts, analysisApi, requirementsL123Api, getLatestClassification, l4RequirementsApi } from '../utils/api'
 import draggable from 'vuedraggable'
 import {
   FileText,
@@ -473,23 +473,77 @@ async function startExtraction() {
   }
 }
 
-// 预留：提取底层需求接口
+// 提取底层需求（L4）
+// 流程：先检查数据库缓存，有则直接加载；否则调用 L4 生成接口
 async function extractLowLevelRequirements() {
-  if (allHighLevelRequirements.value.length === 0) return
+  if (allHighLevelRequirements.value.length === 0) {
+    traceError.value = '请先加载或抽取顶层需求'
+    return
+  }
+
+  const sid = sessionId.value?.trim()
+  if (!sid) {
+    traceError.value = '请先填写 Session ID'
+    return
+  }
 
   isExtractingLowLevel.value = true
   traceError.value = null
+  lowLevelExtractionNotice.value = ''
 
   try {
-    // TODO: 调用底层需求提取接口
-    await new Promise((resolve) => setTimeout(resolve, 500))
-    alert('功能开发中：底层需求提取接口尚未实现\n\n请使用「加载示例底层需求」按钮测试追溯功能')
+    // 准备顶层需求列表
+    const topRequirements = allHighLevelRequirements.value.map((req) => ({
+      id: req.req_id || req.id || `top-${Math.random().toString(36).slice(2, 10)}`,
+      text: req.text || req.statement || '',
+    }))
+
+    // 调用 L4 生成 API（内部会检查缓存）
+    const result = await l4RequirementsApi.generate(sid, topRequirements, {
+      config: {
+        top_k_pattern: 5,
+        top_k_spec: 3,
+        top_k_nfr: 3,
+        max_l4_per_top_req: 5,
+        min_l4_per_top_req: 1,
+        confidence_threshold: 0.6,
+      },
+      model: 'deepseek-chat',
+    })
+
+    // 转换为 lowLevelRequirements 格式
+    const l4Reqs = result.requirements || []
+    lowLevelRequirements.value = l4Reqs.map((req, idx) => ({
+      id: req.req_id || `low-${idx + 1}`,
+      category: 'low',
+      statement: req.text || req.shall_statement || '',
+      rationale: req.source_top_text ? `来源: ${req.source_top_text.slice(0, 50)}...` : '',
+      evidence: req.acceptance_criteria?.join('; ') || '',
+      confidence: req.confidence || 0.8,
+      component: req.component,
+      test_method: req.test_method,
+      source_top_id: req.source_top_id,
+    }))
+
+    // 提示
+    if (result.from_cache) {
+      lowLevelExtractionNotice.value = `已从缓存加载 ${l4Reqs.length} 条底层需求`
+    } else {
+      lowLevelExtractionNotice.value = `成功生成 ${result.inserted_count || l4Reqs.length} 条底层需求并保存`
+    }
+
+    if (lowLevelRequirements.value.length > 0) {
+      currentStep.value = 2
+    }
   } catch (err) {
     traceError.value = err.message || '提取底层需求失败'
   } finally {
     isExtractingLowLevel.value = false
   }
 }
+
+// 底层需求提取提示
+const lowLevelExtractionNotice = ref('')
 
 // 加载示例底层需求（用于测试/演示）
 // 对应会议记录：员工考勤系统需求讨论
@@ -1405,17 +1459,25 @@ onMounted(async () => {
             class="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
           >
             <Loader2 v-if="isExtractingLowLevel" class="w-4 h-4 animate-spin" />
-            <Lock v-else class="w-4 h-4" />
-            <span>{{ isExtractingLowLevel ? '提取中...' : '提取底层需求' }}</span>
-            <span class="text-xs opacity-70">(预留)</span>
+            <Layers v-else class="w-4 h-4" />
+            <span>{{ isExtractingLowLevel ? '生成中...' : '提取底层需求 (L4)' }}</span>
           </button>
+
+          <!-- 底层需求提取提示 -->
+          <div
+            v-if="lowLevelExtractionNotice"
+            class="p-3 text-sm text-emerald-700 bg-emerald-50 rounded-md border border-emerald-200 flex items-center gap-2"
+          >
+            <CheckCircle2 class="w-4 h-4 flex-shrink-0" />
+            {{ lowLevelExtractionNotice }}
+          </div>
 
           <button
             @click="loadMockLowLevelRequirements"
             :disabled="!canLoadRequirements"
             class="w-full py-2 px-4 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 font-medium rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-zinc-300 border-dashed text-sm"
           >
-            <Layers class="w-4 h-4" />
+            <Database class="w-4 h-4" />
             <span>加载示例底层需求</span>
             <span class="text-xs text-zinc-500">(测试用)</span>
           </button>

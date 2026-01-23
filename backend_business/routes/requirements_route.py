@@ -198,3 +198,137 @@ def get_requirements_stats():
         return jsonify(stats)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ========================
+# L4 底层需求相关 API
+# ========================
+
+from backend_business.services.db_service import db_service
+
+
+@requirements_bp.get("/requirements/l4/<session_id>")
+def get_l4_requirements(session_id: str):
+    """
+    查询指定 session 的 L4 底层需求
+    
+    如果数据库中有缓存，直接返回；否则返回空列表
+    """
+    page = int(request.args.get("page", 1))
+    per_page = int(request.args.get("per_page", 100))
+
+    try:
+        result = db_service.get_l4_requirements_by_session(
+            session_id=session_id,
+            page=page,
+            per_page=per_page,
+        )
+        return jsonify({"success": True, **result})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@requirements_bp.get("/requirements/l4/<session_id>/exists")
+def check_l4_exists(session_id: str):
+    """检查指定 session 是否有 L4 底层需求缓存"""
+    try:
+        exists = db_service.has_l4_requirements(session_id)
+        return jsonify({"success": True, "exists": exists})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@requirements_bp.post("/requirements/l4/generate")
+def generate_l4_requirements():
+    """
+    生成 L4 底层需求
+    
+    流程：
+    1. 检查数据库是否有缓存
+    2. 如有缓存，直接返回
+    3. 如无缓存，调用推理后端生成，然后保存到数据库
+    
+    请求体：
+    {
+        "session_id": "xxx",
+        "requirements": [{"id": "...", "text": "..."}],
+        "config": {...},  // 可选
+        "model": "deepseek-chat",  // 可选
+        "force_regenerate": false  // 可选，是否强制重新生成
+    }
+    """
+    data = request.get_json() or {}
+    session_id = data.get("session_id")
+    requirements = data.get("requirements", [])
+    config = data.get("config", {})
+    model = data.get("model")
+    force_regenerate = bool(data.get("force_regenerate", False))
+
+    if not session_id:
+        return jsonify({"success": False, "error": "Missing 'session_id'"}), 400
+    if not requirements:
+        return jsonify({"success": False, "error": "Missing 'requirements'"}), 400
+
+    try:
+        # 检查缓存
+        if not force_regenerate and db_service.has_l4_requirements(session_id):
+            cached = db_service.get_l4_requirements_by_session(session_id, per_page=500)
+            return jsonify({
+                "success": True,
+                "from_cache": True,
+                "requirements": cached.get("requirements", []),
+                "total": cached.get("total", 0),
+            })
+
+        # 调用推理后端生成 L4
+        payload = {
+            "requirements": requirements,
+            "config": config,
+        }
+        if model:
+            payload["model"] = model
+
+        resp = requests.post(
+            f"{settings.INFERENCE_BASE_URL}/l4/generate",
+            json=payload,
+            timeout=600,  # L4 生成可能较慢
+        )
+        resp.raise_for_status()
+        resp_data = resp.json()
+
+        # 解析结果并保存到数据库
+        all_l4_reqs = []
+        for result in resp_data.get("results", []):
+            source_top_id = result.get("source_top_id", "")
+            # 找到对应的顶层需求文本
+            source_top_text = ""
+            for req in requirements:
+                if req.get("id") == source_top_id:
+                    source_top_text = req.get("text", "")
+                    break
+
+            for l4 in result.get("l4_requirements", []):
+                l4["source_top_id"] = source_top_id
+                l4["source_top_text"] = source_top_text
+                all_l4_reqs.append(l4)
+
+        # 保存到数据库
+        inserted_ids = db_service.save_l4_requirements(session_id, all_l4_reqs)
+
+        # 重新查询以返回完整数据
+        saved = db_service.get_l4_requirements_by_session(session_id, per_page=500)
+
+        return jsonify({
+            "success": True,
+            "from_cache": False,
+            "requirements": saved.get("requirements", []),
+            "total": saved.get("total", 0),
+            "inserted_count": len(inserted_ids),
+            "kb_version": resp_data.get("kb_version", ""),
+            "model_id": resp_data.get("model_id", ""),
+        })
+
+    except requests.exceptions.RequestException as e:
+        return jsonify({"success": False, "error": f"推理后端调用失败: {str(e)}"}), 500
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
