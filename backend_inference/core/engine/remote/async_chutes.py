@@ -1,4 +1,5 @@
 """异步Chutes API客户端 - 使用aiohttp实现高性能异步请求"""
+
 from typing import List, Optional
 
 import aiohttp
@@ -90,16 +91,29 @@ class AsyncChutesClient:
                         f"Chutes API error {response.status}: {error_text}"
                     )
 
-                async for line in response.content:
-                    if not line:
+                buffer = b""
+                async for chunk in response.content.iter_chunked(1024):
+                    if not chunk:
                         continue
-                    line_str = line.decode("utf-8").strip()
+                    buffer += chunk
+                    while b"\n" in buffer:
+                        line, buffer = buffer.split(b"\n", 1)
+                        line_str = line.decode("utf-8", errors="ignore").strip()
+                        data = (
+                            line_str[6:] if line_str.startswith("data: ") else line_str
+                        )
+                        if not data:
+                            continue
+                        if data == "[DONE]":
+                            buffer = b""
+                            break
+                        self._extract_stream_content(data, chunks)
+
+                if buffer.strip():
+                    line_str = buffer.decode("utf-8", errors="ignore").strip()
                     data = line_str[6:] if line_str.startswith("data: ") else line_str
-                    if not data:
-                        continue
-                    if data == "[DONE]":
-                        break
-                    self._extract_stream_content(data, chunks)
+                    if data and data != "[DONE]":
+                        self._extract_stream_content(data, chunks)
 
         except aiohttp.ClientError as e:
             raise RuntimeError(f"Chutes API request failed: {e}")

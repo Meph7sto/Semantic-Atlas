@@ -1,7 +1,8 @@
 from typing import Any, AsyncGenerator, Dict, Generator, List, Optional
 
-import torch
 import asyncio
+import torch
+import weakref
 
 from ..config import settings
 from .local import LocalHFEngine
@@ -41,7 +42,7 @@ class DeepSeekEngine:
         self.device_map = "auto" if torch.cuda.is_available() else None
         self._local_engine = None
         self._remote_client = None
-        self._async_remote_client = None
+        self._async_remote_clients = weakref.WeakKeyDictionary()
 
     def _get_local_engine(self) -> LocalHFEngine:
         if self._local_engine is None:
@@ -67,22 +68,24 @@ class DeepSeekEngine:
 
     async def _get_async_remote_client(self):
         """获取异步远程客户端（复用session以提升性能）"""
+        loop = asyncio.get_running_loop()
+        client = self._async_remote_clients.get(loop)
         if self.provider == "chutes":
-            if not isinstance(self._async_remote_client, AsyncChutesClient):
-                self._async_remote_client = AsyncChutesClient(
-                    self.chutes_api_url, self.chutes_api_token
-                )
-                await self._async_remote_client.ensure_session()
-            return self._async_remote_client
+            if not isinstance(client, AsyncChutesClient):
+                client = AsyncChutesClient(self.chutes_api_url, self.chutes_api_token)
+                self._async_remote_clients[loop] = client
+            await client.ensure_session()
+            return client
         if self.provider == "deepseek":
-            if not isinstance(self._async_remote_client, AsyncDeepSeekClient):
-                self._async_remote_client = AsyncDeepSeekClient(
+            if not isinstance(client, AsyncDeepSeekClient):
+                client = AsyncDeepSeekClient(
                     self.deepseek_api_url,
                     self.deepseek_api_key,
                     model=self.deepseek_model,
                 )
-                await self._async_remote_client.ensure_session()
-            return self._async_remote_client
+                self._async_remote_clients[loop] = client
+            await client.ensure_session()
+            return client
         return None
 
     # ---------------------
@@ -140,7 +143,10 @@ class DeepSeekEngine:
         if self.provider == "deepseek":
             client = self._get_remote_client()
             return client.generate_stream(
-                prompt, system_prompt, max_new_tokens, model_override=model
+                prompt,
+                system_prompt,
+                max_new_tokens,
+                model_override=model,
             )
 
         # Fallback for other providers if not implemented (e.g. local/chutes)
@@ -297,7 +303,10 @@ class DeepSeekEngine:
         if self.provider == "deepseek":
             client = await self._get_async_remote_client()
             async for chunk in client.generate_stream(
-                prompt, system_prompt, max_new_tokens, model_override=model
+                prompt,
+                system_prompt,
+                max_new_tokens,
+                model_override=model,
             ):
                 yield chunk
         else:
@@ -310,6 +319,13 @@ class DeepSeekEngine:
             for i in range(0, len(full_text), chunk_size):
                 yield {"type": "content", "delta": full_text[i : i + chunk_size]}
                 await asyncio.sleep(0)  # 让出控制权
+
+    async def close_async(self) -> None:
+        """关闭当前事件循环的异步资源（session等）"""
+        loop = asyncio.get_running_loop()
+        client = self._async_remote_clients.pop(loop, None)
+        if client:
+            await client.close()
 
     async def generate_with_tools_async(
         self,
@@ -389,11 +405,6 @@ class DeepSeekEngine:
             temperature=temperature,
         ):
             yield chunk
-
-    async def close_async(self):
-        """关闭异步资源（session等）"""
-        if self._async_remote_client:
-            await self._async_remote_client.close()
 
 
 __all__ = ["DeepSeekEngine", "ToolCallResult"]

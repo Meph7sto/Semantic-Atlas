@@ -1,4 +1,5 @@
 """异步DeepSeek API客户端 - 使用aiohttp实现高性能异步请求"""
+
 from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
@@ -76,7 +77,7 @@ class AsyncDeepSeekClient:
         max_new_tokens: int,
         model_override: Optional[str] = None,
     ) -> str:
-        """异步调用DeepSeek chat completions并返回拼接后的内容。
+        """异步调用DeepSeek chat completions并返回内容。
 
         Args:
             prompt: 用户提示词
@@ -107,13 +108,12 @@ class AsyncDeepSeekClient:
                 {"role": "user", "content": prompt},
             ],
             "max_tokens": max_new_tokens,
-            "stream": True,
+            "stream": False,
         }
         # Remove unsupported parameters for reasoner model
         if "reasoner" not in target_model:
             body["temperature"] = 0.3
 
-        chunks: List[str] = []
         try:
             async with self._session.post(
                 endpoint, headers=headers, json=body
@@ -127,40 +127,18 @@ class AsyncDeepSeekClient:
                         f"DeepSeek API error {response.status}: {err_payload}"
                     )
 
-                # 异步读取流式响应
-                async for line in response.content:
-                    if not line:
-                        continue
-                    line_str = line.decode("utf-8").strip()
-                    data = line_str[5:] if line_str.startswith("data:") else line_str
-                    data = (
-                        data[1:].strip() if data.startswith(" ") else data
-                    )  # trim optional leading space
-                    if not data:
-                        continue
-                    if data == "[DONE]":
-                        break
-
-                    # 使用与同步版本相同的内容提取逻辑
-                    self._extract_stream_content(data, chunks)
-
-                # 如果服务端未按流式返回，尝试读取一次性 JSON
-                if not chunks:
-                    try:
-                        payload = await response.json()
-                        choices = payload.get("choices") or []
-                        if choices:
-                            message = choices[0].get("message") or {}
-                            content = message.get("content") or ""
-                            if content:
-                                return str(content).strip()
-                    except Exception:
-                        pass
+                payload = await response.json()
+                choices = payload.get("choices") or []
+                if choices:
+                    message = choices[0].get("message") or {}
+                    content = message.get("content") or ""
+                    if content:
+                        return str(content).strip()
 
         except aiohttp.ClientError as exc:
             raise RuntimeError(f"DeepSeek API request failed: {exc}") from exc
 
-        return "".join(chunks).strip()
+        return ""
 
     def _extract_stream_content(self, data: str, chunks: List[str]) -> None:
         """从SSE数据中提取内容（与同步版本逻辑一致）"""
@@ -238,37 +216,63 @@ class AsyncDeepSeekClient:
                         f"DeepSeek API error {response.status}: {err_payload}"
                     )
 
-                async for line in response.content:
-                    if not line:
+                buffer = b""
+                async for chunk in response.content.iter_chunked(1024):
+                    if not chunk:
                         continue
-                    line_str = line.decode("utf-8").strip()
-                    # Remove "data: " prefix
+                    buffer += chunk
+                    while b"\n" in buffer:
+                        line, buffer = buffer.split(b"\n", 1)
+                        line_str = line.decode("utf-8", errors="ignore").strip()
+                        # Remove "data: " prefix
+                        data = (
+                            line_str[5:] if line_str.startswith("data:") else line_str
+                        )
+                        data = data.strip()
+
+                        if not data:
+                            continue
+                        if data == "[DONE]":
+                            buffer = b""
+                            break
+
+                        try:
+                            payload = json.loads(data)
+                            choices = payload.get("choices") or []
+                            if choices:
+                                delta = choices[0].get("delta", {})
+
+                                # 1. Check for reasoning content (Thinking Process)
+                                reasoning = delta.get("reasoning_content", "")
+                                if reasoning:
+                                    yield {"type": "thinking", "delta": reasoning}
+
+                                # 2. Check for final content
+                                content = delta.get("content", "")
+                                if content:
+                                    yield {"type": "content", "delta": content}
+
+                        except json.JSONDecodeError:
+                            pass
+
+                if buffer.strip():
+                    line_str = buffer.decode("utf-8", errors="ignore").strip()
                     data = line_str[5:] if line_str.startswith("data:") else line_str
                     data = data.strip()
-
-                    if not data:
-                        continue
-                    if data == "[DONE]":
-                        break
-
-                    try:
-                        payload = json.loads(data)
-                        choices = payload.get("choices") or []
-                        if choices:
-                            delta = choices[0].get("delta", {})
-
-                            # 1. Check for reasoning content (Thinking Process)
-                            reasoning = delta.get("reasoning_content", "")
-                            if reasoning:
-                                yield {"type": "thinking", "delta": reasoning}
-
-                            # 2. Check for final content
-                            content = delta.get("content", "")
-                            if content:
-                                yield {"type": "content", "delta": content}
-
-                    except json.JSONDecodeError:
-                        pass
+                    if data and data != "[DONE]":
+                        try:
+                            payload = json.loads(data)
+                            choices = payload.get("choices") or []
+                            if choices:
+                                delta = choices[0].get("delta", {})
+                                reasoning = delta.get("reasoning_content", "")
+                                if reasoning:
+                                    yield {"type": "thinking", "delta": reasoning}
+                                content = delta.get("content", "")
+                                if content:
+                                    yield {"type": "content", "delta": content}
+                        except json.JSONDecodeError:
+                            pass
 
         except aiohttp.ClientError as exc:
             raise RuntimeError(f"DeepSeek API request failed: {exc}") from exc
