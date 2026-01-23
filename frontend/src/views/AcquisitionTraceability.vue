@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { traceabilityApi, conflictApi, classifyTexts, analysisApi, requirementsL123Api } from '../utils/api'
+import { traceabilityApi, conflictApi, classifyTexts, analysisApi, requirementsL123Api, getLatestClassification } from '../utils/api'
 import draggable from 'vuedraggable'
 import {
   FileText,
@@ -96,6 +96,7 @@ const conflictProgress = ref({ current: 0, total: 0 })
 const isAnalyzing = ref(false)
 const analysisStep = ref(0) // 0: 未开始, 1: 追溯中, 2: 冲突检测中, 3: 分类中, 4: 完成
 const analysisError = ref(null)
+const analysisNotice = ref('')
 
 // ========== 需求管理状态（表格视图+卡片视图） ==========
 // 需求状态定义
@@ -406,7 +407,7 @@ async function loadContextRuns({ useSessionFilter = true } = {}) {
 async function loadRequirementsFromDB() {
   if (!sessionId.value.trim()) {
     error.value = '请先输入 Session ID'
-    return
+        return
   }
 
   isLoading.value = true
@@ -699,12 +700,59 @@ async function runFullAnalysis() {
 
   isAnalyzing.value = true
   analysisError.value = null
+  analysisNotice.value = ''
   analysisStep.value = 1
 
   // 获取当前 session_id 用于保存到数据库
   const currentSessionId = sessionId.value?.trim() || null
 
   try {
+    // Step 0: 若已有缓存结果，直接读取展示
+    if (currentSessionId) {
+      try {
+        const [traceCache, conflictCache, classificationCache] = await Promise.all([
+          analysisApi.getLatestTrace(currentSessionId),
+          conflictApi.getLatest(currentSessionId),
+          getLatestClassification(currentSessionId),
+        ])
+
+        const hasTrace = !!(traceCache && traceCache.data)
+        const hasConflict = !!(conflictCache && conflictCache.data && conflictCache.data.items && conflictCache.data.items.length)
+        const hasClassification = !!(classificationCache && classificationCache.predictions && classificationCache.predictions.length)
+
+        if (hasTrace && hasConflict && hasClassification) {
+          analysisNotice.value = '已加载缓存分析结果，无需重新分析'
+          traceResult.value = traceCache.data
+          conflictResults.value = conflictCache.data.items.map((item) => ({
+            reqA: { statement: item.requirement_a },
+            reqB: { statement: item.requirement_b },
+            is_conflict: item.is_conflict,
+            raw_response: item.raw_response,
+            data: item.result_json,
+          }))
+
+          const requirements = classificationCache.requirements || []
+          classificationResult.value = {
+            predictions: classificationCache.predictions.map((pred, idx) => ({
+              ...pred,
+              originalReq: { statement: requirements[idx] || '' },
+            })),
+            label_distribution: classificationCache.label_distribution,
+            total: classificationCache.total,
+          }
+
+          currentStep.value = 4
+          analysisStep.value = 4
+          activeTab.value = 'network'
+          setTimeout(() => updateChart(), 100)
+          return
+        }
+      } catch (cacheErr) {
+        // 读取缓存失败不影响正常分析
+        console.warn('读取缓存结果失败，继续执行一键分析:', cacheErr)
+      }
+    }
+
     // Step 1: 追溯分析（保存到数据库）
     traceError.value = null
     traceResult.value = null
@@ -783,12 +831,12 @@ async function runFullAnalysis() {
         } catch (e) {
           console.warn('批量冲突检测失败，尝试单对检测:', e)
           // 降级到单对检测
-          for (let i = 0; i < pairsToCheck.length; i++) {
-            const { reqA, reqB } = pairsToCheck[i]
-            conflictProgress.value.current = i + 1
-            try {
-              const res = await conflictApi.check(
-                reqA.statement || reqA.text || '',
+      for (let i = 0; i < pairsToCheck.length; i++) {
+        const { reqA, reqB } = pairsToCheck[i]
+        conflictProgress.value.current = i + 1
+        try {
+          const res = await conflictApi.check(
+            reqA.statement || reqA.text || '',
                 reqB.statement || reqB.text || '',
                 true,  // save_to_db = true
                 currentSessionId
@@ -1259,16 +1307,16 @@ onMounted(async () => {
 
         <!-- 抽取设置 -->
         <details class="group mb-4">
-          <summary
-            class="flex items-center justify-between cursor-pointer p-3 bg-zinc-50 rounded-lg border border-zinc-200 hover:bg-zinc-100 transition-colors"
-          >
-            <div class="flex items-center gap-2">
-              <Settings2 class="w-4 h-4 text-zinc-500" />
+            <summary
+              class="flex items-center justify-between cursor-pointer p-3 bg-zinc-50 rounded-lg border border-zinc-200 hover:bg-zinc-100 transition-colors"
+            >
+              <div class="flex items-center gap-2">
+                <Settings2 class="w-4 h-4 text-zinc-500" />
               <span class="text-xs font-semibold text-zinc-600 uppercase tracking-wider">抽取设置</span>
-            </div>
+              </div>
             <ChevronDown class="w-4 h-4 text-zinc-400 transition-transform group-open:rotate-180" />
-          </summary>
-          <div class="mt-2 p-3 bg-zinc-50 rounded-lg border border-zinc-200 space-y-3">
+            </summary>
+            <div class="mt-2 p-3 bg-zinc-50 rounded-lg border border-zinc-200 space-y-3">
             <div class="grid grid-cols-2 gap-3">
               <div>
                 <label class="text-xs font-medium text-zinc-600 block mb-1">bundle_strategy</label>
@@ -1316,13 +1364,13 @@ onMounted(async () => {
               <input v-model="extractionForm.useToolcall" type="checkbox" class="w-3 h-3 rounded border-zinc-300" />
               使用 tool-call
             </label>
-          </div>
-        </details>
+            </div>
+          </details>
 
-        <!-- 错误提示 -->
+          <!-- 错误提示 -->
         <div v-if="error" class="p-3 text-sm text-red-600 bg-red-50 rounded-md border border-red-200 mb-4">
-          Error: {{ error }}
-        </div>
+            Error: {{ error }}
+          </div>
         <div v-if="extractionError" class="p-3 text-sm text-red-600 bg-red-50 rounded-md border border-red-200 mb-4">
           抽取错误: {{ extractionError }}
         </div>
@@ -1436,6 +1484,14 @@ onMounted(async () => {
             </div>
           </div>
 
+          <!-- 缓存提示 -->
+          <div
+            v-if="analysisNotice"
+            class="p-3 text-sm text-emerald-700 bg-emerald-50 rounded-md border border-emerald-200"
+          >
+            {{ analysisNotice }}
+          </div>
+
           <!-- 错误提示 -->
           <div
             v-if="analysisError"
@@ -1505,14 +1561,14 @@ onMounted(async () => {
         <!-- Tab 切换 -->
         <div class="bg-white border-b border-zinc-200 px-6 py-2 flex items-center justify-between shrink-0">
           <div class="flex gap-1">
-            <button
-              @click="activeTab = 'board'"
-              class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
-              :class="activeTab === 'board' ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
-            >
-              <Layers class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
-              看板
-            </button>
+          <button
+            @click="activeTab = 'board'"
+            class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+            :class="activeTab === 'board' ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
+          >
+            <Layers class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+            看板
+          </button>
             <button
               @click="activeTab = 'table'"
               class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
@@ -1530,33 +1586,33 @@ onMounted(async () => {
               卡片
             </button>
             <div class="w-px h-6 bg-zinc-200 mx-1 self-center"></div>
-            <button
-              @click="activeTab = 'network'"
-              class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
-              :class="activeTab === 'network' ? 'bg-blue-600 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
-            >
-              <Network class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
-              追溯
-            </button>
-            <button
-              @click="activeTab = 'conflict'"
-              class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
-              :class="activeTab === 'conflict' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
-            >
-              <AlertTriangle class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
-              冲突
-              <span v-if="conflictStats && conflictStats.conflicts > 0" class="ml-1 px-1.5 py-0.5 bg-red-100 text-red-700 rounded-full text-xs">
-                {{ conflictStats.conflicts }}
-              </span>
-            </button>
-            <button
-              @click="activeTab = 'classification'"
-              class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
-              :class="activeTab === 'classification' ? 'bg-emerald-600 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
-            >
-              <Tags class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
-              分类
-            </button>
+          <button
+            @click="activeTab = 'network'"
+            class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+            :class="activeTab === 'network' ? 'bg-blue-600 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
+          >
+            <Network class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+            追溯
+          </button>
+          <button
+            @click="activeTab = 'conflict'"
+            class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+            :class="activeTab === 'conflict' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
+          >
+            <AlertTriangle class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+            冲突
+            <span v-if="conflictStats && conflictStats.conflicts > 0" class="ml-1 px-1.5 py-0.5 bg-red-100 text-red-700 rounded-full text-xs">
+              {{ conflictStats.conflicts }}
+            </span>
+          </button>
+          <button
+            @click="activeTab = 'classification'"
+            class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+            :class="activeTab === 'classification' ? 'bg-emerald-600 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
+          >
+            <Tags class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+            分类
+          </button>
           </div>
           
           <!-- 需求统计 -->

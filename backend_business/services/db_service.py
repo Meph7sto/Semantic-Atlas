@@ -1,5 +1,6 @@
 import json
 import os
+import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -35,6 +36,7 @@ class DBService:
                     """
                     CREATE TABLE IF NOT EXISTS trace_analysis (
                         id SERIAL PRIMARY KEY,
+                        session_id TEXT,
                         analysis_type TEXT NOT NULL,              -- relation | batch
                         title TEXT NOT NULL,
                         description TEXT NOT NULL,
@@ -44,7 +46,9 @@ class DBService:
                     )
                     """
                 )
+                cur.execute("ALTER TABLE trace_analysis ADD COLUMN IF NOT EXISTS session_id TEXT")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_trace_created_at ON trace_analysis(created_at)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_trace_session_id ON trace_analysis(session_id)")
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS spans (
@@ -276,6 +280,7 @@ class DBService:
                     """
                     CREATE TABLE IF NOT EXISTS conflict_analysis (
                         id SERIAL PRIMARY KEY,
+                        batch_id TEXT,
                         session_id TEXT,
                         requirement_a TEXT NOT NULL,
                         requirement_b TEXT NOT NULL,
@@ -286,7 +291,9 @@ class DBService:
                     )
                     """
                 )
+                cur.execute("ALTER TABLE conflict_analysis ADD COLUMN IF NOT EXISTS batch_id TEXT")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_conflict_analysis_session ON conflict_analysis(session_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_conflict_analysis_batch ON conflict_analysis(batch_id)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_conflict_analysis_created_at ON conflict_analysis(created_at)")
 
                 # ========================
@@ -315,6 +322,7 @@ class DBService:
         low_level_requirement: str,
         output: Dict[str, Any],
         title: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> int:
         input_payload = {
             "high_level_requirement": high_level_requirement,
@@ -329,11 +337,12 @@ class DBService:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO trace_analysis(analysis_type, title, description, input_json, output_json, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO trace_analysis(session_id, analysis_type, title, description, input_json, output_json, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
+                        session_id,
                         "relation",
                         str(title)[:200],
                         desc,
@@ -350,6 +359,7 @@ class DBService:
         low_level_requirements: List[str],
         output: Dict[str, Any],
         title: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> int:
         input_payload = {
             "high_level_requirements": high_level_requirements,
@@ -364,11 +374,12 @@ class DBService:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO trace_analysis(analysis_type, title, description, input_json, output_json, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO trace_analysis(session_id, analysis_type, title, description, input_json, output_json, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
+                        session_id,
                         "batch",
                         str(title)[:200],
                         desc,
@@ -455,6 +466,7 @@ class DBService:
         self,
         session_id: Optional[str],
         conflicts: List[Dict[str, Any]],
+        batch_id: Optional[str] = None,
     ) -> List[int]:
         """
         批量保存冲突检测结果
@@ -470,6 +482,7 @@ class DBService:
             return []
 
         record_ids = []
+        batch_id = batch_id or uuid.uuid4().hex
         with self._connect() as conn:
             with conn.cursor() as cur:
                 for conflict in conflicts:
@@ -483,13 +496,14 @@ class DBService:
                     cur.execute(
                         """
                         INSERT INTO conflict_analysis (
-                            session_id, requirement_a, requirement_b,
+                            batch_id, session_id, requirement_a, requirement_b,
                             is_conflict, raw_response, result_json, created_at
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         RETURNING id
                         """,
                         (
+                            batch_id,
                             session_id,
                             conflict.get("requirement_a", ""),
                             conflict.get("requirement_b", ""),
@@ -502,6 +516,84 @@ class DBService:
                     record_ids.append(int(cur.fetchone()[0]))
 
         return record_ids
+
+    def get_latest_trace_batch(self, session_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT id, output_json
+                    FROM trace_analysis
+                    WHERE session_id = %s AND analysis_type = 'batch'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (session_id,),
+                )
+                row = cur.fetchone()
+        if not row:
+            return None
+        try:
+            return {
+                "record_id": row["id"],
+                "data": json.loads(row["output_json"]),
+            }
+        except Exception:
+            return {"record_id": row["id"], "data": {}}
+
+    def get_latest_conflict_batch(self, session_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT batch_id
+                    FROM conflict_analysis
+                    WHERE session_id = %s AND batch_id IS NOT NULL
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (session_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                batch_id = row["batch_id"]
+                cur.execute(
+                    """
+                    SELECT requirement_a, requirement_b, is_conflict, raw_response, result_json
+                    FROM conflict_analysis
+                    WHERE session_id = %s AND batch_id = %s
+                    ORDER BY created_at ASC
+                    """,
+                    (session_id, batch_id),
+                )
+                rows = cur.fetchall()
+        return {"batch_id": batch_id, "items": [dict(r) for r in rows]}
+
+    def get_latest_classification(self, session_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT id, requirements, predictions, label_distribution, total, result_json
+                    FROM classification_analysis
+                    WHERE session_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (session_id,),
+                )
+                row = cur.fetchone()
+        if not row:
+            return None
+        out = dict(row)
+        for key in ("requirements", "predictions", "label_distribution", "result_json"):
+            try:
+                if out.get(key) is not None and isinstance(out.get(key), str):
+                    out[key] = json.loads(out[key])
+            except Exception:
+                pass
+        return out
 
     def save_classification(
         self,

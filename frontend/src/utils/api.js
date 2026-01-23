@@ -76,6 +76,13 @@ export const conflictApi = {
         return resp.data
     },
 
+    async getLatest(sessionId) {
+        const resp = await api.get('/conflict/latest', {
+            params: { session_id: sessionId },
+        })
+        return resp.data
+    },
+
     // 流式检测，直接连接推理服务
     async streamCheck(requirementA, requirementB, useThinking = false) {
         const response = await fetch('/inference/conflict/stream_check', {
@@ -149,6 +156,16 @@ export const analysisApi = {
         }
         return resp.data?.data ?? resp.data
     },
+
+    async getLatestTrace(sessionId) {
+        const resp = await api.get('/trace/latest', {
+            params: { session_id: sessionId },
+        })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '加载追溯缓存失败')
+        }
+        return resp.data?.data ?? resp.data
+    },
 }
 
 // Phase 3 (L1-L3) 需求抽取
@@ -204,6 +221,13 @@ export const classifyTexts = (payload, saveToDb = false, sessionId = null) => {
         finalPayload.session_id = sessionId
     }
     return api.post('/classification/predict-texts', finalPayload)
+}
+
+export const getLatestClassification = async (sessionId) => {
+    const resp = await api.get('/classification/latest', {
+        params: { session_id: sessionId },
+    })
+    return resp.data?.data ?? resp.data
 }
 
 export const classifyCsv = (file) => {

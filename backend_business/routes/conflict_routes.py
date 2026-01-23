@@ -100,3 +100,14 @@ def check_conflict_batch():
         })
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@conflict_bp.route('/latest', methods=['GET'])
+def get_latest_conflict_batch():
+    session_id = request.args.get("session_id")
+    if not session_id:
+        return jsonify({"success": False, "error": "缺少 session_id"}), 400
+    if not db_service:
+        return jsonify({"success": False, "error": "数据库服务未初始化"}), 500
+    data = db_service.get_latest_conflict_batch(session_id)
+    return jsonify({"success": True, "data": data})

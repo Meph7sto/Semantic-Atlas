@@ -99,3 +99,14 @@ def classify_csv():
         )
     except Exception as e:
         return jsonify({"detail": f"Business Backend Error: {str(e)}"}), 500
+
+
+@classification_bp.route("/latest", methods=["GET"])
+def get_latest_classification():
+    session_id = request.args.get("session_id")
+    if not session_id:
+        return jsonify({"detail": "缺少 session_id"}), 400
+    if not db_service:
+        return jsonify({"detail": "数据库服务未初始化"}), 500
+    data = db_service.get_latest_classification(session_id)
+    return jsonify({"data": data})

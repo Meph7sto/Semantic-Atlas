@@ -189,6 +189,7 @@ def batch_trace_relation():
     highs = payload.get("high_level_requirements") or []
     lows = payload.get("low_level_requirements") or []
     save_to_db = bool(payload.get("save_to_db", False))
+    session_id = payload.get("session_id")
     max_new_tokens = int(payload.get("max_new_tokens", 1600))
 
     highs = [str(s).strip() for s in highs if str(s).strip()]
@@ -201,10 +202,21 @@ def batch_trace_relation():
         result = ai_proxy.trace_batch(highs, lows, max_new_tokens=max_new_tokens)
         record_id = None
         if save_to_db:
-            record_id = db_service.save_batch(highs, lows, result)
+            record_id = db_service.save_batch(highs, lows, result, session_id=session_id)
         return jsonify({"success": True, "data": result, "record_id": record_id})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@analysis_bp.route("/trace/latest", methods=["GET"])
+def get_latest_trace_batch():
+    session_id = request.args.get("session_id")
+    if not session_id:
+        return jsonify({"success": False, "error": "缺少 session_id"}), 400
+    data = db_service.get_latest_trace_batch(session_id)
+    if not data:
+        return jsonify({"success": True, "data": None})
+    return jsonify({"success": True, "data": data})
 
 
 @analysis_bp.route("/requirements", methods=["GET"])
