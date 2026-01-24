@@ -41,6 +41,11 @@ const router = createRouter({
             component: RequirementsExtraction
         },
         {
+            path: '/l4-testing',
+            name: 'l4-testing',
+            component: L4Testing
+        },
+        {
             path: '/requirements-manage',
             name: 'requirements-manage',
             component: RequirementsManage

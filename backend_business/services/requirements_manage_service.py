@@ -412,7 +412,7 @@ class RequirementsManageService:
         session_id: str,
         project_id: str,
         created_by: str = "",
-        mapping_mode: str = "flat",
+        mapping_mode: str = "tree",
     ) -> Dict[str, Any]:
         level_map = {
             "L1": "top_level",
@@ -421,9 +421,27 @@ class RequirementsManageService:
             "L4": "low_level",
             "L5": "task",
         }
-        inserted = 0
+        inserted_l123 = 0
+        inserted_l4 = 0
+        level_counts: Dict[str, int] = {}
+        unlinked_l4 = 0
         with self._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT req_id, source_req_id, requirement_type, parent_id
+                    FROM manage_requirements
+                    WHERE project_id = %s AND deleted = FALSE
+                    """,
+                    (project_id,),
+                )
+                existing_rows = cur.fetchall()
+                existing_by_source = {
+                    row["source_req_id"]: row["req_id"]
+                    for row in existing_rows
+                    if row.get("source_req_id")
+                }
+
                 cur.execute(
                     """
                     SELECT req_id, level, text, created_at
@@ -436,8 +454,21 @@ class RequirementsManageService:
                 rows = cur.fetchall()
 
                 for row in rows:
-                    req_type = level_map.get(row["level"], "low_level")
-                    title = row["text"].strip()
+                    level = row.get("level") or ""
+                    level_counts[level] = level_counts.get(level, 0) + 1
+
+                for row in rows:
+                    level = row.get("level") or ""
+                    if level == "L4":
+                        # L4 需求优先从 low_level_requirements 导入
+                        continue
+
+                    req_type = level_map.get(level, "low_level")
+                    source_req_id = row["req_id"]
+                    if source_req_id in existing_by_source:
+                        continue
+
+                    title = (row.get("text") or "").strip()
                     cur.execute(
                         """
                         INSERT INTO manage_requirements (
@@ -465,22 +496,160 @@ class RequirementsManageService:
                             None,
                             json.dumps([]),
                             None,
-                            None if mapping_mode == "flat" else None,
+                            None,
                             0,
-                            row["req_id"],
-                            row["level"],
+                            source_req_id,
+                            level,
                             json.dumps({"source": "requirements_l123"}),
                             created_by,
                             created_by,
                         ),
                     )
                     if cur.rowcount > 0:
-                        inserted += 1
+                        inserted_l123 += 1
 
+                # 刷新 source_req_id -> manage req_id 映射（用于 L4 绑定）
+                cur.execute(
+                    """
+                    SELECT req_id, source_req_id
+                    FROM manage_requirements
+                    WHERE project_id = %s AND deleted = FALSE AND source_req_id IS NOT NULL
+                    """,
+                    (project_id,),
+                )
+                existing_by_source = {
+                    row["source_req_id"]: row["req_id"]
+                    for row in cur.fetchall()
+                    if row.get("source_req_id")
+                }
+
+                # 读取 L4 需求与映射关系
+                cur.execute(
+                    """
+                    SELECT req_id, source_top_id, source_top_text, text, component, created_at
+                    FROM low_level_requirements
+                    WHERE session_id = %s
+                    ORDER BY created_at ASC
+                    """,
+                    (session_id,),
+                )
+                l4_rows = cur.fetchall()
+                level_counts["L4"] = len(l4_rows)
+
+                cur.execute(
+                    """
+                    SELECT req_id, top_req_id
+                    FROM low_level_requirement_links
+                    WHERE session_id = %s
+                    """,
+                    (session_id,),
+                )
+                link_rows = cur.fetchall()
+                link_map: Dict[str, List[str]] = {}
+                for row in link_rows:
+                    link_map.setdefault(row["req_id"], []).append(row["top_req_id"])
+
+                for row in l4_rows:
+                    source_req_id = row["req_id"]
+                    if source_req_id in existing_by_source:
+                        # 尝试补齐 parent_id
+                        if mapping_mode != "flat":
+                            top_ids = link_map.get(source_req_id) or []
+                            if not top_ids and row.get("source_top_id"):
+                                top_ids = [row.get("source_top_id")]
+                            parent_id = None
+                            for top_id in top_ids:
+                                parent_id = existing_by_source.get(top_id)
+                                if parent_id:
+                                    break
+                            if parent_id:
+                                cur.execute(
+                                    """
+                                    UPDATE manage_requirements
+                                    SET parent_id = %s, updated_at = NOW()
+                                    WHERE project_id = %s AND source_req_id = %s AND parent_id IS NULL
+                                    """,
+                                    (parent_id, project_id, source_req_id),
+                                )
+                            else:
+                                unlinked_l4 += 1
+                        continue
+
+                    parent_id = None
+                    if mapping_mode != "flat":
+                        top_ids = link_map.get(source_req_id) or []
+                        if not top_ids and row.get("source_top_id"):
+                            top_ids = [row.get("source_top_id")]
+                        for top_id in top_ids:
+                            parent_id = existing_by_source.get(top_id)
+                            if parent_id:
+                                break
+                        if not parent_id:
+                            unlinked_l4 += 1
+
+                    title = (row.get("text") or "").strip()
+                    cur.execute(
+                        """
+                        INSERT INTO manage_requirements (
+                            req_id, project_id, requirement_type, status, title, description,
+                            priority, assignee, tags, due_date, parent_id, order_index,
+                            source_req_id, source_level, custom_fields,
+                            created_by, created_at, updated_by, updated_at, deleted
+                        )
+                        VALUES (
+                            %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s::jsonb, %s, %s, %s,
+                            %s, %s, %s::jsonb,
+                            %s, NOW(), %s, NOW(), FALSE
+                        )
+                        ON CONFLICT (req_id) DO NOTHING
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            project_id,
+                            "low_level",
+                            "draft",
+                            title,
+                            "",
+                            None,
+                            None,
+                            json.dumps([]),
+                            None,
+                            parent_id,
+                            0,
+                            source_req_id,
+                            "L4",
+                            json.dumps(
+                                {
+                                    "source": "low_level_requirements",
+                                    "source_top_id": row.get("source_top_id"),
+                                    "source_top_text": row.get("source_top_text"),
+                                    "component": row.get("component"),
+                                }
+                            ),
+                            created_by,
+                            created_by,
+                        ),
+                    )
+                    if cur.rowcount > 0:
+                        inserted_l4 += 1
+        l4_total = level_counts.get("L4", 0)
+        top_level_total = sum(
+            level_counts.get(level, 0) for level in ("L1", "L2", "L3")
+        )
+        total = sum(level_counts.values())
         return {
-            "inserted": inserted,
-            "total": len(rows),
+            "inserted": inserted_l123 + inserted_l4,
+            "inserted_l123": inserted_l123,
+            "inserted_l4": inserted_l4,
+            "total": total,
             "mapping_mode": mapping_mode,
+            "stats": {
+                "by_level": level_counts,
+                "top_level_total": top_level_total,
+                "low_level_total": l4_total,
+                "unlinked_l4": unlinked_l4,
+            },
         }
 
     # ----------------------
@@ -578,6 +747,23 @@ class RequirementsManageService:
         requirements = self.list_requirements(project_id, include_deleted=False)
         if not requirements:
             raise ValueError("当前项目没有可用需求")
+
+        top_level_ids = {
+            r["req_id"]
+            for r in requirements
+            if r.get("requirement_type") == "top_level"
+        }
+        low_level_reqs = [
+            r for r in requirements if r.get("requirement_type") == "low_level"
+        ]
+        if not top_level_ids or not low_level_reqs:
+            raise ValueError("里程碑至少需要包含顶层与底层需求")
+
+        unlinked_l4 = [
+            r for r in low_level_reqs if r.get("parent_id") not in top_level_ids
+        ]
+        if unlinked_l4:
+            raise ValueError("存在未挂接到顶层需求的底层需求")
 
         with self._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1031,6 +1217,195 @@ class RequirementsManageService:
                 )
                 if cur.rowcount == 0:
                     raise ValueError("分支不存在")
+
+    def merge_branches(
+        self,
+        project_id: str,
+        source_branch: str,
+        target_branch: str,
+        created_by: str,
+        message: str = "",
+    ) -> Dict[str, Any]:
+        if source_branch == target_branch:
+            raise ValueError("源分支与目标分支不能相同")
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT ref_name, milestone_id
+                    FROM manage_branch_refs
+                    WHERE project_id = %s AND ref_name IN (%s, %s)
+                    """,
+                    (project_id, source_branch, target_branch),
+                )
+                refs = {row["ref_name"]: row["milestone_id"] for row in cur.fetchall()}
+
+                source_milestone_id = refs.get(source_branch)
+                target_milestone_id = refs.get(target_branch)
+                if not source_milestone_id or not target_milestone_id:
+                    raise ValueError("源分支或目标分支不存在，或尚未指向里程碑")
+
+                def _load_nodes(mid: str) -> Dict[str, Dict[str, Any]]:
+                    cur.execute(
+                        """
+                        SELECT requirement_id, requirement_type, status, title, description,
+                               parent_id, order_index, snapshot_data
+                        FROM manage_milestone_nodes
+                        WHERE milestone_id = %s
+                        """,
+                        (mid,),
+                    )
+                    rows = cur.fetchall()
+                    return {row["requirement_id"]: dict(row) for row in rows}
+
+                source_nodes = _load_nodes(source_milestone_id)
+                target_nodes = _load_nodes(target_milestone_id)
+
+                conflicts: List[Dict[str, Any]] = []
+                merged_nodes = dict(target_nodes)
+                for req_id, src_row in source_nodes.items():
+                    if req_id in merged_nodes:
+                        if merged_nodes[req_id].get("snapshot_data") != src_row.get(
+                            "snapshot_data"
+                        ):
+                            conflicts.append(
+                                {
+                                    "requirement_id": req_id,
+                                    "source": src_row.get("snapshot_data"),
+                                    "target": merged_nodes[req_id].get("snapshot_data"),
+                                }
+                            )
+                        continue
+                    merged_nodes[req_id] = src_row
+
+                milestone_id = str(uuid.uuid4())
+                merge_name = f"Merge {source_branch} -> {target_branch}"
+                metadata = {
+                    "source_branch": source_branch,
+                    "target_branch": target_branch,
+                    "source_milestone_id": source_milestone_id,
+                    "target_milestone_id": target_milestone_id,
+                    "conflict_count": len(conflicts),
+                }
+
+                cur.execute(
+                    """
+                    INSERT INTO manage_milestones (
+                        milestone_id, project_id, name, description, message,
+                        milestone_type, is_baseline, sprint, version, tags, created_by, created_at, metadata
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, FALSE, NULL, NULL, %s::jsonb, %s, NOW(), %s::jsonb)
+                    RETURNING milestone_id, project_id, name, description, message,
+                              milestone_type, is_baseline, sprint, version, tags, created_by, created_at::text AS created_at, metadata
+                    """,
+                    (
+                        milestone_id,
+                        project_id,
+                        merge_name,
+                        "",
+                        message,
+                        "merge",
+                        json.dumps([]),
+                        created_by,
+                        json.dumps(metadata),
+                    ),
+                )
+                milestone = dict(cur.fetchone())
+
+                cur.execute(
+                    """
+                    INSERT INTO manage_milestone_edges (
+                        project_id, from_milestone_id, to_milestone_id, relation_type, message, created_by, created_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                    """,
+                    (
+                        project_id,
+                        target_milestone_id,
+                        milestone_id,
+                        "merge",
+                        f"merge-target:{target_branch}",
+                        created_by,
+                    ),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO manage_milestone_edges (
+                        project_id, from_milestone_id, to_milestone_id, relation_type, message, created_by, created_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                    """,
+                    (
+                        project_id,
+                        source_milestone_id,
+                        milestone_id,
+                        "merge",
+                        f"merge-source:{source_branch}",
+                        created_by,
+                    ),
+                )
+
+                for req_id, node in merged_nodes.items():
+                    snapshot_data = node.get("snapshot_data")
+                    cur.execute(
+                        """
+                        INSERT INTO manage_milestone_nodes (
+                            snapshot_id, milestone_id, requirement_id, requirement_type,
+                            status, title, description, parent_id, order_index, snapshot_data, created_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            milestone_id,
+                            req_id,
+                            node.get("requirement_type"),
+                            node.get("status"),
+                            node.get("title"),
+                            node.get("description"),
+                            node.get("parent_id"),
+                            node.get("order_index", 0),
+                            (
+                                json.dumps(snapshot_data)
+                                if snapshot_data is not None
+                                else json.dumps({})
+                            ),
+                        ),
+                    )
+
+                for req_id, node in merged_nodes.items():
+                    parent_id = node.get("parent_id")
+                    if parent_id and parent_id in merged_nodes:
+                        cur.execute(
+                            """
+                            INSERT INTO manage_milestone_relations (milestone_id, parent_id, child_id, order_index)
+                            VALUES (%s, %s, %s, %s)
+                            """,
+                            (
+                                milestone_id,
+                                parent_id,
+                                req_id,
+                                node.get("order_index", 0),
+                            ),
+                        )
+
+                cur.execute(
+                    """
+                    UPDATE manage_branch_refs
+                    SET milestone_id = %s, updated_at = NOW()
+                    WHERE project_id = %s AND ref_name = %s
+                    """,
+                    (milestone_id, project_id, target_branch),
+                )
+
+        return {
+            "milestone": milestone,
+            "conflicts": conflicts,
+            "conflict_count": len(conflicts),
+            "source_branch": source_branch,
+            "target_branch": target_branch,
+        }
 
     @staticmethod
     def _build_tree_from_snapshot(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

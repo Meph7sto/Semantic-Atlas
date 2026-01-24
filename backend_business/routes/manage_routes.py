@@ -128,7 +128,7 @@ def import_requirements(project_id: str):
         session_id=session_id,
         project_id=project_id,
         created_by=actor,
-        mapping_mode=data.get("mapping_mode", "flat"),
+        mapping_mode=data.get("mapping_mode", "tree"),
     )
     service.add_audit_log(
         project_id=project_id,
@@ -445,6 +445,36 @@ def create_merge_request(branch_id: str):
     actor = _get_actor()
     merge = service.create_merge_request(branch_id, target_milestone_id, actor)
     return jsonify(merge)
+
+
+@manage_bp.post("/projects/<project_id>/branches/merge")
+def merge_branches(project_id: str):
+    data = request.get_json(silent=True) or {}
+    source_branch = data.get("source_branch")
+    target_branch = data.get("target_branch")
+    if not source_branch or not target_branch:
+        return _json_error("Missing source_branch or target_branch")
+    actor = _get_actor()
+    try:
+        result = service.merge_branches(
+            project_id=project_id,
+            source_branch=source_branch,
+            target_branch=target_branch,
+            created_by=actor,
+            message=data.get("message", ""),
+        )
+    except Exception as e:
+        return _json_error(str(e))
+
+    service.add_audit_log(
+        project_id=project_id,
+        actor=actor,
+        action="branch_merge",
+        target_type="branch_ref",
+        target_id=target_branch,
+        detail=result,
+    )
+    return jsonify(result)
 
 
 @manage_bp.get("/projects/<project_id>/audits")

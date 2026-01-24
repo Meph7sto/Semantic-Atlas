@@ -32,29 +32,79 @@ const getNodeColor = (reqId) => {
   return COLOR_MAP[uniq[0]] || COLOR_MAP.normal
 }
 
+const getNodeSymbol = (reqType) => {
+  switch (reqType) {
+    case 'top_level':
+      return 'circle'
+    case 'low_level':
+      return 'rect'
+    case 'task':
+      return 'diamond'
+    default:
+      return 'circle'
+  }
+}
+
+const getNodeSize = (reqType) => {
+  switch (reqType) {
+    case 'top_level':
+      return 14
+    case 'low_level':
+      return 12
+    case 'task':
+      return 10
+    default:
+      return 12
+  }
+}
+
 const toTreeNode = (node) => {
   const req = node.requirement || {}
   const reqId = req.req_id || req.id || ''
+  const reqType = req.requirement_type || ''
   return {
-    name: req.title || req.text || reqId || '未命名需求',
+    name: '',
     id: reqId,
     value: req,
     itemStyle: {
       color: getNodeColor(reqId)
     },
+    symbol: getNodeSymbol(reqType),
+    symbolSize: getNodeSize(reqType),
+    label: { show: false },
     children: (node.children || []).map(toTreeNode)
   }
 }
 
 const buildRoots = () => {
   if (!props.treeData || props.treeData.length === 0) return []
-  return props.treeData.map(toTreeNode)
+  const roots = props.treeData.map(toTreeNode)
+  return [
+    {
+      id: '__root__',
+      name: '',
+      value: {},
+      symbolSize: 0,
+      itemStyle: { color: 'transparent' },
+      label: { show: false },
+      children: roots
+    }
+  ]
+}
+
+const countNodes = (nodes = []) => {
+  let total = 0
+  const walk = (n) => {
+    total += 1
+    ;(n.children || []).forEach(walk)
+  }
+  nodes.forEach(walk)
+  return total
 }
 
 const computeRequiredHeight = (roots) => {
-  // approximate height: per-root segment or depth-based estimate
-  const perRoot = 180
-  return Math.max(320, roots.length * perRoot)
+  const total = countNodes(roots)
+  return Math.max(320, Math.min(2400, total * 22))
 }
 
 const updateChart = () => {
@@ -65,36 +115,35 @@ const updateChart = () => {
     return
   }
 
-  const segment = 100 / roots.length
-  const series = roots.map((root, index) => {
-    const top = Math.max(2, index * segment + 2)
-    const height = Math.max(16, segment - 4)
-    return {
+  const series = [
+    {
       type: 'tree',
-      data: [root],
-      top: `${top}%`,
-      height: `${height}%`,
-      left: '6%',
-      right: '20%',
-      symbolSize: 10,
+      data: roots,
+      orient: 'vertical',
+      top: '4%',
+      bottom: '6%',
+      left: '8%',
+      right: '8%',
+      symbolSize: 12,
+      edgeShape: 'polyline',
+      edgeForkPosition: '50%',
+      lineStyle: {
+        width: 1.5,
+        color: '#cbd5f5'
+      },
       label: {
-        position: 'left',
-        verticalAlign: 'middle',
-        align: 'right',
-        fontSize: 11
+        show: false
       },
       leaves: {
         label: {
-          position: 'right',
-          verticalAlign: 'middle',
-          align: 'left'
+          show: false
         }
       },
       expandAndCollapse: true,
       animationDuration: 200,
       animationDurationUpdate: 300
     }
-  })
+  ]
 
   const option = {
     tooltip: {

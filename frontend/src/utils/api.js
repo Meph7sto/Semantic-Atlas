@@ -292,6 +292,7 @@ export const l4RequirementsApi = {
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || 'L4 需求生成失败')
         }
+        return resp.data
     },
 }
 
@@ -387,6 +388,12 @@ export const manageApi = {
 
     async createBranch(projectId, payload) {
         const resp = await api.post(`/manage/projects/${encodeURIComponent(projectId)}/branches`, payload)
+        if (resp.data?.error) throw new Error(resp.data.error)
+        return resp.data
+    },
+
+    async mergeBranches(projectId, payload) {
+        const resp = await api.post(`/manage/projects/${encodeURIComponent(projectId)}/branches/merge`, payload)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
