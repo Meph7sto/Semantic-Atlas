@@ -119,6 +119,39 @@
           />
           <label for="mock_llm" class="text-sm font-medium text-zinc-700">Mock 模式 (无需 API Key)</label>
         </div>
+
+        <!-- Parallel Processing Toggle -->
+        <div class="col-span-full rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
+          <div class="flex items-center justify-between mb-3">
+            <div>
+              <div class="text-sm font-medium text-zinc-700">并行处理模式</div>
+              <div class="text-xs text-zinc-500">同时处理多个窗口，提升 4-5 倍速度</div>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" v-model="options.enable_parallel_windows" class="sr-only peer">
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+              <span class="ml-3 text-sm font-medium text-zinc-600">启用并行</span>
+            </label>
+          </div>
+
+          <!-- Max Concurrent Windows -->
+          <div v-if="options.enable_parallel_windows" class="mt-3">
+            <label class="block text-sm font-medium text-zinc-700 mb-1">
+              最大并发窗口数
+            </label>
+            <div class="flex items-center gap-3">
+              <input
+                v-model.number="options.max_concurrent_windows"
+                type="range"
+                min="1"
+                max="10"
+                class="flex-1"
+              />
+              <span class="text-sm text-zinc-600 w-8">{{ options.max_concurrent_windows }}</span>
+            </div>
+            <p class="text-xs text-zinc-500 mt-1">推荐 3-5，过高可能触发 API 限流</p>
+          </div>
+        </div>
       </div>
 
       <!-- Actions -->
@@ -161,10 +194,10 @@
           <span
             :class="{
               'text-blue-600': event.type === 'init' || event.type === 'window_start',
-              'text-green-600': event.type === 'final' || event.type === 'bundling_done',
+              'text-green-600': event.type === 'final' || event.type === 'bundling_done' || event.type === 'parallel_batch_complete' || event.type === 'window_complete',
               'text-amber-600': event.type === 'llm_edges' || event.type === 'pruned_edges',
-              'text-purple-600': event.type === 'graph_progress',
-              'text-red-600': event.type === 'error'
+              'text-purple-600': event.type === 'graph_progress' || event.type === 'parallel_batch_start',
+              'text-red-600': event.type === 'error' || event.type === 'window_error'
             }"
             class="font-medium"
           >
@@ -439,7 +472,9 @@ const options = reactive({
   top_k: 3,
   max_edges_per_window: 24,
   token_limit_per_bundle: 4000,
-  mock_llm: false
+  mock_llm: false,
+  enable_parallel_windows: false,
+  max_concurrent_windows: 5
 })
 
 const canStart = computed(() => !isLoading.value && sessionId.value.trim().length > 0)
@@ -687,6 +722,29 @@ function handleSSEEvent(data) {
       activeSessionId.value = data.session_id || activeSessionId.value
       break
 
+    // === 并行事件 ===
+    case 'parallel_batch_start':
+      addProgressEvent('parallel_batch_start',
+        `🚀 并行模式 | 总窗口: ${data.total_windows} | 并发: ${data.max_concurrent}`)
+      break
+
+    case 'window_complete':
+      addProgressEvent('window_complete',
+        `✓ 窗口 #${data.window_index} | Refs: ${data.span_refs?.join(', ')} | ` +
+        `边数: ${data.raw_edge_count} → ${data.kept_edge_count}`)
+      break
+
+    case 'window_error':
+      addProgressEvent('error',
+        `✗ 窗口 #${data.window_index} 失败: ${data.error}`)
+      break
+
+    case 'parallel_batch_complete':
+      addProgressEvent('parallel_batch_complete',
+        `✅ 并行处理完成 | 总计: ${data.total_windows_processed} 个窗口`)
+      break
+
+    // === 串行事件（保持不变）===
     case 'window_start':
       addProgressEvent('window_start', `窗口 #${data.window_index} 开始 | Refs: ${data.span_refs?.join(', ')}`)
       break

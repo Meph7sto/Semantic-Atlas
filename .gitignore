@@ -228,3 +228,8 @@ deploy/nginx-1.26.1/
 *.db
 *.sqlite3
 backend_business/data/
+data/audit_logs/
+data/kb_indexes/
+*.csv
+mission.txt
+git_status_output.txt
