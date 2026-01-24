@@ -219,6 +219,123 @@ def get_latest_trace_batch():
     return jsonify({"success": True, "data": data})
 
 
+@analysis_bp.route("/trace-by-mapping", methods=["POST"])
+def trace_by_mapping():
+    """
+    基于数据库映射关系的追溯分析
+    
+    只分析验证数据库中已有对应关系的顶层-底层需求对，
+    而不是全量笛卡尔积分析，大幅减少分析组合数。
+    
+    请求体：
+    {
+        "session_id": "xxx",
+        "save_to_db": true,
+        "max_new_tokens": 800
+    }
+    """
+    payload = request.get_json(silent=True) or {}
+    session_id = payload.get("session_id")
+    save_to_db = bool(payload.get("save_to_db", False))
+    max_new_tokens = int(payload.get("max_new_tokens", 800))
+
+    if not session_id:
+        return jsonify({"success": False, "error": "缺少 session_id"}), 400
+
+    try:
+        # 从数据库获取有映射关系的需求对
+        pairs = db_service.get_requirement_pairs_for_trace(session_id)
+        
+        if not pairs:
+            empty_result = {
+                "summary": "未找到需求映射关系，未执行追溯分析",
+                "statistics": {
+                    "total_combinations": 0,
+                    "relations_found": 0,
+                    "relation_rate": 0.0,
+                },
+                "high_level_requirements": [],
+                "low_level_requirements": [],
+                "relations": [],
+                "trace_network": {
+                    "nodes": [],
+                    "links": [],
+                },
+                "relation_types_count": None,
+            }
+            return jsonify({
+                "success": True,
+                "data": empty_result,
+                "record_id": None,
+                "pairs_analyzed": 0,
+                "total_possible_pairs": 0,
+            })
+
+        # 构建追溯分析所需的数据结构
+        # 去重：同一个顶层需求可能对应多个底层需求
+        high_texts = []
+        low_texts = []
+        high_id_map = {}  # text -> id
+        low_id_map = {}   # text -> id
+        
+        for pair in pairs:
+            ht = pair["high_req_text"]
+            lt = pair["low_req_text"]
+            if ht not in high_id_map:
+                high_id_map[ht] = pair["high_req_id"]
+                high_texts.append(ht)
+            if lt not in low_id_map:
+                low_id_map[lt] = pair["low_req_id"]
+                low_texts.append(lt)
+
+        # 只对有映射关系的对进行分析
+        # 构建需要分析的 (high_index, low_index) 列表
+        pair_indices = []
+        for pair in pairs:
+            hi = high_texts.index(pair["high_req_text"])
+            li = low_texts.index(pair["low_req_text"])
+            if (hi, li) not in pair_indices:
+                pair_indices.append((hi, li))
+
+        # 调用推理后端进行追溯分析（仅分析指定的对）
+        result = ai_proxy.trace_batch_selective(
+            high_texts, 
+            low_texts, 
+            pair_indices,
+            max_new_tokens=max_new_tokens
+        )
+
+        # 为关系补充顶层/底层需求ID，便于前端正确连线
+        pair_id_map = {}
+        for pair in pairs:
+            hi = high_texts.index(pair["high_req_text"])
+            li = low_texts.index(pair["low_req_text"])
+            pair_id_map[(hi, li)] = (pair["high_req_id"], pair["low_req_id"])
+
+        for rel in result.get("relations", []):
+            hi = rel.get("high_level_index")
+            li = rel.get("low_level_index")
+            if hi is None or li is None:
+                continue
+            if (hi, li) in pair_id_map:
+                rel["high_req_id"], rel["low_req_id"] = pair_id_map[(hi, li)]
+        
+        record_id = None
+        if save_to_db:
+            record_id = db_service.save_batch(high_texts, low_texts, result, session_id=session_id)
+
+        return jsonify({
+            "success": True, 
+            "data": result, 
+            "record_id": record_id,
+            "pairs_analyzed": len(pair_indices),
+            "total_possible_pairs": len(high_texts) * len(low_texts),
+        })
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @analysis_bp.route("/requirements", methods=["GET"])
 def list_requirements():
     page = request.args.get("page", 1, type=int)

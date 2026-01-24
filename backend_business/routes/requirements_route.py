@@ -310,6 +310,7 @@ def generate_l4_requirements():
             for l4 in result.get("l4_requirements", []):
                 l4["source_top_id"] = source_top_id
                 l4["source_top_text"] = source_top_text
+                l4["source_top_ids"] = [source_top_id] if source_top_id else []
                 all_l4_reqs.append(l4)
 
         # 保存到数据库

@@ -145,17 +145,30 @@ const canExtract = computed(() => {
   return true
 })
 
+function normalizeLevel(raw) {
+  const text = String(raw || '').trim().toUpperCase()
+  if (!text) return 'L1'
+  if (text === '1' || text === 'L1' || text.includes('L1')) return 'L1'
+  if (text === '2' || text === 'L2' || text.includes('L2')) return 'L2'
+  if (text === '3' || text === 'L3' || text.includes('L3')) return 'L3'
+  return 'L1'
+}
+
 // 所有顶层需求（L1 + L2 + L3）
 const allHighLevelRequirements = computed(() => {
-  return highLevelRequirements.value.map((req, idx) => ({
-    id: `${req.level}-${idx}`,
-    category: req.level,
-    statement: req.text,
-    rationale: '',
-    evidence: req.anchor_span_id || '',
-    confidence: 0.9,
-    ...req
-  }))
+  return highLevelRequirements.value.map((req, idx) => {
+    const level = normalizeLevel(req.level || req.category)
+    return {
+      ...req,
+      id: req.req_id || req.id || `${level}-${idx}`,
+      category: level,
+      level,
+      statement: req.text || req.statement || '',
+      rationale: '',
+      evidence: req.anchor_span_id || '',
+      confidence: 0.9,
+    }
+  })
 })
 
 // 是否可以进行追溯分析
@@ -419,7 +432,10 @@ async function loadRequirementsFromDB() {
       page: 1,
       perPage: 200
     })
-    highLevelRequirements.value = data.requirements || []
+    highLevelRequirements.value = (data.requirements || []).map((req) => ({
+      ...req,
+      level: normalizeLevel(req.level || req.category),
+    }))
     reqStats.value = await requirementsL123Api.stats(sessionId.value.trim())
     
     if (highLevelRequirements.value.length > 0) {
@@ -494,9 +510,12 @@ async function extractLowLevelRequirements() {
   try {
     // 准备顶层需求列表
     const topRequirements = allHighLevelRequirements.value.map((req) => ({
-      id: req.req_id || req.id || `top-${Math.random().toString(36).slice(2, 10)}`,
+      id: req.req_id,
       text: req.text || req.statement || '',
     }))
+    if (topRequirements.some((req) => !req.id)) {
+      throw new Error('存在顶层需求缺少 req_id，无法建立正确映射关系')
+    }
 
     // 调用 L4 生成 API（内部会检查缓存）
     const result = await l4RequirementsApi.generate(sid, topRequirements, {
@@ -774,7 +793,12 @@ async function runFullAnalysis() {
         const hasConflict = !!(conflictCache && conflictCache.data && conflictCache.data.items && conflictCache.data.items.length)
         const hasClassification = !!(classificationCache && classificationCache.predictions && classificationCache.predictions.length)
 
-        if (hasTrace && hasConflict && hasClassification) {
+        const traceRelations = traceCache?.data?.relations || []
+        const traceHasIds = traceRelations.length === 0
+          ? true
+          : traceRelations.every((rel) => rel.high_req_id && rel.low_req_id)
+
+        if (hasTrace && hasConflict && hasClassification && traceHasIds) {
           analysisNotice.value = '已加载缓存分析结果，无需重新分析'
           traceResult.value = traceCache.data
           conflictResults.value = conflictCache.data.items.map((item) => ({
@@ -807,7 +831,7 @@ async function runFullAnalysis() {
       }
     }
 
-    // Step 1: 追溯分析（保存到数据库）
+    // Step 1: 追溯分析（基于数据库映射关系，避免全量笛卡尔积）
     traceError.value = null
     traceResult.value = null
     
@@ -822,14 +846,18 @@ async function runFullAnalysis() {
       throw new Error('顶层需求或底层需求为空')
     }
 
-    // 启用保存到数据库（max_new_tokens=800 减少推理时间，降低超时概率）
-    const traceApiResult = await traceabilityApi.batchAnalyzeRelation(
-      highReqs, 
-      lowReqs, 
-      800, 
+    // 仅使用基于映射关系的追溯分析（不回退到全量分析）
+    const mappingResult = await traceabilityApi.traceByMapping(
+      currentSessionId, 
       true,  // save_to_db = true
-      currentSessionId
+      800
     )
+    const pairsAnalyzed = mappingResult.pairs_analyzed || 0
+    const totalPossible = mappingResult.total_possible_pairs || (highReqs.length * lowReqs.length)
+    if (pairsAnalyzed < totalPossible) {
+      analysisNotice.value = `基于映射关系分析：仅分析 ${pairsAnalyzed} 个有关联的需求对（全量为 ${totalPossible} 个）`
+    }
+    const traceApiResult = mappingResult.data
     traceResult.value = traceApiResult
     currentStep.value = 2
 
@@ -1035,17 +1063,22 @@ function updateChart() {
   const categoryMap = { L1: 0, L2: 1, L3: 2, low: 3 }
 
   const leftSpacing = highNodes.length > 1 ? availableHeight / (highNodes.length - 1) : 0
-  const nodes = highNodes.map((req, idx) => ({
-    id: `high_${idx}`,
+  const highIndexToNodeId = {}
+  const nodes = highNodes.map((req, idx) => {
+    const level = normalizeLevel(req.category || req.level)
+    const nodeId = req.req_id || req.id || `high_${idx}`
+    highIndexToNodeId[idx] = nodeId
+    return {
+    id: nodeId,
     name: req.statement.length > 25 ? req.statement.slice(0, 25) + '...' : req.statement,
     x: leftX,
     y: topPadding + (highNodes.length === 1 ? availableHeight / 2 : idx * leftSpacing),
-    category: categoryMap[req.category] ?? 0,
+    category: categoryMap[level] ?? 0,
     symbol: 'roundRect',
     symbolSize: [200, 32],
     itemStyle: {
-      color: getCategoryColor(req.category),
-      borderColor: getCategoryBorderColor(req.category),
+      color: getCategoryColor(level),
+      borderColor: getCategoryBorderColor(level),
       borderWidth: 2,
       borderRadius: 4
     },
@@ -1062,16 +1095,20 @@ function updateChart() {
     },
     tooltip: {
       formatter: `<div style="max-width:350px; padding: 8px;">
-        <div style="font-weight: bold; color: ${getCategoryColor(req.category)}; margin-bottom: 4px;">[${req.category}] 顶层需求</div>
+        <div style="font-weight: bold; color: ${getCategoryColor(level)}; margin-bottom: 4px;">[${level}] 顶层需求</div>
         <div>${req.statement}</div>
       </div>`
     }
-  }))
+  }
+  })
 
   const rightSpacing = lowNodes.length > 1 ? availableHeight / (lowNodes.length - 1) : 0
+  const lowIndexToNodeId = {}
   lowNodes.forEach((req, idx) => {
+    const nodeId = req.req_id || req.id || `low_${idx}`
+    lowIndexToNodeId[idx] = nodeId
     nodes.push({
-      id: `low_${idx}`,
+      id: nodeId,
       name: req.statement.length > 25 ? req.statement.slice(0, 25) + '...' : req.statement,
       x: rightX,
       y: topPadding + (lowNodes.length === 1 ? availableHeight / 2 : idx * rightSpacing),
@@ -1108,9 +1145,12 @@ function updateChart() {
   if (traceResult.value?.relations) {
     traceResult.value.relations.forEach((rel) => {
       if (rel.has_relation) {
+        const sourceId = rel.high_req_id
+        const targetId = rel.low_req_id
+        if (!sourceId || !targetId) return
         links.push({
-          source: `high_${rel.high_level_index}`,
-          target: `low_${rel.low_level_index}`,
+          source: sourceId,
+          target: targetId,
           lineStyle: {
             color: getRelationTypeColor(rel.relation_type),
             width: 2 + (rel.confidence || 0.5) * 2,

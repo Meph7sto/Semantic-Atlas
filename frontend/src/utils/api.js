@@ -58,6 +58,23 @@ export const traceabilityApi = {
         }
         return resp.data?.data ?? resp.data
     },
+
+    /**
+     * 基于数据库映射关系的追溯分析
+     * 只分析有映射关系的顶层-底层需求对，而非全量笛卡尔积
+     */
+    async traceByMapping(sessionId, saveToDb = true, maxNewTokens = 800) {
+        const payload = {
+            session_id: sessionId,
+            save_to_db: saveToDb,
+            max_new_tokens: maxNewTokens,
+        }
+        const resp = await api.post('/trace-by-mapping', payload)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '基于映射的追溯分析失败')
+        }
+        return resp.data
+    },
 }
 
 // 冲突检测 API

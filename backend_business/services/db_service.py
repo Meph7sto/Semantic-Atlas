@@ -300,6 +300,23 @@ class DBService:
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_low_level_requirements_source_top ON low_level_requirements(source_top_id)")
 
                 # ========================
+                # Low-level to Top Requirements Mapping (多对多映射表)
+                # ========================
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS low_level_requirement_links (
+                        req_id TEXT NOT NULL REFERENCES low_level_requirements(req_id) ON DELETE CASCADE,
+                        session_id TEXT NOT NULL,
+                        top_req_id TEXT NOT NULL,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        PRIMARY KEY (req_id, top_req_id)
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_low_level_requirement_links_session ON low_level_requirement_links(session_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_low_level_requirement_links_top ON low_level_requirement_links(top_req_id)")
+
+                # ========================
                 # Conflict Analysis Table (冲突检测结果表)
                 # ========================
                 cur.execute(
@@ -747,6 +764,22 @@ class DBService:
                     )
                     inserted_ids.append(req_id)
 
+                    # 维护多对多映射：一个底层需求可关联多个顶层需求
+                    top_ids = req.get("source_top_ids") or []
+                    if not top_ids and req.get("source_top_id"):
+                        top_ids = [req.get("source_top_id")]
+                    for top_id in top_ids:
+                        if not top_id:
+                            continue
+                        cur.execute(
+                            """
+                            INSERT INTO low_level_requirement_links (req_id, session_id, top_req_id, created_at)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT DO NOTHING
+                            """,
+                            (req_id, session_id, top_id, _utc_now_iso()),
+                        )
+
         return inserted_ids
 
     def get_l4_requirements_by_session(
@@ -787,6 +820,19 @@ class DBService:
                 )
                 rows = cur.fetchall()
 
+                # 批量获取映射关系
+                cur.execute(
+                    """
+                    SELECT req_id, array_agg(top_req_id) AS source_top_ids
+                    FROM low_level_requirement_links
+                    WHERE session_id = %s
+                    GROUP BY req_id
+                    """,
+                    (session_id,),
+                )
+                link_rows = cur.fetchall()
+                top_map = {r["req_id"]: r["source_top_ids"] for r in link_rows}
+
         # 解析 JSONB 字段
         requirements = []
         for row in rows:
@@ -798,6 +844,7 @@ class DBService:
                         req[key] = json.loads(req[key])
                     except Exception:
                         pass
+            req["source_top_ids"] = top_map.get(req["req_id"], [])
             requirements.append(req)
 
         return {
@@ -816,6 +863,55 @@ class DBService:
                     (session_id,)
                 )
                 return cur.fetchone() is not None
+
+    def get_requirement_pairs_for_trace(self, session_id: str) -> List[Dict[str, Any]]:
+        """
+        获取需要进行追溯分析的顶层-底层需求对
+        
+        只返回数据库中有映射关系的对，避免全量笛卡尔积分析
+        
+        Returns:
+            List[{
+                'high_req_id': str,
+                'high_req_text': str,
+                'low_req_id': str,
+                'low_req_text': str,
+            }]
+        """
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # 从映射表关联顶层需求和底层需求
+                cur.execute(
+                    """
+                    SELECT 
+                        lnk.top_req_id AS high_req_id,
+                        COALESCE(top.text, low.source_top_text, '') AS high_req_text,
+                        lnk.req_id AS low_req_id,
+                        low.text AS low_req_text
+                    FROM low_level_requirement_links lnk
+                    JOIN low_level_requirements low ON lnk.req_id = low.req_id
+                    LEFT JOIN requirements_l123 top ON lnk.top_req_id = top.req_id
+                    WHERE lnk.session_id = %s
+                    ORDER BY lnk.created_at
+                    """,
+                    (session_id,)
+                )
+                rows = cur.fetchall()
+        
+        # 过滤掉空文本的记录
+        pairs = []
+        for row in rows:
+            high_text = (row.get("high_req_text") or "").strip()
+            low_text = (row.get("low_req_text") or "").strip()
+            if high_text and low_text:
+                pairs.append({
+                    "high_req_id": row["high_req_id"],
+                    "high_req_text": high_text,
+                    "low_req_id": row["low_req_id"],
+                    "low_req_text": low_text,
+                })
+        
+        return pairs
 
     def upsert_spans(self, spans: List[Dict[str, Any]]) -> Dict[str, Any]:
         if not spans:
