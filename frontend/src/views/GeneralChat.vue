@@ -5,6 +5,7 @@ import { MessageSquare, Send, Sparkles } from 'lucide-vue-next'
 
 const question = ref('')
 const useThinking = ref(false)
+const useAsyncClient = ref(false)
 const isLoading = ref(false)
 const result = ref(null)
 const error = ref(null)
@@ -16,7 +17,11 @@ const askQuestion = async () => {
   result.value = { raw_response: '', thinking_content: '' }
 
   try {
-    const stream = await chatApi.streamAsk(question.value.trim(), useThinking.value)
+    const stream = await chatApi.streamAsk(
+      question.value.trim(),
+      useThinking.value,
+      useAsyncClient.value
+    )
     if (!stream) {
       throw new Error('Empty response body')
     }
@@ -80,11 +85,16 @@ const askQuestion = async () => {
 
       <div class="flex flex-col items-center gap-4 justify-center">
         
-        <div class="flex items-center gap-3">
+        <div class="flex flex-col items-center gap-3">
           <label class="relative inline-flex items-center cursor-pointer">
             <input type="checkbox" v-model="useThinking" class="sr-only peer">
             <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-zinc-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-zinc-900"></div>
             <span class="ml-3 text-sm font-medium text-zinc-600">DeepSeek R1 (Reasoning Mode)</span>
+          </label>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" v-model="useAsyncClient" class="sr-only peer">
+            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-zinc-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-zinc-900"></div>
+            <span class="ml-3 text-sm font-medium text-zinc-600">DeepSeek Async (aiohttp)</span>
           </label>
         </div>
 

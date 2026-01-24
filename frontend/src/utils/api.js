@@ -135,7 +135,13 @@ export const conflictApi = {
 
 // 通用问答 API
 export const chatApi = {
-    async streamAsk(prompt, useThinking = false, maxNewTokens = 800, systemPrompt = '') {
+    async streamAsk(
+        prompt,
+        useThinking = false,
+        useAsyncClient = false,
+        maxNewTokens = 800,
+        systemPrompt = ''
+    ) {
         const response = await fetch('/inference/chat/stream', {
             method: 'POST',
             headers: {
@@ -146,6 +152,7 @@ export const chatApi = {
                 system_prompt: systemPrompt,
                 max_new_tokens: maxNewTokens,
                 use_thinking_mode: useThinking,
+                use_async_client: useAsyncClient,
             }),
         })
 

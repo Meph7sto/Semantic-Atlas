@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -45,7 +46,7 @@ class LLMClient:
             stream = engine.generate_stream(
                 prompt=prompt,
                 system_prompt=SYSTEM_PROMPT_LINK,
-                max_new_tokens=1500,
+                max_new_tokens=8000,
                 model=model_name,
             )
             text = self._collect_stream_text(stream)
@@ -54,7 +55,7 @@ class LLMClient:
         return engine.generate(
             prompt=prompt,
             system_prompt=SYSTEM_PROMPT_LINK,
-            max_new_tokens=1500,
+            max_new_tokens=8000,
         )
 
     def generate_links(
@@ -74,7 +75,39 @@ class LLMClient:
             return self._parse_llm_response(response)
         except Exception as exc:
             print(f"[LLMClient] Error calling LLM: {exc}")
-            return [], []
+            raise
+
+    async def generate_links_async(
+        self,
+        spans: List[Span],
+        ref_map: Dict[str, str],
+        model_name: Optional[str] = None,
+    ) -> Tuple[List[Dict], List[str]]:
+        """Async version of generate_links for parallel processing."""
+        if self.mock_mode:
+            await asyncio.sleep(0.1)  # Simulate network delay
+            return self._mock_generate(spans, ref_map)
+
+        prompt = build_window_prompt(spans, ref_map)
+        engine = self._get_engine()
+
+        try:
+            response = await engine.generate_async(
+                prompt=prompt,
+                system_prompt=SYSTEM_PROMPT_LINK,
+                max_new_tokens=8000,
+                model=model_name,
+            )
+            return self._parse_llm_response(response)
+        except Exception as exc:
+            print(f"[LLMClient] Async error: {exc}")
+            raise
+
+    async def close_async(self) -> None:
+        engine = self._get_engine()
+        close_fn = getattr(engine, "close_async", None)
+        if callable(close_fn):
+            await close_fn()
 
     def _mock_generate(
         self, spans: List[Span], ref_map: Dict[str, str]

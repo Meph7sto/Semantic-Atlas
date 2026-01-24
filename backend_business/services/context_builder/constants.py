@@ -27,6 +27,8 @@ DEFAULT_OPTIONS = {
     "token_limit_per_bundle": 4000,
     "mock_llm": False,
     "llm_model": None,
+    "enable_parallel_windows": False,
+    "max_concurrent_windows": 5,
 }
 
 
