@@ -6,7 +6,7 @@ class ChatService:
     def __init__(self, model_engine):
         self.model_engine = model_engine
 
-    async def ask_stream(
+    def ask_stream(
         self,
         prompt: str,
         system_prompt: str = "",
@@ -16,14 +16,27 @@ class ChatService:
     ):
         """
         Stream a general chat response.
-        Yields:
-            str: NDJSON lines containing tokens and final answer
+        Returns a sync generator or async generator depending on client type.
         """
+        if use_async_client:
+            return self._ask_stream_async(
+                prompt, system_prompt, max_new_tokens, use_thinking_mode
+            )
+        else:
+            return self._ask_stream_sync(
+                prompt, system_prompt, max_new_tokens, use_thinking_mode
+            )
+
+    async def _ask_stream_async(
+        self,
+        prompt: str,
+        system_prompt: str,
+        max_new_tokens: int,
+        use_thinking_mode: bool,
+    ):
         import json
 
-        # Determine model
         model_name = "deepseek-reasoner" if use_thinking_mode else None
-
         full_response = ""
 
         def handle_chunk(chunk):
@@ -42,58 +55,97 @@ class ChatService:
             full_response += token
             return "token", token
 
-        if use_async_client:
-            stream = self.model_engine.generate_stream_async(
-                prompt=prompt,
-                system_prompt=system_prompt or "",
-                max_new_tokens=max_new_tokens,
-                model=model_name,
+        stream = self.model_engine.generate_stream_async(
+            prompt=prompt,
+            system_prompt=system_prompt or "",
+            max_new_tokens=max_new_tokens,
+            model=model_name,
+        )
+
+        async for chunk in stream:
+            parsed = handle_chunk(chunk)
+            if not parsed:
+                continue
+            msg_type, content = parsed
+            
+            if msg_type == "thinking":
+                yield (
+                    json.dumps(
+                        {"type": "thinking", "content": content}, ensure_ascii=False
+                    )
+                    + "\n"
+                )
+            else:
+                yield (
+                    json.dumps(
+                        {"type": "token", "content": content}, ensure_ascii=False
+                    )
+                    + "\n"
+                )
+
+        yield (
+            json.dumps(
+                {"type": "result", "data": {"answer": full_response}},
+                ensure_ascii=False,
             )
-            async for chunk in stream:
-                parsed = handle_chunk(chunk)
-                if not parsed:
-                    continue
-                msg_type, content = parsed
+            + "\n"
+        )
+
+    def _ask_stream_sync(
+        self,
+        prompt: str,
+        system_prompt: str,
+        max_new_tokens: int,
+        use_thinking_mode: bool,
+    ):
+        import json
+
+        model_name = "deepseek-reasoner" if use_thinking_mode else None
+        full_response = ""
+
+        def handle_chunk(chunk):
+            nonlocal full_response
+            if isinstance(chunk, dict):
+                msg_type = chunk.get("type", "content")
+                content = chunk.get("delta", "")
                 if msg_type == "thinking":
-                    yield (
-                        json.dumps(
-                            {"type": "thinking", "content": content}, ensure_ascii=False
-                        )
-                        + "\n"
+                    return "thinking", content
+                if msg_type == "content":
+                    full_response += content
+                    return "token", content
+                return None
+
+            token = str(chunk)
+            full_response += token
+            return "token", token
+
+        stream = self.model_engine.generate_stream(
+            prompt=prompt,
+            system_prompt=system_prompt or "",
+            max_new_tokens=max_new_tokens,
+            model=model_name,
+        )
+
+        for chunk in stream:
+            parsed = handle_chunk(chunk)
+            if not parsed:
+                continue
+            msg_type, content = parsed
+
+            if msg_type == "thinking":
+                yield (
+                    json.dumps(
+                        {"type": "thinking", "content": content}, ensure_ascii=False
                     )
-                else:
-                    yield (
-                        json.dumps(
-                            {"type": "token", "content": content}, ensure_ascii=False
-                        )
-                        + "\n"
+                    + "\n"
+                )
+            else:
+                yield (
+                    json.dumps(
+                        {"type": "token", "content": content}, ensure_ascii=False
                     )
-        else:
-            stream = self.model_engine.generate_stream(
-                prompt=prompt,
-                system_prompt=system_prompt or "",
-                max_new_tokens=max_new_tokens,
-                model=model_name,
-            )
-            for chunk in stream:
-                parsed = handle_chunk(chunk)
-                if not parsed:
-                    continue
-                msg_type, content = parsed
-                if msg_type == "thinking":
-                    yield (
-                        json.dumps(
-                            {"type": "thinking", "content": content}, ensure_ascii=False
-                        )
-                        + "\n"
-                    )
-                else:
-                    yield (
-                        json.dumps(
-                            {"type": "token", "content": content}, ensure_ascii=False
-                        )
-                        + "\n"
-                    )
+                    + "\n"
+                )
 
         yield (
             json.dumps(
