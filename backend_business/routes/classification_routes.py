@@ -2,6 +2,8 @@ from flask import Blueprint, Response, jsonify, request
 import requests
 import os
 
+from backend_business.services.db_service import db_service
+
 classification_bp = Blueprint("classification", __name__)
 
 # Allow separating classification service port; default 8001
@@ -12,15 +14,42 @@ CLASSIFICATION_SERVICE_URL = os.getenv("CLASSIFICATION_URL", "http://localhost:8
 def classify_texts():
     try:
         data = request.json or {}
+        save_to_db = bool(data.get("save_to_db", False))
+        session_id = data.get("session_id")
+
+        # 移除业务层参数，只传递分类服务需要的参数
+        payload = {k: v for k, v in data.items() if k not in ['save_to_db', 'session_id']}
+
         resp = requests.post(
-            f"{CLASSIFICATION_SERVICE_URL}/classification/predict-texts", json=data
+            f"{CLASSIFICATION_SERVICE_URL}/classification/predict-texts", json=payload
         )
         try:
             resp_data = resp.json()
         except ValueError:
             resp_data = {"detail": f"Upstream Error: {resp.text}"}
 
-        return jsonify(resp_data), resp.status_code
+        record_id = None
+        if save_to_db and db_service and resp.status_code == 200:
+            requirements = data.get("requirements", [])
+            predictions = resp_data.get("predictions", [])
+            label_distribution = resp_data.get("label_distribution")
+            total = resp_data.get("total")
+
+            if requirements and predictions:
+                record_id = db_service.save_classification(
+                    session_id=session_id,
+                    requirements=requirements,
+                    predictions=predictions,
+                    label_distribution=label_distribution,
+                    total=total,
+                    result_json=resp_data,
+                )
+
+        result = resp_data.copy() if isinstance(resp_data, dict) else {"data": resp_data}
+        if record_id is not None:
+            result["record_id"] = record_id
+
+        return jsonify(result), resp.status_code
     except requests.exceptions.ConnectionError:
         return (
             jsonify(
@@ -70,3 +99,14 @@ def classify_csv():
         )
     except Exception as e:
         return jsonify({"detail": f"Business Backend Error: {str(e)}"}), 500
+
+
+@classification_bp.route("/latest", methods=["GET"])
+def get_latest_classification():
+    session_id = request.args.get("session_id")
+    if not session_id:
+        return jsonify({"detail": "缺少 session_id"}), 400
+    if not db_service:
+        return jsonify({"detail": "数据库服务未初始化"}), 500
+    data = db_service.get_latest_classification(session_id)
+    return jsonify({"data": data})

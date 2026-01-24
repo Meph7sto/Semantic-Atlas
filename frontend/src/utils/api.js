@@ -42,26 +42,71 @@ export const traceabilityApi = {
         return resp.data?.data ?? resp.data
     },
 
-    async batchAnalyzeRelation(highLevelReqs, lowLevelReqs, maxNewTokens = 1200) {
-        const resp = await api.post('/batch-trace-relation', {
+    async batchAnalyzeRelation(highLevelReqs, lowLevelReqs, maxNewTokens = 800, saveToDb = false, sessionId = null) {
+        const payload = {
             high_level_requirements: highLevelReqs,
             low_level_requirements: lowLevelReqs,
             max_new_tokens: maxNewTokens,
-            save_to_db: false,
-        })
+            save_to_db: saveToDb,
+        }
+        if (sessionId) {
+            payload.session_id = sessionId
+        }
+        const resp = await api.post('/batch-trace-relation', payload)
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '批量分析失败')
         }
         return resp.data?.data ?? resp.data
     },
+
+    /**
+     * 基于数据库映射关系的追溯分析
+     * 只分析有映射关系的顶层-底层需求对，而非全量笛卡尔积
+     */
+    async traceByMapping(sessionId, saveToDb = true, maxNewTokens = 800) {
+        const payload = {
+            session_id: sessionId,
+            save_to_db: saveToDb,
+            max_new_tokens: maxNewTokens,
+        }
+        const resp = await api.post('/trace-by-mapping', payload)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '基于映射的追溯分析失败')
+        }
+        return resp.data
+    },
 }
 
 // 冲突检测 API
 export const conflictApi = {
-    async check(requirementA, requirementB) {
-        const resp = await api.post('/conflict/check', {
+    async check(requirementA, requirementB, saveToDb = false, sessionId = null) {
+        const payload = {
             requirement_a: requirementA,
             requirement_b: requirementB,
+            save_to_db: saveToDb,
+        }
+        if (sessionId) {
+            payload.session_id = sessionId
+        }
+        const resp = await api.post('/conflict/check', payload)
+        return resp.data
+    },
+
+    async checkBatch(pairs, saveToDb = false, sessionId = null) {
+        const payload = {
+            pairs: pairs,
+            save_to_db: saveToDb,
+        }
+        if (sessionId) {
+            payload.session_id = sessionId
+        }
+        const resp = await api.post('/conflict/check/batch', payload)
+        return resp.data
+    },
+
+    async getLatest(sessionId) {
+        const resp = await api.get('/conflict/latest', {
+            params: { session_id: sessionId },
         })
         return resp.data
     },
@@ -146,6 +191,16 @@ export const analysisApi = {
         }
         return resp.data?.data ?? resp.data
     },
+
+    async getLatestTrace(sessionId) {
+        const resp = await api.get('/trace/latest', {
+            params: { session_id: sessionId },
+        })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '加载追溯缓存失败')
+        }
+        return resp.data?.data ?? resp.data
+    },
 }
 
 // Phase 3 (L1-L3) 需求抽取
@@ -191,8 +246,73 @@ export const requirementsL123Api = {
     },
 }
 
+// L4 底层需求 API
+export const l4RequirementsApi = {
+    /**
+     * 获取指定 session 的 L4 底层需求
+     */
+    async getBySession(sessionId, { page = 1, perPage = 100 } = {}) {
+        const resp = await api.get(`/requirements/l4/${encodeURIComponent(sessionId)}`, {
+            params: { page, per_page: perPage },
+        })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '加载 L4 需求失败')
+        }
+        return resp.data
+    },
+
+    /**
+     * 检查指定 session 是否有 L4 底层需求缓存
+     */
+    async checkExists(sessionId) {
+        const resp = await api.get(`/requirements/l4/${encodeURIComponent(sessionId)}/exists`)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '检查 L4 缓存失败')
+        }
+        return resp.data.exists
+    },
+
+    /**
+     * 生成 L4 底层需求
+     * 如有缓存直接返回，否则调用推理后端生成
+     */
+    async generate(sessionId, requirements, { config = {}, model = null, forceRegenerate = false } = {}) {
+        const payload = {
+            session_id: sessionId,
+            requirements,
+            config,
+            force_regenerate: forceRegenerate,
+        }
+        if (model) {
+            payload.model = model
+        }
+        
+        const resp = await api.post('/requirements/l4/generate', payload)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || 'L4 需求生成失败')
+        }
+        return resp.data
+    },
+}
+
 // 需求分类 API
-export const classifyTexts = (payload) => api.post('/classification/predict-texts', payload)
+export const classifyTexts = (payload, saveToDb = false, sessionId = null) => {
+    const finalPayload = {
+        ...payload,
+        save_to_db: saveToDb,
+    }
+    if (sessionId) {
+        finalPayload.session_id = sessionId
+    }
+    return api.post('/classification/predict-texts', finalPayload)
+}
+
+export const getLatestClassification = async (sessionId) => {
+    const resp = await api.get('/classification/latest', {
+        params: { session_id: sessionId },
+    })
+    return resp.data?.data ?? resp.data
+}
 
 export const classifyCsv = (file) => {
     const formData = new FormData()

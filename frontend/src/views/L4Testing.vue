@@ -14,7 +14,7 @@ import {
   Info,
   Check
 } from 'lucide-vue-next'
-import { requirementsL123Api, l4Api } from '@/utils/api'
+import { requirementsL123Api, l4Api, l4RequirementsApi } from '@/utils/api'
 
 // --- State ---
 const sessionId = ref('')
@@ -98,15 +98,57 @@ function clearSelection() {
 
 async function startGeneration() {
   if (!canGenerate.value) return
+  if (!sessionId.value.trim()) {
+    generationError.value = '请先填写 Session ID'
+    return
+  }
 
   generationError.value = ''
   isGenerating.value = true
   generationResults.value = []
 
   try {
-    const resp = await l4Api.generate(selectedReqsForApi.value, config.value, modelId.value)
-    generationResults.value = resp.results || []
-    kbVersion.value = resp.kb_version
+    const resp = await l4RequirementsApi.generate(
+      sessionId.value.trim(),
+      selectedReqsForApi.value,
+      {
+        config: config.value,
+        model: modelId.value,
+      }
+    )
+
+    const requirements = resp.requirements || []
+    const grouped = {}
+    requirements.forEach((req) => {
+      const topId = req.source_top_id || 'unknown'
+      if (!grouped[topId]) {
+        grouped[topId] = {
+          source_top_id: topId,
+          l4_requirements: [],
+          open_questions: [],
+        }
+      }
+      grouped[topId].l4_requirements.push({
+        l4_id: req.req_id,
+        source_top_id: req.source_top_id,
+        source_top_text: req.source_top_text,
+        component: req.component || 'TBD',
+        shall_statement: req.text,
+        acceptance_criteria: req.acceptance_criteria || [],
+        test_method: req.test_method || 'TBD',
+        interfaces: req.interfaces || [],
+        data_contracts: req.data_contracts || [],
+        error_handling: req.error_handling || [],
+        nfr: req.nfr || [],
+        open_questions: req.open_questions || [],
+        evidence_ids: req.evidence_ids || [],
+        confidence: req.confidence ?? 0.6,
+        validator_status: { passed: false, issues: [] },
+      })
+    })
+
+    generationResults.value = Object.values(grouped)
+    kbVersion.value = resp.kb_version || kbVersion.value
   } catch (err) {
     generationError.value = err?.message || '生成失败'
   } finally {

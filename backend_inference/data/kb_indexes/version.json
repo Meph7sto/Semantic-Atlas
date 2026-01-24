@@ -1,0 +1,8 @@
+{
+  "kb_version": "a989ed293b72",
+  "pattern_count": 1057,
+  "spec_count": 12,
+  "nfr_count": 15,
+  "hard_negative_count": 1871,
+  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2"
+}

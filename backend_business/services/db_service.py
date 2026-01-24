@@ -1,5 +1,6 @@
 import json
 import os
+import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -35,6 +36,7 @@ class DBService:
                     """
                     CREATE TABLE IF NOT EXISTS trace_analysis (
                         id SERIAL PRIMARY KEY,
+                        session_id TEXT,
                         analysis_type TEXT NOT NULL,              -- relation | batch
                         title TEXT NOT NULL,
                         description TEXT NOT NULL,
@@ -44,7 +46,9 @@ class DBService:
                     )
                     """
                 )
+                cur.execute("ALTER TABLE trace_analysis ADD COLUMN IF NOT EXISTS session_id TEXT")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_trace_created_at ON trace_analysis(created_at)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_trace_session_id ON trace_analysis(session_id)")
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS spans (
@@ -253,21 +257,107 @@ class DBService:
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_requirements_l123_anchor_span ON requirements_l123(anchor_span_id)")
 
                 # ========================
-                # Low-level Requirements Table (底层需求占位表)
+                # Low-level Requirements Table (L4 底层需求表)
                 # ========================
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS low_level_requirements (
                         req_id TEXT PRIMARY KEY,
                         session_id TEXT NOT NULL,
+                        source_top_id TEXT,
+                        source_top_text TEXT,
                         text TEXT NOT NULL,
+                        component TEXT,
+                        acceptance_criteria JSONB,
+                        test_method TEXT,
+                        interfaces JSONB,
+                        data_contracts JSONB,
+                        error_handling JSONB,
+                        nfr JSONB,
+                        open_questions JSONB,
+                        evidence_ids JSONB,
+                        confidence REAL,
                         source TEXT,
                         meta JSONB,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                     )
                     """
                 )
+                # 扩展旧表字段（必须先补齐字段，再建索引）
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS source_top_id TEXT")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS source_top_text TEXT")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS component TEXT")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS acceptance_criteria JSONB")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS test_method TEXT")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS interfaces JSONB")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS data_contracts JSONB")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS error_handling JSONB")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS nfr JSONB")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS open_questions JSONB")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS evidence_ids JSONB")
+                cur.execute("ALTER TABLE low_level_requirements ADD COLUMN IF NOT EXISTS confidence REAL")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_low_level_requirements_session ON low_level_requirements(session_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_low_level_requirements_source_top ON low_level_requirements(source_top_id)")
+
+                # ========================
+                # Low-level to Top Requirements Mapping (多对多映射表)
+                # ========================
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS low_level_requirement_links (
+                        req_id TEXT NOT NULL REFERENCES low_level_requirements(req_id) ON DELETE CASCADE,
+                        session_id TEXT NOT NULL,
+                        top_req_id TEXT NOT NULL,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        PRIMARY KEY (req_id, top_req_id)
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_low_level_requirement_links_session ON low_level_requirement_links(session_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_low_level_requirement_links_top ON low_level_requirement_links(top_req_id)")
+
+                # ========================
+                # Conflict Analysis Table (冲突检测结果表)
+                # ========================
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS conflict_analysis (
+                        id SERIAL PRIMARY KEY,
+                        batch_id TEXT,
+                        session_id TEXT,
+                        requirement_a TEXT NOT NULL,
+                        requirement_b TEXT NOT NULL,
+                        is_conflict BOOLEAN NOT NULL,
+                        raw_response TEXT,
+                        result_json JSONB,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute("ALTER TABLE conflict_analysis ADD COLUMN IF NOT EXISTS batch_id TEXT")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_conflict_analysis_session ON conflict_analysis(session_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_conflict_analysis_batch ON conflict_analysis(batch_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_conflict_analysis_created_at ON conflict_analysis(created_at)")
+
+                # ========================
+                # Classification Analysis Table (需求分类结果表)
+                # ========================
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS classification_analysis (
+                        id SERIAL PRIMARY KEY,
+                        session_id TEXT,
+                        requirements JSONB NOT NULL,
+                        predictions JSONB NOT NULL,
+                        label_distribution JSONB,
+                        total INTEGER,
+                        result_json JSONB,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_classification_analysis_session ON classification_analysis(session_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_classification_analysis_created_at ON classification_analysis(created_at)")
 
     def save_relation(
         self,
@@ -275,6 +365,7 @@ class DBService:
         low_level_requirement: str,
         output: Dict[str, Any],
         title: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> int:
         input_payload = {
             "high_level_requirement": high_level_requirement,
@@ -289,11 +380,12 @@ class DBService:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO trace_analysis(analysis_type, title, description, input_json, output_json, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO trace_analysis(session_id, analysis_type, title, description, input_json, output_json, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
+                        session_id,
                         "relation",
                         str(title)[:200],
                         desc,
@@ -310,6 +402,7 @@ class DBService:
         low_level_requirements: List[str],
         output: Dict[str, Any],
         title: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> int:
         input_payload = {
             "high_level_requirements": high_level_requirements,
@@ -324,11 +417,12 @@ class DBService:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO trace_analysis(analysis_type, title, description, input_json, output_json, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO trace_analysis(session_id, analysis_type, title, description, input_json, output_json, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
+                        session_id,
                         "batch",
                         str(title)[:200],
                         desc,
@@ -410,6 +504,414 @@ class DBService:
             "total_requirements": total,
             "analysis_type_stats": {r["analysis_type"]: r["c"] for r in type_rows},
         }
+
+    def save_conflict_batch(
+        self,
+        session_id: Optional[str],
+        conflicts: List[Dict[str, Any]],
+        batch_id: Optional[str] = None,
+    ) -> List[int]:
+        """
+        批量保存冲突检测结果
+        conflicts: List[{
+            'requirement_a': str,
+            'requirement_b': str,
+            'is_conflict': bool,
+            'raw_response': str,
+            'data': dict (可选，完整的响应数据)
+        }]
+        """
+        if not conflicts:
+            return []
+
+        record_ids = []
+        batch_id = batch_id or uuid.uuid4().hex
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                for conflict in conflicts:
+                    result_json = conflict.get("data") or conflict.get("raw_response") or {}
+                    if isinstance(result_json, str):
+                        try:
+                            result_json = json.loads(result_json)
+                        except Exception:
+                            result_json = {"raw": result_json}
+
+                    cur.execute(
+                        """
+                        INSERT INTO conflict_analysis (
+                            batch_id, session_id, requirement_a, requirement_b,
+                            is_conflict, raw_response, result_json, created_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                        """,
+                        (
+                            batch_id,
+                            session_id,
+                            conflict.get("requirement_a", ""),
+                            conflict.get("requirement_b", ""),
+                            bool(conflict.get("is_conflict", False)),
+                            conflict.get("raw_response", ""),
+                            json.dumps(result_json, ensure_ascii=False),
+                            _utc_now_iso(),
+                        ),
+                    )
+                    record_ids.append(int(cur.fetchone()[0]))
+
+        return record_ids
+
+    def get_latest_trace_batch(self, session_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT id, output_json
+                    FROM trace_analysis
+                    WHERE session_id = %s AND analysis_type = 'batch'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (session_id,),
+                )
+                row = cur.fetchone()
+        if not row:
+            return None
+        try:
+            return {
+                "record_id": row["id"],
+                "data": json.loads(row["output_json"]),
+            }
+        except Exception:
+            return {"record_id": row["id"], "data": {}}
+
+    def get_latest_conflict_batch(self, session_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT batch_id
+                    FROM conflict_analysis
+                    WHERE session_id = %s AND batch_id IS NOT NULL
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (session_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                batch_id = row["batch_id"]
+                cur.execute(
+                    """
+                    SELECT requirement_a, requirement_b, is_conflict, raw_response, result_json
+                    FROM conflict_analysis
+                    WHERE session_id = %s AND batch_id = %s
+                    ORDER BY created_at ASC
+                    """,
+                    (session_id, batch_id),
+                )
+                rows = cur.fetchall()
+        return {"batch_id": batch_id, "items": [dict(r) for r in rows]}
+
+    def get_latest_classification(self, session_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT id, requirements, predictions, label_distribution, total, result_json
+                    FROM classification_analysis
+                    WHERE session_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (session_id,),
+                )
+                row = cur.fetchone()
+        if not row:
+            return None
+        out = dict(row)
+        for key in ("requirements", "predictions", "label_distribution", "result_json"):
+            try:
+                if out.get(key) is not None and isinstance(out.get(key), str):
+                    out[key] = json.loads(out[key])
+            except Exception:
+                pass
+        return out
+
+    def save_classification(
+        self,
+        session_id: Optional[str],
+        requirements: List[str],
+        predictions: List[Dict[str, Any]],
+        label_distribution: Optional[Dict[str, Any]] = None,
+        total: Optional[int] = None,
+        result_json: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """
+        保存需求分类结果
+        """
+        if result_json is None:
+            result_json = {
+                "predictions": predictions,
+                "label_distribution": label_distribution,
+                "total": total,
+            }
+
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO classification_analysis (
+                        session_id, requirements, predictions,
+                        label_distribution, total, result_json, created_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        session_id,
+                        json.dumps(requirements, ensure_ascii=False),
+                        json.dumps(predictions, ensure_ascii=False),
+                        json.dumps(label_distribution, ensure_ascii=False) if label_distribution else None,
+                        total,
+                        json.dumps(result_json, ensure_ascii=False),
+                        _utc_now_iso(),
+                    ),
+                )
+                return int(cur.fetchone()[0])
+
+    # ========================
+    # L4 低层需求 (low_level_requirements) 相关方法
+    # ========================
+
+    def save_l4_requirements(
+        self,
+        session_id: str,
+        l4_requirements: List[Dict[str, Any]],
+    ) -> List[str]:
+        """
+        保存 L4 需求到数据库
+        
+        Args:
+            session_id: 会话 ID
+            l4_requirements: L4 需求列表，每个包含:
+                - l4_id / req_id
+                - source_top_id
+                - source_top_text (可选)
+                - shall_statement / text
+                - component
+                - acceptance_criteria
+                - test_method
+                - interfaces
+                - data_contracts
+                - error_handling
+                - nfr
+                - open_questions
+                - evidence_ids
+                - confidence
+        
+        Returns:
+            插入的 req_id 列表
+        """
+        if not l4_requirements:
+            return []
+
+        inserted_ids = []
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                for req in l4_requirements:
+                    req_id = req.get("l4_id") or req.get("req_id") or f"L4-{_utc_now_iso()}"
+                    text = req.get("shall_statement") or req.get("text") or ""
+                    
+                    # 如果 req_id 已存在，则生成新的唯一 ID，避免跨 session 冲突
+                    cur.execute(
+                        "SELECT 1 FROM low_level_requirements WHERE req_id = %s",
+                        (req_id,)
+                    )
+                    if cur.fetchone():
+                        req_id = f"{req_id}-{uuid.uuid4().hex[:6]}"
+                    
+                    cur.execute(
+                        """
+                        INSERT INTO low_level_requirements (
+                            req_id, session_id, source_top_id, source_top_text,
+                            text, component, acceptance_criteria, test_method,
+                            interfaces, data_contracts, error_handling, nfr,
+                            open_questions, evidence_ids, confidence, source, meta, created_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            req_id,
+                            session_id,
+                            req.get("source_top_id"),
+                            req.get("source_top_text"),
+                            text,
+                            req.get("component"),
+                            json.dumps(req.get("acceptance_criteria", []), ensure_ascii=False),
+                            req.get("test_method"),
+                            json.dumps(req.get("interfaces", []), ensure_ascii=False),
+                            json.dumps(req.get("data_contracts", []), ensure_ascii=False),
+                            json.dumps(req.get("error_handling", []), ensure_ascii=False),
+                            json.dumps(req.get("nfr", []), ensure_ascii=False),
+                            json.dumps(req.get("open_questions", []), ensure_ascii=False),
+                            json.dumps(req.get("evidence_ids", []), ensure_ascii=False),
+                            req.get("confidence"),
+                            "l4_generation",
+                            json.dumps(req, ensure_ascii=False),
+                            _utc_now_iso(),
+                        ),
+                    )
+                    inserted_ids.append(req_id)
+
+                    # 维护多对多映射：一个底层需求可关联多个顶层需求
+                    top_ids = req.get("source_top_ids") or []
+                    if not top_ids and req.get("source_top_id"):
+                        top_ids = [req.get("source_top_id")]
+                    for top_id in top_ids:
+                        if not top_id:
+                            continue
+                        cur.execute(
+                            """
+                            INSERT INTO low_level_requirement_links (req_id, session_id, top_req_id, created_at)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT DO NOTHING
+                            """,
+                            (req_id, session_id, top_id, _utc_now_iso()),
+                        )
+
+        return inserted_ids
+
+    def get_l4_requirements_by_session(
+        self,
+        session_id: str,
+        page: int = 1,
+        per_page: int = 100,
+    ) -> Dict[str, Any]:
+        """
+        查询指定 session 的 L4 底层需求
+        """
+        page = max(1, int(page))
+        per_page = max(1, min(500, int(per_page)))
+        offset = (page - 1) * per_page
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT COUNT(1) AS c FROM low_level_requirements WHERE session_id = %s",
+                    (session_id,)
+                )
+                total = cur.fetchone()["c"]
+                
+                cur.execute(
+                    """
+                    SELECT 
+                        req_id, session_id, source_top_id, source_top_text,
+                        text, component, acceptance_criteria, test_method,
+                        interfaces, data_contracts, error_handling, nfr,
+                        open_questions, evidence_ids, confidence, source,
+                        created_at::text AS created_at
+                    FROM low_level_requirements
+                    WHERE session_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (session_id, per_page, offset),
+                )
+                rows = cur.fetchall()
+
+                # 批量获取映射关系
+                cur.execute(
+                    """
+                    SELECT req_id, array_agg(top_req_id) AS source_top_ids
+                    FROM low_level_requirement_links
+                    WHERE session_id = %s
+                    GROUP BY req_id
+                    """,
+                    (session_id,),
+                )
+                link_rows = cur.fetchall()
+                top_map = {r["req_id"]: r["source_top_ids"] for r in link_rows}
+
+        # 解析 JSONB 字段
+        requirements = []
+        for row in rows:
+            req = dict(row)
+            for key in ("acceptance_criteria", "interfaces", "data_contracts", 
+                        "error_handling", "nfr", "open_questions", "evidence_ids"):
+                if req.get(key) and isinstance(req[key], str):
+                    try:
+                        req[key] = json.loads(req[key])
+                    except Exception:
+                        pass
+            req["source_top_ids"] = top_map.get(req["req_id"], [])
+            requirements.append(req)
+
+        return {
+            "requirements": requirements,
+            "total": total,
+            "pages": (total + per_page - 1) // per_page if total else 0,
+            "current_page": page,
+        }
+
+    def has_l4_requirements(self, session_id: str) -> bool:
+        """检查指定 session 是否有 L4 需求"""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM low_level_requirements WHERE session_id = %s LIMIT 1",
+                    (session_id,)
+                )
+                return cur.fetchone() is not None
+
+    def get_requirement_pairs_for_trace(self, session_id: str) -> List[Dict[str, Any]]:
+        """
+        获取需要进行追溯分析的顶层-底层需求对
+        
+        只返回数据库中有映射关系的对，避免全量笛卡尔积分析
+        
+        Returns:
+            List[{
+                'high_req_id': str,
+                'high_req_text': str,
+                'low_req_id': str,
+                'low_req_text': str,
+            }]
+        """
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # 从映射表关联顶层需求和底层需求
+                cur.execute(
+                    """
+                    SELECT 
+                        lnk.top_req_id AS high_req_id,
+                        COALESCE(top.text, low.source_top_text, '') AS high_req_text,
+                        lnk.req_id AS low_req_id,
+                        low.text AS low_req_text
+                    FROM low_level_requirement_links lnk
+                    JOIN low_level_requirements low ON lnk.req_id = low.req_id
+                    LEFT JOIN requirements_l123 top ON lnk.top_req_id = top.req_id
+                    WHERE lnk.session_id = %s
+                    ORDER BY lnk.created_at
+                    """,
+                    (session_id,)
+                )
+                rows = cur.fetchall()
+        
+        # 过滤掉空文本的记录
+        pairs = []
+        for row in rows:
+            high_text = (row.get("high_req_text") or "").strip()
+            low_text = (row.get("low_req_text") or "").strip()
+            if high_text and low_text:
+                pairs.append({
+                    "high_req_id": row["high_req_id"],
+                    "high_req_text": high_text,
+                    "low_req_id": row["low_req_id"],
+                    "low_req_text": low_text,
+                })
+        
+        return pairs
 
     def upsert_spans(self, spans: List[Dict[str, Any]]) -> Dict[str, Any]:
         if not spans:

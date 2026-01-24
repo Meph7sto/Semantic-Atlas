@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { traceabilityApi, conflictApi, classifyTexts, analysisApi, requirementsL123Api } from '../utils/api'
+import { traceabilityApi, conflictApi, classifyTexts, analysisApi, requirementsL123Api, getLatestClassification, l4RequirementsApi } from '../utils/api'
 import draggable from 'vuedraggable'
 import {
   FileText,
@@ -96,6 +96,7 @@ const conflictProgress = ref({ current: 0, total: 0 })
 const isAnalyzing = ref(false)
 const analysisStep = ref(0) // 0: 未开始, 1: 追溯中, 2: 冲突检测中, 3: 分类中, 4: 完成
 const analysisError = ref(null)
+const analysisNotice = ref('')
 
 // ========== 需求管理状态（表格视图+卡片视图） ==========
 // 需求状态定义
@@ -144,17 +145,30 @@ const canExtract = computed(() => {
   return true
 })
 
+function normalizeLevel(raw) {
+  const text = String(raw || '').trim().toUpperCase()
+  if (!text) return 'L1'
+  if (text === '1' || text === 'L1' || text.includes('L1')) return 'L1'
+  if (text === '2' || text === 'L2' || text.includes('L2')) return 'L2'
+  if (text === '3' || text === 'L3' || text.includes('L3')) return 'L3'
+  return 'L1'
+}
+
 // 所有顶层需求（L1 + L2 + L3）
 const allHighLevelRequirements = computed(() => {
-  return highLevelRequirements.value.map((req, idx) => ({
-    id: `${req.level}-${idx}`,
-    category: req.level,
-    statement: req.text,
-    rationale: '',
-    evidence: req.anchor_span_id || '',
-    confidence: 0.9,
-    ...req
-  }))
+  return highLevelRequirements.value.map((req, idx) => {
+    const level = normalizeLevel(req.level || req.category)
+    return {
+      ...req,
+      id: req.req_id || req.id || `${level}-${idx}`,
+      category: level,
+      level,
+      statement: req.text || req.statement || '',
+      rationale: '',
+      evidence: req.anchor_span_id || '',
+      confidence: 0.9,
+    }
+  })
 })
 
 // 是否可以进行追溯分析
@@ -406,7 +420,7 @@ async function loadContextRuns({ useSessionFilter = true } = {}) {
 async function loadRequirementsFromDB() {
   if (!sessionId.value.trim()) {
     error.value = '请先输入 Session ID'
-    return
+        return
   }
 
   isLoading.value = true
@@ -418,7 +432,10 @@ async function loadRequirementsFromDB() {
       page: 1,
       perPage: 200
     })
-    highLevelRequirements.value = data.requirements || []
+    highLevelRequirements.value = (data.requirements || []).map((req) => ({
+      ...req,
+      level: normalizeLevel(req.level || req.category),
+    }))
     reqStats.value = await requirementsL123Api.stats(sessionId.value.trim())
     
     if (highLevelRequirements.value.length > 0) {
@@ -472,17 +489,71 @@ async function startExtraction() {
   }
 }
 
-// 预留：提取底层需求接口
+// 提取底层需求（L4）
+// 流程：先检查数据库缓存，有则直接加载；否则调用 L4 生成接口
 async function extractLowLevelRequirements() {
-  if (allHighLevelRequirements.value.length === 0) return
+  if (allHighLevelRequirements.value.length === 0) {
+    traceError.value = '请先加载或抽取顶层需求'
+    return
+  }
+
+  const sid = sessionId.value?.trim()
+  if (!sid) {
+    traceError.value = '请先填写 Session ID'
+    return
+  }
 
   isExtractingLowLevel.value = true
   traceError.value = null
+  lowLevelExtractionNotice.value = ''
 
   try {
-    // TODO: 调用底层需求提取接口
-    await new Promise((resolve) => setTimeout(resolve, 500))
-    alert('功能开发中：底层需求提取接口尚未实现\n\n请使用「加载示例底层需求」按钮测试追溯功能')
+    // 准备顶层需求列表
+    const topRequirements = allHighLevelRequirements.value.map((req) => ({
+      id: req.req_id,
+      text: req.text || req.statement || '',
+    }))
+    if (topRequirements.some((req) => !req.id)) {
+      throw new Error('存在顶层需求缺少 req_id，无法建立正确映射关系')
+    }
+
+    // 调用 L4 生成 API（内部会检查缓存）
+    const result = await l4RequirementsApi.generate(sid, topRequirements, {
+      config: {
+        top_k_pattern: 5,
+        top_k_spec: 3,
+        top_k_nfr: 3,
+        max_l4_per_top_req: 5,
+        min_l4_per_top_req: 1,
+        confidence_threshold: 0.6,
+      },
+      model: 'deepseek-chat',
+    })
+
+    // 转换为 lowLevelRequirements 格式
+    const l4Reqs = result.requirements || []
+    lowLevelRequirements.value = l4Reqs.map((req, idx) => ({
+      id: req.req_id || `low-${idx + 1}`,
+      category: 'low',
+      statement: req.text || req.shall_statement || '',
+      rationale: req.source_top_text ? `来源: ${req.source_top_text.slice(0, 50)}...` : '',
+      evidence: req.acceptance_criteria?.join('; ') || '',
+      confidence: req.confidence || 0.8,
+      component: req.component,
+      test_method: req.test_method,
+      source_top_id: req.source_top_id,
+    }))
+
+    // 提示
+    if (result.from_cache) {
+      lowLevelExtractionNotice.value = `已从缓存加载 ${l4Reqs.length} 条底层需求`
+    } else {
+      lowLevelExtractionNotice.value = `成功生成 ${result.inserted_count || l4Reqs.length} 条底层需求并保存`
+    }
+
+    if (lowLevelRequirements.value.length > 0) {
+      currentStep.value = 2
+    }
   } catch (err) {
     traceError.value = err.message || '提取底层需求失败'
   } finally {
@@ -490,105 +561,60 @@ async function extractLowLevelRequirements() {
   }
 }
 
+// 底层需求提取提示
+const lowLevelExtractionNotice = ref('')
+
 // 加载示例底层需求（用于测试/演示）
-// 这些底层需求对应会议记录中的技术实现细节
+// 对应会议记录：员工考勤系统需求讨论
+// 会议内容：
+// PM: 我们需要开发一个员工考勤系统，支持手机打卡。
+// HR: 打卡要支持GPS定位，防止员工在家打卡。定位精度要在50米以内。
+// DEV: 那如果GPS信号不好怎么办？
+// HR: 可以用WiFi辅助定位，公司WiFi连上了也算有效打卡。
+// PM: 系统要能自动生成月度考勤报表，HR每月要统计。
+// HR: 对，报表要支持导出Excel，还要能看到迟到早退的明细。
+// DEV: 好的，我们一周内出原型。
 function loadMockLowLevelRequirements() {
   const mockLowLevel = [
     {
       id: 'low-1',
       category: 'low',
-      statement: '实现银行流水解析模块，支持Excel和CSV格式文件解析',
-      rationale: '满足财务部门导入银行流水的数据格式需求',
-      evidence: '主要是Excel和CSV格式，因为银行通常提供这两种格式的流水文件',
+      statement: '开发手机端打卡模块，支持iOS和Android双平台',
+      rationale: '实现员工移动端打卡功能',
+      evidence: '我们需要开发一个员工考勤系统，支持手机打卡',
       confidence: 0.95
     },
     {
       id: 'low-2',
       category: 'low',
-      statement: '开发智能匹配算法，基于金额、日期、摘要进行多维匹配',
-      rationale: '实现自动对账的核心算法，提高匹配准确率',
-      evidence: '我们需要设计一个智能匹配算法，基于金额、日期、摘要等多个维度进行匹配',
-      confidence: 0.92
+      statement: '集成GPS定位SDK，定位精度控制在50米以内',
+      rationale: '防止员工虚假打卡，确保打卡位置真实性',
+      evidence: '打卡要支持GPS定位，防止员工在家打卡。定位精度要在50米以内',
+      confidence: 0.93
     },
     {
       id: 'low-3',
       category: 'low',
-      statement: '实现差异标记功能，支持红色高亮显示和批注',
-      rationale: '帮助财务人员快速定位需要人工复核的异常记录',
-      evidence: '匹配不上的记录需要高亮显示，这样财务人员可以快速定位需要人工复核的异常记录',
-      confidence: 0.93
+      statement: '实现WiFi辅助定位功能，连接公司WiFi视为有效打卡',
+      rationale: '解决GPS信号弱时的定位问题',
+      evidence: '可以用WiFi辅助定位，公司WiFi连上了也算有效打卡',
+      confidence: 0.91
     },
     {
       id: 'low-4',
       category: 'low',
-      statement: '采用批量处理和分页加载机制，确保大数据量下的响应速度',
-      rationale: '满足1万条数据1分钟内处理完成的性能要求',
-      evidence: '我们每个月大概有1万条左右的流水记录，希望系统能在1分钟内完成匹配处理',
-      confidence: 0.88
+      statement: '开发月度考勤报表自动生成模块',
+      rationale: '满足HR每月统计考勤的需求',
+      evidence: '系统要能自动生成月度考勤报表，HR每月要统计',
+      confidence: 0.92
     },
     {
       id: 'low-5',
       category: 'low',
-      statement: '实现用户权限管理和会话管理模块，支持多用户并发操作',
-      rationale: '满足财务部门多人同时使用的并发需求',
-      evidence: '系统需要支持多用户并发操作，因为财务部门有多个人会同时使用',
+      statement: '实现Excel导出功能，包含迟到早退明细数据',
+      rationale: '方便HR导出数据进行分析和存档',
+      evidence: '报表要支持导出Excel，还要能看到迟到早退的明细',
       confidence: 0.90
-    },
-    {
-      id: 'low-6',
-      category: 'low',
-      statement: '开发PDF报告导出功能，包含匹配结果统计和异常记录明细',
-      rationale: '满足财务部门导出对账报告的需求',
-      evidence: '系统需要能够导出对账报告，格式要求是PDF，包含匹配结果统计和异常记录明细',
-      confidence: 0.91
-    },
-    {
-      id: 'low-7',
-      category: 'low',
-      statement: '实现数据库加密存储和审计日志功能，记录所有操作',
-      rationale: '保障财务数据安全，满足审计追踪要求',
-      evidence: '财务数据非常敏感，需要加密存储，并且要有操作日志记录，方便审计追踪',
-      confidence: 0.94
-    },
-    {
-      id: 'low-8',
-      category: 'low',
-      statement: '设计数据库表结构，包含银行流水表、内部单据表、匹配结果表、操作日志表',
-      rationale: '数据持久化的基础设施，支持对账业务的数据存储',
-      evidence: '数据存储需求',
-      confidence: 0.87
-    },
-    {
-      id: 'low-9',
-      category: 'low',
-      statement: '实现定期数据备份机制，防止数据丢失',
-      rationale: '保障数据安全，满足审计要求',
-      evidence: '建议定期备份数据，防止数据丢失',
-      confidence: 0.89
-    },
-    {
-      id: 'low-10',
-      category: 'low',
-      statement: '开发RESTful API接口，响应时间小于200ms，支持Chrome和Edge浏览器',
-      rationale: '满足性能要求和浏览器兼容性需求',
-      evidence: '主要是Chrome和Edge，财务部门统一使用这两个浏览器',
-      confidence: 0.86
-    },
-    {
-      id: 'low-11',
-      category: 'low',
-      statement: '实现模糊匹配和相似度算法，匹配准确率达到95%以上',
-      rationale: '提高自动匹配的准确率，减少人工复核工作量',
-      evidence: '匹配的准确率至少要达到95%以上',
-      confidence: 0.92
-    },
-    {
-      id: 'low-12',
-      category: 'low',
-      statement: '集成第三方PDF生成库，实现标准报告模板',
-      rationale: '满足PDF报告导出功能的技术实现',
-      evidence: 'PDF导出功能我们可以集成第三方库来实现',
-      confidence: 0.88
     }
   ]
 
@@ -747,10 +773,65 @@ async function runFullAnalysis() {
 
   isAnalyzing.value = true
   analysisError.value = null
+  analysisNotice.value = ''
   analysisStep.value = 1
 
+  // 获取当前 session_id 用于保存到数据库
+  const currentSessionId = sessionId.value?.trim() || null
+
   try {
-    // Step 1: 追溯分析
+    // Step 0: 若已有缓存结果，直接读取展示
+    if (currentSessionId) {
+      try {
+        const [traceCache, conflictCache, classificationCache] = await Promise.all([
+          analysisApi.getLatestTrace(currentSessionId),
+          conflictApi.getLatest(currentSessionId),
+          getLatestClassification(currentSessionId),
+        ])
+
+        const hasTrace = !!(traceCache && traceCache.data)
+        const hasConflict = !!(conflictCache && conflictCache.data && conflictCache.data.items && conflictCache.data.items.length)
+        const hasClassification = !!(classificationCache && classificationCache.predictions && classificationCache.predictions.length)
+
+        const traceRelations = traceCache?.data?.relations || []
+        const traceHasIds = traceRelations.length === 0
+          ? true
+          : traceRelations.every((rel) => rel.high_req_id && rel.low_req_id)
+
+        if (hasTrace && hasConflict && hasClassification && traceHasIds) {
+          analysisNotice.value = '已加载缓存分析结果，无需重新分析'
+          traceResult.value = traceCache.data
+          conflictResults.value = conflictCache.data.items.map((item) => ({
+            reqA: { statement: item.requirement_a },
+            reqB: { statement: item.requirement_b },
+            is_conflict: item.is_conflict,
+            raw_response: item.raw_response,
+            data: item.result_json,
+          }))
+
+          const requirements = classificationCache.requirements || []
+          classificationResult.value = {
+            predictions: classificationCache.predictions.map((pred, idx) => ({
+              ...pred,
+              originalReq: { statement: requirements[idx] || '' },
+            })),
+            label_distribution: classificationCache.label_distribution,
+            total: classificationCache.total,
+          }
+
+          currentStep.value = 4
+          analysisStep.value = 4
+          activeTab.value = 'network'
+          setTimeout(() => updateChart(), 100)
+          return
+        }
+      } catch (cacheErr) {
+        // 读取缓存失败不影响正常分析
+        console.warn('读取缓存结果失败，继续执行一键分析:', cacheErr)
+      }
+    }
+
+    // Step 1: 追溯分析（基于数据库映射关系，避免全量笛卡尔积）
     traceError.value = null
     traceResult.value = null
     
@@ -765,11 +846,22 @@ async function runFullAnalysis() {
       throw new Error('顶层需求或底层需求为空')
     }
 
-    const traceApiResult = await traceabilityApi.batchAnalyzeRelation(highReqs, lowReqs)
+    // 仅使用基于映射关系的追溯分析（不回退到全量分析）
+    const mappingResult = await traceabilityApi.traceByMapping(
+      currentSessionId, 
+      true,  // save_to_db = true
+      800
+    )
+    const pairsAnalyzed = mappingResult.pairs_analyzed || 0
+    const totalPossible = mappingResult.total_possible_pairs || (highReqs.length * lowReqs.length)
+    if (pairsAnalyzed < totalPossible) {
+      analysisNotice.value = `基于映射关系分析：仅分析 ${pairsAnalyzed} 个有关联的需求对（全量为 ${totalPossible} 个）`
+    }
+    const traceApiResult = mappingResult.data
     traceResult.value = traceApiResult
     currentStep.value = 2
 
-    // Step 2: 冲突检测
+    // Step 2: 冲突检测（保存到数据库）
     analysisStep.value = 2
     conflictError.value = null
     conflictResults.value = []
@@ -795,23 +887,53 @@ async function runFullAnalysis() {
       const pairsToCheck = pairs.slice(0, 10)
       conflictProgress.value = { current: 0, total: pairsToCheck.length }
 
+      // 准备批量检测的数据
+      const conflictPairs = pairsToCheck.map(({ reqA, reqB }) => ({
+        requirement_a: reqA.statement || reqA.text || '',
+        requirement_b: reqB.statement || reqB.text || '',
+      }))
+
+      // 尝试批量检测并保存
+      if (conflictPairs.length > 0) {
+        try {
+          const conflictBatchResult = await conflictApi.checkBatch(
+            conflictPairs,
+            true,  // save_to_db = true
+            currentSessionId
+          )
+          
+          if (conflictBatchResult.success && conflictBatchResult.data) {
+            conflictResults.value = conflictBatchResult.data.map((result, idx) => ({
+              reqA: pairsToCheck[idx].reqA,
+              reqB: pairsToCheck[idx].reqB,
+              ...result
+            }))
+            conflictProgress.value.current = pairsToCheck.length
+          }
+        } catch (e) {
+          console.warn('批量冲突检测失败，尝试单对检测:', e)
+          // 降级到单对检测
       for (let i = 0; i < pairsToCheck.length; i++) {
         const { reqA, reqB } = pairsToCheck[i]
         conflictProgress.value.current = i + 1
         try {
           const res = await conflictApi.check(
             reqA.statement || reqA.text || '',
-            reqB.statement || reqB.text || ''
-          )
-          conflictResults.value.push({ reqA, reqB, ...res })
-        } catch (e) {
-          console.warn('冲突检测单对失败:', e)
+                reqB.statement || reqB.text || '',
+                true,  // save_to_db = true
+                currentSessionId
+              )
+              conflictResults.value.push({ reqA, reqB, ...(res.data || res) })
+            } catch (innerErr) {
+              console.warn('冲突检测单对失败:', innerErr)
+            }
+          }
         }
       }
       currentStep.value = 3
     }
 
-    // Step 3: 需求分类
+    // Step 3: 需求分类（保存到数据库）
     analysisStep.value = 3
     classificationError.value = null
     classificationResult.value = null
@@ -819,7 +941,11 @@ async function runFullAnalysis() {
     const classifyReqs = [...allHighLevelRequirements.value, ...lowLevelRequirements.value]
     if (classifyReqs.length > 0) {
       const requirements = classifyReqs.map((r) => r.statement || r.text || '')
-      const response = await classifyTexts({ requirements })
+      const response = await classifyTexts(
+        { requirements },
+        true,  // save_to_db = true
+        currentSessionId
+      )
       const data = response.data
       
       classificationResult.value = {
@@ -937,17 +1063,22 @@ function updateChart() {
   const categoryMap = { L1: 0, L2: 1, L3: 2, low: 3 }
 
   const leftSpacing = highNodes.length > 1 ? availableHeight / (highNodes.length - 1) : 0
-  const nodes = highNodes.map((req, idx) => ({
-    id: `high_${idx}`,
+  const highIndexToNodeId = {}
+  const nodes = highNodes.map((req, idx) => {
+    const level = normalizeLevel(req.category || req.level)
+    const nodeId = req.req_id || req.id || `high_${idx}`
+    highIndexToNodeId[idx] = nodeId
+    return {
+    id: nodeId,
     name: req.statement.length > 25 ? req.statement.slice(0, 25) + '...' : req.statement,
     x: leftX,
     y: topPadding + (highNodes.length === 1 ? availableHeight / 2 : idx * leftSpacing),
-    category: categoryMap[req.category] ?? 0,
+    category: categoryMap[level] ?? 0,
     symbol: 'roundRect',
     symbolSize: [200, 32],
     itemStyle: {
-      color: getCategoryColor(req.category),
-      borderColor: getCategoryBorderColor(req.category),
+      color: getCategoryColor(level),
+      borderColor: getCategoryBorderColor(level),
       borderWidth: 2,
       borderRadius: 4
     },
@@ -964,16 +1095,20 @@ function updateChart() {
     },
     tooltip: {
       formatter: `<div style="max-width:350px; padding: 8px;">
-        <div style="font-weight: bold; color: ${getCategoryColor(req.category)}; margin-bottom: 4px;">[${req.category}] 顶层需求</div>
+        <div style="font-weight: bold; color: ${getCategoryColor(level)}; margin-bottom: 4px;">[${level}] 顶层需求</div>
         <div>${req.statement}</div>
       </div>`
     }
-  }))
+  }
+  })
 
   const rightSpacing = lowNodes.length > 1 ? availableHeight / (lowNodes.length - 1) : 0
+  const lowIndexToNodeId = {}
   lowNodes.forEach((req, idx) => {
+    const nodeId = req.req_id || req.id || `low_${idx}`
+    lowIndexToNodeId[idx] = nodeId
     nodes.push({
-      id: `low_${idx}`,
+      id: nodeId,
       name: req.statement.length > 25 ? req.statement.slice(0, 25) + '...' : req.statement,
       x: rightX,
       y: topPadding + (lowNodes.length === 1 ? availableHeight / 2 : idx * rightSpacing),
@@ -1010,9 +1145,12 @@ function updateChart() {
   if (traceResult.value?.relations) {
     traceResult.value.relations.forEach((rel) => {
       if (rel.has_relation) {
+        const sourceId = rel.high_req_id
+        const targetId = rel.low_req_id
+        if (!sourceId || !targetId) return
         links.push({
-          source: `high_${rel.high_level_index}`,
-          target: `low_${rel.low_level_index}`,
+          source: sourceId,
+          target: targetId,
           lineStyle: {
             color: getRelationTypeColor(rel.relation_type),
             width: 2 + (rel.confidence || 0.5) * 2,
@@ -1263,16 +1401,16 @@ onMounted(async () => {
 
         <!-- 抽取设置 -->
         <details class="group mb-4">
-          <summary
-            class="flex items-center justify-between cursor-pointer p-3 bg-zinc-50 rounded-lg border border-zinc-200 hover:bg-zinc-100 transition-colors"
-          >
-            <div class="flex items-center gap-2">
-              <Settings2 class="w-4 h-4 text-zinc-500" />
+            <summary
+              class="flex items-center justify-between cursor-pointer p-3 bg-zinc-50 rounded-lg border border-zinc-200 hover:bg-zinc-100 transition-colors"
+            >
+              <div class="flex items-center gap-2">
+                <Settings2 class="w-4 h-4 text-zinc-500" />
               <span class="text-xs font-semibold text-zinc-600 uppercase tracking-wider">抽取设置</span>
-            </div>
+              </div>
             <ChevronDown class="w-4 h-4 text-zinc-400 transition-transform group-open:rotate-180" />
-          </summary>
-          <div class="mt-2 p-3 bg-zinc-50 rounded-lg border border-zinc-200 space-y-3">
+            </summary>
+            <div class="mt-2 p-3 bg-zinc-50 rounded-lg border border-zinc-200 space-y-3">
             <div class="grid grid-cols-2 gap-3">
               <div>
                 <label class="text-xs font-medium text-zinc-600 block mb-1">bundle_strategy</label>
@@ -1320,13 +1458,13 @@ onMounted(async () => {
               <input v-model="extractionForm.useToolcall" type="checkbox" class="w-3 h-3 rounded border-zinc-300" />
               使用 tool-call
             </label>
-          </div>
-        </details>
+            </div>
+          </details>
 
-        <!-- 错误提示 -->
+          <!-- 错误提示 -->
         <div v-if="error" class="p-3 text-sm text-red-600 bg-red-50 rounded-md border border-red-200 mb-4">
-          Error: {{ error }}
-        </div>
+            Error: {{ error }}
+          </div>
         <div v-if="extractionError" class="p-3 text-sm text-red-600 bg-red-50 rounded-md border border-red-200 mb-4">
           抽取错误: {{ extractionError }}
         </div>
@@ -1361,17 +1499,25 @@ onMounted(async () => {
             class="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
           >
             <Loader2 v-if="isExtractingLowLevel" class="w-4 h-4 animate-spin" />
-            <Lock v-else class="w-4 h-4" />
-            <span>{{ isExtractingLowLevel ? '提取中...' : '提取底层需求' }}</span>
-            <span class="text-xs opacity-70">(预留)</span>
+            <Layers v-else class="w-4 h-4" />
+            <span>{{ isExtractingLowLevel ? '生成中...' : '提取底层需求 (L4)' }}</span>
           </button>
+
+          <!-- 底层需求提取提示 -->
+          <div
+            v-if="lowLevelExtractionNotice"
+            class="p-3 text-sm text-emerald-700 bg-emerald-50 rounded-md border border-emerald-200 flex items-center gap-2"
+          >
+            <CheckCircle2 class="w-4 h-4 flex-shrink-0" />
+            {{ lowLevelExtractionNotice }}
+          </div>
 
           <button
             @click="loadMockLowLevelRequirements"
             :disabled="!canLoadRequirements"
             class="w-full py-2 px-4 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 font-medium rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-zinc-300 border-dashed text-sm"
           >
-            <Layers class="w-4 h-4" />
+            <Database class="w-4 h-4" />
             <span>加载示例底层需求</span>
             <span class="text-xs text-zinc-500">(测试用)</span>
           </button>
@@ -1438,6 +1584,14 @@ onMounted(async () => {
             }">
               {{ analysisStepText }}
             </div>
+          </div>
+
+          <!-- 缓存提示 -->
+          <div
+            v-if="analysisNotice"
+            class="p-3 text-sm text-emerald-700 bg-emerald-50 rounded-md border border-emerald-200"
+          >
+            {{ analysisNotice }}
           </div>
 
           <!-- 错误提示 -->
@@ -1509,14 +1663,14 @@ onMounted(async () => {
         <!-- Tab 切换 -->
         <div class="bg-white border-b border-zinc-200 px-6 py-2 flex items-center justify-between shrink-0">
           <div class="flex gap-1">
-            <button
-              @click="activeTab = 'board'"
-              class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
-              :class="activeTab === 'board' ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
-            >
-              <Layers class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
-              看板
-            </button>
+          <button
+            @click="activeTab = 'board'"
+            class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+            :class="activeTab === 'board' ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
+          >
+            <Layers class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+            看板
+          </button>
             <button
               @click="activeTab = 'table'"
               class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
@@ -1534,33 +1688,33 @@ onMounted(async () => {
               卡片
             </button>
             <div class="w-px h-6 bg-zinc-200 mx-1 self-center"></div>
-            <button
-              @click="activeTab = 'network'"
-              class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
-              :class="activeTab === 'network' ? 'bg-blue-600 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
-            >
-              <Network class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
-              追溯
-            </button>
-            <button
-              @click="activeTab = 'conflict'"
-              class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
-              :class="activeTab === 'conflict' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
-            >
-              <AlertTriangle class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
-              冲突
-              <span v-if="conflictStats && conflictStats.conflicts > 0" class="ml-1 px-1.5 py-0.5 bg-red-100 text-red-700 rounded-full text-xs">
-                {{ conflictStats.conflicts }}
-              </span>
-            </button>
-            <button
-              @click="activeTab = 'classification'"
-              class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
-              :class="activeTab === 'classification' ? 'bg-emerald-600 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
-            >
-              <Tags class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
-              分类
-            </button>
+          <button
+            @click="activeTab = 'network'"
+            class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+            :class="activeTab === 'network' ? 'bg-blue-600 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
+          >
+            <Network class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+            追溯
+          </button>
+          <button
+            @click="activeTab = 'conflict'"
+            class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+            :class="activeTab === 'conflict' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
+          >
+            <AlertTriangle class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+            冲突
+            <span v-if="conflictStats && conflictStats.conflicts > 0" class="ml-1 px-1.5 py-0.5 bg-red-100 text-red-700 rounded-full text-xs">
+              {{ conflictStats.conflicts }}
+            </span>
+          </button>
+          <button
+            @click="activeTab = 'classification'"
+            class="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+            :class="activeTab === 'classification' ? 'bg-emerald-600 text-white' : 'text-zinc-600 hover:bg-zinc-100'"
+          >
+            <Tags class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+            分类
+          </button>
           </div>
           
           <!-- 需求统计 -->
