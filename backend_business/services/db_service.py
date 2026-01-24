@@ -610,6 +610,25 @@ class DBService:
 
                 cur.execute(
                     """
+                    CREATE TABLE IF NOT EXISTS manage_branch_refs (
+                        ref_id TEXT PRIMARY KEY,
+                        project_id TEXT NOT NULL REFERENCES manage_projects(project_id) ON DELETE CASCADE,
+                        ref_name TEXT NOT NULL,
+                        ref_type TEXT NOT NULL DEFAULT 'branch' CHECK (ref_type IN ('branch', 'tag')),
+                        milestone_id TEXT REFERENCES manage_milestones(milestone_id) ON DELETE SET NULL,
+                        created_by TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        UNIQUE(project_id, ref_name)
+                    )
+                    """
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_manage_branch_refs_project ON manage_branch_refs(project_id)"
+                )
+
+                cur.execute(
+                    """
                     CREATE TABLE IF NOT EXISTS manage_branches (
                         branch_id TEXT PRIMARY KEY,
                         project_id TEXT NOT NULL REFERENCES manage_projects(project_id) ON DELETE CASCADE,

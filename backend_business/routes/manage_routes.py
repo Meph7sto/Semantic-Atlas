@@ -1,10 +1,13 @@
 """需求管理监控路由"""
+
 from typing import Any, Dict
 
 from flask import Blueprint, jsonify, request
 
 from backend_business.config import settings
-from backend_business.services.requirements_manage_service import RequirementsManageService
+from backend_business.services.requirements_manage_service import (
+    RequirementsManageService,
+)
 
 manage_bp = Blueprint("manage", __name__)
 service = RequirementsManageService(dsn=settings.POSTGRES_DSN)
@@ -15,7 +18,9 @@ def _json_error(message: str, status: int = 400):
 
 
 def _get_actor() -> str:
-    return request.headers.get("X-Actor", "") or request.args.get("actor", "") or "system"
+    return (
+        request.headers.get("X-Actor", "") or request.args.get("actor", "") or "system"
+    )
 
 
 @manage_bp.post("/projects")
@@ -26,8 +31,17 @@ def create_project():
         return _json_error("Missing project name")
     description = data.get("description", "")
     actor = _get_actor()
-    project = service.create_project(name=name, description=description, created_by=actor)
-    service.add_audit_log(project_id=project["project_id"], actor=actor, action="create", target_type="project", target_id=project["project_id"], detail=project)
+    project = service.create_project(
+        name=name, description=description, created_by=actor
+    )
+    service.add_audit_log(
+        project_id=project["project_id"],
+        actor=actor,
+        action="create",
+        target_type="project",
+        target_id=project["project_id"],
+        detail=project,
+    )
     return jsonify(project)
 
 
@@ -74,7 +88,14 @@ def create_requirement(project_id: str):
     except Exception as e:
         return _json_error(str(e))
 
-    service.add_audit_log(project_id=project_id, actor=actor, action="create", target_type="requirement", target_id=req["req_id"], detail=req)
+    service.add_audit_log(
+        project_id=project_id,
+        actor=actor,
+        action="create",
+        target_type="requirement",
+        target_id=req["req_id"],
+        detail=req,
+    )
     return jsonify(req)
 
 
@@ -83,9 +104,17 @@ def list_requirements(project_id: str):
     include_deleted = request.args.get("include_deleted") in ("1", "true", "True")
     as_tree = request.args.get("tree") in ("1", "true", "True")
     if as_tree:
-        tree, orphans = service.get_requirement_tree(project_id, include_deleted=include_deleted)
+        tree, orphans = service.get_requirement_tree(
+            project_id, include_deleted=include_deleted
+        )
         return jsonify({"tree": tree, "orphans": orphans})
-    return jsonify({"requirements": service.list_requirements(project_id, include_deleted=include_deleted)})
+    return jsonify(
+        {
+            "requirements": service.list_requirements(
+                project_id, include_deleted=include_deleted
+            )
+        }
+    )
 
 
 @manage_bp.post("/projects/<project_id>/requirements/import")
@@ -95,8 +124,20 @@ def import_requirements(project_id: str):
     if not session_id:
         return _json_error("Missing session_id")
     actor = _get_actor()
-    result = service.import_from_l123(session_id=session_id, project_id=project_id, created_by=actor, mapping_mode=data.get("mapping_mode", "flat"))
-    service.add_audit_log(project_id=project_id, actor=actor, action="import", target_type="requirements", target_id=project_id, detail=result)
+    result = service.import_from_l123(
+        session_id=session_id,
+        project_id=project_id,
+        created_by=actor,
+        mapping_mode=data.get("mapping_mode", "flat"),
+    )
+    service.add_audit_log(
+        project_id=project_id,
+        actor=actor,
+        action="import",
+        target_type="requirements",
+        target_id=project_id,
+        detail=result,
+    )
     return jsonify(result)
 
 
@@ -109,7 +150,14 @@ def update_requirement(req_id: str):
     except Exception as e:
         return _json_error(str(e))
 
-    service.add_audit_log(project_id=req["project_id"], actor=actor, action="update", target_type="requirement", target_id=req_id, detail=data)
+    service.add_audit_log(
+        project_id=req["project_id"],
+        actor=actor,
+        action="update",
+        target_type="requirement",
+        target_id=req_id,
+        detail=data,
+    )
     return jsonify(req)
 
 
@@ -118,10 +166,22 @@ def move_requirement(req_id: str):
     data = request.get_json(silent=True) or {}
     actor = _get_actor()
     try:
-        service.move_requirement(req_id, data.get("parent_id"), data.get("order_index", 0), updated_by=actor)
+        service.move_requirement(
+            req_id, data.get("parent_id"), data.get("order_index", 0), updated_by=actor
+        )
         req = service.get_requirement(req_id)
         if req:
-            service.add_audit_log(project_id=req["project_id"], actor=actor, action="update", target_type="requirement", target_id=req_id, detail={"parent_id": data.get("parent_id"), "order_index": data.get("order_index", 0)})
+            service.add_audit_log(
+                project_id=req["project_id"],
+                actor=actor,
+                action="update",
+                target_type="requirement",
+                target_id=req_id,
+                detail={
+                    "parent_id": data.get("parent_id"),
+                    "order_index": data.get("order_index", 0),
+                },
+            )
         return jsonify({"success": True})
     except Exception as e:
         return _json_error(str(e))
@@ -138,7 +198,14 @@ def delete_requirement(req_id: str):
 
     req = service.get_requirement(req_id)
     project_id = req["project_id"] if req else None
-    service.add_audit_log(project_id=project_id, actor=actor, action="delete", target_type="requirement", target_id=req_id, detail={"cascade": cascade, "affected": affected})
+    service.add_audit_log(
+        project_id=project_id,
+        actor=actor,
+        action="delete",
+        target_type="requirement",
+        target_id=req_id,
+        detail={"cascade": cascade, "affected": affected},
+    )
     return jsonify({"deleted": affected})
 
 
@@ -149,8 +216,22 @@ def create_test_case(project_id: str):
     if not title:
         return _json_error("Missing test case title")
     actor = _get_actor()
-    tc = service.create_test_case(project_id=project_id, title=title, description=data.get("description", ""), status=data.get("status", "draft"), source=data.get("source", ""), created_by=actor)
-    service.add_audit_log(project_id=project_id, actor=actor, action="create", target_type="test_case", target_id=tc["test_case_id"], detail=tc)
+    tc = service.create_test_case(
+        project_id=project_id,
+        title=title,
+        description=data.get("description", ""),
+        status=data.get("status", "draft"),
+        source=data.get("source", ""),
+        created_by=actor,
+    )
+    service.add_audit_log(
+        project_id=project_id,
+        actor=actor,
+        action="create",
+        target_type="test_case",
+        target_id=tc["test_case_id"],
+        detail=tc,
+    )
     return jsonify(tc)
 
 
@@ -174,7 +255,14 @@ def bind_test_case(req_id: str):
 
     req = service.get_requirement(req_id)
     if req:
-        service.add_audit_log(project_id=req["project_id"], actor=actor, action="update", target_type="requirement", target_id=req_id, detail={"test_case_id": test_case_id, "link_type": link_type})
+        service.add_audit_log(
+            project_id=req["project_id"],
+            actor=actor,
+            action="update",
+            target_type="requirement",
+            target_id=req_id,
+            detail={"test_case_id": test_case_id, "link_type": link_type},
+        )
     return jsonify({"success": True})
 
 
@@ -197,11 +285,20 @@ def create_milestone(project_id: str):
             version=data.get("version"),
             tags=data.get("tags"),
             metadata=data.get("metadata"),
+            branch_name=data.get("branch_name"),
+            parent_milestone_id=data.get("parent_milestone_id"),
         )
     except Exception as e:
         return _json_error(str(e))
 
-    service.add_audit_log(project_id=project_id, actor=actor, action="snapshot", target_type="milestone", target_id=milestone["milestone_id"], detail=milestone)
+    service.add_audit_log(
+        project_id=project_id,
+        actor=actor,
+        action="snapshot",
+        target_type="milestone",
+        target_id=milestone["milestone_id"],
+        detail=milestone,
+    )
     return jsonify(milestone)
 
 
@@ -225,7 +322,14 @@ def set_baseline(milestone_id: str):
         service.set_baseline(milestone_id)
         milestone = service.get_milestone(milestone_id, include_nodes=False)
         if milestone:
-            service.add_audit_log(project_id=milestone["project_id"], actor=actor, action="baseline", target_type="milestone", target_id=milestone_id, detail=milestone)
+            service.add_audit_log(
+                project_id=milestone["project_id"],
+                actor=actor,
+                action="baseline",
+                target_type="milestone",
+                target_id=milestone_id,
+                detail=milestone,
+            )
         return jsonify({"success": True})
     except Exception as e:
         return _json_error(str(e))
@@ -261,13 +365,20 @@ def add_milestone_edge(project_id: str):
     except Exception as e:
         return _json_error(str(e))
 
-    service.add_audit_log(project_id=project_id, actor=actor, action="update", target_type="milestone_edge", target_id=str(edge.get("id")), detail=edge)
+    service.add_audit_log(
+        project_id=project_id,
+        actor=actor,
+        action="update",
+        target_type="milestone_edge",
+        target_id=str(edge.get("id")),
+        detail=edge,
+    )
     return jsonify(edge)
 
 
 @manage_bp.get("/projects/<project_id>/milestone-graph")
 def list_milestone_graph(project_id: str):
-    return jsonify({"edges": service.list_milestone_graph(project_id)})
+    return jsonify(service.list_milestone_graph(project_id))
 
 
 @manage_bp.post("/projects/<project_id>/branches")
@@ -279,7 +390,14 @@ def create_branch(project_id: str):
         return _json_error("Missing name or base_milestone_id")
     actor = _get_actor()
     branch = service.create_branch(project_id, base_milestone_id, name, actor)
-    service.add_audit_log(project_id=project_id, actor=actor, action="branch_create", target_type="branch", target_id=branch["branch_id"], detail=branch)
+    service.add_audit_log(
+        project_id=project_id,
+        actor=actor,
+        action="branch_create",
+        target_type="branch_ref",
+        target_id=branch["ref_id"],
+        detail=branch,
+    )
     return jsonify(branch)
 
 
