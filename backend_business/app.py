@@ -15,6 +15,7 @@ from backend_business.routes.conflict_routes import conflict_bp
 from backend_business.routes.file_route import file_bp
 from backend_business.routes.requirements_route import requirements_bp
 from backend_business.routes.classification_routes import classification_bp
+from backend_business.routes.manage_routes import manage_bp
 
 
 def create_app() -> Flask:
@@ -39,6 +40,7 @@ def create_app() -> Flask:
     app.register_blueprint(file_bp, url_prefix="/api")
     app.register_blueprint(requirements_bp, url_prefix="/api")
     app.register_blueprint(classification_bp, url_prefix="/api/classification")
+    app.register_blueprint(manage_bp, url_prefix="/api/manage")
 
     # 兼容主框架：提供 /health（非 /api/health）
     @app.get("/health")
