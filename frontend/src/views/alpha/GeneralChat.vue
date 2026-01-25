@@ -1,6 +1,6 @@
 <script setup>
 import { ref } from 'vue'
-import { chatApi } from '../utils/api'
+import { chatApi } from '../../utils/api'
 import { MessageSquare, Send, Sparkles } from 'lucide-vue-next'
 
 const question = ref('')

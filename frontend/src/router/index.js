@@ -11,13 +11,40 @@ import RequirementsExtraction from '../views/alpha/RequirementsExtraction.vue'
 import L4Testing from '../views/alpha/L4Testing.vue'
 import RequirementsManage from '../views/alpha/RequirementsManage.vue'
 
+// Main views (migrated from frontend_ref)
+import LoginView from '../views/main/LoginView.vue'
+import DashboardView from '../views/main/DashboardView.vue'
+import ProjectManageView from '../views/main/ProjectManageView.vue'
+
 const router = createRouter({
     history: createWebHistory(import.meta.env.BASE_URL),
     routes: [
         {
             path: '/',
             name: 'home',
-            redirect: '/alpha/conflict'
+            redirect: '/main/login'
+        },
+        // Main routes (migrated from frontend_ref)
+        {
+            path: '/main',
+            name: 'main',
+            children: [
+                {
+                    path: 'login',
+                    name: 'main-login',
+                    component: LoginView
+                },
+                {
+                    path: 'dashboard',
+                    name: 'main-dashboard',
+                    component: DashboardView
+                },
+                {
+                    path: 'project',
+                    name: 'main-project',
+                    component: ProjectManageView
+                }
+            ]
         },
         {
             path: '/alpha',

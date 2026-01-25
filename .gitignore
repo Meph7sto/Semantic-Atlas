@@ -233,3 +233,6 @@ data/kb_indexes/
 *.csv
 mission.txt
 git_status_output.txt
+
+# References
+frontend_ref/

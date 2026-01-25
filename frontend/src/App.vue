@@ -1,6 +1,11 @@
 <script setup>
-import { ref } from 'vue'
-import { RouterView, RouterLink } from 'vue-router'
+import { ref, computed } from 'vue'
+import { RouterView, RouterLink, useRoute } from 'vue-router'
+
+const route = useRoute()
+
+// Check if current route is under /main - these pages have their own layout
+const isMainRoute = computed(() => route.path.startsWith('/main'))
 import {
   LayoutDashboard,
   GitCompare,
@@ -21,10 +26,16 @@ const isTopGroupOpen = ref(true)
 </script>
 
 <template>
-  <div class="flex h-screen w-full bg-white">
+  <!-- Main routes have their own layout -->
+  <div v-if="isMainRoute" class="min-h-screen">
+    <RouterView />
+  </div>
+
+  <!-- Alpha routes use the default layout -->
+  <div v-else class="flex h-screen w-full bg-white">
     <!-- Sidebar Toggle Button (Floating when closed) -->
     <div v-if="!isSidebarOpen" class="absolute top-4 left-4 z-50">
-      <button 
+      <button
         @click="isSidebarOpen = true"
         class="p-2 text-zinc-500 hover:bg-zinc-100/80 hover:text-zinc-900 rounded-md transition-colors"
         title="Open Sidebar"
@@ -34,7 +45,7 @@ const isTopGroupOpen = ref(true)
     </div>
 
     <!-- Sidebar -->
-    <aside 
+    <aside
       class="flex flex-col border-r border-zinc-200 bg-zinc-50 transition-[width,opacity,transform] duration-300 ease-in-out overflow-hidden"
       :class="isSidebarOpen ? 'w-64 opacity-100 translate-x-0' : 'w-0 opacity-0 -translate-x-4'"
     >
