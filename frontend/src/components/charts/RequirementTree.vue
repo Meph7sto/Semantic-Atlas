@@ -68,15 +68,15 @@ const toTreeNode = (node) => {
   const req = node.requirement || {}
   const reqId = req.req_id || req.id || ''
   const reqType = req.requirement_type || ''
-  const isPlanned = req.is_planned === true 
+  const isInSprint = req.status === 'in_progress'
   return {
     name: '',
     id: reqId,
     value: req,
     itemStyle: {
       color: getNodeColor(reqId, reqType),
-      borderColor: isPlanned ? '#f59e0b' : '#fff',
-      borderWidth: isPlanned ? 4 : 1.5,
+      borderColor: isInSprint ? '#f59e0b' : '#fff',
+      borderWidth: isInSprint ? 4 : 1.5,
       shadowColor: 'rgba(0,0,0,0.1)',
       shadowBlur: 3
     },
@@ -145,17 +145,18 @@ const computeRequiredHeight = (roots) => {
           'low_level': '底层需求',
           'task': '任务'
         }[req.requirement_type] || req.requirement_type || '-'
-        const isPlanned = req.is_planned === true ? '<span class="text-amber-600 font-bold">是</span>' : '<span class="text-gray-400">否</span>'
+        const levelLabel = req.source_level || '-'
+        const isInSprint = req.status === 'in_progress'
         
         return `
           <div class="font-sans">
             <div class="font-bold text-gray-900 border-b border-gray-200 pb-1 mb-2">
               ${req.title || req.text || '需求'}
-              ${req.is_planned ? '<span class="ml-2 text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded border border-amber-200">Sprint</span>' : ''}
+              ${isInSprint ? '<span class="ml-2 text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded border border-amber-200">Sprint</span>' : ''}
             </div>
             <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-600">
               <div><span class="text-gray-400">ID:</span> ${req.req_id || req.id || '-'}</div>
-              <div><span class="text-gray-400">冲刺内容:</span> ${isPlanned}</div>
+              <div><span class="text-gray-400">级别:</span> ${levelLabel}</div>
               <div><span class="text-gray-400">类型:</span> ${typeLabel}</div>
               <div><span class="text-gray-400">状态:</span> <span class="font-medium ${req.status === 'completed' ? 'text-green-600' : ''}">${req.status || '-'}</span></div>
               <div><span class="text-gray-400">优先级:</span> ${req.priority || '-'}</div>
