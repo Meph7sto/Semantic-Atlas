@@ -1,3 +1,24 @@
+/* 1) Georgia：覆盖除 ASCII 数字 0-9 和全角数字 ０-９ 之外的范围 */
+@font-face {
+  font-family: "BodyWithTimesDigits";
+  src: local("Georgia"), local("Georgia Regular");
+  /* 排除 U+0030-0039（ASCII 数字）和 U+FF10-FF19（全角数字） */
+  unicode-range:
+    U+0000-002F,
+    /* 0x00 ~ '/' */
+    U+003A-FF0F,
+    /* ':' ~ '／' (到全角数字之前) */
+    U+FF1A-10FFFF;
+  /* 全角 ':' 之后 ~ 最高码位 */
+}
+
+/* 2) Times New Roman：仅覆盖数字（ASCII + 全角） */
+@font-face {
+  font-family: "BodyWithTimesDigits";
+  src: local("Times New Roman"), local("TimesNewRomanPSMT");
+  unicode-range: U+0030-0039, U+FF10-FF19;
+}
+
 :root {
   --ink-950: #1b2730;
   --ink-900: #23323d;
@@ -27,7 +48,8 @@
     radial-gradient(circle at 86% 8%, rgba(47, 143, 137, 0.18), transparent 46%),
     linear-gradient(135deg, #f8f3ea 0%, #f1e7d5 45%, #f9f5ed 100%);
   color: var(--ink-950);
-  font-family: "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  font-family: "BodyWithTimesDigits", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  font-variant-numeric: lining-nums tabular-nums;
 }
 
 .ref-app a {
@@ -38,7 +60,7 @@
 .ref-app button,
 .ref-app input,
 .ref-app select {
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 .ref-app .grain {
@@ -53,9 +75,11 @@
 .ref-app .app-layout {
   display: grid;
   grid-template-columns: var(--sidebar-width, 260px) 1fr;
+  height: 100vh;
   min-height: 100vh;
   position: relative;
   transition: grid-template-columns 0.3s ease;
+  overflow: hidden;
 }
 
 .ref-app .rail {
@@ -66,6 +90,8 @@
   flex-direction: column;
   gap: 28px;
   position: relative;
+  height: 100%;
+  overflow: hidden;
 }
 
 .ref-app .rail.collapsed {
@@ -131,7 +157,7 @@
 }
 
 .ref-app .brand-mark {
-  font-family: "Bodoni MT", "Didot", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  font-family: "BodyWithTimesDigits", "Bodoni MT", "Didot", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
   font-size: 32px;
   letter-spacing: 4px;
   transition: opacity 0.2s ease;
@@ -154,7 +180,7 @@
 
 .ref-app .brand-sub {
   color: rgba(28, 40, 52, 0.7);
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 2px;
@@ -164,7 +190,7 @@
 .ref-app .rail-nav {
   display: grid;
   gap: 14px;
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   font-size: 14px;
 }
 
@@ -240,7 +266,7 @@
 
 .ref-app .meta-value {
   font-size: 18px;
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 .ref-app .meta-caption {
@@ -273,7 +299,7 @@
 }
 
 .ref-app .rail-footer {
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   border-top: 1px solid rgba(28, 40, 52, 0.15);
   padding-top: 16px;
 }
@@ -300,6 +326,9 @@
   padding: 42px 48px 60px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(248, 242, 232, 0.45)),
     repeating-linear-gradient(90deg, rgba(28, 40, 52, 0.05) 0, rgba(28, 40, 52, 0.05) 1px, transparent 1px, transparent 60px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  height: 100%;
 }
 
 .ref-app .page-header {
@@ -316,7 +345,7 @@
 
 .ref-app .page-header h1 {
   margin: 10px 0 12px;
-  font-family: "Bodoni MT", "Didot", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  font-family: "BodyWithTimesDigits", "Bodoni MT", "Didot", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
   font-size: clamp(26px, 2.6vw, 36px);
 }
 
@@ -347,12 +376,12 @@
   text-transform: uppercase;
   letter-spacing: 2.5px;
   font-size: 12px;
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   color: rgba(28, 40, 52, 0.7);
 }
 
 .ref-app .hero h1 {
-  font-family: "Bodoni MT", "Didot", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  font-family: "BodyWithTimesDigits", "Bodoni MT", "Didot", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
   font-size: clamp(32px, 3vw, 44px);
   margin: 14px 0 12px;
 }
@@ -425,7 +454,7 @@
   padding: 8px 14px;
   border-radius: 0;
   font-size: 12px;
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   background: rgba(28, 40, 52, 0.08);
   border: 1px solid rgba(28, 40, 52, 0.1);
 }
@@ -457,7 +486,7 @@
 .ref-app .panel-value {
   font-size: 24px;
   margin-top: 10px;
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 .ref-app .panel-caption {
@@ -529,7 +558,7 @@
 .ref-app .card h2 {
   margin: 0;
   font-size: 22px;
-  font-family: "Bodoni MT", "Didot", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  font-family: "BodyWithTimesDigits", "Bodoni MT", "Didot", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
 }
 
 .ref-app .chip {
@@ -539,7 +568,7 @@
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 1px;
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   border: 1px solid transparent;
 }
 
@@ -589,7 +618,7 @@
 }
 
 .ref-app .matrix-row.head {
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   color: rgba(28, 40, 52, 0.6);
   font-size: 12px;
 }
@@ -599,7 +628,7 @@
   border-radius: var(--radius-sm);
   text-align: center;
   font-size: 12px;
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 .ref-app .slot.free {
@@ -617,7 +646,7 @@
 .ref-app .form {
   display: grid;
   gap: 16px;
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 .ref-app .form label {
@@ -676,7 +705,7 @@
 .ref-app .payment-item h3 {
   margin: 0 0 4px;
   font-size: 16px;
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 .ref-app .timeline-item p,
@@ -746,7 +775,7 @@
 }
 
 .ref-app .summary-row strong {
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 .ref-app .stat-grid {
@@ -773,7 +802,7 @@
 .ref-app .stat-value {
   font-size: 18px;
   margin: 0 0 4px;
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 .ref-app .stat-meta {
@@ -811,7 +840,7 @@
 .ref-app .approval-card h3 {
   margin: 0 0 4px;
   font-size: 16px;
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 .ref-app .availability-item p,
@@ -869,7 +898,7 @@
   border-radius: 0;
   border: 1px solid rgba(28, 40, 52, 0.12);
   background: rgba(255, 255, 255, 0.9);
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   font-size: 12px;
   color: rgba(28, 40, 52, 0.8);
 }
@@ -985,7 +1014,7 @@
 .ref-app .student-row h3 {
   margin: 0 0 4px;
   font-size: 16px;
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 .ref-app .student-row p {
@@ -1087,7 +1116,7 @@
 .ref-app .report-card h3 {
   margin: 0;
   font-size: 14px;
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 .ref-app .report-card p {
@@ -1139,7 +1168,7 @@
 
 .ref-app .login-header h1 {
   margin: 12px 0 8px;
-  font-family: "Bodoni MT", "Didot", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  font-family: "BodyWithTimesDigits", "Bodoni MT", "Didot", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
   font-size: clamp(28px, 3vw, 36px);
 }
 
@@ -1151,7 +1180,7 @@
 }
 
 .ref-app .login-mark {
-  font-family: "Bodoni MT", "Didot", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  font-family: "BodyWithTimesDigits", "Bodoni MT", "Didot", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
   font-size: 28px;
   letter-spacing: 4px;
 }
@@ -1172,7 +1201,7 @@
 .ref-app .login-panel h2 {
   margin: 0 0 4px;
   font-size: 20px;
-  font-family: "Bodoni MT", "Didot", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  font-family: "BodyWithTimesDigits", "Bodoni MT", "Didot", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
 }
 
 .ref-app .login-caption {
@@ -1252,7 +1281,7 @@
   color: var(--ink-950);
   padding: 10px 12px;
   border-radius: var(--radius-sm);
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 .ref-app .login-actions {
@@ -1410,7 +1439,7 @@
   font-size: 14px;
   color: var(--ink-950);
   white-space: nowrap;
-  font-family: "Noto Sans SC", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", sans-serif;
 }
 
 .ref-app .nav-subtitle {
@@ -1420,7 +1449,7 @@
   max-width: 320px;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-family: "Noto Sans SC", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", sans-serif;
 }
 
 /* Center Pill (Jama) */
@@ -1436,7 +1465,7 @@
   padding: 6px 20px;
   border-radius: 4px;
   font-size: 13px;
-  font-family: "Noto Serif SC", serif;
+  font-family: "BodyWithTimesDigits", "Noto Serif SC", serif;
   font-weight: 500;
   letter-spacing: 0.5px;
 }
@@ -1453,7 +1482,7 @@
   border-radius: 4px;
   font-size: 13px;
   cursor: pointer;
-  font-family: "Noto Sans SC", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", sans-serif;
   transition: all 0.2s ease;
   border: 1px solid rgba(28, 40, 52, 0.1);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
@@ -1483,7 +1512,7 @@
   font-size: 13px;
   color: var(--ink-500);
   margin-left: 8px;
-  font-family: "Noto Sans SC", sans-serif;
+  font-family: "BodyWithTimesDigits", "Noto Sans SC", sans-serif;
 }
 
 /* Split Layout */
@@ -1503,7 +1532,7 @@
   margin: 0;
   font-size: 18px;
   font-weight: 700;
-  font-family: "Noto Serif SC", serif;
+  font-family: "BodyWithTimesDigits", "Noto Serif SC", serif;
 }
 
 .ref-app .card-header.no-border {

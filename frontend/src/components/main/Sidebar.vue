@@ -41,11 +41,6 @@
     </nav>
     <div class="rail-meta">
       <div class="meta-block">
-        <div class="meta-title">系统脉搏</div>
-        <div class="meta-value">稳定 · {{ notificationCount || 0 }} </div>
-        <div class="meta-caption">{{ timestamp || "更新中" }}</div>
-      </div>
-      <div class="meta-block">
       <div class="meta-title">当前身份</div>
       <div class="meta-value">{{ isCollapsed ? roleLabel.charAt(0) : roleLabel || "未登录" }}</div>
       <div class="meta-caption">
