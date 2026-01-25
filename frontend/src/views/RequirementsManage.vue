@@ -17,6 +17,8 @@ const reqError = ref('')
 const isLoadingReqs = ref(false)
 const showTree = ref(true)
 const requirementHover = ref(null)
+const isPlanningMode = ref(false)
+const showPlannedOnly = ref(false)
 
 const requirementForm = ref({
   requirement_type: 'top_level',
@@ -37,12 +39,21 @@ const milestoneGraph = ref({ nodes: [], edges: [] })
 const selectedMilestoneId = ref('')
 const selectedMilestoneDetail = ref(null)
 const milestoneHoverRequirement = ref(null)
+const showPlannedSnapshotOnly = ref(false)
 
 const compareForm = ref({ from_milestone_id: '', to_milestone_id: '' })
 const compareResult = ref(null)
+const showPlannedDiffOnly = ref(false)
 const changeList = computed(() => {
   if (!compareResult.value?.changes) return []
-  return compareResult.value.changes.map((change) => {
+  let changes = compareResult.value.changes
+  if (showPlannedDiffOnly.value) {
+     changes = changes.filter(c => {
+        const req = c.after || c.before || {}
+        return req.is_planned === true
+     })
+  }
+  return changes.map((change) => {
     const raw = change.type === 'added' ? change.after : change.before
     const req = raw || {}
     const title = req.title || req.text || change.requirement_id
@@ -70,13 +81,34 @@ const requirementTypeOptions = [
 const selectedProject = computed(() => projects.value.find(p => p.project_id === selectedProjectId.value) || null)
 const branchOptions = computed(() => branches.value.filter(b => b.ref_name !== 'main'))
 
+const filterTreeByPlan = (nodes) => {
+  if (!nodes) return []
+  return nodes.map(node => {
+     const req = node.requirement || {}
+     const children = filterTreeByPlan(node.children || [])
+     // If planned or has planned children, keep it
+     if (req.is_planned || children.length > 0) {
+        return { ...node, children }
+     }
+     return null
+  }).filter(n => n !== null)
+}
+
 const filterTopLevelTrees = (trees = []) => {
-  return trees.filter(node => node?.requirement?.requirement_type === 'top_level')
+  let nodes = trees.filter(node => node?.requirement?.requirement_type === 'top_level')
+  if (showPlannedOnly.value) {
+    nodes = filterTreeByPlan(nodes)
+  }
+  return nodes
 }
 
 const filterOtherRoots = (trees = []) => {
-  return trees.filter(node => node?.requirement?.requirement_type !== 'top_level')
-}
+  let nodes = trees.filter(node => node?.requirement?.requirement_type !== 'top_level')
+  if (showPlannedOnly.value) {
+     nodes = filterTreeByPlan(nodes)
+  }
+  return nodes
+} 
 
 const topLevelRequirementTrees = computed(() => filterTopLevelTrees(requirementTree.value))
 const otherRequirementRoots = computed(() => filterOtherRoots(requirementTree.value))
@@ -113,14 +145,41 @@ const buildSnapshotTree = (nodes = []) => {
 
 const selectedMilestoneTree = computed(() => {
   const nodes = selectedMilestoneDetail.value?.nodes || []
-  return buildSnapshotTree(nodes)
+  let tree = buildSnapshotTree(nodes)
+  if (showPlannedSnapshotOnly.value) {
+     tree = filterTreeByPlan(tree)
+  }
+  return tree
 })
 
-const selectedMilestoneTopTrees = computed(() => filterTopLevelTrees(selectedMilestoneTree.value))
-const selectedMilestoneOtherRoots = computed(() => filterOtherRoots(selectedMilestoneTree.value))
+const selectedMilestoneTopTrees = computed(() => selectedMilestoneTree.value.filter(node => node?.requirement?.requirement_type === 'top_level'))
+const selectedMilestoneOtherRoots = computed(() => selectedMilestoneTree.value.filter(node => node?.requirement?.requirement_type !== 'top_level'))
 
-const compareFromTrees = computed(() => filterTopLevelTrees(compareResult.value?.from_tree || []))
-const compareToTrees = computed(() => filterTopLevelTrees(compareResult.value?.to_tree || []))
+const compareFromTrees = computed(() => {
+   let tree = filterTopLevelTrees(compareResult.value?.from_tree || [])
+   if (showPlannedDiffOnly.value) tree = filterTreeByPlan(tree)
+   return tree
+})
+const compareToTrees = computed(() => {
+   let tree = filterTopLevelTrees(compareResult.value?.to_tree || [])
+   if (showPlannedDiffOnly.value) tree = filterTreeByPlan(tree)
+   return tree
+})
+
+const handleNodeClick = async (req) => {
+  if (!isPlanningMode.value) return
+  try {
+     const newStatus = !req.is_planned
+     await manageApi.updateRequirement(req.req_id || req.id, { is_planned: newStatus })
+     
+     // Quick optimistic update or reload
+     // Reload is safer to get full tree state if we implement bulk later
+     await loadRequirements() 
+  } catch (err) {
+     reqError.value = '更新计划状态失败'
+  }
+}
+
 
 const changeLabelMap = {
   added: '新增',
@@ -424,7 +483,20 @@ onMounted(loadProjects)
               <Layers class="w-4 h-4" />
               需求树
             </h3>
-            <button class="text-xs text-zinc-600" @click="showTree = !showTree">{{ showTree ? '列表' : '树形' }}</button>
+            <div class="flex items-center gap-3">
+               <label class="flex items-center gap-1.5 text-xs bg-slate-100 px-2 py-1 rounded cursor-pointer select-none border border-slate-200 hover:bg-slate-200">
+                  <input type="checkbox" v-model="showPlannedOnly" class="rounded text-zinc-900 focus:ring-0 w-3.5 h-3.5" />
+                  <span>仅看 Sprint 内容</span>
+               </label>
+               <button 
+                  class="text-xs px-2 py-1 rounded border transition-colors select-none"
+                  :class="isPlanningMode ? 'bg-amber-100 text-amber-700 border-amber-300 font-medium' : 'bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50'"
+                  @click="isPlanningMode = !isPlanningMode"
+               >
+                  {{ isPlanningMode ? '正在选定 Sprint 内容 (点击节点切换)' : '进入 Sprint 规划模式' }}
+               </button>
+               <button class="text-xs text-zinc-600" @click="showTree = !showTree">{{ showTree ? '列表' : '树形' }}</button>
+            </div>
           </div>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -468,13 +540,14 @@ onMounted(loadProjects)
 
           <div v-if="showTree" class="border border-zinc-200 rounded-lg p-3 space-y-3">
             <div class="text-xs text-zinc-500">顶层需求树（L1/L2/L3）</div>
-            <RequirementTree :tree-data="topLevelRequirementTrees" @hover="(req) => (requirementHover = req)" />
+            <RequirementTree :tree-data="topLevelRequirementTrees" @hover="(req) => (requirementHover = req)" @click-node="handleNodeClick" />
             <div v-if="otherRequirementRoots.length" class="text-xs text-zinc-500 pt-2">未归类根节点</div>
-            <RequirementTree v-if="otherRequirementRoots.length" :tree-data="otherRequirementRoots" @hover="(req) => (requirementHover = req)" />
+            <RequirementTree v-if="otherRequirementRoots.length" :tree-data="otherRequirementRoots" @hover="(req) => (requirementHover = req)" @click-node="handleNodeClick" />
             <div class="flex flex-wrap gap-3 text-[10px] text-zinc-500">
               <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-zinc-400"></span>顶层需求</span>
               <span class="flex items-center gap-1"><span class="w-2 h-2 bg-zinc-400"></span>底层需求</span>
               <span class="flex items-center gap-1"><span class="w-2 h-2 bg-zinc-400 rotate-45"></span>任务</span>
+              <span class="flex items-center gap-1"><span class="w-2 h-2 border-2 border-amber-400"></span>Sprint 内容</span>
             </div>
           </div>
           <div v-else class="max-h-80 overflow-y-auto text-xs text-zinc-700 border border-zinc-200 rounded-lg p-3">
@@ -543,7 +616,13 @@ onMounted(loadProjects)
                 <div>说明: {{ selectedMilestoneDetail.message || '-' }}</div>
               </div>
               <div v-if="selectedMilestoneDetail" class="border-t border-zinc-200 pt-2 space-y-2">
-                <div class="font-medium text-zinc-800">该里程碑需求树（按顶层需求分组）</div>
+                <div class="flex items-center justify-between">
+                  <div class="font-medium text-zinc-800">该里程碑需求树</div>
+                  <label class="flex items-center gap-1 text-[10px] text-zinc-600 cursor-pointer select-none">
+                    <input type="checkbox" v-model="showPlannedSnapshotOnly" class="rounded w-3 h-3" />
+                    <span>仅看计划内容</span>
+                  </label>
+                </div>
                 <RequirementTree :tree-data="selectedMilestoneTopTrees" @hover="(req) => (milestoneHoverRequirement = req)" />
                 <RequirementTree v-if="selectedMilestoneOtherRoots.length" :tree-data="selectedMilestoneOtherRoots" @hover="(req) => (milestoneHoverRequirement = req)" />
                 <div v-if="milestoneHoverRequirement" class="mt-2 text-zinc-600">
@@ -568,6 +647,11 @@ onMounted(loadProjects)
           <button class="inline-flex items-center gap-2 rounded-lg border border-zinc-300 px-3 py-2 text-sm" @click="compareMilestones">
             比较差异
           </button>
+          
+          <label class="ml-3 inline-flex items-center gap-1.5 text-xs text-zinc-600 cursor-pointer select-none">
+             <input type="checkbox" v-model="showPlannedDiffOnly" class="rounded w-3.5 h-3.5" />
+             <span>仅对比 Sprint 内容变动</span>
+          </label>
 
           <div v-if="compareResult" class="border border-zinc-200 rounded-lg p-3 space-y-3">
             <div class="grid grid-cols-2 md:grid-cols-5 gap-3">

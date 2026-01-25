@@ -84,6 +84,7 @@ def create_requirement(project_id: str):
             source_req_id=data.get("source_req_id"),
             source_level=data.get("source_level"),
             custom_fields=data.get("custom_fields"),
+            is_planned=data.get("is_planned", False),
         )
     except Exception as e:
         return _json_error(str(e))

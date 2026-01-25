@@ -108,6 +108,7 @@ class RequirementsManageService:
         source_req_id: Optional[str] = None,
         source_level: Optional[str] = None,
         custom_fields: Optional[Dict[str, Any]] = None,
+        is_planned: bool = False,
     ) -> Dict[str, Any]:
         req_id = str(uuid.uuid4())
         tags_payload = json.dumps(tags or [])
@@ -140,18 +141,18 @@ class RequirementsManageService:
                         req_id, project_id, requirement_type, status, title, description,
                         priority, assignee, tags, due_date, parent_id, order_index,
                         source_req_id, source_level, custom_fields,
-                        created_by, created_at, updated_by, updated_at, deleted
+                        created_by, created_at, updated_by, updated_at, deleted, is_planned
                     )
                     VALUES (
                         %s, %s, %s, %s, %s, %s,
                         %s, %s, %s::jsonb, %s, %s, %s,
                         %s, %s, %s::jsonb,
-                        %s, NOW(), %s, NOW(), FALSE
+                        %s, NOW(), %s, NOW(), FALSE, %s
                     )
                     RETURNING req_id, project_id, requirement_type, status, title, description,
                               priority, assignee, tags, due_date, parent_id, order_index,
                               source_req_id, source_level, custom_fields, created_by,
-                              created_at::text AS created_at, updated_by, updated_at::text AS updated_at
+                              created_at::text AS created_at, updated_by, updated_at::text AS updated_at, is_planned
                     """,
                     (
                         req_id,
@@ -171,6 +172,7 @@ class RequirementsManageService:
                         custom_payload,
                         created_by,
                         created_by,
+                        False,
                     ),
                 )
                 return dict(cur.fetchone())
@@ -186,7 +188,7 @@ class RequirementsManageService:
                     SELECT req_id, project_id, requirement_type, status, title, description,
                            priority, assignee, tags, due_date, parent_id, order_index,
                            source_req_id, source_level, custom_fields, created_by,
-                           created_at::text AS created_at, updated_by, updated_at::text AS updated_at, deleted
+                           created_at::text AS created_at, updated_by, updated_at::text AS updated_at, deleted, is_planned
                     FROM manage_requirements
                     WHERE project_id = %s {where_clause}
                     ORDER BY order_index ASC, created_at DESC
@@ -203,7 +205,7 @@ class RequirementsManageService:
                     SELECT req_id, project_id, requirement_type, status, title, description,
                            priority, assignee, tags, due_date, parent_id, order_index,
                            source_req_id, source_level, custom_fields, created_by,
-                           created_at::text AS created_at, updated_by, updated_at::text AS updated_at, deleted
+                           created_at::text AS created_at, updated_by, updated_at::text AS updated_at, deleted, is_planned
                     FROM manage_requirements
                     WHERE req_id = %s
                     """,
@@ -225,6 +227,7 @@ class RequirementsManageService:
             "due_date",
             "custom_fields",
             "order_index",
+            "is_planned",
         }
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
@@ -258,7 +261,7 @@ class RequirementsManageService:
                     RETURNING req_id, project_id, requirement_type, status, title, description,
                               priority, assignee, tags, due_date, parent_id, order_index,
                               source_req_id, source_level, custom_fields, created_by,
-                              created_at::text AS created_at, updated_by, updated_at::text AS updated_at, deleted
+                              created_at::text AS created_at, updated_by, updated_at::text AS updated_at, deleted, is_planned
                     """,
                     values,
                 )
@@ -967,22 +970,23 @@ class RequirementsManageService:
         with self._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
-                    "SELECT project_id FROM manage_milestones WHERE milestone_id = %s",
+                    "SELECT project_id, is_baseline FROM manage_milestones WHERE milestone_id = %s",
                     (milestone_id,),
                 )
                 row = cur.fetchone()
                 if not row:
                     raise ValueError("里程碑不存在")
-                project_id = row["project_id"]
+
+                # Toggle logic: allow multiple baselines
+                new_state = not row["is_baseline"]
 
                 cur.execute(
-                    "UPDATE manage_milestones SET is_baseline = FALSE WHERE project_id = %s",
-                    (project_id,),
+                    "UPDATE manage_milestones SET is_baseline = %s WHERE milestone_id = %s",
+                    (new_state, milestone_id),
                 )
-                cur.execute(
-                    "UPDATE manage_milestones SET is_baseline = TRUE, milestone_type = 'baseline' WHERE milestone_id = %s",
-                    (milestone_id,),
-                )
+
+                # Optionally update type if it was regular, but preserving other types is better
+                # We will rely on is_baseline flag for logic
 
     def compare_milestones(self, from_id: str, to_id: str) -> Dict[str, Any]:
         with self._connect() as conn:

@@ -483,9 +483,13 @@ class DBService:
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         updated_by TEXT,
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        deleted BOOLEAN NOT NULL DEFAULT FALSE
+                        deleted BOOLEAN NOT NULL DEFAULT FALSE,
+                        is_planned BOOLEAN NOT NULL DEFAULT FALSE
                     )
                     """
+                )
+                cur.execute(
+                    "ALTER TABLE manage_requirements ADD COLUMN IF NOT EXISTS is_planned BOOLEAN NOT NULL DEFAULT FALSE"
                 )
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_manage_requirements_project ON manage_requirements(project_id)"

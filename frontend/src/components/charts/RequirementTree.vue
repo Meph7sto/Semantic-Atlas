@@ -7,13 +7,19 @@ const props = defineProps({
   highlightMap: { type: Object, default: () => ({}) }
 })
 
-const emit = defineEmits(['hover'])
+const emit = defineEmits(['hover', 'click-node'])
 
 const chartContainer = ref(null)
 const outerContainer = ref(null)
 let chart = null
 let resizeObserver = null
-const scale = ref(1)
+const handleReset = () => {
+  if (chart) {
+    chart.dispatchAction({
+      type: 'restore'
+    })
+  }
+}
 
 const COLOR_MAP = {
   added: '#22c55e',
@@ -24,37 +30,37 @@ const COLOR_MAP = {
   normal: '#94a3b8'
 }
 
-const getNodeColor = (reqId) => {
+const TYPE_COLORS = {
+  top_level: '#6366f1', // Indigo
+  low_level: '#06b6d4', // Cyan
+  task: '#8b5cf6'       // Violet
+}
+
+const getNodeColor = (reqId, reqType) => {
   const types = props.highlightMap?.[reqId]
-  if (!types || types.length === 0) return COLOR_MAP.normal
-  const uniq = Array.from(new Set(types))
-  if (uniq.length > 1) return COLOR_MAP.mixed
-  return COLOR_MAP[uniq[0]] || COLOR_MAP.normal
+  if (types && types.length > 0) {
+    const uniq = Array.from(new Set(types))
+    if (uniq.length > 1) return COLOR_MAP.mixed
+    return COLOR_MAP[uniq[0]] || COLOR_MAP.normal
+  }
+  return TYPE_COLORS[reqType] || COLOR_MAP.normal
 }
 
 const getNodeSymbol = (reqType) => {
   switch (reqType) {
-    case 'top_level':
-      return 'circle'
-    case 'low_level':
-      return 'rect'
-    case 'task':
-      return 'diamond'
-    default:
-      return 'circle'
+    case 'top_level': return 'circle'
+    case 'low_level': return 'roundRect'
+    case 'task': return 'diamond'
+    default: return 'circle'
   }
 }
 
 const getNodeSize = (reqType) => {
   switch (reqType) {
-    case 'top_level':
-      return 14
-    case 'low_level':
-      return 12
-    case 'task':
-      return 10
-    default:
-      return 12
+    case 'top_level': return 20 
+    case 'low_level': return 16
+    case 'task': return 14
+    default: return 14
   }
 }
 
@@ -62,19 +68,24 @@ const toTreeNode = (node) => {
   const req = node.requirement || {}
   const reqId = req.req_id || req.id || ''
   const reqType = req.requirement_type || ''
+  const isPlanned = req.is_planned === true 
   return {
     name: '',
     id: reqId,
     value: req,
     itemStyle: {
-      color: getNodeColor(reqId)
+      color: getNodeColor(reqId, reqType),
+      borderColor: isPlanned ? '#f59e0b' : '#fff',
+      borderWidth: isPlanned ? 4 : 1.5,
+      shadowColor: 'rgba(0,0,0,0.1)',
+      shadowBlur: 3
     },
     symbol: getNodeSymbol(reqType),
     symbolSize: getNodeSize(reqType),
-    label: { show: false },
     children: (node.children || []).map(toTreeNode)
   }
 }
+
 
 const buildRoots = () => {
   if (!props.treeData || props.treeData.length === 0) return []
@@ -104,10 +115,11 @@ const countNodes = (nodes = []) => {
 
 const computeRequiredHeight = (roots) => {
   const total = countNodes(roots)
-  return Math.max(320, Math.min(2400, total * 22))
+  // Removed strict upper bound to prevent overlap in dense trees
+  return Math.max(400, total * 35)
 }
 
-const updateChart = () => {
+  const updateChart = () => {
   if (!chart) return
   const roots = buildRoots()
   if (roots.length === 0) {
@@ -115,58 +127,88 @@ const updateChart = () => {
     return
   }
 
-  const series = [
-    {
-      type: 'tree',
-      data: roots,
-      orient: 'vertical',
-      top: '4%',
-      bottom: '6%',
-      left: '8%',
-      right: '8%',
-      symbolSize: 12,
-      edgeShape: 'polyline',
-      edgeForkPosition: '50%',
-      lineStyle: {
-        width: 1.5,
-        color: '#cbd5f5'
-      },
-      label: {
-        show: false
-      },
-      leaves: {
-        label: {
-          show: false
-        }
-      },
-      expandAndCollapse: true,
-      animationDuration: 200,
-      animationDurationUpdate: 300
-    }
-  ]
-
   const option = {
     tooltip: {
       trigger: 'item',
+      backgroundColor: 'rgba(255, 255, 255, 0.95)',
+      borderColor: '#e2e8f0',
+      borderWidth: 1,
+      textStyle: {
+        color: '#1e293b'
+      },
+      extraCssText: 'box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); border-radius: 0.5rem;',
       formatter: (params) => {
         const req = params?.data?.value || {}
         if (!req || Object.keys(req).length === 0) return ''
+        const typeLabel = {
+          'top_level': '顶层需求',
+          'low_level': '底层需求',
+          'task': '任务'
+        }[req.requirement_type] || req.requirement_type || '-'
+        const isPlanned = req.is_planned === true ? '<span class="text-amber-600 font-bold">是</span>' : '<span class="text-gray-400">否</span>'
+        
         return `
-          <div style="padding:6px; max-width:280px;">
-            <div style="font-weight:600; margin-bottom:4px;">${req.title || req.text || '需求'}</div>
-            <div>类型: ${req.requirement_type || '-'}</div>
-            <div>状态: ${req.status || '-'}</div>
-            <div>优先级: ${req.priority || '-'}</div>
-            <div>负责人: ${req.assignee || '-'}</div>
-            <div>截止: ${req.due_date || '-'}</div>
+          <div class="font-sans">
+            <div class="font-bold text-gray-900 border-b border-gray-200 pb-1 mb-2">
+              ${req.title || req.text || '需求'}
+              ${req.is_planned ? '<span class="ml-2 text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded border border-amber-200">Sprint</span>' : ''}
+            </div>
+            <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-600">
+              <div><span class="text-gray-400">ID:</span> ${req.req_id || req.id || '-'}</div>
+              <div><span class="text-gray-400">冲刺内容:</span> ${isPlanned}</div>
+              <div><span class="text-gray-400">类型:</span> ${typeLabel}</div>
+              <div><span class="text-gray-400">状态:</span> <span class="font-medium ${req.status === 'completed' ? 'text-green-600' : ''}">${req.status || '-'}</span></div>
+              <div><span class="text-gray-400">优先级:</span> ${req.priority || '-'}</div>
+              <div class="col-span-2"><span class="text-gray-400">负责人:</span> ${req.assignee || '-'}</div>
+            </div>
           </div>
         `
       }
     },
-    series
+    series: [
+      {
+        type: 'tree',
+        data: roots,
+        top: '10%',
+        bottom: '10%',
+        left: '10%',
+        right: '10%',
+        symbolSize: (value, params) => getNodeSize(params.data.value?.requirement_type),
+        edgeShape: 'curve',
+        roam: true,
+        initialTreeDepth: 3,
+        lineStyle: {
+          width: 2,
+          color: '#cbd5e1',
+          curveness: 0.5
+        },
+        label: {
+          show: true,
+          position: 'right',
+          verticalAlign: 'middle',
+          align: 'left',
+          fontSize: 12,
+          formatter: (params) => {
+             const title = params.data.value?.title || params.data.value?.text || ''
+             return title.length > 10 ? title.substring(0, 10) + '...' : title
+          }
+        },
+        leaves: {
+          label: {
+            position: 'right',
+            verticalAlign: 'middle',
+            align: 'left'
+          }
+        },
+        emphasis: {
+          focus: 'descendant'
+        },
+        expandAndCollapse: true,
+        animationDuration: 550,
+        animationDurationUpdate: 750
+      }
+    ]
   }
-
-  applyContainerSizing(roots)
   chart.setOption(option, true)
 }
 
@@ -185,6 +227,9 @@ const initChart = () => {
   chart.on('mouseover', params => {
     if (params?.data?.value) emit('hover', params.data.value)
   })
+  chart.on('click', params => {
+    if (params?.data?.value) emit('click-node', params.data.value)
+  })
   updateChart()
   resizeObserver = new ResizeObserver(() => chart?.resize())
   resizeObserver.observe(chartContainer.value)
@@ -201,12 +246,15 @@ watch(() => [props.treeData, props.highlightMap], () => updateChart(), { deep: t
 </script>
 
 <template>
-  <div ref="outerContainer" class="w-full h-[320px] overflow-auto relative">
-    <div class="absolute top-2 right-2 z-10 flex gap-2">
-      <button class="px-2 py-1 bg-white rounded shadow" @click.prevent="() => { scale.value = Math.min(2, scale.value + 0.1); chart && chart.resize(); }">放大</button>
-      <button class="px-2 py-1 bg-white rounded shadow" @click.prevent="() => { scale.value = Math.max(0.5, scale.value - 0.1); chart && chart.resize(); }">缩小</button>
-      <button class="px-2 py-1 bg-white rounded shadow" @click.prevent="() => { scale.value = 1; chart && chart.resize(); }">重置</button>
+  <div ref="outerContainer" class="w-full h-[500px] overflow-hidden relative border border-gray-100 rounded-lg bg-slate-50">
+    <div class="absolute top-3 right-3 z-10 flex gap-2">
+      <button 
+        class="flex items-center gap-1 px-3 py-1.5 bg-white text-sm font-medium text-slate-600 rounded-md shadow-sm border border-slate-200 hover:bg-slate-50 transition-colors"
+        @click.prevent="handleReset"
+      >
+        <span>还原视图</span>
+      </button>
     </div>
-    <div ref="chartContainer" :style="{ transform: `scale(${scale})`, transformOrigin: '0 0' }" class="w-full"></div>
+    <div ref="chartContainer" class="w-full h-full"></div>
   </div>
 </template>
