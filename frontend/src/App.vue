@@ -68,7 +68,7 @@ const isTopGroupOpen = ref(true)
 
           <div v-show="isTopGroupOpen" class="pl-4 ml-3 border-l border-zinc-200 space-y-1">
             <RouterLink
-              to="/transcript-ingestion"
+              to="/alpha/transcript-ingestion"
               active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
               class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
             >
@@ -76,7 +76,7 @@ const isTopGroupOpen = ref(true)
             </RouterLink>
 
             <RouterLink
-              to="/context-builder"
+              to="/alpha/context-builder"
               active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
               class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
             >
@@ -84,7 +84,7 @@ const isTopGroupOpen = ref(true)
             </RouterLink>
 
             <RouterLink
-              to="/requirements-extraction"
+              to="/alpha/requirements-extraction"
               active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
               class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
             >
@@ -92,7 +92,7 @@ const isTopGroupOpen = ref(true)
             </RouterLink>
 
             <RouterLink
-              to="/l4-testing"
+              to="/alpha/l4-testing"
               active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
               class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
             >
@@ -102,7 +102,7 @@ const isTopGroupOpen = ref(true)
         </div>
 
         <RouterLink 
-          to="/conflict" 
+          to="/alpha/conflict" 
           active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
           class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
         >
@@ -112,7 +112,7 @@ const isTopGroupOpen = ref(true)
 
         <!-- Placeholders for other views if they exist -->
         <RouterLink 
-          to="/classification" 
+          to="/alpha/classification" 
           active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
           class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
         >
@@ -121,7 +121,7 @@ const isTopGroupOpen = ref(true)
         </RouterLink>
 
         <RouterLink 
-          to="/requirements-manage" 
+          to="/alpha/requirements-manage" 
           active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
           class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
         >
@@ -130,7 +130,7 @@ const isTopGroupOpen = ref(true)
         </RouterLink>
 
         <RouterLink 
-          to="/traceability" 
+          to="/alpha/traceability" 
           active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
           class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
         >
@@ -138,7 +138,7 @@ const isTopGroupOpen = ref(true)
           <span class="whitespace-nowrap">Traceability</span>
         </RouterLink>
         <RouterLink 
-          to="/acquisition" 
+          to="/alpha/acquisition" 
           active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
           class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
         >
@@ -147,7 +147,7 @@ const isTopGroupOpen = ref(true)
         </RouterLink>
 
         <RouterLink 
-          to="/acquisition-trace" 
+          to="/alpha/acquisition-trace" 
           active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
           class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
         >
@@ -156,7 +156,7 @@ const isTopGroupOpen = ref(true)
         </RouterLink>
 
         <RouterLink 
-          to="/chat" 
+          to="/alpha/chat" 
           active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
           class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
         >
