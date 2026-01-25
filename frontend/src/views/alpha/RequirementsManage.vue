@@ -18,7 +18,9 @@ const isLoadingReqs = ref(false)
 const showTree = ref(true)
 const requirementHover = ref(null)
 const isPlanningMode = ref(false)
-const showPlannedOnly = ref(false)
+const filterStatus = ref('')
+const filterType = ref('')
+const filterLevel = ref('')
 
 const requirementForm = ref({
   requirement_type: 'top_level',
@@ -39,19 +41,19 @@ const milestoneGraph = ref({ nodes: [], edges: [] })
 const selectedMilestoneId = ref('')
 const selectedMilestoneDetail = ref(null)
 const milestoneHoverRequirement = ref(null)
-const showPlannedSnapshotOnly = ref(false)
+const showSnapshotFilters = ref(false)
 
 const compareForm = ref({ from_milestone_id: '', to_milestone_id: '' })
 const compareResult = ref(null)
-const showPlannedDiffOnly = ref(false)
+const showInProgressDiffOnly = ref(false)
 const changeList = computed(() => {
   if (!compareResult.value?.changes) return []
   let changes = compareResult.value.changes
-  if (showPlannedDiffOnly.value) {
-     changes = changes.filter(c => {
-        const req = c.after || c.before || {}
-        return req.is_planned === true
-     })
+  if (showInProgressDiffOnly.value) {
+    changes = changes.filter(c => {
+      const req = c.after || c.before || {}
+      return req.status === 'in_progress'
+    })
   }
   return changes.map((change) => {
     const raw = change.type === 'added' ? change.after : change.before
@@ -78,40 +80,105 @@ const requirementTypeOptions = [
   { value: 'task', label: '任务（L5）' }
 ]
 
+const statusOptions = [
+  { value: '', label: '全部状态' },
+  { value: 'draft', label: '草稿' },
+  { value: 'under_review', label: '评审中' },
+  { value: 'confirmed', label: '已确认' },
+  { value: 'in_progress', label: '进行中' },
+  { value: 'completed', label: '已完成' },
+  { value: 'archived', label: '已归档' }
+]
+
+const levelOptions = [
+  { value: '', label: '全部级别' },
+  { value: 'L1', label: 'L1' },
+  { value: 'L2', label: 'L2' },
+  { value: 'L3', label: 'L3' },
+  { value: 'L4', label: 'L4' },
+  { value: 'L5', label: 'L5' }
+]
+
+const listColumns = ref([
+  { key: 'title', label: '标题' },
+  { key: 'requirement_type', label: '类型' },
+  { key: 'source_level', label: '级别' },
+  { key: 'status', label: '状态' },
+  { key: 'priority', label: '优先级' },
+  { key: 'assignee', label: '负责人' },
+  { key: 'due_date', label: '截止时间' }
+])
+
+const selectedColumnKeys = ref(['title', 'requirement_type', 'source_level', 'status', 'priority'])
+
 const selectedProject = computed(() => projects.value.find(p => p.project_id === selectedProjectId.value) || null)
 const branchOptions = computed(() => branches.value.filter(b => b.ref_name !== 'main'))
 
-const filterTreeByPlan = (nodes) => {
+const getLevelFromReq = (req = {}) => {
+  if (req.source_level) return req.source_level
+  switch (req.requirement_type) {
+    case 'low_level':
+      return 'L4'
+    case 'task':
+      return 'L5'
+    case 'top_level':
+      return 'L1'
+    default:
+      return '-'
+  }
+}
+
+const matchesFilters = (req = {}) => {
+  if (filterStatus.value && req.status !== filterStatus.value) return false
+  if (filterType.value && req.requirement_type !== filterType.value) return false
+  if (filterLevel.value && getLevelFromReq(req) !== filterLevel.value) return false
+  return true
+}
+
+const filterTreeByCriteria = (nodes) => {
   if (!nodes) return []
-  return nodes.map(node => {
-     const req = node.requirement || {}
-     const children = filterTreeByPlan(node.children || [])
-     // If planned or has planned children, keep it
-     if (req.is_planned || children.length > 0) {
+  return nodes
+    .map(node => {
+      const req = node.requirement || {}
+      const children = filterTreeByCriteria(node.children || [])
+      if (matchesFilters(req) || children.length > 0) {
         return { ...node, children }
-     }
-     return null
-  }).filter(n => n !== null)
+      }
+      return null
+    })
+    .filter(n => n !== null)
 }
 
-const filterTopLevelTrees = (trees = []) => {
-  let nodes = trees.filter(node => node?.requirement?.requirement_type === 'top_level')
-  if (showPlannedOnly.value) {
-    nodes = filterTreeByPlan(nodes)
-  }
+const filterTreeByStatus = (nodes, statusValue) => {
+  if (!nodes) return []
   return nodes
+    .map(node => {
+      const req = node.requirement || {}
+      const children = filterTreeByStatus(node.children || [], statusValue)
+      if (req.status === statusValue || children.length > 0) {
+        return { ...node, children }
+      }
+      return null
+    })
+    .filter(n => n !== null)
 }
 
-const filterOtherRoots = (trees = []) => {
-  let nodes = trees.filter(node => node?.requirement?.requirement_type !== 'top_level')
-  if (showPlannedOnly.value) {
-     nodes = filterTreeByPlan(nodes)
-  }
-  return nodes
-} 
+const filteredRequirementTree = computed(() => filterTreeByCriteria(requirementTree.value))
+const topLevelRequirementTrees = computed(() => filteredRequirementTree.value.filter(node => node?.requirement?.requirement_type === 'top_level'))
+const otherRequirementRoots = computed(() => filteredRequirementTree.value.filter(node => node?.requirement?.requirement_type !== 'top_level'))
 
-const topLevelRequirementTrees = computed(() => filterTopLevelTrees(requirementTree.value))
-const otherRequirementRoots = computed(() => filterOtherRoots(requirementTree.value))
+const filteredRequirements = computed(() => {
+  return requirements.value.filter(req => matchesFilters(req))
+})
+
+const visibleColumns = computed(() => {
+  return listColumns.value.filter(col => selectedColumnKeys.value.includes(col.key))
+})
+
+const getColumnValue = (req, key) => {
+  if (key === 'source_level') return getLevelFromReq(req)
+  return req?.[key] ?? '-'
+}
 
 const buildSnapshotTree = (nodes = []) => {
   const nodeMap = new Map()
@@ -146,8 +213,8 @@ const buildSnapshotTree = (nodes = []) => {
 const selectedMilestoneTree = computed(() => {
   const nodes = selectedMilestoneDetail.value?.nodes || []
   let tree = buildSnapshotTree(nodes)
-  if (showPlannedSnapshotOnly.value) {
-     tree = filterTreeByPlan(tree)
+  if (showSnapshotFilters.value) {
+     tree = filterTreeByCriteria(tree)
   }
   return tree
 })
@@ -156,27 +223,85 @@ const selectedMilestoneTopTrees = computed(() => selectedMilestoneTree.value.fil
 const selectedMilestoneOtherRoots = computed(() => selectedMilestoneTree.value.filter(node => node?.requirement?.requirement_type !== 'top_level'))
 
 const compareFromTrees = computed(() => {
-   let tree = filterTopLevelTrees(compareResult.value?.from_tree || [])
-   if (showPlannedDiffOnly.value) tree = filterTreeByPlan(tree)
+   let tree = compareResult.value?.from_tree || []
+   if (showInProgressDiffOnly.value) {
+     tree = filterTreeByStatus(tree, 'in_progress').filter(node => node?.requirement?.requirement_type === 'top_level')
+   } else {
+     tree = tree.filter(node => node?.requirement?.requirement_type === 'top_level')
+   }
    return tree
 })
 const compareToTrees = computed(() => {
-   let tree = filterTopLevelTrees(compareResult.value?.to_tree || [])
-   if (showPlannedDiffOnly.value) tree = filterTreeByPlan(tree)
+   let tree = compareResult.value?.to_tree || []
+   if (showInProgressDiffOnly.value) {
+     tree = filterTreeByStatus(tree, 'in_progress').filter(node => node?.requirement?.requirement_type === 'top_level')
+   } else {
+     tree = tree.filter(node => node?.requirement?.requirement_type === 'top_level')
+   }
    return tree
 })
+
+const getNextSprintStatus = (currentStatus) => {
+  if (currentStatus === 'in_progress') return 'confirmed'
+  if (['completed', 'archived'].includes(currentStatus)) return currentStatus
+  return 'in_progress'
+}
+
+const handleListSprintToggle = async (req) => {
+  if (req.requirement_type !== 'low_level') return
+  try {
+    const nextStatus = getNextSprintStatus(req.status)
+    if (nextStatus === req.status) return
+    await manageApi.updateRequirement(req.req_id || req.id, { status: nextStatus })
+    await loadRequirements()
+  } catch (err) {
+    reqError.value = '更新冲刺状态失败'
+  }
+}
+
+const collectLowLevelIds = (node) => {
+  if (!node) return []
+  const req = node.requirement || {}
+  let ids = []
+  if (req.requirement_type === 'low_level') {
+    ids.push(req.req_id || req.id)
+  }
+  ;(node.children || []).forEach(child => {
+    ids = ids.concat(collectLowLevelIds(child))
+  })
+  return ids
+}
+
+const findNodeById = (nodes, targetId) => {
+  for (const node of nodes || []) {
+    const req = node.requirement || {}
+    if ((req.req_id || req.id) === targetId) return node
+    const found = findNodeById(node.children || [], targetId)
+    if (found) return found
+  }
+  return null
+}
 
 const handleNodeClick = async (req) => {
   if (!isPlanningMode.value) return
   try {
-     const newStatus = !req.is_planned
-     await manageApi.updateRequirement(req.req_id || req.id, { is_planned: newStatus })
-     
-     // Quick optimistic update or reload
-     // Reload is safer to get full tree state if we implement bulk later
-     await loadRequirements() 
+    if (req.requirement_type === 'low_level') {
+      const nextStatus = getNextSprintStatus(req.status)
+      if (nextStatus === req.status) return
+      await manageApi.updateRequirement(req.req_id || req.id, { status: nextStatus })
+      await loadRequirements()
+      return
+    }
+
+    if (req.requirement_type === 'top_level') {
+      const root = findNodeById(requirementTree.value, req.req_id || req.id)
+      const lowLevelIds = collectLowLevelIds(root)
+      if (lowLevelIds.length === 0) return
+      await manageApi.bulkUpdateRequirementStatus({ req_ids: lowLevelIds, status: 'in_progress' })
+      await loadRequirements()
+    }
   } catch (err) {
-     reqError.value = '更新计划状态失败'
+    reqError.value = '更新冲刺状态失败'
   }
 }
 
@@ -484,18 +609,24 @@ onMounted(loadProjects)
               需求树
             </h3>
             <div class="flex items-center gap-3">
-               <label class="flex items-center gap-1.5 text-xs bg-slate-100 px-2 py-1 rounded cursor-pointer select-none border border-slate-200 hover:bg-slate-200">
-                  <input type="checkbox" v-model="showPlannedOnly" class="rounded text-zinc-900 focus:ring-0 w-3.5 h-3.5" />
-                  <span>仅看 Sprint 内容</span>
-               </label>
-               <button 
-                  class="text-xs px-2 py-1 rounded border transition-colors select-none"
-                  :class="isPlanningMode ? 'bg-amber-100 text-amber-700 border-amber-300 font-medium' : 'bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50'"
-                  @click="isPlanningMode = !isPlanningMode"
-               >
-                  {{ isPlanningMode ? '正在选定 Sprint 内容 (点击节点切换)' : '进入 Sprint 规划模式' }}
-               </button>
-               <button class="text-xs text-zinc-600" @click="showTree = !showTree">{{ showTree ? '列表' : '树形' }}</button>
+              <select v-model="filterStatus" class="text-xs rounded border border-zinc-300 px-2 py-1">
+                <option v-for="opt in statusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+              </select>
+              <select v-model="filterType" class="text-xs rounded border border-zinc-300 px-2 py-1">
+                <option value="">全部类型</option>
+                <option v-for="opt in requirementTypeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+              </select>
+              <select v-model="filterLevel" class="text-xs rounded border border-zinc-300 px-2 py-1">
+                <option v-for="opt in levelOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+              </select>
+              <button
+                class="text-xs px-2 py-1 rounded border transition-colors select-none"
+                :class="isPlanningMode ? 'bg-amber-100 text-amber-700 border-amber-300 font-medium' : 'bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50'"
+                @click="isPlanningMode = !isPlanningMode"
+              >
+                {{ isPlanningMode ? '冲刺规划模式：点击节点' : '进入冲刺规划模式' }}
+              </button>
+              <button class="text-xs text-zinc-600" @click="showTree = !showTree">{{ showTree ? '列表' : '树形' }}</button>
             </div>
           </div>
 
@@ -547,17 +678,59 @@ onMounted(loadProjects)
               <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-zinc-400"></span>顶层需求</span>
               <span class="flex items-center gap-1"><span class="w-2 h-2 bg-zinc-400"></span>底层需求</span>
               <span class="flex items-center gap-1"><span class="w-2 h-2 bg-zinc-400 rotate-45"></span>任务</span>
-              <span class="flex items-center gap-1"><span class="w-2 h-2 border-2 border-amber-400"></span>Sprint 内容</span>
+              <span class="flex items-center gap-1"><span class="w-2 h-2 border-2 border-amber-400"></span>冲刺进行中</span>
             </div>
           </div>
-          <div v-else class="max-h-80 overflow-y-auto text-xs text-zinc-700 border border-zinc-200 rounded-lg p-3">
-            <pre class="whitespace-pre-wrap">{{ JSON.stringify(requirements, null, 2) }}</pre>
+          <div v-else class="border border-zinc-200 rounded-lg p-3 space-y-3">
+            <div class="text-xs text-zinc-500">自定义列表列</div>
+            <div class="flex flex-wrap gap-2">
+              <label v-for="col in listColumns" :key="col.key" class="text-xs flex items-center gap-1 px-2 py-1 rounded border border-zinc-200 bg-zinc-50">
+                <input type="checkbox" v-model="selectedColumnKeys" :value="col.key" class="rounded w-3 h-3" />
+                <span>{{ col.label }}</span>
+              </label>
+            </div>
+            <div class="overflow-auto max-h-80">
+              <table class="min-w-full text-xs text-zinc-700">
+                <thead class="bg-zinc-50 sticky top-0">
+                  <tr>
+                    <th class="text-left px-2 py-2 border-b border-zinc-200">ID</th>
+                    <th class="text-left px-2 py-2 border-b border-zinc-200">冲刺</th>
+                    <th v-for="col in visibleColumns" :key="`header-${col.key}`" class="text-left px-2 py-2 border-b border-zinc-200">
+                      {{ col.label }}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="req in filteredRequirements" :key="req.req_id" class="border-b border-zinc-100 hover:bg-zinc-50">
+                    <td class="px-2 py-2 font-mono text-[10px] text-zinc-400">{{ req.req_id }}</td>
+                    <td class="px-2 py-2">
+                      <button
+                        class="text-[10px] px-2 py-1 rounded border"
+                        :class="req.requirement_type === 'low_level'
+                          ? (req.status === 'in_progress'
+                            ? 'bg-amber-100 text-amber-700 border-amber-200'
+                            : 'bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50')
+                          : 'bg-zinc-100 text-zinc-400 border-zinc-200 cursor-not-allowed'"
+                        :disabled="req.requirement_type !== 'low_level'"
+                        @click="handleListSprintToggle(req)"
+                      >
+                        {{ req.status === 'in_progress' ? '取消' : '选定' }}
+                      </button>
+                    </td>
+                    <td v-for="col in visibleColumns" :key="`cell-${req.req_id}-${col.key}`" class="px-2 py-2">
+                      {{ getColumnValue(req, col.key) }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <div v-if="requirementHover" class="text-xs text-zinc-600 border border-zinc-200 rounded-lg p-3 bg-zinc-50">
             <div class="font-medium text-zinc-800">悬浮需求</div>
             <div>标题: {{ requirementHover.title || requirementHover.text }}</div>
             <div>类型: {{ requirementHover.requirement_type || '-' }}</div>
+            <div>级别: {{ requirementHover.source_level || '-' }}</div>
             <div>状态: {{ requirementHover.status || '-' }}</div>
             <div>优先级: {{ requirementHover.priority || '-' }}</div>
             <div>负责人: {{ requirementHover.assignee || '-' }}</div>
@@ -619,8 +792,8 @@ onMounted(loadProjects)
                 <div class="flex items-center justify-between">
                   <div class="font-medium text-zinc-800">该里程碑需求树</div>
                   <label class="flex items-center gap-1 text-[10px] text-zinc-600 cursor-pointer select-none">
-                    <input type="checkbox" v-model="showPlannedSnapshotOnly" class="rounded w-3 h-3" />
-                    <span>仅看计划内容</span>
+                    <input type="checkbox" v-model="showSnapshotFilters" class="rounded w-3 h-3" />
+                    <span>应用筛选条件</span>
                   </label>
                 </div>
                 <RequirementTree :tree-data="selectedMilestoneTopTrees" @hover="(req) => (milestoneHoverRequirement = req)" />
@@ -649,8 +822,8 @@ onMounted(loadProjects)
           </button>
           
           <label class="ml-3 inline-flex items-center gap-1.5 text-xs text-zinc-600 cursor-pointer select-none">
-             <input type="checkbox" v-model="showPlannedDiffOnly" class="rounded w-3.5 h-3.5" />
-             <span>仅对比 Sprint 内容变动</span>
+             <input type="checkbox" v-model="showInProgressDiffOnly" class="rounded w-3.5 h-3.5" />
+             <span>仅对比进行中需求变动</span>
           </label>
 
           <div v-if="compareResult" class="border border-zinc-200 rounded-lg p-3 space-y-3">

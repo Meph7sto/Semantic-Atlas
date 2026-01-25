@@ -330,6 +330,12 @@ export const manageApi = {
         return resp.data
     },
 
+    async bulkUpdateRequirementStatus(payload) {
+        const resp = await api.post('/manage/requirements/bulk-status', payload)
+        if (resp.data?.error) throw new Error(resp.data.error)
+        return resp.data
+    },
+
     async moveRequirement(reqId, payload) {
         const resp = await api.post(`/manage/requirements/${encodeURIComponent(reqId)}/move`, payload)
         if (resp.data?.error) throw new Error(resp.data.error)

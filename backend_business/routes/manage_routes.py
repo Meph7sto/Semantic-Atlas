@@ -84,7 +84,6 @@ def create_requirement(project_id: str):
             source_req_id=data.get("source_req_id"),
             source_level=data.get("source_level"),
             custom_fields=data.get("custom_fields"),
-            is_planned=data.get("is_planned", False),
         )
     except Exception as e:
         return _json_error(str(e))
@@ -160,6 +159,22 @@ def update_requirement(req_id: str):
         detail=data,
     )
     return jsonify(req)
+
+
+@manage_bp.post("/requirements/bulk-status")
+def bulk_update_requirement_status():
+    data = request.get_json(silent=True) or {}
+    req_ids = data.get("req_ids") or []
+    status = data.get("status")
+    actor = _get_actor()
+    try:
+        result = service.bulk_update_requirement_status(
+            req_ids, status, updated_by=actor
+        )
+    except Exception as e:
+        return _json_error(str(e))
+
+    return jsonify(result)
 
 
 @manage_bp.post("/requirements/<req_id>/move")

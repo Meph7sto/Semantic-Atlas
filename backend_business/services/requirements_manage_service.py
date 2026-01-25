@@ -108,7 +108,6 @@ class RequirementsManageService:
         source_req_id: Optional[str] = None,
         source_level: Optional[str] = None,
         custom_fields: Optional[Dict[str, Any]] = None,
-        is_planned: bool = False,
     ) -> Dict[str, Any]:
         req_id = str(uuid.uuid4())
         tags_payload = json.dumps(tags or [])
@@ -141,13 +140,13 @@ class RequirementsManageService:
                         req_id, project_id, requirement_type, status, title, description,
                         priority, assignee, tags, due_date, parent_id, order_index,
                         source_req_id, source_level, custom_fields,
-                        created_by, created_at, updated_by, updated_at, deleted, is_planned
+                        created_by, created_at, updated_by, updated_at, deleted
                     )
                     VALUES (
                         %s, %s, %s, %s, %s, %s,
                         %s, %s, %s::jsonb, %s, %s, %s,
                         %s, %s, %s::jsonb,
-                        %s, NOW(), %s, NOW(), FALSE, %s
+                        %s, NOW(), %s, NOW(), FALSE
                     )
                     RETURNING req_id, project_id, requirement_type, status, title, description,
                               priority, assignee, tags, due_date, parent_id, order_index,
@@ -172,7 +171,6 @@ class RequirementsManageService:
                         custom_payload,
                         created_by,
                         created_by,
-                        False,
                     ),
                 )
                 return dict(cur.fetchone())
@@ -227,7 +225,6 @@ class RequirementsManageService:
             "due_date",
             "custom_fields",
             "order_index",
-            "is_planned",
         }
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
@@ -269,6 +266,53 @@ class RequirementsManageService:
                 if not row:
                     raise ValueError("需求不存在")
                 return dict(row)
+
+    def bulk_update_requirement_status(
+        self, req_ids: List[str], status: str, updated_by: str = ""
+    ) -> Dict[str, Any]:
+        if not req_ids:
+            raise ValueError("缺少需求ID列表")
+        allowed_status = {
+            "draft",
+            "under_review",
+            "confirmed",
+            "in_progress",
+            "completed",
+            "archived",
+        }
+        if status not in allowed_status:
+            raise ValueError("非法状态")
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT req_id, requirement_type
+                    FROM manage_requirements
+                    WHERE req_id = ANY(%s)
+                    """,
+                    (req_ids,),
+                )
+                rows = cur.fetchall()
+                low_level_ids = [
+                    r["req_id"] for r in rows if r["requirement_type"] == "low_level"
+                ]
+                skipped = len(req_ids) - len(low_level_ids)
+
+                if not low_level_ids:
+                    return {"updated": 0, "skipped": skipped}
+
+                cur.execute(
+                    """
+                    UPDATE manage_requirements
+                    SET status = %s, updated_by = %s, updated_at = NOW()
+                    WHERE req_id = ANY(%s)
+                      AND deleted = FALSE
+                      AND requirement_type = 'low_level'
+                    """,
+                    (status, updated_by, low_level_ids),
+                )
+                return {"updated": cur.rowcount, "skipped": skipped}
 
     def move_requirement(
         self,
