@@ -787,6 +787,7 @@ class DBService:
         session_id: str,
         page: int = 1,
         per_page: int = 100,
+        top_req_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         查询指定 session 的 L4 底层需求
@@ -794,6 +795,72 @@ class DBService:
         page = max(1, int(page))
         per_page = max(1, min(500, int(per_page)))
         offset = (page - 1) * per_page
+
+        if top_req_ids:
+            with self._connect() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute(
+                        """
+                        SELECT COUNT(DISTINCT l.req_id) AS c
+                        FROM low_level_requirements l
+                        JOIN low_level_requirement_links lk
+                          ON lk.req_id = l.req_id AND lk.session_id = l.session_id
+                        WHERE l.session_id = %s AND lk.top_req_id = ANY(%s::text[])
+                        """,
+                        (session_id, top_req_ids),
+                    )
+                    total = cur.fetchone()["c"]
+
+                    cur.execute(
+                        """
+                        SELECT DISTINCT ON (l.req_id)
+                            l.req_id, l.session_id, l.source_top_id, l.source_top_text,
+                            l.text, l.component, l.acceptance_criteria, l.test_method,
+                            l.interfaces, l.data_contracts, l.error_handling, l.nfr,
+                            l.open_questions, l.evidence_ids, l.confidence, l.source,
+                            l.created_at::text AS created_at
+                        FROM low_level_requirements l
+                        JOIN low_level_requirement_links lk
+                          ON lk.req_id = l.req_id AND lk.session_id = l.session_id
+                        WHERE l.session_id = %s AND lk.top_req_id = ANY(%s::text[])
+                        ORDER BY l.req_id, l.created_at DESC
+                        LIMIT %s OFFSET %s
+                        """,
+                        (session_id, top_req_ids, per_page, offset),
+                    )
+                    rows = cur.fetchall()
+
+                    cur.execute(
+                        """
+                        SELECT req_id, array_agg(top_req_id) AS source_top_ids
+                        FROM low_level_requirement_links
+                        WHERE session_id = %s
+                        GROUP BY req_id
+                        """,
+                        (session_id,),
+                    )
+                    link_rows = cur.fetchall()
+                    top_map = {r["req_id"]: r["source_top_ids"] for r in link_rows}
+
+            requirements = []
+            for row in rows:
+                req = dict(row)
+                for key in ("acceptance_criteria", "interfaces", "data_contracts",
+                            "error_handling", "nfr", "open_questions", "evidence_ids"):
+                    if req.get(key) and isinstance(req[key], str):
+                        try:
+                            req[key] = json.loads(req[key])
+                        except Exception:
+                            pass
+                req["source_top_ids"] = top_map.get(req["req_id"], [])
+                requirements.append(req)
+
+            return {
+                "requirements": requirements,
+                "total": total,
+                "pages": (total + per_page - 1) // per_page if total else 0,
+                "current_page": page,
+            }
 
         with self._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -863,6 +930,21 @@ class DBService:
                     (session_id,)
                 )
                 return cur.fetchone() is not None
+
+    def get_existing_top_req_ids(self, session_id: str, top_req_ids: List[str]) -> List[str]:
+        if not top_req_ids:
+            return []
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT DISTINCT top_req_id
+                    FROM low_level_requirement_links
+                    WHERE session_id = %s AND top_req_id = ANY(%s::text[])
+                    """,
+                    (session_id, top_req_ids),
+                )
+                return [row[0] for row in cur.fetchall()]
 
     def get_requirement_pairs_for_trace(self, session_id: str) -> List[Dict[str, Any]]:
         """

@@ -530,8 +530,11 @@ async function extractLowLevelRequirements() {
       model: 'deepseek-chat',
     })
 
+    // 获取当前 session 的全部底层需求（缓存 + 新生成）
+    const allL4 = await l4RequirementsApi.getBySession(sid, { perPage: 500 })
+
     // 转换为 lowLevelRequirements 格式
-    const l4Reqs = result.requirements || []
+    const l4Reqs = allL4.requirements || result.requirements || []
     lowLevelRequirements.value = l4Reqs.map((req, idx) => ({
       id: req.req_id || `low-${idx + 1}`,
       category: 'low',
@@ -548,7 +551,7 @@ async function extractLowLevelRequirements() {
     if (result.from_cache) {
       lowLevelExtractionNotice.value = `已从缓存加载 ${l4Reqs.length} 条底层需求`
     } else {
-      lowLevelExtractionNotice.value = `成功生成 ${result.inserted_count || l4Reqs.length} 条底层需求并保存`
+      lowLevelExtractionNotice.value = `成功生成 ${result.inserted_count || 0} 条底层需求，当前共 ${l4Reqs.length} 条`
     }
 
     if (lowLevelRequirements.value.length > 0) {
@@ -798,7 +801,19 @@ async function runFullAnalysis() {
           ? true
           : traceRelations.every((rel) => rel.high_req_id && rel.low_req_id)
 
-        if (hasTrace && hasConflict && hasClassification && traceHasIds) {
+        const highReqIds = allHighLevelRequirements.value.map((r) => r.req_id).filter(Boolean)
+        const lowSourceTopIds = new Set()
+        lowLevelRequirements.value.forEach((req) => {
+          const ids = req.source_top_ids || (req.source_top_id ? [req.source_top_id] : [])
+          ids.forEach((id) => {
+            if (id) lowSourceTopIds.add(id)
+          })
+        })
+        const allTopAnalyzed = highReqIds.length === 0
+          ? true
+          : highReqIds.every((id) => lowSourceTopIds.has(id))
+
+        if (hasTrace && hasConflict && hasClassification && traceHasIds && allTopAnalyzed) {
           analysisNotice.value = '已加载缓存分析结果，无需重新分析'
           traceResult.value = traceCache.data
           conflictResults.value = conflictCache.data.items.map((item) => ({
@@ -1144,29 +1159,23 @@ function updateChart() {
   const links = []
   if (traceResult.value?.relations) {
     traceResult.value.relations.forEach((rel) => {
-      if (rel.has_relation) {
-        const sourceId = rel.high_req_id
-        const targetId = rel.low_req_id
-        if (!sourceId || !targetId) return
-        links.push({
-          source: sourceId,
-          target: targetId,
-          lineStyle: {
-            color: getRelationTypeColor(rel.relation_type),
-            width: 2 + (rel.confidence || 0.5) * 2,
-            curveness: 0.1
-          },
-          label: {
-            show: true,
-            formatter: getRelationTypeLabel(rel.relation_type),
-            fontSize: 9,
-            color: '#666',
-            backgroundColor: 'rgba(255,255,255,0.9)',
-            padding: [2, 6],
-            borderRadius: 3
-          }
-        })
-      }
+      if (!rel.has_relation) return
+      const sourceId = rel.high_req_id
+      const targetId = rel.low_req_id
+      if (!sourceId || !targetId) return
+      const curve = ((links.length % 7) - 3) * 0.06
+      links.push({
+        source: sourceId,
+        target: targetId,
+        relation_type: rel.relation_type,
+        lineStyle: {
+          color: getRelationTypeColor(rel.relation_type),
+          width: 1.4 + (rel.confidence || 0.5) * 1.2,
+          curveness: curve,
+          opacity: 0.7
+        },
+        label: { show: false }
+      })
     })
   }
 
@@ -1203,11 +1212,20 @@ function updateChart() {
         data: nodes,
         links: links,
         edgeSymbol: ['none', 'arrow'],
-        edgeSymbolSize: [0, 10],
-        lineStyle: { opacity: 0.85 },
+        edgeSymbolSize: [0, 8],
+        lineStyle: { opacity: 0.7 },
         emphasis: {
           focus: 'adjacency',
-          lineStyle: { width: 5 },
+          lineStyle: { width: 3, opacity: 0.95 },
+          edgeLabel: {
+            show: true,
+            formatter: (p) => getRelationTypeLabel(p.data?.relation_type),
+            fontSize: 10,
+            color: '#666',
+            backgroundColor: 'rgba(255,255,255,0.9)',
+            padding: [2, 6],
+            borderRadius: 3
+          },
           itemStyle: { shadowBlur: 12, shadowColor: 'rgba(0, 0, 0, 0.25)' }
         }
       }
