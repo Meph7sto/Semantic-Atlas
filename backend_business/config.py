@@ -13,7 +13,9 @@ except ImportError:
     load_dotenv = None
 
 if load_dotenv:
-    _ROOT_ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    _ROOT_ENV_PATH = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"
+    )
     load_dotenv(_ROOT_ENV_PATH, override=False)
 
 
@@ -34,7 +36,9 @@ class Settings:
 
     # Inference service (FastAPI)
     # 不一致时以冲突为主：优先读取 INFERENCE_URL，其次 INFERENCE_BASE_URL
-    INFERENCE_BASE_URL = os.environ.get("INFERENCE_URL") or os.environ.get("INFERENCE_BASE_URL", "http://localhost:8000")
+    INFERENCE_BASE_URL = os.environ.get("INFERENCE_URL") or os.environ.get(
+        "INFERENCE_BASE_URL", "http://localhost:8000"
+    )
 
     # Storage (PostgreSQL)
     POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "127.0.0.1")
