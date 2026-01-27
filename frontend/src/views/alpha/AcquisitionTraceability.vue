@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { traceabilityApi, conflictApi, classifyTexts, analysisApi, requirementsL123Api, getLatestClassification, l4RequirementsApi } from '../utils/api'
+import { traceabilityApi, conflictApi, classifyTexts, analysisApi, requirementsL123Api, getLatestClassification, l4RequirementsApi } from '../../utils/api'
 import draggable from 'vuedraggable'
 import {
   FileText,

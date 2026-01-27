@@ -2,13 +2,37 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body {
+html,
+body {
   height: 100%;
   margin: 0;
-  overflow: hidden; /* Prevent scrolling on body, let containers scroll */
+  overflow: hidden;
+  /* Prevent scrolling on body, let containers scroll */
+}
+
+/* 1) Georgia：覆盖除 ASCII 数字 0-9 和全角数字 ０-９ 之外的范围 */
+@font-face {
+  font-family: "BodyWithTimesDigits";
+  src: local("Georgia"), local("Georgia Regular");
+  /* 排除 U+0030-0039（ASCII 数字）和 U+FF10-FF19（全角数字） */
+  unicode-range:
+    U+0000-002F,
+    /* 0x00 ~ '/' */
+    U+003A-FF0F,
+    /* ':' ~ '／' (到全角数字之前) */
+    U+FF1A-10FFFF;
+  /* 全角 ':' 之后 ~ 最高码位 */
+}
+
+/* 2) Times New Roman：仅覆盖数字（ASCII + 全角） */
+@font-face {
+  font-family: "BodyWithTimesDigits";
+  src: local("Times New Roman"), local("TimesNewRomanPSMT");
+  unicode-range: U+0030-0039, U+FF10-FF19;
 }
 
 body {
   @apply bg-white text-zinc-900;
-  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-family: "BodyWithTimesDigits", "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-variant-numeric: lining-nums tabular-nums;
 }
