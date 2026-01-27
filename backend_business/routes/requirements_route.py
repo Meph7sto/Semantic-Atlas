@@ -270,17 +270,36 @@ def generate_l4_requirements():
         return jsonify({"success": False, "error": "Missing 'requirements'"}), 400
 
     try:
-        # 检查缓存
-        if not force_regenerate and db_service.has_l4_requirements(session_id):
-            cached = db_service.get_l4_requirements_by_session(session_id, per_page=500)
-            return jsonify({
-                "success": True,
-                "from_cache": True,
-                "requirements": cached.get("requirements", []),
-                "total": cached.get("total", 0),
-            })
+        requested_ids = [r.get("id") for r in requirements if r.get("id")]
+        if not requested_ids:
+            return jsonify({"success": False, "error": "所有顶层需求必须包含 'id' 字段"}), 400
 
-        # 调用推理后端生成 L4
+        # 检查缓存（按本次请求的顶层需求范围）
+        if not force_regenerate:
+            existing_ids = db_service.get_existing_top_req_ids(session_id, requested_ids)
+            missing_ids = [rid for rid in requested_ids if rid not in set(existing_ids)]
+            
+            # 如果所有都有缓存，直接返回
+            if not missing_ids:
+                cached = db_service.get_l4_requirements_by_session(
+                    session_id,
+                    per_page=500,
+                    top_req_ids=requested_ids,
+                )
+                return jsonify({
+                    "success": True,
+                    "from_cache": True,
+                    "requirements": cached.get("requirements", []),
+                    "total": cached.get("total", 0),
+                })
+            
+            # 只对缺失的顶层需求生成
+            requirements = [r for r in requirements if r.get("id") in set(missing_ids)]
+
+        # 调用推理后端生成 L4（只生成缺失的）
+        if not requirements:
+            return jsonify({"success": False, "error": "没有需要生成的需求"}), 400
+
         payload = {
             "requirements": requirements,
             "config": config,
@@ -314,10 +333,16 @@ def generate_l4_requirements():
                 all_l4_reqs.append(l4)
 
         # 保存到数据库
-        inserted_ids = db_service.save_l4_requirements(session_id, all_l4_reqs)
+        inserted_ids = []
+        if all_l4_reqs:
+            inserted_ids = db_service.save_l4_requirements(session_id, all_l4_reqs)
 
-        # 重新查询以返回完整数据
-        saved = db_service.get_l4_requirements_by_session(session_id, per_page=500)
+        # 重新查询以返回完整数据（包含缓存的+新生成的）
+        saved = db_service.get_l4_requirements_by_session(
+            session_id,
+            per_page=500,
+            top_req_ids=requested_ids,
+        )
 
         return jsonify({
             "success": True,
@@ -327,6 +352,7 @@ def generate_l4_requirements():
             "inserted_count": len(inserted_ids),
             "kb_version": resp_data.get("kb_version", ""),
             "model_id": resp_data.get("model_id", ""),
+            "missing_top_ids": missing_ids if "missing_ids" in locals() else [],
         })
 
     except requests.exceptions.RequestException as e:

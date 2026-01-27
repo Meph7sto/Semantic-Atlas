@@ -6,7 +6,11 @@ param(
 
   # 模型提供方：local=本地模型，chutes=Chutes API，deepseek=DeepSeek API
   [ValidateSet("local", "chutes", "deepseek")]
-  [string]$Provider
+  [string]$Provider,
+
+  # 前端入口：alpha=测试页面，main=正式页面
+  [ValidateSet("alpha", "main")]
+  [string]$Entry
 )
 
 $ErrorActionPreference = "Stop"
@@ -50,6 +54,22 @@ if (-not $Provider) {
 }
 
 $env:MODEL_PROVIDER = $Provider
+
+# 前端入口选择
+if (-not $Entry) {
+  $defaultEntry = if ($env:FRONTEND_ENTRY) { $env:FRONTEND_ENTRY } else { "main" }
+  Write-Host "请选择前端入口: 1=main(正式页面) 2=alpha(测试页面)" -ForegroundColor Cyan
+  $choice = Read-Host "输入编号或模式名 (默认 $defaultEntry)"
+  switch ($choice) {
+    "1" { $Entry = "main" }
+    "2" { $Entry = "alpha" }
+    "main" { $Entry = "main" }
+    "alpha" { $Entry = "alpha" }
+    default { $Entry = $defaultEntry }
+  }
+}
+
+$env:FRONTEND_ENTRY = $Entry
 
 if ($Provider -eq "chutes" -and -not $env:CHUTES_API_TOKEN) {
   Write-Host "检测到使用 chutes 模式，但未设置 CHUTES_API_TOKEN。" -ForegroundColor Yellow
@@ -398,6 +418,20 @@ if ($doFrontend) {
   Write-Host "[start] Building frontend (npm install & npm run build)..."
   if (Test-Path $FRONTEND_ROOT) { Remove-Item -Recurse -Force $FRONTEND_ROOT }
 
+  # 根据入口选择修改路由默认重定向
+  $routerPath = Join-Path $BASE_DIR "frontend/src/router/index.js"
+  if (Test-Path $routerPath) {
+    $routerContent = Get-Content $routerPath -Raw -Encoding UTF8
+    if ($Entry -eq "alpha") {
+      $routerContent = $routerContent -replace "redirect: '/main/login'", "redirect: '/alpha/conflict'"
+      Write-Host "[start] Frontend entry set to: alpha (测试页面)" -ForegroundColor Yellow
+    } else {
+      $routerContent = $routerContent -replace "redirect: '/alpha/conflict'", "redirect: '/main/login'"
+      Write-Host "[start] Frontend entry set to: main (正式页面)" -ForegroundColor Yellow
+    }
+    Set-Content -Path $routerPath -Value $routerContent -Encoding UTF8 -NoNewline
+  }
+
   # 生成前端配置文件（保持与 Linux 脚本一致）
   @'
 /** @type {import('tailwindcss').Config} */
@@ -555,5 +589,6 @@ if ($doBusiness) {
 }
 
 
-Write-Host "[start] Done. Mode=$Mode; Model provider=$Provider; Nginx 8008 (if enabled), FastAPI 8000 (if enabled), Flask 5001 (if enabled)."
+Write-Host "[start] Done. Mode=$Mode; Model provider=$Provider; Entry=$Entry"
+Write-Host "[start] Nginx 8008 (if enabled), FastAPI 8000 (if enabled), Flask 5001 (if enabled)."
 Write-Host "[start] Logs located in $LogsDir"

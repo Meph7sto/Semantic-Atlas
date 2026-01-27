@@ -7,6 +7,7 @@ cd "$BASE_DIR"
 
 MODE=""
 PROVIDER=""
+ENTRY=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -26,11 +27,21 @@ while [[ $# -gt 0 ]]; do
       PROVIDER="$2"
       shift 2
       ;;
+    -e|--entry)
+      if [[ -z "${2:-}" ]]; then
+        echo "[start] Missing value for --entry"
+        exit 1
+      fi
+      ENTRY="$2"
+      shift 2
+      ;;
     *)
       if [[ -z "$MODE" ]]; then
         MODE="$1"
       elif [[ -z "$PROVIDER" ]]; then
         PROVIDER="$1"
+      elif [[ -z "$ENTRY" ]]; then
+        ENTRY="$1"
       else
         echo "[start] Unknown argument: $1"
         exit 1
@@ -66,6 +77,20 @@ if [[ -z "$PROVIDER" ]]; then
 fi
 
 export MODEL_PROVIDER="$PROVIDER"
+
+# 前端入口选择
+if [[ -z "$ENTRY" ]]; then
+  default_entry="${FRONTEND_ENTRY:-main}"
+  echo "请选择前端入口: 1=main(正式页面) 2=alpha(测试页面)"
+  read -r -p "输入编号或模式名 (默认 ${default_entry}): " choice
+  case "$choice" in
+    2|alpha) ENTRY="alpha" ;;
+    1|main|"") ENTRY="${default_entry}" ;;
+    *) ENTRY="${default_entry}" ;;
+  esac
+fi
+
+export FRONTEND_ENTRY="$ENTRY"
 
 if [[ "$PROVIDER" == "chutes" && -z "${CHUTES_API_TOKEN:-}" && -z "${CHUTES_API_KEY:-}" ]]; then
   echo "检测到使用 chutes 模式，但未设置 CHUTES_API_TOKEN。"
@@ -172,6 +197,20 @@ if [[ "$do_frontend" -eq 1 ]]; then
   # 清理旧的 dist 以防万一
   rm -rf "$FRONTEND_ROOT"
 
+  # 根据入口选择修改路由默认重定向
+  ROUTER_PATH="${BASE_DIR}/frontend/src/router/index.js"
+  if [[ -f "$ROUTER_PATH" ]]; then
+    if [[ "$ENTRY" == "alpha" ]]; then
+      sed -i.bak "s|redirect: '/main/login'|redirect: '/alpha/conflict'|g" "$ROUTER_PATH"
+      rm -f "${ROUTER_PATH}.bak"
+      echo "[start] Frontend entry set to: alpha (测试页面)"
+    else
+      sed -i.bak "s|redirect: '/alpha/conflict'|redirect: '/main/login'|g" "$ROUTER_PATH"
+      rm -f "${ROUTER_PATH}.bak"
+      echo "[start] Frontend entry set to: main (正式页面)"
+    fi
+  fi
+
   # 为了防止服务器缺失配置文件，在此处自动生成
   echo "Generating tailwind.config.js..."
   cat > "${BASE_DIR}/frontend/tailwind.config.js" <<EOF
@@ -250,5 +289,6 @@ if [[ "$do_business" -eq 1 ]]; then
     > "${BASE_DIR}/deploy/logs/business.log" 2>&1 &
 fi
 
-echo "[start] Done. Mode=${MODE}; Model provider=${PROVIDER}; Nginx 8008 (if enabled), FastAPI 8000 (if enabled), Flask 5001 (if enabled)."
+echo "[start] Done. Mode=${MODE}; Model provider=${PROVIDER}; Entry=${ENTRY}"
+echo "[start] Nginx 8008 (if enabled), FastAPI 8000 (if enabled), Flask 5001 (if enabled)."
 echo "[start] Logs located in ${BASE_DIR}/deploy/logs"

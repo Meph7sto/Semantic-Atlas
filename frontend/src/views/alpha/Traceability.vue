@@ -1,7 +1,7 @@
 <script setup>
   import { ref, computed } from 'vue'
-  import { traceabilityApi } from '../utils/api'
-  import TraceNetworkChart from '../components/charts/TraceNetworkChart.vue'
+  import { traceabilityApi } from '../../utils/api'
+  import TraceNetworkChart from '../../components/charts/TraceNetworkChart.vue'
   import { FileSearch, Plus, Trash2, Sparkles } from 'lucide-vue-next'
   
   const analysisMode = ref('relation') // 'relation' 或 'batch'

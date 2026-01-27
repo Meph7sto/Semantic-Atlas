@@ -1,6 +1,6 @@
 <script setup>
 import { ref } from 'vue'
-import { conflictApi } from '../utils/api'
+import { conflictApi } from '../../utils/api'
 import { Play, CheckCircle2, AlertCircle, Sparkles } from 'lucide-vue-next'
 
 const reqA = ref('')
