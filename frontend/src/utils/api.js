@@ -532,4 +532,108 @@ export const l4Api = {
     }
 }
 
+// 消息推送 API
+export const pushApi = {
+    async listMessages({ messageType = null, pushed = null, page = 1, perPage = 20 } = {}) {
+        const params = { page, per_page: perPage }
+        if (messageType) params.message_type = messageType
+        if (pushed !== null) params.pushed = pushed
+        const resp = await api.get('/push/messages', { params })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '获取消息列表失败')
+        }
+        return resp.data
+    },
+
+    async createMessage(payload) {
+        const resp = await api.post('/push/messages', payload)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '创建消息失败')
+        }
+        return resp.data
+    },
+
+    async getMessage(messageId) {
+        const resp = await api.get(`/push/messages/${encodeURIComponent(messageId)}`)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '获取消息失败')
+        }
+        return resp.data.data
+    },
+
+    async pushMessage(messageId) {
+        const resp = await api.post(`/push/messages/${encodeURIComponent(messageId)}/push`)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '推送消息失败')
+        }
+        return resp.data
+    },
+
+    async markRead(messageId) {
+        const resp = await api.post(`/push/messages/${encodeURIComponent(messageId)}/read`)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '标记已读失败')
+        }
+        return resp.data
+    },
+
+    async deleteMessage(messageId) {
+        const resp = await api.delete(`/push/messages/${encodeURIComponent(messageId)}`)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '删除消息失败')
+        }
+        return resp.data
+    },
+
+    async getPendingMessages({ messageType = null, since = null } = {}) {
+        const params = {}
+        if (messageType) params.message_type = messageType
+        if (since) params.since = since
+        const resp = await api.get('/push/messages/pending', { params })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '获取待处理消息失败')
+        }
+        return resp.data.messages
+    },
+
+    /**
+     * 创建 SSE 连接
+     * @returns {EventSource}
+     */
+    createSSEConnection() {
+        return new EventSource('/api/push/stream')
+    },
+}
+
+// 移动端对话桥接 API
+export const mobileChatApi = {
+    async listMessages({ sessionId, limit = 100, since = null } = {}) {
+        const params = { session_id: sessionId, limit }
+        if (since) params.since = since
+        const resp = await api.get('/mobile/messages', { params })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '获取移动端消息失败')
+        }
+        return resp.data.messages
+    },
+
+    async sendMessage({ sessionId, sender, content, metadata = null }) {
+        const payload = {
+            session_id: sessionId,
+            sender,
+            content,
+        }
+        if (metadata) payload.metadata = metadata
+        const resp = await api.post('/mobile/messages', payload)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '发送移动端消息失败')
+        }
+        return resp.data.data
+    },
+
+    createSSEConnection(sessionId) {
+        return new EventSource(`/api/mobile/stream?session_id=${encodeURIComponent(sessionId)}`)
+    },
+}
+
 export default api

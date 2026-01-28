@@ -736,6 +736,59 @@ class DBService:
                     "CREATE INDEX IF NOT EXISTS idx_manage_audit_logs_project ON manage_audit_logs(project_id)"
                 )
 
+                # ========================
+                # Push Messages Table (实时消息推送)
+                # ========================
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS push_messages (
+                        message_id TEXT PRIMARY KEY,
+                        message_type TEXT NOT NULL CHECK (message_type IN ('review', 'change')),
+                        title TEXT NOT NULL,
+                        content TEXT,
+                        source TEXT,
+                        priority TEXT DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
+                        ai_suggestion TEXT,
+                        metadata JSONB,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        read BOOLEAN NOT NULL DEFAULT FALSE,
+                        pushed BOOLEAN NOT NULL DEFAULT FALSE,
+                        pushed_at TIMESTAMPTZ
+                    )
+                    """
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_push_messages_type ON push_messages(message_type)"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_push_messages_pushed ON push_messages(pushed)"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_push_messages_created_at ON push_messages(created_at)"
+                )
+
+                # ========================
+                # Mobile Chat Messages Table (移动端对话桥接)
+                # ========================
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS mobile_chat_messages (
+                        message_id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        sender TEXT NOT NULL CHECK (sender IN ('web', 'mobile')),
+                        content TEXT NOT NULL,
+                        metadata JSONB,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_mobile_chat_session ON mobile_chat_messages(session_id)"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_mobile_chat_created_at ON mobile_chat_messages(created_at)"
+                )
+
     def save_relation(
         self,
         high_level_requirement: str,

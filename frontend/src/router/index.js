@@ -10,6 +10,8 @@ import ContextBuilder from '../views/alpha/ContextBuilder.vue'
 import RequirementsExtraction from '../views/alpha/RequirementsExtraction.vue'
 import L4Testing from '../views/alpha/L4Testing.vue'
 import RequirementsManage from '../views/alpha/RequirementsManage.vue'
+import MessagePush from '../views/alpha/MessagePush.vue'
+import MobileBridge from '../views/alpha/MobileBridge.vue'
 
 // Main views (migrated from frontend_ref)
 import LoginView from '../views/main/LoginView.vue'
@@ -116,6 +118,16 @@ const router = createRouter({
                     path: 'chat',
                     name: 'chat',
                     component: GeneralChat
+                },
+                {
+                    path: 'message-push',
+                    name: 'message-push',
+                    component: MessagePush
+                },
+                {
+                    path: 'mobile-bridge',
+                    name: 'mobile-bridge',
+                    component: MobileBridge
                 }
             ]
         }

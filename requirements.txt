@@ -25,5 +25,5 @@ sentence-transformers>=2.2.0
 # 向量存储 (可选持久化)
 faiss-cpu>=1.7.4
 
-psycopg2
+psycopg2-binary
 
