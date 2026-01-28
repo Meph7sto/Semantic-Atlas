@@ -8,6 +8,19 @@ from backend_business.services.mobile_chat_service import mobile_chat_service
 mobile_chat_bp = Blueprint("mobile_chat", __name__)
 
 
+@mobile_chat_bp.route("/sessions", methods=["GET"])
+def list_sessions():
+    if not mobile_chat_service:
+        return jsonify({"success": False, "error": "移动端聊天服务未初始化"}), 500
+
+    limit = request.args.get("limit", 200, type=int)
+    try:
+        sessions = mobile_chat_service.list_sessions(limit=limit)
+        return jsonify({"success": True, "sessions": sessions})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @mobile_chat_bp.route("/messages", methods=["GET"])
 def list_messages():
     if not mobile_chat_service:

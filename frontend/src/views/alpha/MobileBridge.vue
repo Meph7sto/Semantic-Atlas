@@ -8,6 +8,8 @@ const messageInput = ref('')
 const messages = ref([])
 const isLoading = ref(false)
 const isSending = ref(false)
+const sessions = ref([])
+const isLoadingSessions = ref(false)
 const sseStatus = ref('disconnected')
 const lastEventAt = ref(null)
 
@@ -44,6 +46,19 @@ const addMessage = (msg) => {
     if (messageIdSet.has(msg.message_id)) return
     messageIdSet.add(msg.message_id)
     messages.value.push(msg)
+}
+
+const loadSessions = async () => {
+    isLoadingSessions.value = true
+    try {
+        const list = await mobileChatApi.listSessions({ limit: 200 })
+        sessions.value = list || []
+    } catch (e) {
+        console.error('加载会话列表失败', e)
+        alert('加载会话列表失败: ' + (e.message || e))
+    } finally {
+        isLoadingSessions.value = false
+    }
 }
 
 const loadHistory = async () => {
@@ -117,6 +132,21 @@ const disconnectSSE = () => {
     sseStatus.value = 'disconnected'
 }
 
+const activateSession = async () => {
+    if (!sessionId.value.trim()) {
+        alert('请输入 session_id')
+        return
+    }
+    await loadHistory()
+    connectSSE()
+}
+
+const useSession = async (sid) => {
+    if (!sid) return
+    sessionId.value = sid
+    await activateSession()
+}
+
 const sendMessage = async () => {
     if (!sessionId.value.trim()) {
         alert('请输入 session_id')
@@ -132,6 +162,7 @@ const sendMessage = async () => {
         })
         addMessage(msg)
         messageInput.value = ''
+        loadSessions()
     } catch (e) {
         console.error('发送消息失败', e)
         alert('发送消息失败: ' + (e.message || e))
@@ -145,8 +176,8 @@ watch(sessionId, (val) => {
 })
 
 onMounted(async () => {
-    await loadHistory()
-    connectSSE()
+    await loadSessions()
+    await activateSession()
 })
 
 onBeforeUnmount(() => {
@@ -184,7 +215,7 @@ onBeforeUnmount(() => {
                         <input v-model="sessionId" type="text" placeholder="e.g. mobile-demo"
                             class="w-full px-3 py-2 border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-zinc-200" />
                         <div class="mt-4 flex items-center gap-2">
-                            <button @click="connectSSE"
+                            <button @click="activateSession"
                                 class="flex items-center gap-2 px-3 py-2 bg-zinc-900 text-white rounded-lg text-sm hover:bg-zinc-800 transition-colors">
                                 <Radio class="w-4 h-4" />
                                 Connect
@@ -196,6 +227,41 @@ onBeforeUnmount(() => {
                         </div>
                         <div class="mt-4 text-xs text-zinc-500">
                             Last event: <span class="font-medium text-zinc-700">{{ formatTime(lastEventAt) }}</span>
+                        </div>
+                    </div>
+
+                    <div class="p-5 bg-white border border-zinc-200 rounded-xl shadow-sm">
+                        <div class="flex items-center justify-between mb-4">
+                            <div class="flex items-center gap-2 text-sm font-semibold text-zinc-700">
+                                <PlugZap class="w-4 h-4 text-zinc-500" />
+                                Sessions
+                            </div>
+                            <button @click="loadSessions" :disabled="isLoadingSessions"
+                                class="flex items-center gap-2 px-3 py-1.5 border border-zinc-200 rounded-lg text-xs hover:bg-zinc-50 transition-colors disabled:opacity-50">
+                                <RefreshCw class="w-3 h-3" :class="{ 'animate-spin': isLoadingSessions }" />
+                                Refresh
+                            </button>
+                        </div>
+                        <div v-if="sessions.length === 0" class="text-xs text-zinc-400">
+                            暂无会话，发送消息后自动出现。
+                        </div>
+                        <div v-else class="space-y-2 max-h-56 overflow-y-auto">
+                            <button
+                                v-for="session in sessions"
+                                :key="session.session_id"
+                                @click="useSession(session.session_id)"
+                                class="w-full text-left px-3 py-2 rounded-lg border transition-colors"
+                                :class="session.session_id === sessionId
+                                    ? 'border-zinc-900 bg-zinc-900 text-white'
+                                    : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50'">
+                                <div class="flex items-center justify-between gap-2 text-xs">
+                                    <span class="font-semibold">{{ session.session_id }}</span>
+                                    <span class="opacity-80">{{ session.message_count }} msgs</span>
+                                </div>
+                                <div class="text-[11px] opacity-80 mt-1">
+                                    Last: {{ formatTime(session.last_message_at) }}
+                                </div>
+                            </button>
                         </div>
                     </div>
 

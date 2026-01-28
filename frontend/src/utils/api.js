@@ -607,6 +607,14 @@ export const pushApi = {
 
 // 移动端对话桥接 API
 export const mobileChatApi = {
+    async listSessions({ limit = 200 } = {}) {
+        const resp = await api.get('/mobile/sessions', { params: { limit } })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '获取会话列表失败')
+        }
+        return resp.data.sessions
+    },
+
     async listMessages({ sessionId, limit = 100, since = null } = {}) {
         const params = { session_id: sessionId, limit }
         if (since) params.since = since

@@ -109,6 +109,26 @@ class MobileChatService:
             messages.append(msg)
         return messages
 
+    def list_sessions(self, limit: int = 200) -> List[Dict[str, Any]]:
+        limit = max(1, min(1000, int(limit)))
+        with db_service._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        session_id,
+                        COUNT(1) AS message_count,
+                        MAX(created_at)::text AS last_message_at
+                    FROM mobile_chat_messages
+                    GROUP BY session_id
+                    ORDER BY MAX(created_at) DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                rows = cur.fetchall()
+        return [dict(row) for row in rows]
+
     # ========================
     # SSE
     # ========================
