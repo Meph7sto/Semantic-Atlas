@@ -30,40 +30,43 @@ async def lifespan(app: FastAPI):
     FastAPI 生命周期管理器
     """
     # 启动时：加载模型
-    print(
-        f"Initializing Model from: {settings.MODEL_PATH} (provider={settings.MODEL_PROVIDER})"
-    )
-    try:
-        if settings.MODEL_PROVIDER == "local":
-            if os.path.exists(settings.MODEL_PATH):
+    if settings.SKIP_MODEL_LOAD:
+        print("[lifespan] SKIP_MODEL_LOAD is true, skipping local model loading.")
+    else:
+        print(
+            f"Initializing Model from: {settings.MODEL_PATH} (provider={settings.MODEL_PROVIDER})"
+        )
+        try:
+            if settings.MODEL_PROVIDER == "local":
+                if os.path.exists(settings.MODEL_PATH):
+                    model_engine.load_model()
+                else:
+                    print(
+                        f"CRITICAL WARNING: Model directory not found at {settings.MODEL_PATH}"
+                    )
+            else:
+                # API 模式直接初始化远程客户端
                 model_engine.load_model()
-            else:
-                print(
-                    f"CRITICAL WARNING: Model directory not found at {settings.MODEL_PATH}"
-                )
-        else:
-            # API 模式直接初始化远程客户端
-            model_engine.load_model()
-    except Exception as e:
-        print(f"CRITICAL ERROR: Failed to initialize model provider: {e}")
-        # We continue startup so health checks pass, but inference will fail
+        except Exception as e:
+            print(f"CRITICAL ERROR: Failed to initialize model provider: {e}")
+            # We continue startup so health checks pass, but inference will fail
 
-    # 分类模型加载（用于需求分类）
-    print(
-        f"Initializing Classification Model from: {settings.CLASSIFICATION_MODEL_PATH} (provider={settings.CLASSIFICATION_PROVIDER})"
-    )
-    try:
-        if settings.CLASSIFICATION_PROVIDER == "local":
-            if os.path.exists(settings.CLASSIFICATION_MODEL_PATH):
-                classification_engine.load()
+        # 分类模型加载（用于需求分类）
+        print(
+            f"Initializing Classification Model from: {settings.CLASSIFICATION_MODEL_PATH} (provider={settings.CLASSIFICATION_PROVIDER})"
+        )
+        try:
+            if settings.CLASSIFICATION_PROVIDER == "local":
+                if os.path.exists(settings.CLASSIFICATION_MODEL_PATH):
+                    classification_engine.load()
+                else:
+                    print(
+                        f"CRITICAL WARNING: Classification model directory not found at {settings.CLASSIFICATION_MODEL_PATH}"
+                    )
             else:
-                print(
-                    f"CRITICAL WARNING: Classification model directory not found at {settings.CLASSIFICATION_MODEL_PATH}"
-                )
-        else:
-            classification_engine.load()
-    except Exception as e:
-        print(f"CRITICAL ERROR: Failed to load classification model files: {e}")
+                classification_engine.load()
+        except Exception as e:
+            print(f"CRITICAL ERROR: Failed to load classification model files: {e}")
 
     # 加载 KB 索引
     print("Initializing Knowledge Base indexes...")

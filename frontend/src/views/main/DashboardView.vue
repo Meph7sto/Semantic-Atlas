@@ -21,29 +21,39 @@
 </template>
 
 <script setup>
-import { ref } from "vue";
-import { useRouter } from "vue-router";
+import { ref, computed } from "vue";
+import { useRouter, useRoute } from "vue-router";
 import HeroSection from "../../components/main/HeroSection.vue";
 import AvailabilityMatrix from "../../components/main/AvailabilityMatrix.vue";
 import Sidebar from "../../components/main/Sidebar.vue";
 
 const router = useRouter();
+const route = useRoute();
 
 const roleType = ref("unified_admin");
 const roleLabel = ref("管理员");
 const timestamp = ref(new Date().toLocaleString());
 const notificationCount = ref(3);
-const activePage = ref("dashboard");
+const routeNameToPageKey = {
+  "main-dashboard": "dashboard",
+  "main-project": "project-management",
+  "main-requirements": "requirements",
+  "main-requirements-analysis": "requirements-analysis",
+};
+
+const pageKeyToRouteName = {
+  "dashboard": "main-dashboard",
+  "project-management": "main-project",
+  "requirements": "main-requirements",
+  "requirements-analysis": "main-requirements-analysis",
+};
+
+const activePage = computed(() => routeNameToPageKey[route.name] || "dashboard");
 
 const handleNavigate = (page) => {
-  activePage.value = page;
-  const routes = {
-    "project-management": "main-project",
-    "requirements": "main-requirements",
-    "requirements-analysis": "main-requirements-analysis",
-  };
-  if (routes[page]) {
-    router.push({ name: routes[page] });
+  const target = pageKeyToRouteName[page];
+  if (target && target !== route.name) {
+    router.push({ name: target });
   }
 };
 

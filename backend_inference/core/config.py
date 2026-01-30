@@ -26,6 +26,10 @@ class Settings:
     MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "local").lower()
     CLASSIFICATION_PROVIDER = os.getenv("CLASSIFICATION_PROVIDER", MODEL_PROVIDER).lower()
 
+    # 是否跳过模型加载过程（默认为 False，即加载模型）
+    # 当设置为 "true" 时，lifespan 会跳过本地模型加载
+    SKIP_MODEL_LOAD = os.getenv("SKIP_MODEL_LOAD", "false").lower() == "true"
+
     # 生成式模型（冲突/追溯等）路径配置
     MODEL_RELATIVE_PATH = os.getenv(
         "LLM_MODEL_RELATIVE_PATH",

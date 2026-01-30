@@ -278,7 +278,7 @@ def generate_l4_requirements():
         if not force_regenerate:
             existing_ids = db_service.get_existing_top_req_ids(session_id, requested_ids)
             missing_ids = [rid for rid in requested_ids if rid not in set(existing_ids)]
-            
+
             # 如果所有都有缓存，直接返回
             if not missing_ids:
                 cached = db_service.get_l4_requirements_by_session(
@@ -292,7 +292,7 @@ def generate_l4_requirements():
                     "requirements": cached.get("requirements", []),
                     "total": cached.get("total", 0),
                 })
-            
+
             # 只对缺失的顶层需求生成
             requirements = [r for r in requirements if r.get("id") in set(missing_ids)]
 
@@ -332,10 +332,10 @@ def generate_l4_requirements():
                 l4["source_top_ids"] = [source_top_id] if source_top_id else []
                 all_l4_reqs.append(l4)
 
-        # 保存到数据库
-        inserted_ids = []
+        # 保存到数据库（带去重）
+        save_result = {"inserted": 0, "duplicates": 0, "inserted_ids": []}
         if all_l4_reqs:
-            inserted_ids = db_service.save_l4_requirements(session_id, all_l4_reqs)
+            save_result = db_service.save_l4_requirements(session_id, all_l4_reqs)
 
         # 重新查询以返回完整数据（包含缓存的+新生成的）
         saved = db_service.get_l4_requirements_by_session(
@@ -349,7 +349,8 @@ def generate_l4_requirements():
             "from_cache": False,
             "requirements": saved.get("requirements", []),
             "total": saved.get("total", 0),
-            "inserted_count": len(inserted_ids),
+            "inserted_count": save_result.get("inserted", 0),
+            "duplicates_skipped": save_result.get("duplicates", 0),
             "kb_version": resp_data.get("kb_version", ""),
             "model_id": resp_data.get("model_id", ""),
             "missing_top_ids": missing_ids if "missing_ids" in locals() else [],

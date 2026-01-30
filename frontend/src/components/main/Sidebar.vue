@@ -31,8 +31,8 @@
           <button
             type="button"
             class="rail-link has-children"
-            :class="{ 
-              active: item.key === activePage || isChildActive(item), 
+            :class="{
+              active: item.key === activePage || isChildActive(item),
               muted: item.disabled,
               expanded: expandedMenus[item.key]
             }"
@@ -40,7 +40,8 @@
             @click="toggleMenu(item.key)"
             :title="isCollapsed ? item.label : ''"
           >
-            <span class="nav-icon" :style="{ backgroundColor: getIconColor(item.key) }"></span>
+            <component v-if="item.icon" :is="item.icon" class="nav-icon-svg" />
+            <span v-else class="nav-icon" :style="{ backgroundColor: getIconColor(item.key) }"></span>
             <span class="nav-label">{{ item.label }}</span>
             <svg
               v-if="!isCollapsed"
@@ -66,7 +67,8 @@
               :class="{ active: child.key === activePage }"
               @click="$emit('navigate', child.key)"
             >
-              <span class="submenu-dot"></span>
+              <component v-if="child.icon" :is="child.icon" class="submenu-icon-svg" />
+              <span v-else class="submenu-dot"></span>
               <span>{{ child.label }}</span>
             </button>
           </div>
@@ -82,7 +84,8 @@
           @click="$emit('navigate', item.key)"
           :title="isCollapsed ? item.label : ''"
         >
-          <span class="nav-icon" :style="{ backgroundColor: getIconColor(item.key) }"></span>
+          <component v-if="item.icon" :is="item.icon" class="nav-icon-svg" />
+          <span v-else class="nav-icon" :style="{ backgroundColor: getIconColor(item.key) }"></span>
           <span>{{ item.label }}</span>
         </button>
       </template>
@@ -99,6 +102,10 @@
         <div class="footer-label">下次审计</div>
         <div class="footer-value">12 天</div>
       </div>
+      <button type="button" class="ghost rail-guide" @click="router.push('/guide')">
+        <span v-if="!isCollapsed">返回 Guide</span>
+        <span v-else>Guide</span>
+      </button>
       <button type="button" class="ghost rail-exit" @click="$emit('exit')">
         <span v-if="!isCollapsed">返回登录</span>
         <span v-else>Exit</span>
@@ -109,6 +116,19 @@
 
 <script setup>
 import { computed, ref, watch } from "vue";
+import { useRouter } from "vue-router";
+import {
+  LayoutDashboard,
+  FolderKanban,
+  FileText,
+  BarChart3,
+  Bug,
+  GitBranch,
+  FileCheck,
+  FileBarChart
+} from 'lucide-vue-next';
+
+const router = useRouter();
 
 const props = defineProps({
   roleType: {
@@ -161,19 +181,20 @@ watch(isCollapsed, (v) => {
 });
 
 const commonNav = [
-  { key: "dashboard", label: "概览" },
-  { 
-    key: "project-management", 
+  { key: "dashboard", label: "概览", icon: LayoutDashboard },
+  {
+    key: "project-management",
     label: "项目管理",
+    icon: FolderKanban,
     children: [
-      { key: "requirements", label: "需求" },
-      { key: "requirements-analysis", label: "需求分析" },
+      { key: "requirements", label: "需求", icon: FileText },
+      { key: "requirements-analysis", label: "需求分析", icon: BarChart3 },
     ]
   },
-  { key: "defects", label: "缺陷与问题" },
-  { key: "tracking", label: "追踪" },
-  { key: "reviews", label: "评审" },
-  { key: "reports", label: "报告" },
+  { key: "defects", label: "缺陷与问题", icon: Bug },
+  { key: "tracking", label: "追踪", icon: GitBranch },
+  { key: "reviews", label: "评审", icon: FileCheck },
+  { key: "reports", label: "报告", icon: FileBarChart },
 ];
 
 const getIconColor = (key) => {
@@ -210,3 +231,25 @@ const roleCaption = computed(() => {
   return "项目成员";
 });
 </script>
+
+<style scoped>
+.nav-icon-svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  stroke-width: 2;
+}
+
+.submenu-icon-svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  stroke-width: 2;
+  opacity: 0.7;
+}
+
+.rail-link.active .nav-icon-svg,
+.submenu-item.active .submenu-icon-svg {
+  opacity: 1;
+}
+</style>

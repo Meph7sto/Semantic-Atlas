@@ -427,7 +427,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRouter, useRoute } from "vue-router";
 import draggable from "vuedraggable";
 import Sidebar from "../../components/main/Sidebar.vue";
 import RequirementTree from "../../components/charts/RequirementTree.vue";
@@ -435,13 +435,28 @@ import { requirementsL123Api, l4RequirementsApi, analysisApi, manageApi } from "
 import { Loader2, FileText, RefreshCw, Briefcase, Users, Layout, Layers, Database, Circle, Clock, CheckCircle, GripVertical, Search, Filter, ChevronDown, ChevronUp, CheckCircle2 } from "lucide-vue-next";
 
 const router = useRouter();
+const route = useRoute();
 
 // 侧边栏状态
 const roleType = ref("unified_admin");
 const roleLabel = ref("管理员");
 const timestamp = ref(new Date().toLocaleString());
 const notificationCount = ref(3);
-const activePage = ref("requirements");
+const routeNameToPageKey = {
+  "main-dashboard": "dashboard",
+  "main-project": "project-management",
+  "main-requirements": "requirements",
+  "main-requirements-analysis": "requirements-analysis",
+};
+
+const pageKeyToRouteName = {
+  "dashboard": "main-dashboard",
+  "project-management": "main-project",
+  "requirements": "main-requirements",
+  "requirements-analysis": "main-requirements-analysis",
+};
+
+const activePage = computed(() => routeNameToPageKey[route.name] || "requirements");
 
 // 数据状态
 const isLoading = ref(false);
@@ -1038,15 +1053,9 @@ function buildTreeWithRelations(highReqs, lowReqs, relations) {
 
 // 导航处理
 function handleNavigate(page) {
-  activePage.value = page;
-  const routes = {
-    "dashboard": "main-dashboard",
-    "project-management": "main-project",
-    "requirements": "main-requirements",
-    "requirements-analysis": "main-requirements-analysis",
-  };
-  if (routes[page]) {
-    router.push({ name: routes[page] });
+  const target = pageKeyToRouteName[page];
+  if (target && target !== route.name) {
+    router.push({ name: target });
   }
 }
 

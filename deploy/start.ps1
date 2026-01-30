@@ -8,8 +8,8 @@ param(
   [ValidateSet("local", "chutes", "deepseek")]
   [string]$Provider,
 
-  # 前端入口：alpha=测试页面，main=正式页面
-  [ValidateSet("alpha", "main")]
+  # 前端入口：alpha=测试页面，main=正式页面，all=全部模式(引导页)
+  [ValidateSet("alpha", "main", "all")]
   [string]$Entry
 )
 
@@ -55,16 +55,30 @@ if (-not $Provider) {
 
 $env:MODEL_PROVIDER = $Provider
 
+# 是否加载模型选择 (默认不加载)
+Write-Host "是否加载本地模型权重? 1=no(跳过, 启动快) 2=yes(加载, 需GPU/大内存)" -ForegroundColor Cyan
+$loadChoice = Read-Host "输入编号 (默认 1/no)"
+if ($loadChoice -eq "2" -or $loadChoice -eq "yes") {
+  $env:SKIP_MODEL_LOAD = "false"
+  Write-Host "[start] Model loading enabled." -ForegroundColor Yellow
+}
+else {
+  $env:SKIP_MODEL_LOAD = "true"
+  Write-Host "[start] Model loading skipped (default)." -ForegroundColor Yellow
+}
+
 # 前端入口选择
 if (-not $Entry) {
-  $defaultEntry = if ($env:FRONTEND_ENTRY) { $env:FRONTEND_ENTRY } else { "main" }
-  Write-Host "请选择前端入口: 1=main(正式页面) 2=alpha(测试页面)" -ForegroundColor Cyan
+  $defaultEntry = if ($env:FRONTEND_ENTRY) { $env:FRONTEND_ENTRY } else { "all" }
+  Write-Host "请选择前端入口: 1=main(正式页面) 2=alpha(测试页面) 3=all(全部模式+引导页)" -ForegroundColor Cyan
   $choice = Read-Host "输入编号或模式名 (默认 $defaultEntry)"
   switch ($choice) {
     "1" { $Entry = "main" }
     "2" { $Entry = "alpha" }
+    "3" { $Entry = "all" }
     "main" { $Entry = "main" }
     "alpha" { $Entry = "alpha" }
+    "all" { $Entry = "all" }
     default { $Entry = $defaultEntry }
   }
 }
@@ -424,9 +438,17 @@ if ($doFrontend) {
     $routerContent = Get-Content $routerPath -Raw -Encoding UTF8
     if ($Entry -eq "alpha") {
       $routerContent = $routerContent -replace "redirect: '/main/login'", "redirect: '/alpha/conflict'"
+      $routerContent = $routerContent -replace "redirect: '/guide'", "redirect: '/alpha/conflict'"
       Write-Host "[start] Frontend entry set to: alpha (测试页面)" -ForegroundColor Yellow
-    } else {
+    }
+    elseif ($Entry -eq "all") {
+      $routerContent = $routerContent -replace "redirect: '/main/login'", "redirect: '/guide'"
+      $routerContent = $routerContent -replace "redirect: '/alpha/conflict'", "redirect: '/guide'"
+      Write-Host "[start] Frontend entry set to: all (全部模式+引导页)" -ForegroundColor Yellow
+    }
+    else {
       $routerContent = $routerContent -replace "redirect: '/alpha/conflict'", "redirect: '/main/login'"
+      $routerContent = $routerContent -replace "redirect: '/guide'", "redirect: '/main/login'"
       Write-Host "[start] Frontend entry set to: main (正式页面)" -ForegroundColor Yellow
     }
     Set-Content -Path $routerPath -Value $routerContent -Encoding UTF8 -NoNewline

@@ -117,14 +117,26 @@ fi
 
 export MODEL_PROVIDER="$PROVIDER"
 
+# 是否加载模型选择 (默认不加载)
+echo "是否加载本地模型权重? 1=no(跳过, 启动快) 2=yes(加载, 需GPU/大内存)"
+read -r -p "输入编号 (默认 1/no): " load_choice
+if [[ "$load_choice" == "2" || "$load_choice" == "yes" ]]; then
+  export SKIP_MODEL_LOAD="false"
+  echo "[start] Model loading enabled."
+else
+  export SKIP_MODEL_LOAD="true"
+  echo "[start] Model loading skipped (default)."
+fi
+
 # 前端入口选择
 if [[ -z "$ENTRY" ]]; then
-  default_entry="${FRONTEND_ENTRY:-main}"
-  echo "请选择前端入口: 1=main(正式页面) 2=alpha(测试页面)"
+  default_entry="${FRONTEND_ENTRY:-all}"
+  echo "请选择前端入口: 1=main(正式页面) 2=alpha(测试页面) 3=all(全部模式+引导页)"
   read -r -p "输入编号或模式名 (默认 ${default_entry}): " choice
   case "$choice" in
     1|main) ENTRY="main" ;;
     2|alpha) ENTRY="alpha" ;;
+    3|all) ENTRY="all" ;;
     "") ENTRY="${default_entry}" ;;
     *) ENTRY="${default_entry}" ;;
   esac
@@ -646,10 +658,17 @@ if [[ "$do_frontend" -eq 1 ]]; then
   if [[ -f "$ROUTER_PATH" ]]; then
     if [[ "$ENTRY" == "alpha" ]]; then
       sed -i.bak "s|redirect: '/main/login'|redirect: '/alpha/conflict'|g" "$ROUTER_PATH"
+      sed -i.bak "s|redirect: '/guide'|redirect: '/alpha/conflict'|g" "$ROUTER_PATH"
       rm -f "${ROUTER_PATH}.bak"
       echo "[start] Frontend entry set to: alpha (测试页面)"
+    elif [[ "$ENTRY" == "all" ]]; then
+      sed -i.bak "s|redirect: '/main/login'|redirect: '/guide'|g" "$ROUTER_PATH"
+      sed -i.bak "s|redirect: '/alpha/conflict'|redirect: '/guide'|g" "$ROUTER_PATH"
+      rm -f "${ROUTER_PATH}.bak"
+      echo "[start] Frontend entry set to: all (全部模式+引导页)"
     else
       sed -i.bak "s|redirect: '/alpha/conflict'|redirect: '/main/login'|g" "$ROUTER_PATH"
+      sed -i.bak "s|redirect: '/guide'|redirect: '/main/login'|g" "$ROUTER_PATH"
       rm -f "${ROUTER_PATH}.bak"
       echo "[start] Frontend entry set to: main (正式页面)"
     fi

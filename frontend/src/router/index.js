@@ -21,6 +21,9 @@ import ProjectManageView from '../views/main/ProjectManageView.vue'
 import RequirementsView from '../views/main/RequirementsView.vue'
 import RequirementsAnalysisView from '../views/main/RequirementsAnalysisView.vue'
 
+// Guide view
+import GuideView from '../views/GuideView.vue'
+
 const router = createRouter({
     history: createWebHistory(import.meta.env.BASE_URL),
     routes: [
@@ -28,6 +31,11 @@ const router = createRouter({
             path: '/',
             name: 'home',
             redirect: '/main/login'
+        },
+        {
+            path: '/guide',
+            name: 'guide',
+            component: GuideView
         },
         // Main routes (migrated from frontend_ref)
         {
