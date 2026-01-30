@@ -125,7 +125,8 @@ import {
   Bug,
   GitBranch,
   FileCheck,
-  FileBarChart
+  FileBarChart,
+  Sparkles
 } from 'lucide-vue-next';
 
 const router = useRouter();
@@ -169,7 +170,7 @@ const expandedMenus = ref({
 // 当 activePage 是子菜单项时，自动展开父菜单
 watch(() => props.activePage, (newPage) => {
   // 检查是否是 project-management 的子项
-  const projectChildren = ['requirements', 'requirements-analysis'];
+  const projectChildren = ['requirements-collection', 'requirements', 'requirements-analysis'];
   if (projectChildren.includes(newPage)) {
     expandedMenus.value['project-management'] = true;
   }
@@ -187,6 +188,7 @@ const commonNav = [
     label: "项目管理",
     icon: FolderKanban,
     children: [
+      { key: "requirements-collection", label: "需求采集", icon: Sparkles },
       { key: "requirements", label: "需求", icon: FileText },
       { key: "requirements-analysis", label: "需求分析", icon: BarChart3 },
     ]
@@ -205,6 +207,7 @@ const getIconColor = (key) => {
     tracking: "#5d6b76",
     reviews: "#a85424",
     reports: "#1b2730",
+    "requirements-collection": "#8b5cf6",
     requirements: "#c4692f",
     "requirements-analysis": "#c4692f",
   };

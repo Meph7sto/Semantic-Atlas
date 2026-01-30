@@ -20,6 +20,7 @@ import DashboardView from '../views/main/DashboardView.vue'
 import ProjectManageView from '../views/main/ProjectManageView.vue'
 import RequirementsView from '../views/main/RequirementsView.vue'
 import RequirementsAnalysisView from '../views/main/RequirementsAnalysisView.vue'
+import RequirementsCollectionView from '../views/main/RequirementsCollectionView.vue'
 
 // Guide view
 import GuideView from '../views/GuideView.vue'
@@ -30,7 +31,7 @@ const router = createRouter({
         {
             path: '/',
             name: 'home',
-            redirect: '/main/login'
+            redirect: '/guide'
         },
         {
             path: '/guide',
@@ -66,6 +67,11 @@ const router = createRouter({
                     path: 'requirements-analysis',
                     name: 'main-requirements-analysis',
                     component: RequirementsAnalysisView
+                },
+                {
+                    path: 'requirements-collection',
+                    name: 'main-requirements-collection',
+                    component: RequirementsCollectionView
                 }
             ]
         },
