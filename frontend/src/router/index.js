@@ -12,6 +12,7 @@ import L4Testing from '../views/alpha/L4Testing.vue'
 import RequirementsManage from '../views/alpha/RequirementsManage.vue'
 import MessagePush from '../views/alpha/MessagePush.vue'
 import MobileBridge from '../views/alpha/MobileBridge.vue'
+import FileReceive from '../views/alpha/FileReceive.vue'
 
 // Main views (migrated from frontend_ref)
 import LoginView from '../views/main/LoginView.vue'
@@ -128,6 +129,11 @@ const router = createRouter({
                     path: 'mobile-bridge',
                     name: 'mobile-bridge',
                     component: MobileBridge
+                },
+                {
+                    path: 'file-receive',
+                    name: 'file-receive',
+                    component: FileReceive
                 }
             ]
         }
