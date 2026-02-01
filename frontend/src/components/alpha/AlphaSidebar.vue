@@ -16,7 +16,8 @@ import {
   ClipboardList,
   Bell,
   Smartphone,
-  ArrowLeft
+  ArrowLeft,
+  FolderUp
 } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -197,6 +198,15 @@ const toggleSidebar = (open) => {
       >
         <Smartphone class="w-4 h-4" />
         <span class="whitespace-nowrap">Mobile Bridge</span>
+      </RouterLink>
+
+      <RouterLink
+        to="/alpha/file-receive"
+        active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
+        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+      >
+        <FolderUp class="w-4 h-4" />
+        <span class="whitespace-nowrap">File Receive</span>
       </RouterLink>
     </nav>
 

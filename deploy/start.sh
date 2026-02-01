@@ -524,13 +524,31 @@ if [[ "$do_business" -eq 1 ]]; then
       pg_bin=$(command -v pg_ctl || true)
     fi
 
-    # 启动 PostgreSQL 服务 (直接使用 pg_ctl 绕过 systemd/service)
-    echo "[start] Starting PostgreSQL service using pg_ctl..."
-    if [[ -n "$pg_bin" && -d "$pg_data" ]]; then
-      # 确保目录权限正确
+    # 确保 PostgreSQL 启动环境权限（解决 autodl 等容器环境下的 root 启动问题）
+    echo "[start] Preparing PostgreSQL runtime environment..."
+    mkdir -p /var/run/postgresql
+    chown -R postgres:postgres /var/run/postgresql
+    chmod 2775 /var/run/postgresql
+
+    # 在 /tmp 下创建日志，解决 /root 目录权限导致的拒绝访问问题
+    PG_TMP_LOG="/tmp/semantic_atlas_postgres.log"
+    touch "$PG_TMP_LOG"
+    chown postgres:postgres "$PG_TMP_LOG"
+    chmod 666 "$PG_TMP_LOG"
+
+    # 启动 PostgreSQL 服务 (优先使用 pg_ctlcluster，适应 Ubuntu 拆分路径)
+    echo "[start] Starting PostgreSQL service..."
+    if command -v pg_ctlcluster >/dev/null 2>&1 && [[ -n "${pg_version:-}" && -n "${pg_cluster:-}" ]]; then
+      echo "[start] Using pg_ctlcluster to start PostgreSQL ${pg_version} ${pg_cluster}..."
+      pg_ctlcluster "${pg_version}" "${pg_cluster}" start || true
+    elif [[ -n "$pg_bin" && -d "$pg_data" ]]; then
+      # 确保数据目录权限正确
       chown -R postgres:postgres "$pg_data" 2>/dev/null || true
-      # 切换到 postgres 用户启动
-      run_as_postgres "$pg_bin" -D "$pg_data" -l "${LOGS_DIR}/postgresql.log" start || true
+      # 切换到 postgres 用户启动，将日志重定向到 /tmp 下的任务文件
+      if ! run_as_postgres "$pg_bin" -D "$pg_data" -o "-k /var/run/postgresql" -l "$PG_TMP_LOG" start; then
+        echo "[start] pg_ctl failed to start. Log content from ${PG_TMP_LOG}:"
+        cat "$PG_TMP_LOG"
+      fi
     else
       # 备选：尝试使用服务方式（通常在容器里会由于 policy-rc.d 失败）
       service postgresql start || true
@@ -550,9 +568,13 @@ if [[ "$do_business" -eq 1 ]]; then
     done
 
     if [[ "$pg_ready" -eq 0 ]]; then
-      echo "[start] ERROR: PostgreSQL failed to start. Check ${LOGS_DIR}/postgresql.log"
+      echo "[start] ERROR: PostgreSQL failed to start. Last log entries from ${PG_TMP_LOG}:"
       # 打印最后几行日志帮助调试
-      [[ -f "${LOGS_DIR}/postgresql.log" ]] && tail -n 20 "${LOGS_DIR}/postgresql.log"
+      if [[ -f "$PG_TMP_LOG" ]]; then
+        tail -n 20 "$PG_TMP_LOG"
+      else
+        echo "Log file not found at ${PG_TMP_LOG}"
+      fi
     fi
 
     # 创建用户和数据库
@@ -698,7 +720,7 @@ module.exports = {
 }
 EOF
 
-  (cd "${BASE_DIR}/frontend" && npm install && npm run build)
+  (cd "${BASE_DIR}/frontend" && npm install && chmod +x node_modules/.bin/* 2>/dev/null || true && npm run build)
 
   # 2) 生成 Nginx 配置
   MIME_PATH="${BASE_DIR}/deploy/mime.types"
