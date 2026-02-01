@@ -14,7 +14,7 @@
         <!-- 页面头部 -->
         <section class="page-header nav-style" data-animate style="--delay: 0.05s">
           <div class="nav-left">
-            <span class="nav-title">项目管理 · 需求</span>
+            <span class="nav-title">项目管理 · 需求管理</span>
           </div>
           <div class="nav-center">
             <div class="session-indicator" v-if="sessionId">
@@ -1044,6 +1044,7 @@ function handleNavigate(page) {
     "project-management": "main-project",
     "requirements": "main-requirements",
     "requirements-analysis": "main-requirements-analysis",
+    "requirements-acquisition": "main-requirements-acquisition",
   };
   if (routes[page]) {
     router.push({ name: routes[page] });

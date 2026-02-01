@@ -919,6 +919,7 @@ function handleNavigate(page) {
     "project-management": "main-project",
     "requirements": "main-requirements",
     "requirements-analysis": "main-requirements-analysis",
+    "requirements-acquisition": "main-requirements-acquisition",
   };
   if (routes[page]) {
     router.push({ name: routes[page] });

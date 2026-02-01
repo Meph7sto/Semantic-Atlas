@@ -213,6 +213,7 @@ const handleNavigate = (page) => {
     "dashboard": "main-dashboard",
     "requirements": "main-requirements",
     "requirements-analysis": "main-requirements-analysis",
+    "requirements-acquisition": "main-requirements-acquisition",
   };
   if (routes[page]) {
     router.push({ name: routes[page] });

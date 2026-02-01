@@ -19,6 +19,7 @@ import DashboardView from '../views/main/DashboardView.vue'
 import ProjectManageView from '../views/main/ProjectManageView.vue'
 import RequirementsView from '../views/main/RequirementsView.vue'
 import RequirementsAnalysisView from '../views/main/RequirementsAnalysisView.vue'
+import RequirementsAcquisitionView from '../views/main/RequirementsAcquisitionView.vue'
 
 const router = createRouter({
     history: createWebHistory(import.meta.env.BASE_URL),
@@ -57,6 +58,11 @@ const router = createRouter({
                     path: 'requirements-analysis',
                     name: 'main-requirements-analysis',
                     component: RequirementsAnalysisView
+                },
+                {
+                    path: 'requirements-acquisition',
+                    name: 'main-requirements-acquisition',
+                    component: RequirementsAcquisitionView
                 }
             ]
         },

@@ -149,7 +149,7 @@ const expandedMenus = ref({
 // 当 activePage 是子菜单项时，自动展开父菜单
 watch(() => props.activePage, (newPage) => {
   // 检查是否是 project-management 的子项
-  const projectChildren = ['requirements', 'requirements-analysis'];
+  const projectChildren = ['requirements', 'requirements-analysis', 'requirements-acquisition'];
   if (projectChildren.includes(newPage)) {
     expandedMenus.value['project-management'] = true;
   }
@@ -166,7 +166,8 @@ const commonNav = [
     key: "project-management", 
     label: "项目管理",
     children: [
-      { key: "requirements", label: "需求" },
+      { key: "requirements-acquisition", label: "需求采集" },
+      { key: "requirements", label: "需求管理" },
       { key: "requirements-analysis", label: "需求分析" },
     ]
   },
@@ -186,6 +187,7 @@ const getIconColor = (key) => {
     reports: "#1b2730",
     requirements: "#c4692f",
     "requirements-analysis": "#c4692f",
+    "requirements-acquisition": "#c4692f",
   };
   return colors[key] || "#9eabb4";
 };
