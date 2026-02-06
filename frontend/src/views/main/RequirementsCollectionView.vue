@@ -90,6 +90,33 @@
                     <input v-model.number="options.tau" type="number" min="0" max="1" step="0.05" class="control-input" style="width: 80px; padding: 4px 8px;" />
                   </div>
                   <div class="stat-row">
+                    <span style="display: flex; align-items: center; gap: 6px;">
+                      并行处理
+                      <span style="font-size: 11px; color: rgba(28, 40, 52, 0.5);">(Phase 2 & 3)</span>
+                    </span>
+                    <label class="toggle-switch">
+                      <input v-model="options.enable_parallel_windows" type="checkbox" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
+                  <div v-if="options.enable_parallel_windows" class="stat-row">
+                    <span style="padding-left: 12px; font-size: 12px;">最大并发数</span>
+                    <input v-model.number="options.max_concurrent_windows" type="number" min="1" max="10" class="control-input" style="width: 80px; padding: 4px 8px;" />
+                  </div>
+                  <div class="stat-row">
+                    <span style="display: flex; align-items: center; gap: 6px;">
+                      串行记忆
+                      <div class="tooltip-container">
+                        <AlertCircle class="w-3 h-3 text-muted" />
+                        <span class="tooltip-text">仅在关闭并行处理时生效。开启后大模型可以看到已生成的需求，避免重复。</span>
+                      </div>
+                    </span>
+                    <label class="toggle-switch">
+                      <input v-model="options.history_aware" type="checkbox" :disabled="options.enable_parallel_windows" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
+                  <div class="stat-row">
                     <span>Mock 模式</span>
                     <input v-model="options.mock_llm" type="checkbox" style="width: 16px; height: 16px;" />
                   </div>
@@ -316,7 +343,8 @@ const options = reactive({
   token_limit_per_bundle: 4000,
   mock_llm: false,
   enable_parallel_windows: false,
-  max_concurrent_windows: 5
+  max_concurrent_windows: 5,
+  history_aware: false
 });
 
 // 流程状态
@@ -596,14 +624,52 @@ async function runPhase3() {
     max_spans_per_bundle: 12,
     token_limit: 1500,
     top_m_2hop: 5,
-    keywords: ['要', '需要', '必须', '应该', '决定', '改成', '提升', '优化', '实现']
+    keywords: ['要', '需要', '必须', '应该', '决定', '改成', '提升', '优化', '实现'],
+    // 复用 Phase 2 的并发参数
+    enable_parallel_windows: options.enable_parallel_windows,
+    max_concurrent_windows: options.max_concurrent_windows,
+    history_aware: options.history_aware
   };
 
-  const result = await requirementsL123Api.extract(payload);
+  let totalInserted = 0;
+  let totalDuplicates = 0;
+  let bundlesProcessed = 0;
+  let gotFinal = false;
 
-  pipelineState.phases[3].l123Count = result.total_inserted || 0;
-  addLog('Phase 3', `完成！抽取 ${result.total_inserted} 条需求，处理 ${result.bundles_processed} 个 bundles`, 'success');
+  await requirementsL123Api.extractStream(payload, (eventName, eventData) => {
+    if (eventName === 'init') {
+      addLog('Phase 3', `初始化: ${eventData.total_spans} spans, ${eventData.total_anchors || 0} 锚点`);
+    } else if (eventName === 'anchors_selected') {
+      addLog('Phase 3', `选择锚点: ${eventData.total_anchors} 个`);
+    } else if (eventName === 'parallel_batch_start') {
+      addLog('Phase 3', `🚀 并行模式 | 总锚点: ${eventData.total_anchors} | 并发: ${eventData.max_concurrent}`);
+    } else if (eventName === 'anchor_start') {
+      addLog('Phase 3', `处理锚点 #${eventData.anchor_idx}`);
+    } else if (eventName === 'anchor_complete') {
+      bundlesProcessed++;
+      totalInserted += eventData.inserted || 0;
+      totalDuplicates += eventData.duplicates || 0;
+      addLog('Phase 3', `✓ 锚点 #${eventData.anchor_idx} | r=${eventData.r} | 插入: ${eventData.inserted} | 重复: ${eventData.duplicates}`);
+    } else if (eventName === 'anchor_error') {
+      addLog('Phase 3', `✗ 锚点 #${eventData.anchor_idx} 失败: ${eventData.error}`, 'warning');
+    } else if (eventName === 'parallel_batch_complete') {
+      addLog('Phase 3', `✅ 并行处理完成 | 总计: ${eventData.total_anchors_processed} 个锚点`);
+    } else if (eventName === 'final') {
+      totalInserted = eventData.total_inserted || totalInserted;
+      totalDuplicates = eventData.total_duplicates || totalDuplicates;
+      bundlesProcessed = eventData.bundles_processed || bundlesProcessed;
+      gotFinal = true;
+      addLog('Phase 3', `完成！抽取 ${totalInserted} 条需求（重复 ${totalDuplicates}），处理 ${bundlesProcessed} 个 bundles`, 'success');
+    } else if (eventName === 'error') {
+      throw new Error(eventData.message);
+    }
+  });
 
+  if (!gotFinal) {
+    throw new Error('Phase 3 流结束但未收到 final 事件');
+  }
+
+  pipelineState.phases[3].l123Count = totalInserted;
   pipelineState.phases[3].status = 'completed';
 }
 
@@ -747,6 +813,39 @@ function handleExit() {
 .analysis-container {
   flex: 1;
   display: flex;
+
+/* Tooltip implementation */
+.tooltip-container {
+  position: relative;
+  display: inline-flex;
+  cursor: help;
+}
+.text-muted {
+  color: rgba(28, 40, 52, 0.4);
+}
+.tooltip-text {
+  visibility: hidden;
+  width: 200px;
+  background-color: #333;
+  color: #fff;
+  text-align: center;
+  border-radius: 4px;
+  padding: 5px;
+  position: absolute;
+  z-index: 10;
+  bottom: 125%;
+  left: 50%;
+  margin-left: -100px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  font-size: 11px;
+  font-weight: normal;
+}
+.tooltip-container:hover .tooltip-text {
+  visibility: visible;
+  opacity: 1;
+}
+
   flex-direction: column;
   height: 100%;
   overflow: hidden;
@@ -976,5 +1075,56 @@ function handleExit() {
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(28, 40, 52, 0.2);
+}
+
+/* Toggle Switch */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(28, 40, 52, 0.2);
+  transition: 0.3s;
+  border-radius: 24px;
+}
+
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.3s;
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background-color: var(--accent);
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+  transform: translateX(20px);
+}
+
+.toggle-switch input:focus + .toggle-slider {
+  box-shadow: 0 0 0 3px rgba(196, 105, 47, 0.1);
 }
 </style>

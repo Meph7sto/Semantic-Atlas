@@ -26,7 +26,11 @@ const form = ref({
   maxSpansPerBundle: 12,
   tokenLimit: 1500, // null/0 表示不限制
   topM2Hop: 5,
-  keywords: '要,需要,必须,应该,决定,改成,提升,优化,实现'
+  keywords: '要,需要,必须,应该,决定,改成,提升,优化,实现',
+  enableParallel: false, // 是否启用并行处理
+  maxConcurrent: 5, // 最大并发数
+  historyAware: false, // 是否启用历史感知（串行记忆）
+  resetBeforeExtract: true // 抽取前是否清理该 session 的历史结果
 })
 
 const isExtracting = ref(false)
@@ -197,7 +201,11 @@ async function startExtraction() {
       max_spans_per_bundle: Number(form.value.maxSpansPerBundle) || 12,
       token_limit: Number(form.value.tokenLimit) || 0,
       top_m_2hop: Number(form.value.topM2Hop) || 5,
-      keywords: normalizeKeywords(form.value.keywords)
+      keywords: normalizeKeywords(form.value.keywords),
+      enable_parallel_windows: !!form.value.enableParallel,
+      max_concurrent_windows: Number(form.value.maxConcurrent) || 5,
+      history_aware: !!form.value.historyAware,
+      reset_before_extract: !!form.value.resetBeforeExtract
     }
 
     extractionResult.value = await requirementsL123Api.extract(payload)
@@ -411,6 +419,49 @@ onMounted(async () => {
                   class="mt-2 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-black focus:ring-black"
                 />
               </div>
+
+              <div class="md:col-span-2">
+                <label class="flex items-center justify-between text-sm font-medium text-zinc-700">
+                  <span class="flex items-center gap-2">
+                    锚点并行处理（Phase 3）
+                    <span class="text-xs text-zinc-500 font-normal">并行抽取多个锚点</span>
+                  </span>
+                  <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" v-model="form.enableParallel" class="sr-only peer">
+                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-zinc-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-zinc-900"></div>
+                  </label>
+                </label>
+                <div v-if="form.enableParallel" class="mt-3 pl-4 border-l-2 border-zinc-200">
+                  <label class="block text-sm font-medium text-zinc-700">最大并发锚点数（Phase 3）</label>
+                  <input
+                    v-model.number="form.maxConcurrent"
+                    type="number"
+                    min="1"
+                    max="20"
+                    class="mt-2 w-32 rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-black focus:ring-black"
+                  />
+                  <p class="mt-1 text-xs text-zinc-500">同时处理的锚点数量（1-20）</p>
+                </div>
+                <div v-else class="mt-3 pl-4 border-l-2 border-zinc-200">
+                  <label class="flex items-center gap-2">
+                    <input v-model="form.historyAware" type="checkbox" class="w-4 h-4 rounded border-zinc-300" />
+                    <span class="text-sm text-zinc-700 font-medium">串行记忆（History Aware）</span>
+                  </label>
+                  <p class="mt-1 text-xs text-zinc-500">
+                    仅在关闭并行处理时生效。开启后大模型可以看到前面锚点已生成的需求，避免重复。
+                  </p>
+                </div>
+              </div>
+
+              <div class="md:col-span-2">
+                <label class="flex items-center gap-2">
+                  <input v-model="form.resetBeforeExtract" type="checkbox" class="w-4 h-4 rounded border-zinc-300" />
+                  <span class="text-sm text-zinc-700 font-medium">重跑前清理该 session 的 L1/L2/L3 结果</span>
+                </label>
+                <p class="mt-1 text-xs text-zinc-500">
+                  建议开启。每次点击“开始抽取并写库”前先删除该 session 的历史需求，避免多次重跑累积重复条目。
+                </p>
+              </div>
             </div>
           </div>
 
@@ -457,6 +508,7 @@ onMounted(async () => {
             <div class="mt-2 grid grid-cols-2 gap-3 text-xs text-zinc-700">
               <div>anchors: {{ extractionResult.total_anchors }}</div>
               <div>bundles_processed: {{ extractionResult.bundles_processed }}</div>
+              <div>cleared: {{ extractionResult.cleared_before_extract ?? 0 }}</div>
               <div>inserted: {{ extractionResult.total_inserted }}</div>
               <div>duplicates: {{ extractionResult.total_duplicates }}</div>
             </div>

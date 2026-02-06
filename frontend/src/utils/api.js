@@ -213,6 +213,54 @@ export const requirementsL123Api = {
         return resp.data
     },
 
+    /**
+     * 流式需求抽取（支持并发处理）
+     * @param {Object} payload - 抽取参数
+     * @param {Function} onEvent - 事件回调 (eventName, eventData) => void
+     * @returns {Promise<void>}
+     */
+    async extractStream(payload, onEvent) {
+        const response = await fetch('/api/requirements/extract_l123/stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        })
+
+        if (!response.ok) {
+            const text = await response.text()
+            throw new Error(`HTTP ${response.status}: ${text}`)
+        }
+
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+
+        while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+            buffer = lines.pop() || ''
+
+            let currentEvent = 'message'
+            for (const line of lines) {
+                if (line.startsWith('event: ')) {
+                    currentEvent = line.slice(7).trim()
+                } else if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6))
+                        if (onEvent) {
+                            onEvent(currentEvent, data)
+                        }
+                    } catch (e) {
+                        console.warn('Failed to parse SSE data:', line, e)
+                    }
+                }
+            }
+        }
+    },
+
     async listBySession(sessionId, { level = null, page = 1, perPage = 50 } = {}) {
         const params = {
             page,
