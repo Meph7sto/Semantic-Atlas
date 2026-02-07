@@ -104,7 +104,6 @@
 .ref-app .rail.collapsed .brand-sub,
 .ref-app .rail.collapsed .rail-link span:not(.nav-icon),
 .ref-app .rail.collapsed .meta-block,
-.ref-app .rail.collapsed .rail-exit,
 .ref-app .rail.collapsed .footer-label,
 .ref-app .rail.collapsed .footer-value {
   display: none;
@@ -308,7 +307,7 @@
 .ref-app .rail-meta {
   display: grid;
   gap: 20px;
-  margin-top: 0;
+  margin-top: auto;
 }
 
 .ref-app .meta-block {
@@ -380,8 +379,37 @@
 
 .ref-app .rail-exit {
   width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   justify-content: center;
   padding: 10px 0;
+}
+
+.ref-app .rail-guide {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+  padding: 10px 0;
+}
+
+.ref-app .rail.collapsed .rail-meta {
+  gap: 12px;
+}
+
+.ref-app .rail.collapsed .rail-guide,
+.ref-app .rail.collapsed .rail-exit {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  margin: 0 auto;
+}
+
+.ref-app .rail.collapsed .rail-guide span,
+.ref-app .rail.collapsed .rail-exit span {
+  display: none;
 }
 
 .ref-app .canvas {

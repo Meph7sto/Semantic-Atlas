@@ -3,7 +3,7 @@
     <button
       type="button"
       class="sidebar-toggle"
-      @click="isCollapsed = !isCollapsed"
+      @click="toggleSidebar"
       aria-label="Toggle Sidebar"
     >
       <svg
@@ -58,20 +58,22 @@
             </svg>
           </button>
           <!-- 子菜单 -->
-          <div v-if="expandedMenus[item.key] && !isCollapsed" class="nav-submenu">
-            <button
-              v-for="child in item.children"
-              :key="child.key"
-              type="button"
-              class="rail-link submenu-item"
-              :class="{ active: child.key === activePage }"
-              @click="$emit('navigate', child.key)"
-            >
-              <component v-if="child.icon" :is="child.icon" class="submenu-icon-svg" />
-              <span v-else class="submenu-dot"></span>
-              <span>{{ child.label }}</span>
-            </button>
-          </div>
+          <Transition :name="isCollapsed ? '' : 'submenu-collapse'">
+            <div v-if="expandedMenus[item.key] && !isCollapsed && !isSidebarTransitioning" class="nav-submenu">
+              <button
+                v-for="child in item.children"
+                :key="child.key"
+                type="button"
+                class="rail-link submenu-item"
+                :class="{ active: child.key === activePage }"
+                @click="$emit('navigate', child.key)"
+              >
+                <component v-if="child.icon" :is="child.icon" class="submenu-icon-svg" />
+                <span v-else class="submenu-dot"></span>
+                <span>{{ child.label }}</span>
+              </button>
+            </div>
+          </Transition>
         </div>
         <!-- 普通导航项 -->
         <button
@@ -102,20 +104,20 @@
         <div class="footer-label">下次审计</div>
         <div class="footer-value">12 天</div>
       </div>
-      <button type="button" class="ghost rail-guide" @click="router.push('/guide')">
+      <button type="button" class="ghost rail-guide" @click="router.push('/guide')" :title="isCollapsed ? '返回 Guide' : ''">
+        <Compass class="rail-action-icon" />
         <span v-if="!isCollapsed">返回 Guide</span>
-        <span v-else>Guide</span>
       </button>
-      <button type="button" class="ghost rail-exit" @click="$emit('exit')">
+      <button type="button" class="ghost rail-exit" @click="$emit('exit')" :title="isCollapsed ? '返回登录' : ''">
+        <LogOut class="rail-action-icon" />
         <span v-if="!isCollapsed">返回登录</span>
-        <span v-else>Exit</span>
       </button>
     </div>
   </aside>
 </template>
 
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import {
   LayoutDashboard,
@@ -127,7 +129,9 @@ import {
   FileCheck,
   FileBarChart,
   Sparkles,
-  Package
+  Package,
+  Compass,
+  LogOut
 } from 'lucide-vue-next';
 
 const router = useRouter();
@@ -162,29 +166,84 @@ const props = defineProps({
 defineEmits(["exit", "navigate"]);
 
 const isCollapsed = ref(false);
+const isSidebarTransitioning = ref(false);
+let sidebarTransitionTimer = null;
 
 // 展开的菜单状态
-const expandedMenus = ref({
-  "project-management": false,
-  "products": false,
-});
+const EXPANDED_MENUS_STORAGE_KEY = "semantic-atlas.sidebar.expandedMenus";
 
-// 当 activePage 是子菜单项时，自动展开父菜单
-watch(() => props.activePage, (newPage) => {
-  // 检查是否是 project-management 的子项
-  const projectChildren = ['requirements-collection', 'requirements', 'requirements-analysis'];
-  if (projectChildren.includes(newPage)) {
-    expandedMenus.value['project-management'] = true;
+const getInitialExpandedMenus = () => {
+  const defaults = {
+    "project-management": false,
+    "products": false,
+  };
+
+  if (typeof window === "undefined") return defaults;
+
+  try {
+    const raw = window.sessionStorage.getItem(EXPANDED_MENUS_STORAGE_KEY);
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return defaults;
+
+    return {
+      ...defaults,
+      ...Object.fromEntries(
+        Object.keys(defaults).map((k) => [k, Boolean(parsed[k])])
+      ),
+    };
+  } catch {
+    return defaults;
   }
-  // 检查是否是 products 相关页面
-  if (newPage === 'products') {
-    expandedMenus.value['products'] = false;
+};
+
+const expandedMenus = ref(getInitialExpandedMenus());
+
+// 当 activePage 是子菜单项时，自动展开父菜单（但不会自动收缩已展开的菜单）
+watch(() => props.activePage, (newPage) => {
+  // 检查是否是 project-management 的子项，如果是则自动展开（不在子项时不自动收缩）
+  const projectChildren = ['requirements-collection', 'requirements', 'requirements-analysis'];
+  if (projectChildren.includes(newPage) && !isCollapsed.value) {
+    expandedMenus.value['project-management'] = true;
   }
 }, { immediate: true });
 
 // Update global CSS variable for sidebar width
 watch(isCollapsed, (v) => {
   document.documentElement.style.setProperty('--sidebar-width', v ? '80px' : '260px');
+});
+
+watch(
+  expandedMenus,
+  (v) => {
+    if (typeof window === "undefined") return;
+    try {
+      window.sessionStorage.setItem(EXPANDED_MENUS_STORAGE_KEY, JSON.stringify(v));
+    } catch {
+      // ignore storage failures
+    }
+  },
+  { deep: true }
+);
+
+const toggleSidebar = () => {
+  isCollapsed.value = !isCollapsed.value;
+  isSidebarTransitioning.value = true;
+
+  if (sidebarTransitionTimer) {
+    clearTimeout(sidebarTransitionTimer);
+  }
+
+  sidebarTransitionTimer = window.setTimeout(() => {
+    isSidebarTransitioning.value = false;
+    sidebarTransitionTimer = null;
+  }, 320);
+};
+
+onBeforeUnmount(() => {
+  if (sidebarTransitionTimer) {
+    clearTimeout(sidebarTransitionTimer);
+  }
 });
 
 const commonNav = [
@@ -262,5 +321,31 @@ const roleCaption = computed(() => {
 .rail-link.active .nav-icon-svg,
 .submenu-item.active .submenu-icon-svg {
   opacity: 1;
+}
+
+.submenu-collapse-enter-active,
+.submenu-collapse-leave-active {
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.24s ease, transform 0.3s ease;
+}
+
+.submenu-collapse-enter-from,
+.submenu-collapse-leave-to {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+.submenu-collapse-enter-to,
+.submenu-collapse-leave-from {
+  max-height: 220px;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.rail-action-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
 }
 </style>
