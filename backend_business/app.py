@@ -20,6 +20,8 @@ from backend_business.routes.product_routes import product_bp
 from backend_business.routes.push_routes import push_bp
 from backend_business.routes.mobile_chat_routes import mobile_chat_bp
 from backend_business.routes.deduplication_route import dedup_bp
+from backend_business.routes.ai_chat_routes import ai_chat_bp
+from backend_business.routes.agent_task_routes import agent_task_bp
 
 
 def create_app() -> Flask:
@@ -49,6 +51,8 @@ def create_app() -> Flask:
     app.register_blueprint(push_bp, url_prefix="/api/push")
     app.register_blueprint(mobile_chat_bp, url_prefix="/api/mobile")
     app.register_blueprint(dedup_bp, url_prefix="/api/dedup")
+    app.register_blueprint(ai_chat_bp, url_prefix="/api/ai-chat")
+    app.register_blueprint(agent_task_bp, url_prefix="/api/agent-tasks")
 
     # 兼容主框架：提供 /health（非 /api/health）
     @app.get("/health")

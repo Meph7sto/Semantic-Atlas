@@ -830,3 +830,87 @@ def init_db(conn):
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_mobile_chat_created_at ON mobile_chat_messages(created_at)"
         )
+
+        # ========================
+        # AI Chat Sessions Table (AI 聊天会话)
+        # ========================
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ai_chat_sessions (
+                session_id TEXT PRIMARY KEY,
+                project_id TEXT REFERENCES manage_projects(project_id) ON DELETE SET NULL,
+                user_id TEXT NOT NULL,
+                title TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_project ON ai_chat_sessions(project_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_user ON ai_chat_sessions(user_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_updated ON ai_chat_sessions(updated_at)"
+        )
+
+        # ========================
+        # AI Chat Messages Table (AI 聊天消息)
+        # ========================
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ai_chat_messages (
+                message_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES ai_chat_sessions(session_id) ON DELETE CASCADE,
+                role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+                content TEXT NOT NULL,
+                metadata JSONB,
+                is_read BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_session ON ai_chat_messages(session_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_created ON ai_chat_messages(created_at)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_unread ON ai_chat_messages(session_id, is_read) WHERE is_read = FALSE"
+        )
+
+        # ========================
+        # Agent Pending Tasks Table (Agent 待审任务)
+        # ========================
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_pending_tasks (
+                task_id TEXT PRIMARY KEY,
+                session_id TEXT REFERENCES ai_chat_sessions(session_id) ON DELETE CASCADE,
+                project_id TEXT REFERENCES manage_projects(project_id) ON DELETE SET NULL,
+                user_id TEXT NOT NULL,
+                task_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                payload JSONB,
+                status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'expired')),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                resolved_at TIMESTAMPTZ
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_tasks_user ON agent_pending_tasks(user_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_tasks_project ON agent_pending_tasks(project_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_pending_tasks(status)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_tasks_pending ON agent_pending_tasks(user_id, status) WHERE status = 'pending'"
+        )

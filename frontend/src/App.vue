@@ -1,7 +1,8 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import AlphaSidebar from '@/components/alpha/AlphaSidebar.vue'
+import AiFloatingBall from '@/components/ai-chat/AiFloatingBall.vue'
 
 const route = useRoute()
 
@@ -12,12 +13,24 @@ const isAlphaRoute = computed(() => !isMainRoute.value && !isGuideRoute.value)
 
 // Alpha sidebar state
 const isSidebarOpen = ref(true)
+
+// Main routes: use lastProjectId if available
+const lastProjectId = ref(localStorage.getItem('lastProjectId') || null)
+
+watch(
+  () => route.fullPath,
+  () => {
+    lastProjectId.value = localStorage.getItem('lastProjectId') || null
+  }
+)
 </script>
 
 <template>
   <!-- Main routes: Self-contained layout -->
   <div v-if="isMainRoute" class="min-h-screen">
     <RouterView />
+    <!-- AI Floating Ball -->
+    <AiFloatingBall :project-id="lastProjectId" />
   </div>
 
   <!-- Guide route: Full-screen without sidebar -->
