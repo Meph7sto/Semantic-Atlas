@@ -139,6 +139,15 @@ const handleEnter = async () => {
     // Navigate to dashboard
     router.push({ name: 'main-dashboard' });
 
+    // Persist minimal identity for audit/permission headers
+    try {
+      const actor = trimmedAccount || "Test User";
+      localStorage.setItem("actor", actor);
+      localStorage.setItem("role", selectedRole.value);
+    } catch (_) {
+      // ignore
+    }
+
     emit("enter", {
       role: selectedRole.value,
       user: {
@@ -151,6 +160,13 @@ const handleEnter = async () => {
     console.error(error);
     // Even on error, for prototype, just enter
     router.push({ name: 'main-dashboard' });
+    try {
+      const actor = trimmedAccount || "Test User";
+      localStorage.setItem("actor", actor);
+      localStorage.setItem("role", selectedRole.value);
+    } catch (_) {
+      // ignore
+    }
     emit("enter", { role: selectedRole.value, user: { role: selectedRole.value } });
   } finally {
     loading.value = false;

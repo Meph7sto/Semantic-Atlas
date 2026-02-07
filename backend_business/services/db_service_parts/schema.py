@@ -111,19 +111,11 @@ def init_db(conn):
             )
             """
         )
-        cur.execute(
-            "ALTER TABLE bundles ADD COLUMN IF NOT EXISTS context_run_id TEXT"
-        )
-        cur.execute(
-            "ALTER TABLE bundles ADD COLUMN IF NOT EXISTS session_id TEXT"
-        )
-        cur.execute(
-            "ALTER TABLE bundles ADD COLUMN IF NOT EXISTS order_index INTEGER"
-        )
+        cur.execute("ALTER TABLE bundles ADD COLUMN IF NOT EXISTS context_run_id TEXT")
+        cur.execute("ALTER TABLE bundles ADD COLUMN IF NOT EXISTS session_id TEXT")
+        cur.execute("ALTER TABLE bundles ADD COLUMN IF NOT EXISTS order_index INTEGER")
         cur.execute("ALTER TABLE bundles ADD COLUMN IF NOT EXISTS status TEXT")
-        cur.execute(
-            "ALTER TABLE bundles ADD COLUMN IF NOT EXISTS context_summary TEXT"
-        )
+        cur.execute("ALTER TABLE bundles ADD COLUMN IF NOT EXISTS context_summary TEXT")
         cur.execute("ALTER TABLE bundles ADD COLUMN IF NOT EXISTS meta JSONB")
         cur.execute(
             "ALTER TABLE bundles ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
@@ -415,6 +407,53 @@ def init_db(conn):
         # Requirements Management (Monitor)
         # ========================
 
+        # ========================
+        # Product Layer (产品薄层)
+        # ========================
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS manage_products (
+                product_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+                roadmap TEXT,
+                version TEXT,
+                tags JSONB,
+                created_by TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_manage_products_status ON manage_products(status)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_manage_products_created_at ON manage_products(created_at)"
+        )
+
+        # 产品成员表（可选：用于产品级别角色管理）
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS manage_product_members (
+                id SERIAL PRIMARY KEY,
+                product_id TEXT NOT NULL REFERENCES manage_products(product_id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'admin', 'member', 'viewer')),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE(product_id, user_id)
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_manage_product_members_product ON manage_product_members(product_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_manage_product_members_user ON manage_product_members(user_id)"
+        )
+
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS manage_projects (
@@ -422,11 +461,23 @@ def init_db(conn):
                 name TEXT NOT NULL,
                 description TEXT,
                 status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+                product_id TEXT REFERENCES manage_products(product_id) ON DELETE SET NULL,
                 created_by TEXT,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             """
+        )
+        # 为已有表添加 product_id 列（兼容旧数据）
+        cur.execute(
+            "ALTER TABLE manage_projects ADD COLUMN IF NOT EXISTS product_id TEXT REFERENCES manage_products(product_id) ON DELETE SET NULL"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_manage_projects_product ON manage_projects(product_id)"
+        )
+        # 项目-Session 绑定：记录当前关联的采集 session_id
+        cur.execute(
+            "ALTER TABLE manage_projects ADD COLUMN IF NOT EXISTS current_session_id TEXT"
         )
 
         cur.execute(
@@ -691,6 +742,7 @@ def init_db(conn):
             CREATE TABLE IF NOT EXISTS manage_audit_logs (
                 log_id TEXT PRIMARY KEY,
                 project_id TEXT,
+                product_id TEXT,
                 actor TEXT,
                 action TEXT,
                 target_type TEXT,
@@ -700,8 +752,30 @@ def init_db(conn):
             )
             """
         )
+        # 兼容旧部署：为已存在的审计表补齐 product_id 字段
+        cur.execute(
+            "ALTER TABLE manage_audit_logs ADD COLUMN IF NOT EXISTS product_id TEXT"
+        )
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_manage_audit_logs_project ON manage_audit_logs(project_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_manage_audit_logs_product ON manage_audit_logs(product_id)"
+        )
+
+        # 兼容旧数据：此前产品审计误用 project_id 字段存放 product_id
+        cur.execute(
+            """
+            UPDATE manage_audit_logs
+            SET product_id = project_id,
+                project_id = NULL
+            WHERE product_id IS NULL
+              AND project_id IS NOT NULL
+              AND (
+                target_type IN ('product', 'product_member')
+                OR target_type LIKE 'product%'
+              )
+            """
         )
 
         # ========================

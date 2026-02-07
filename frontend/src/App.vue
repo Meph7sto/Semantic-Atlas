@@ -17,20 +17,12 @@ const isSidebarOpen = ref(true)
 <template>
   <!-- Main routes: Self-contained layout -->
   <div v-if="isMainRoute" class="min-h-screen">
-    <RouterView v-slot="{ Component }">
-      <keep-alive>
-        <component :is="Component" />
-      </keep-alive>
-    </RouterView>
+    <RouterView />
   </div>
 
   <!-- Guide route: Full-screen without sidebar -->
   <div v-else-if="isGuideRoute" class="min-h-screen bg-white">
-    <RouterView v-slot="{ Component }">
-      <keep-alive>
-        <component :is="Component" />
-      </keep-alive>
-    </RouterView>
+    <RouterView />
   </div>
 
   <!-- Alpha routes: Sidebar + Content layout -->
@@ -38,11 +30,7 @@ const isSidebarOpen = ref(true)
     <AlphaSidebar v-model:isOpen="isSidebarOpen" />
 
     <main class="flex-1 flex flex-col h-full overflow-hidden bg-white relative transition-all duration-300">
-      <RouterView v-slot="{ Component }">
-        <keep-alive>
-          <component :is="Component" />
-        </keep-alive>
-      </RouterView>
+      <RouterView />
     </main>
   </div>
 </template>

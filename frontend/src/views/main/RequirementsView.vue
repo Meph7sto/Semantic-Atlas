@@ -16,13 +16,56 @@
           <div class="nav-left">
             <span class="nav-title">项目管理 · 需求</span>
           </div>
-          <div class="nav-center">
-            <div class="session-indicator" v-if="sessionId">
+          <div class="nav-center" style="gap: 8px; background: rgba(47, 143, 137, 0.06); padding: 6px 16px; border-radius: 4px; border: 1px solid rgba(47, 143, 137, 0.15);">
+            <!-- 项目选择 -->
+            <div class="session-indicator">
+              <Briefcase class="w-3 h-3" />
+              <span class="session-label">项目:</span>
+              <select
+                v-model="selectedProjectId"
+                class="session-input"
+                style="width: min(200px, 18vw); padding: 3px 6px;"
+              >
+                <option value="">未选择</option>
+                <option v-for="p in projects" :key="p.project_id" :value="p.project_id">
+                  {{ p.name }}
+                </option>
+              </select>
+            </div>
+            <!-- Session 输入 -->
+            <div class="session-indicator">
               <Database class="w-3 h-3" />
               <span class="session-label">Session:</span>
-              <span class="session-id">{{ sessionId.slice(0, 12) }}...</span>
+              <input
+                v-model="sessionIdDraft"
+                type="text"
+                class="session-input"
+                placeholder="输入 Session ID"
+                spellcheck="false"
+                autocomplete="off"
+                @keydown.enter.prevent="commitSessionId"
+                @blur="commitSessionId"
+              />
+              <button
+                v-if="sessionIdDraft"
+                type="button"
+                class="session-clear"
+                title="清空 Session"
+                @click="clearSessionId"
+              >
+                清空
+              </button>
+              <button
+                v-if="sessionMismatch"
+                type="button"
+                class="session-clear"
+                style="background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.3); color: #d97706;"
+                title="当前 Session 与项目绑定的不一致"
+                @click="useProjectSession"
+              >
+                切换为项目Session
+              </button>
             </div>
-            <span v-else class="jama-pill warning">未选择 Session</span>
           </div>
           <div class="page-actions">
             <button type="button" class="action-btn brown" @click="refreshData" :disabled="isLoading">
@@ -444,6 +487,7 @@ const timestamp = ref(new Date().toLocaleString());
 const notificationCount = ref(3);
 const routeNameToPageKey = {
   "main-dashboard": "dashboard",
+  "main-products": "products",
   "main-project": "project-management",
   "main-requirements": "requirements",
   "main-requirements-analysis": "requirements-analysis",
@@ -452,6 +496,7 @@ const routeNameToPageKey = {
 
 const pageKeyToRouteName = {
   "dashboard": "main-dashboard",
+  "products": "main-products",
   "project-management": "main-project",
   "requirements": "main-requirements",
   "requirements-analysis": "main-requirements-analysis",
@@ -470,6 +515,54 @@ const selectedProjectId = ref(localStorage.getItem('lastProjectId') || '');
 const manageReqIdMap = ref(new Map());
 const manageStatusMap = ref(new Map());
 const isSyncingStatus = ref(false);
+const projects = ref([]);
+const isLoadingProjects = ref(false);
+const projectSessionId = ref(''); // 项目绑定的 session
+const sessionMismatch = ref(false); // session 与项目不一致
+
+async function loadProjects() {
+  isLoadingProjects.value = true;
+  try {
+    const data = await manageApi.listProjects();
+    projects.value = data?.projects || [];
+  } catch (err) {
+    console.warn('加载项目列表失败', err);
+    projects.value = [];
+  } finally {
+    isLoadingProjects.value = false;
+  }
+}
+
+async function loadProjectSession() {
+  if (!selectedProjectId.value) {
+    projectSessionId.value = '';
+    sessionMismatch.value = false;
+    return;
+  }
+  try {
+    const proj = await manageApi.getProject(selectedProjectId.value);
+    projectSessionId.value = proj?.current_session_id || '';
+    checkSessionMismatch();
+  } catch (err) {
+    console.warn('加载项目 Session 失败', err);
+  }
+}
+
+function checkSessionMismatch() {
+  if (!selectedProjectId.value || !projectSessionId.value || !sessionId.value) {
+    sessionMismatch.value = false;
+    return;
+  }
+  sessionMismatch.value = sessionId.value !== projectSessionId.value;
+}
+
+function useProjectSession() {
+  if (projectSessionId.value) {
+    sessionIdDraft.value = projectSessionId.value;
+    sessionId.value = projectSessionId.value;
+    sessionMismatch.value = false;
+  }
+}
 
 // 需求状态定义
 const requirementStatuses = [
@@ -598,12 +691,27 @@ const hoveredNode = ref(null);
 
 // Session ID (从localStorage获取，与需求分析界面同步)
 const sessionId = ref(localStorage.getItem('lastSessionId') || '');
+const sessionIdDraft = ref(sessionId.value);
+
+function commitSessionId() {
+  const next = String(sessionIdDraft.value || '').trim();
+  sessionIdDraft.value = next;
+  if (next === sessionId.value) return;
+  sessionId.value = next;
+}
+
+function clearSessionId() {
+  sessionIdDraft.value = '';
+  if (sessionId.value) sessionId.value = '';
+  localStorage.removeItem('lastSessionId');
+}
 
 // 监听 session-changed 事件（来自需求分析界面）
 function handleSessionChanged(event) {
   const newSessionId = event.detail?.sessionId;
   if (newSessionId && newSessionId !== sessionId.value) {
     sessionId.value = newSessionId;
+    sessionIdDraft.value = newSessionId;
     loadRequirements();
   }
 }
@@ -617,10 +725,30 @@ function handleAnalysisCompleted(event) {
   }
 }
 
+// 监听项目切换
+watch(selectedProjectId, async (val) => {
+  if (val) {
+    localStorage.setItem('lastProjectId', val);
+    await loadProjectSession();
+    // 自动切换到项目 session
+    if (projectSessionId.value && projectSessionId.value !== sessionId.value) {
+      sessionId.value = projectSessionId.value;
+      sessionIdDraft.value = projectSessionId.value;
+    }
+  } else {
+    projectSessionId.value = '';
+    sessionMismatch.value = false;
+  }
+});
+
 // 监听 sessionId 变化
 watch(sessionId, (newVal) => {
+  if (newVal !== sessionIdDraft.value) {
+    sessionIdDraft.value = newVal;
+  }
   if (newVal && newVal.trim()) {
     localStorage.setItem('lastSessionId', newVal.trim());
+    checkSessionMismatch();
     loadRequirements();
   }
 });
@@ -1065,11 +1193,26 @@ function handleExit() {
   router.push({ name: "main-login" });
 }
 
-onMounted(() => {
+onMounted(async () => {
   // 监听来自需求分析界面的事件
   window.addEventListener('session-changed', handleSessionChanged);
   window.addEventListener('analysis-completed', handleAnalysisCompleted);
-  
+
+  // 加载项目列表
+  await loadProjects();
+
+  // 如果有项目，尝试从项目获取 session
+  if (selectedProjectId.value) {
+    await loadProjectSession();
+    // 如果当前没有 session 但项目有，使用项目的 session
+    if (!sessionId.value && projectSessionId.value) {
+      sessionId.value = projectSessionId.value;
+      sessionIdDraft.value = projectSessionId.value;
+    } else {
+      checkSessionMismatch();
+    }
+  }
+
   // 初始加载
   loadRequirements();
 });
@@ -1101,6 +1244,36 @@ onUnmounted(() => {
 .session-id {
   font-family: monospace;
   font-weight: 500;
+}
+
+.session-input {
+  width: min(520px, 42vw);
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: monospace;
+  border: 1px solid rgba(47, 143, 137, 0.25);
+  background: rgba(255, 255, 255, 0.85);
+  color: #134e4a;
+  outline: none;
+}
+
+.session-input:focus {
+  border-color: rgba(47, 143, 137, 0.55);
+  box-shadow: 0 0 0 3px rgba(47, 143, 137, 0.12);
+}
+
+.session-clear {
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid rgba(47, 143, 137, 0.25);
+  background: rgba(255, 255, 255, 0.85);
+  color: rgba(28, 40, 52, 0.7);
+  cursor: pointer;
+}
+
+.session-clear:hover {
+  color: rgba(28, 40, 52, 0.9);
+  border-color: rgba(47, 143, 137, 0.45);
 }
 
 .jama-pill.warning {

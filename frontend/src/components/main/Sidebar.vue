@@ -126,7 +126,8 @@ import {
   GitBranch,
   FileCheck,
   FileBarChart,
-  Sparkles
+  Sparkles,
+  Package
 } from 'lucide-vue-next';
 
 const router = useRouter();
@@ -165,6 +166,7 @@ const isCollapsed = ref(false);
 // 展开的菜单状态
 const expandedMenus = ref({
   "project-management": false,
+  "products": false,
 });
 
 // 当 activePage 是子菜单项时，自动展开父菜单
@@ -173,6 +175,10 @@ watch(() => props.activePage, (newPage) => {
   const projectChildren = ['requirements-collection', 'requirements', 'requirements-analysis'];
   if (projectChildren.includes(newPage)) {
     expandedMenus.value['project-management'] = true;
+  }
+  // 检查是否是 products 相关页面
+  if (newPage === 'products') {
+    expandedMenus.value['products'] = false;
   }
 }, { immediate: true });
 
@@ -183,13 +189,14 @@ watch(isCollapsed, (v) => {
 
 const commonNav = [
   { key: "dashboard", label: "概览", icon: LayoutDashboard },
+  { key: "products", label: "产品管理", icon: Package },
   {
     key: "project-management",
     label: "项目管理",
     icon: FolderKanban,
     children: [
       { key: "requirements-collection", label: "需求采集", icon: Sparkles },
-      { key: "requirements", label: "需求", icon: FileText },
+      { key: "requirements", label: "需求管理", icon: FileText },
       { key: "requirements-analysis", label: "需求分析", icon: BarChart3 },
     ]
   },
@@ -202,6 +209,7 @@ const commonNav = [
 const getIconColor = (key) => {
   const colors = {
     dashboard: "#2f8f89",
+    products: "#7c3aed",
     "project-management": "#c4692f",
     defects: "#c45b60",
     tracking: "#5d6b76",

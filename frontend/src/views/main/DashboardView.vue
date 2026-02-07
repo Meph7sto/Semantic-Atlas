@@ -39,6 +39,8 @@ const routeNameToPageKey = {
   "main-project": "project-management",
   "main-requirements": "requirements",
   "main-requirements-analysis": "requirements-analysis",
+  "main-requirements-collection": "requirements-collection",
+  "main-products": "products",
 };
 
 const pageKeyToRouteName = {
@@ -46,6 +48,8 @@ const pageKeyToRouteName = {
   "project-management": "main-project",
   "requirements": "main-requirements",
   "requirements-analysis": "main-requirements-analysis",
+  "requirements-collection": "main-requirements-collection",
+  "products": "main-products",
 };
 
 const activePage = computed(() => routeNameToPageKey[route.name] || "dashboard");

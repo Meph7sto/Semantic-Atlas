@@ -16,8 +16,8 @@
           <div class="nav-left">
             <span class="nav-title">项目管理 · 需求采集</span>
           </div>
-          <div class="nav-center">
-            <span class="jama-pill">转录文本 → 需求入库 一键处理</span>
+          <div class="nav-center" style="background: rgba(47, 143, 137, 0.06); padding: 6px 16px; border-radius: 4px; border: 1px solid rgba(47, 143, 137, 0.15); min-width: 200px; display: flex; justify-content: center;">
+            <span style="font-weight: 600; color: var(--teal); font-size: 15px;">当前项目：{{ currentProjectName }}</span>
           </div>
           <div class="page-actions">
             <span class="nav-text">自动化流程</span>
@@ -29,6 +29,32 @@
           <div class="analysis-layout">
             <!-- 左侧面板：输入和控制 -->
             <div class="control-panel">
+              <!-- 项目选择 -->
+              <div class="control-section">
+                <div class="control-header">
+                  <label class="control-label">所属项目</label>
+                  <button
+                    type="button"
+                    class="refresh-btn"
+                    :disabled="isLoadingProjects"
+                    @click="loadProjects"
+                  >
+                    <RefreshCw class="w-3 h-3" :class="isLoadingProjects ? 'animate-spin' : ''" />
+                    刷新
+                  </button>
+                </div>
+                <select v-model="selectedProjectId" class="control-select">
+                  <option value="">请选择项目（必选）</option>
+                  <option v-for="p in projects" :key="p.project_id" :value="p.project_id">
+                    {{ p.name }}{{ p.current_session_id ? ' · Session: ' + p.current_session_id.slice(0, 8) + '...' : '' }}
+                  </option>
+                </select>
+                <div v-if="!selectedProjectId" class="notice-box" style="background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); color: #d97706; padding: 8px 12px; font-size: 12px; margin-top: 4px;">
+                  <AlertCircle class="notice-icon" style="width: 14px; height: 14px;" />
+                  请先选择项目，采集结果将绑定到该项目
+                </div>
+              </div>
+
               <!-- Session ID 输入 -->
               <div class="control-section">
                 <label class="control-label">Session ID（可空）</label>
@@ -359,10 +385,10 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, reactive } from "vue";
+import { ref, computed, nextTick, reactive, onMounted, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import Sidebar from "../../components/main/Sidebar.vue";
-import { requirementsL123Api, l4RequirementsApi } from "../../utils/api";
+import { requirementsL123Api, l4RequirementsApi, manageApi } from "../../utils/api";
 import {
   Loader2,
   Sparkles,
@@ -373,7 +399,8 @@ import {
   CheckCircle2,
   XCircle,
   Zap,
-  FileText
+  FileText,
+  RefreshCw
 } from "lucide-vue-next";
 
 const router = useRouter();
@@ -387,6 +414,7 @@ const notificationCount = ref(3);
 
 const routeNameToPageKey = {
   "main-dashboard": "dashboard",
+  "main-products": "products",
   "main-project": "project-management",
   "main-requirements": "requirements",
   "main-requirements-analysis": "requirements-analysis",
@@ -395,6 +423,7 @@ const routeNameToPageKey = {
 
 const pageKeyToRouteName = {
   "dashboard": "main-dashboard",
+  "products": "main-products",
   "project-management": "main-project",
   "requirements": "main-requirements",
   "requirements-analysis": "main-requirements-analysis",
@@ -402,6 +431,29 @@ const pageKeyToRouteName = {
 };
 
 const activePage = computed(() => routeNameToPageKey[route.name] || "requirements-collection");
+
+// 项目状态
+const projects = ref([]);
+const selectedProjectId = ref(localStorage.getItem('lastProjectId') || '');
+const isLoadingProjects = ref(false);
+
+const currentProjectName = computed(() => {
+  const p = projects.value.find(p => p.project_id === selectedProjectId.value);
+  return p ? p.name : '未选择项目';
+});
+
+async function loadProjects() {
+  isLoadingProjects.value = true;
+  try {
+    const data = await manageApi.listProjects();
+    projects.value = data?.projects || [];
+  } catch (err) {
+    console.warn('加载项目列表失败', err);
+    projects.value = [];
+  } finally {
+    isLoadingProjects.value = false;
+  }
+}
 
 // 输入状态
 const sessionId = ref('');
@@ -455,7 +507,7 @@ const phases = [
 
 // 计算属性
 const canStart = computed(() => {
-  return transcriptText.value.trim().length > 0;
+  return transcriptText.value.trim().length > 0 && !!selectedProjectId.value;
 });
 
 // 辅助函数
@@ -845,9 +897,21 @@ async function runPipeline() {
     if (pipelineState.phases[1].sessionId) {
       localStorage.setItem('lastSessionId', pipelineState.phases[1].sessionId);
 
+      // 绑定 session 到当前项目
+      if (selectedProjectId.value) {
+        try {
+          await manageApi.setProjectSession(selectedProjectId.value, pipelineState.phases[1].sessionId);
+          localStorage.setItem('lastProjectId', selectedProjectId.value);
+          addLog('系统', `Session 已绑定到项目`, 'success');
+        } catch (err) {
+          addLog('系统', `绑定 Session 到项目失败: ${err.message}`, 'error');
+        }
+      }
+
       window.dispatchEvent(new CustomEvent('collection-completed', {
         detail: {
           sessionId: pipelineState.phases[1].sessionId,
+          projectId: selectedProjectId.value,
           spanCount: pipelineState.phases[1].spanCount,
           bundleCount: pipelineState.phases[2].bundleCount,
           l123Count: pipelineState.phases[3].l123Count,
@@ -912,6 +976,17 @@ function handleNavigate(page) {
 function handleExit() {
   router.push({ name: "main-login" });
 }
+
+// 保存项目选择
+watch(selectedProjectId, (val) => {
+  if (val) {
+    localStorage.setItem('lastProjectId', val);
+  }
+});
+
+onMounted(() => {
+  loadProjects();
+});
 </script>
 
 <style scoped>

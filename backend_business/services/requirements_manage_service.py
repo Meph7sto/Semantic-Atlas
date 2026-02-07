@@ -38,7 +38,7 @@ class RequirementsManageService:
                     """
                     INSERT INTO manage_projects(project_id, name, description, created_by, created_at, updated_at)
                     VALUES (%s, %s, %s, %s, NOW(), NOW())
-                    RETURNING project_id, name, description, status, created_by, created_at::text AS created_at
+                    RETURNING project_id, name, description, status, product_id, current_session_id, created_by, created_at::text AS created_at
                     """,
                     (project_id, name, description, created_by),
                 )
@@ -58,7 +58,7 @@ class RequirementsManageService:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     """
-                    SELECT project_id, name, description, status, created_by, created_at::text AS created_at
+                    SELECT project_id, name, description, status, product_id, current_session_id, created_by, created_at::text AS created_at
                     FROM manage_projects
                     ORDER BY created_at DESC
                     """
@@ -70,7 +70,7 @@ class RequirementsManageService:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     """
-                    SELECT project_id, name, description, status, created_by, created_at::text AS created_at
+                    SELECT project_id, name, description, status, product_id, current_session_id, created_by, created_at::text AS created_at
                     FROM manage_projects
                     WHERE project_id = %s
                     """,
@@ -78,6 +78,25 @@ class RequirementsManageService:
                 )
                 row = cur.fetchone()
                 return dict(row) if row else None
+
+    def set_project_session(
+        self, project_id: str, session_id: str, updated_by: str = ""
+    ) -> Dict[str, Any]:
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    UPDATE manage_projects
+                    SET current_session_id = %s, updated_at = NOW()
+                    WHERE project_id = %s
+                    RETURNING project_id, name, description, status, product_id, current_session_id, created_by, created_at::text AS created_at
+                    """,
+                    (session_id, project_id),
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise ValueError("项目不存在")
+                return dict(row)
 
     # ----------------------
     # Requirements
@@ -1591,8 +1610,8 @@ class RequirementsManageService:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO manage_audit_logs (log_id, project_id, actor, action, target_type, target_id, detail, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
+                    INSERT INTO manage_audit_logs (log_id, project_id, product_id, actor, action, target_type, target_id, detail, created_at)
+                    VALUES (%s, %s, NULL, %s, %s, %s, %s, %s::jsonb, NOW())
                     """,
                     (
                         log_id,

@@ -21,6 +21,7 @@ import ProjectManageView from '../views/main/ProjectManageView.vue'
 import RequirementsView from '../views/main/RequirementsView.vue'
 import RequirementsAnalysisView from '../views/main/RequirementsAnalysisView.vue'
 import RequirementsCollectionView from '../views/main/RequirementsCollectionView.vue'
+import ProductManageView from '../views/main/ProductManageView.vue'
 
 // Guide view
 import GuideView from '../views/GuideView.vue'
@@ -42,6 +43,7 @@ const router = createRouter({
         {
             path: '/main',
             name: 'main',
+            redirect: '/guide',
             children: [
                 {
                     path: 'login',
@@ -72,12 +74,18 @@ const router = createRouter({
                     path: 'requirements-collection',
                     name: 'main-requirements-collection',
                     component: RequirementsCollectionView
+                },
+                {
+                    path: 'products',
+                    name: 'main-products',
+                    component: ProductManageView
                 }
             ]
         },
         {
             path: '/alpha',
             name: 'alpha',
+            redirect: '/alpha/transcript-ingestion',
             children: [
                 {
                     path: 'conflict',
@@ -150,6 +158,11 @@ const router = createRouter({
                     component: FileReceive
                 }
             ]
+        },
+        // Fallback: keep layout predictable on bad URLs
+        {
+            path: '/:pathMatch(.*)*',
+            redirect: '/guide'
         }
     ]
 })

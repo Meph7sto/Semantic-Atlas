@@ -16,8 +16,8 @@
           <div class="nav-left">
             <span class="nav-title">项目管理 · 需求分析</span>
           </div>
-          <div class="nav-center">
-            <span class="jama-pill">追溯 · 冲突 · 分类 一键分析</span>
+          <div class="nav-center" style="background: rgba(47, 143, 137, 0.06); padding: 6px 16px; border-radius: 4px; border: 1px solid rgba(47, 143, 137, 0.15); min-width: 200px; display: flex; justify-content: center;">
+            <span style="font-weight: 600; color: var(--teal); font-size: 15px;">当前项目：{{ currentProjectName }}</span>
           </div>
           <div class="page-actions">
             <span class="nav-text">分析进度</span>
@@ -29,6 +29,37 @@
           <div class="analysis-layout">
             <!-- 左侧面板：输入和控制 -->
             <div class="control-panel">
+              <!-- 项目选择 -->
+              <div class="control-section">
+                <div class="control-header">
+                  <label class="control-label">所属项目</label>
+                  <button
+                    type="button"
+                    class="refresh-btn"
+                    :disabled="isLoadingProjects"
+                    @click="loadProjects"
+                  >
+                    <RefreshCw class="w-3 h-3" :class="isLoadingProjects ? 'animate-spin' : ''" />
+                    刷新
+                  </button>
+                </div>
+                <select v-model="selectedProjectId" class="control-select">
+                  <option value="">（可选：关联项目）</option>
+                  <option v-for="p in projects" :key="p.project_id" :value="p.project_id">
+                    {{ p.name }}{{ p.current_session_id ? ' · Session: ' + p.current_session_id.slice(0, 8) + '...' : '' }}
+                  </option>
+                </select>
+                <button
+                  v-if="selectedProjectId && projectSessionId && projectSessionId !== sessionId"
+                  type="button"
+                  class="refresh-btn"
+                  style="margin-top: 4px; width: 100%; justify-content: center;"
+                  @click="sessionId = projectSessionId"
+                >
+                  使用项目 Session: {{ projectSessionId.slice(0, 12) }}...
+                </button>
+              </div>
+
               <!-- Session ID 输入 -->
               <div class="control-section">
                 <label class="control-label">Session ID</label>
@@ -313,7 +344,8 @@ import {
   analysisApi,
   requirementsL123Api,
   getLatestClassification,
-  l4RequirementsApi
+  l4RequirementsApi,
+  manageApi
 } from "../../utils/api";
 import * as echarts from "echarts";
 import {
@@ -337,6 +369,7 @@ const timestamp = ref(new Date().toLocaleString());
 const notificationCount = ref(3);
 const routeNameToPageKey = {
   "main-dashboard": "dashboard",
+  "main-products": "products",
   "main-project": "project-management",
   "main-requirements": "requirements",
   "main-requirements-analysis": "requirements-analysis",
@@ -345,6 +378,7 @@ const routeNameToPageKey = {
 
 const pageKeyToRouteName = {
   "dashboard": "main-dashboard",
+  "products": "main-products",
   "project-management": "main-project",
   "requirements": "main-requirements",
   "requirements-analysis": "main-requirements-analysis",
@@ -352,6 +386,46 @@ const pageKeyToRouteName = {
 };
 
 const activePage = computed(() => routeNameToPageKey[route.name] || "requirements-analysis");
+
+// 项目状态
+const projects = ref([]);
+const selectedProjectId = ref(localStorage.getItem('lastProjectId') || '');
+const isLoadingProjects = ref(false);
+const projectSessionId = ref(''); // 项目绑定的 session
+
+const currentProjectName = computed(() => {
+  const p = projects.value.find(p => p.project_id === selectedProjectId.value);
+  return p ? p.name : '未选择项目';
+});
+
+async function loadProjects() {
+  isLoadingProjects.value = true;
+  try {
+    const data = await manageApi.listProjects();
+    projects.value = data?.projects || [];
+  } catch (err) {
+    console.warn('加载项目列表失败', err);
+    projects.value = [];
+  } finally {
+    isLoadingProjects.value = false;
+  }
+}
+
+async function loadProjectSession() {
+  if (!selectedProjectId.value) return;
+  try {
+    const proj = await manageApi.getProject(selectedProjectId.value);
+    if (proj?.current_session_id) {
+      projectSessionId.value = proj.current_session_id;
+      // 如果当前没有 session 或想自动同步，使用项目的 session
+      if (!sessionId.value) {
+        sessionId.value = proj.current_session_id;
+      }
+    }
+  } catch (err) {
+    console.warn('加载项目 Session 失败', err);
+  }
+}
 
 // Session 和 Context Run
 const sessionId = ref(localStorage.getItem('lastSessionId') || '');
@@ -365,6 +439,13 @@ watch(sessionId, (newVal) => {
     localStorage.setItem('lastSessionId', newVal.trim());
     // 广播事件通知其他组件
     window.dispatchEvent(new CustomEvent('session-changed', { detail: { sessionId: newVal.trim() } }));
+  }
+});
+
+watch(selectedProjectId, (val) => {
+  if (val) {
+    localStorage.setItem('lastProjectId', val);
+    loadProjectSession();
   }
 });
 
@@ -1000,13 +1081,21 @@ async function loadExistingResults() {
 }
 
 onMounted(async () => {
+  // 加载项目列表
+  await loadProjects();
+
+  // 如果有项目但没有 sessionId，尝试从项目获取
+  if (selectedProjectId.value && !sessionId.value) {
+    await loadProjectSession();
+  }
+
   if (sessionId.value) {
     await Promise.all([
       loadContextRuns(),
       loadRequirements(),
       loadExistingResults()
     ]);
-    
+
     // 如果有追溯结果，初始化图表
     if (traceResult.value && activeTab.value === 'network') {
       await nextTick();

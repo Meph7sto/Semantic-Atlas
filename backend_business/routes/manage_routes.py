@@ -58,6 +58,31 @@ def get_project(project_id: str):
     return jsonify(project)
 
 
+@manage_bp.patch("/projects/<project_id>")
+def update_project(project_id: str):
+    data = request.get_json(silent=True) or {}
+    session_id = data.get("current_session_id")
+    if session_id is None:
+        return _json_error("Missing current_session_id")
+    actor = _get_actor()
+    try:
+        project = service.set_project_session(
+            project_id=project_id, session_id=session_id, updated_by=actor
+        )
+    except Exception as e:
+        return _json_error(str(e))
+
+    service.add_audit_log(
+        project_id=project_id,
+        actor=actor,
+        action="update",
+        target_type="project",
+        target_id=project_id,
+        detail={"current_session_id": session_id},
+    )
+    return jsonify(project)
+
+
 @manage_bp.post("/projects/<project_id>/requirements")
 def create_requirement(project_id: str):
     data = request.get_json(silent=True) or {}
