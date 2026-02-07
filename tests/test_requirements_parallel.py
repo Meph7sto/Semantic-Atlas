@@ -78,6 +78,26 @@ class TestRequirementsExtractionParallel(unittest.TestCase):
         self.assertEqual(len(result["errors"]), 1)
         self.assertEqual(result["errors"][0]["anchor_idx"], 1)
 
+    def test_parallel_forces_history_aware_off(self):
+        service = RequirementsExtractionService(
+            dsn="postgresql://test:test@localhost:5432/test"
+        )
+        service.data_access.get_spans_by_session = MagicMock(
+            return_value=[{"span_id": "s1", "text": "a"}]
+        )
+
+        with patch.object(service, "_run_parallel", return_value=[]):
+            result = service.extract_requirements_for_session(
+                session_id="test-session",
+                bundle_strategy="sequence",
+                anchor_strategy="all",
+                enable_parallel=True,
+                max_concurrent=2,
+                history_aware=True,
+            )
+
+        self.assertFalse(result["history_aware"])
+
 
 class TestRequirementsExtractionAsync(unittest.IsolatedAsyncioTestCase):
     async def test_execute_bundle_runs_in_thread(self):

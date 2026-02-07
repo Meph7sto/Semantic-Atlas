@@ -182,6 +182,12 @@ class RequirementsExtractionService:
         Returns:
             抽取结果统计
         """
+        if enable_parallel and history_aware:
+            logger.warning(
+                "history_aware is serial-only; forcing history_aware=False in parallel mode"
+            )
+            history_aware = False
+
         params = normalize_extraction_params(
             r=r,
             adaptive_retry_r2=adaptive_retry_r2,
@@ -294,6 +300,12 @@ class RequirementsExtractionService:
         Yields:
             SSE 事件 {"event": "...", "data": {...}}
         """
+        if enable_parallel and history_aware:
+            logger.warning(
+                "history_aware is serial-only; forcing history_aware=False in parallel mode"
+            )
+            history_aware = False
+
         params = normalize_extraction_params(
             r=r,
             adaptive_retry_r2=adaptive_retry_r2,

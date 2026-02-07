@@ -120,6 +120,32 @@
                     <span>Mock 模式</span>
                     <input v-model="options.mock_llm" type="checkbox" style="width: 16px; height: 16px;" />
                   </div>
+
+                  <div class="stat-row" style="border-top: 1px dashed rgba(28, 40, 52, 0.12); margin-top: 10px; padding-top: 10px;">
+                    <span style="display: flex; align-items: center; gap: 6px;">
+                      抽取后去重
+                      <span style="font-size: 11px; color: rgba(28, 40, 52, 0.5);">(Phase 3)</span>
+                    </span>
+                    <label class="toggle-switch">
+                      <input v-model="options.post_dedup" type="checkbox" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
+
+                  <div v-if="options.post_dedup" class="stat-row">
+                    <span style="padding-left: 12px; font-size: 12px;">相似度阈值</span>
+                    <input v-model.number="options.dedup_threshold" type="number" min="0.5" max="0.99" step="0.01" class="control-input" style="width: 80px; padding: 4px 8px;" />
+                  </div>
+
+                  <div v-if="options.post_dedup" class="stat-row">
+                    <span style="padding-left: 12px; font-size: 12px;">LLM 建议</span>
+                    <input v-model="options.dedup_with_llm" type="checkbox" style="width: 16px; height: 16px;" />
+                  </div>
+
+                  <div v-if="options.post_dedup" class="stat-row">
+                    <span style="padding-left: 12px; font-size: 12px;">自动合并（写库）</span>
+                    <input v-model="options.dedup_auto_merge" type="checkbox" style="width: 16px; height: 16px;" />
+                  </div>
                 </div>
               </div>
 
@@ -271,6 +297,56 @@
                         <div style="font-size: 18px; font-weight: 600; color: #15803d;">{{ pipelineState.phases[4].l4Count }}</div>
                       </div>
                     </div>
+
+                    <div
+                      v-if="pipelineState.phases[3].deduplication && options.post_dedup"
+                      style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed rgba(34, 197, 94, 0.25);"
+                    >
+                      <div style="font-weight: 600; margin-bottom: 10px;">抽取后去重（Phase 3）</div>
+                      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;">
+                        <div style="text-align: center; padding: 8px; background: rgba(255,255,255,0.8); border: 1px solid rgba(34, 197, 94, 0.2);">
+                          <div style="font-size: 10px; color: rgba(28, 40, 52, 0.6); text-transform: uppercase;">Groups</div>
+                          <div style="font-size: 18px; font-weight: 600; color: #15803d;">{{ pipelineState.phases[3].deduplication.total_duplicates ?? 0 }}</div>
+                        </div>
+                        <div style="text-align: center; padding: 8px; background: rgba(255,255,255,0.8); border: 1px solid rgba(34, 197, 94, 0.2);">
+                          <div style="font-size: 10px; color: rgba(28, 40, 52, 0.6); text-transform: uppercase;">Scanned</div>
+                          <div style="font-size: 18px; font-weight: 600; color: #15803d;">{{ pipelineState.phases[3].deduplication.total_requirements_scanned ?? 0 }}</div>
+                        </div>
+                        <div style="text-align: center; padding: 8px; background: rgba(255,255,255,0.8); border: 1px solid rgba(34, 197, 94, 0.2);">
+                          <div style="font-size: 10px; color: rgba(28, 40, 52, 0.6); text-transform: uppercase;">Merged</div>
+                          <div style="font-size: 18px; font-weight: 600; color: #15803d;">{{ pipelineState.phases[3].deduplication.total_merged ?? '-' }}</div>
+                        </div>
+                      </div>
+
+                      <div
+                        v-if="(pipelineState.phases[3].deduplication.duplicate_groups || []).length"
+                        style="margin-top: 12px; border: 1px solid rgba(28, 40, 52, 0.08); background: rgba(255, 255, 255, 0.7); padding: 10px; max-height: 180px; overflow-y: auto;"
+                      >
+                        <div style="font-size: 12px; font-weight: 600; margin-bottom: 8px; color: rgba(28, 40, 52, 0.8);">重复组明细</div>
+                        <div
+                          v-for="group in pipelineState.phases[3].deduplication.duplicate_groups"
+                          :key="group.group_id"
+                          style="padding: 8px 0; border-bottom: 1px solid rgba(28, 40, 52, 0.06);"
+                        >
+                          <div style="display: flex; justify-content: space-between; gap: 8px;">
+                            <div style="font-size: 12px; font-weight: 600; color: rgba(28, 40, 52, 0.85);">{{ group.level }} · {{ group.group_id }}</div>
+                            <div style="font-size: 11px; color: rgba(28, 40, 52, 0.55);">sim: {{ group.similarity }}</div>
+                          </div>
+                          <div style="margin-top: 6px; font-size: 11px; color: rgba(28, 40, 52, 0.75); white-space: pre-wrap;">
+                            <span style="color: rgba(28, 40, 52, 0.5);">repr:</span>
+                            {{ group.representative_text || '' }}
+                          </div>
+                          <div v-if="group.llm_decision" style="margin-top: 6px; font-size: 11px; color: rgba(28, 40, 52, 0.75);">
+                            <span style="color: rgba(28, 40, 52, 0.5);">llm:</span>
+                            merge={{ group.llm_decision.should_merge }} primary={{ group.llm_decision.primary_req_id || '-' }}
+                          </div>
+                          <div v-if="group.merge_result" style="margin-top: 4px; font-size: 11px; color: rgba(28, 40, 52, 0.75);">
+                            <span style="color: rgba(28, 40, 52, 0.5);">db:</span>
+                            success={{ group.merge_result.success }} deleted={{ group.merge_result.deleted_count ?? 0 }}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -344,7 +420,13 @@ const options = reactive({
   mock_llm: false,
   enable_parallel_windows: false,
   max_concurrent_windows: 5,
-  history_aware: false
+  history_aware: false,
+
+  // Phase 3 post extraction dedup
+  post_dedup: false,
+  dedup_with_llm: false,
+  dedup_auto_merge: false,
+  dedup_threshold: 0.85
 });
 
 // 流程状态
@@ -354,7 +436,7 @@ const pipelineState = reactive({
   phases: {
     1: { status: 'pending', sessionId: null, spanCount: 0 },
     2: { status: 'pending', contextRunId: null, bundleCount: 0 },
-    3: { status: 'pending', l123Count: 0 },
+    3: { status: 'pending', l123Count: 0, deduplication: null },
     4: { status: 'pending', l4Count: 0 }
   },
   error: null
@@ -409,7 +491,7 @@ function resetPipelineState() {
   pipelineState.error = null;
   pipelineState.phases[1] = { status: 'pending', sessionId: null, spanCount: 0 };
   pipelineState.phases[2] = { status: 'pending', contextRunId: null, bundleCount: 0 };
-  pipelineState.phases[3] = { status: 'pending', l123Count: 0 };
+  pipelineState.phases[3] = { status: 'pending', l123Count: 0, deduplication: null };
   pipelineState.phases[4] = { status: 'pending', l4Count: 0 };
   logs.value = [];
 }
@@ -612,6 +694,13 @@ async function runPhase3() {
   pipelineState.currentPhase = 3;
   addLog('Phase 3', '开始抽取 L1/L2/L3 需求...');
 
+  if (options.dedup_auto_merge && !options.post_dedup) {
+    throw new Error('已选择“自动合并”，请先开启“抽取后去重”')
+  }
+  if (options.dedup_auto_merge && !options.dedup_with_llm) {
+    options.dedup_with_llm = true
+  }
+
   const payload = {
     session_id: pipelineState.phases[1].sessionId,
     context_run_id: pipelineState.phases[2].contextRunId,
@@ -628,7 +717,13 @@ async function runPhase3() {
     // 复用 Phase 2 的并发参数
     enable_parallel_windows: options.enable_parallel_windows,
     max_concurrent_windows: options.max_concurrent_windows,
-    history_aware: options.history_aware
+    history_aware: options.history_aware,
+
+    // Post extraction dedup
+    post_dedup: options.post_dedup,
+    dedup_with_llm: options.dedup_with_llm || options.dedup_auto_merge,
+    dedup_auto_merge: options.dedup_auto_merge,
+    dedup_threshold: Number(options.dedup_threshold) || 0.85
   };
 
   let totalInserted = 0;
@@ -660,6 +755,17 @@ async function runPhase3() {
       bundlesProcessed = eventData.bundles_processed || bundlesProcessed;
       gotFinal = true;
       addLog('Phase 3', `完成！抽取 ${totalInserted} 条需求（重复 ${totalDuplicates}），处理 ${bundlesProcessed} 个 bundles`, 'success');
+    } else if (eventName === 'dedup_start') {
+      addLog('Phase 3', '开始抽取后去重...', 'info');
+    } else if (eventName === 'dedup_final') {
+      pipelineState.phases[3].deduplication = eventData || null;
+      const dupCount = eventData?.total_duplicates ?? 0;
+      const merged = eventData?.total_merged;
+      addLog(
+        'Phase 3',
+        `去重完成：重复组 ${dupCount}${merged === null || merged === undefined ? '' : `，合并 ${merged}`}`,
+        dupCount > 0 ? 'warning' : 'success'
+      );
     } else if (eventName === 'error') {
       throw new Error(eventData.message);
     }

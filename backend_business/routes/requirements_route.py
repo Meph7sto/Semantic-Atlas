@@ -14,11 +14,39 @@ from backend_business.services.ai_proxy import ai_proxy
 from backend_business.services.requirements_extraction import (
     RequirementsExtractionService,
 )
+from backend_business.services.requirements_deduplication import (
+    RequirementsDeduplicationService,
+)
 
 requirements_bp = Blueprint("requirements", __name__)
 
 # 初始化需求抽取服务
 requirements_service = RequirementsExtractionService(dsn=settings.POSTGRES_DSN)
+dedup_service = RequirementsDeduplicationService(dsn=settings.POSTGRES_DSN)
+
+
+def _parse_bool(value: Any, default: bool = False) -> bool:
+    """Parse common bool-like inputs from JSON payloads."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "y", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "n", "off", ""}:
+            return False
+    return bool(value)
+
+
+def _parse_optional_bool(value: Any):
+    """Parse bool-like input and preserve None when missing."""
+    if value is None:
+        return None
+    return _parse_bool(value, default=False)
 
 
 @requirements_bp.post("/requirements/extract")
@@ -117,17 +145,28 @@ def extract_l123_requirements():
     )  # all | keyword | informative
     r = data.get("r", 2)
     model_name = data.get("model", "deepseek-chat")
-    use_toolcall = bool(data.get("use_toolcall", True))
-    adaptive_retry_r2 = bool(data.get("adaptive_retry_r2", False))
+    use_toolcall = _parse_bool(data.get("use_toolcall"), default=True)
+    adaptive_retry_r2 = _parse_optional_bool(data.get("adaptive_retry_r2"))
     max_spans_per_bundle = data.get("max_spans_per_bundle")
     token_limit = data.get("token_limit")
     top_m_2hop = data.get("top_m_2hop")
     keywords = data.get("keywords")
-    history_aware = bool(data.get("history_aware", False))
-    reset_before_extract = bool(data.get("reset_before_extract", True))
+    history_aware = _parse_bool(data.get("history_aware"), default=False)
+    reset_before_extract = _parse_bool(data.get("reset_before_extract"), default=True)
+
+    # Optional: post extraction dedup
+    post_dedup = _parse_bool(data.get("post_dedup"), default=False)
+    dedup_with_llm = _parse_bool(data.get("dedup_with_llm"), default=False)
+    dedup_auto_merge = _parse_bool(data.get("dedup_auto_merge"), default=False)
+    dedup_threshold = data.get("dedup_threshold")
+    try:
+        dedup_max_concurrent = int(data.get("dedup_max_concurrent", 5))
+    except (TypeError, ValueError):
+        dedup_max_concurrent = 5
+    dedup_max_concurrent = max(1, min(10, dedup_max_concurrent))
 
     # 可选并发参数（与 Phase 2 保持一致的命名）
-    enable_parallel = bool(data.get("enable_parallel_windows", False))
+    enable_parallel = _parse_bool(data.get("enable_parallel_windows"), default=False)
     try:
         max_concurrent = int(data.get("max_concurrent_windows", 5))
     except (TypeError, ValueError):
@@ -137,8 +176,8 @@ def extract_l123_requirements():
     try:
         cleared_before_extract = 0
         if reset_before_extract:
-            cleared_before_extract = requirements_service.clear_requirements_for_session(
-                session_id
+            cleared_before_extract = (
+                requirements_service.clear_requirements_for_session(session_id)
             )
 
         result = requirements_service.extract_requirements_for_session(
@@ -158,6 +197,26 @@ def extract_l123_requirements():
             max_concurrent=max_concurrent,
             history_aware=history_aware,
         )
+
+        if post_dedup:
+            # Use per-request threshold if provided
+            service = dedup_service
+            if dedup_threshold is not None:
+                service = RequirementsDeduplicationService(
+                    dsn=settings.POSTGRES_DSN,
+                    similarity_threshold=float(dedup_threshold),
+                    default_model=model_name,
+                )
+
+            dedup_result = service.detect_duplicates(
+                session_id=session_id,
+                level=None,
+                with_llm_decision=dedup_with_llm,
+                auto_merge=dedup_auto_merge,
+                model_name=model_name,
+                max_concurrent=dedup_max_concurrent,
+            )
+            result["deduplication"] = dedup_result
         result["cleared_before_extract"] = cleared_before_extract
         return jsonify(result)
     except Exception as e:
@@ -180,17 +239,28 @@ def extract_l123_requirements_stream():
     anchor_strategy = data.get("anchor_strategy", "informative")
     r = data.get("r", 2)
     model_name = data.get("model", "deepseek-chat")
-    use_toolcall = bool(data.get("use_toolcall", True))
-    adaptive_retry_r2 = bool(data.get("adaptive_retry_r2", False))
+    use_toolcall = _parse_bool(data.get("use_toolcall"), default=True)
+    adaptive_retry_r2 = _parse_optional_bool(data.get("adaptive_retry_r2"))
     max_spans_per_bundle = data.get("max_spans_per_bundle")
     token_limit = data.get("token_limit")
     top_m_2hop = data.get("top_m_2hop")
     keywords = data.get("keywords")
-    history_aware = bool(data.get("history_aware", False))
-    reset_before_extract = bool(data.get("reset_before_extract", True))
+    history_aware = _parse_bool(data.get("history_aware"), default=False)
+    reset_before_extract = _parse_bool(data.get("reset_before_extract"), default=True)
+
+    # Optional: post extraction dedup
+    post_dedup = _parse_bool(data.get("post_dedup"), default=False)
+    dedup_with_llm = _parse_bool(data.get("dedup_with_llm"), default=False)
+    dedup_auto_merge = _parse_bool(data.get("dedup_auto_merge"), default=False)
+    dedup_threshold = data.get("dedup_threshold")
+    try:
+        dedup_max_concurrent = int(data.get("dedup_max_concurrent", 5))
+    except (TypeError, ValueError):
+        dedup_max_concurrent = 5
+    dedup_max_concurrent = max(1, min(10, dedup_max_concurrent))
 
     # 并发参数（复用 Phase 2 的参数名）
-    enable_parallel = bool(data.get("enable_parallel_windows", False))
+    enable_parallel = _parse_bool(data.get("enable_parallel_windows"), default=False)
     try:
         max_concurrent = int(data.get("max_concurrent_windows", 5))
     except (TypeError, ValueError):
@@ -200,8 +270,8 @@ def extract_l123_requirements_stream():
     try:
         cleared_before_extract = 0
         if reset_before_extract:
-            cleared_before_extract = requirements_service.clear_requirements_for_session(
-                session_id
+            cleared_before_extract = (
+                requirements_service.clear_requirements_for_session(session_id)
             )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -237,6 +307,31 @@ def extract_l123_requirements_stream():
 
                 yield f"event: {event_name}\n"
                 yield f"data: {json.dumps(event_data)}\n\n"
+
+            # Run dedup after stream completes successfully
+            if post_dedup:
+                yield "event: dedup_start\n"
+                yield f"data: {json.dumps({'session_id': session_id})}\n\n"
+
+                service = dedup_service
+                if dedup_threshold is not None:
+                    service = RequirementsDeduplicationService(
+                        dsn=settings.POSTGRES_DSN,
+                        similarity_threshold=float(dedup_threshold),
+                        default_model=model_name,
+                    )
+
+                dedup_result = service.detect_duplicates(
+                    session_id=session_id,
+                    level=None,
+                    with_llm_decision=dedup_with_llm,
+                    auto_merge=dedup_auto_merge,
+                    model_name=model_name,
+                    max_concurrent=dedup_max_concurrent,
+                )
+
+                yield "event: dedup_final\n"
+                yield f"data: {json.dumps(dedup_result)}\n\n"
         except Exception as e:
             yield f"event: error\n"
             yield f"data: {json.dumps({'message': str(e)})}\n\n"

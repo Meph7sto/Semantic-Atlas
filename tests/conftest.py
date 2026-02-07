@@ -85,12 +85,12 @@ def pytest_ignore_collect(collection_path, config):  # type: ignore[no-untyped-d
         return False
 
     basename = None
-    if hasattr(path, "basename"):
-        basename = getattr(path, "basename")
+    if hasattr(collection_path, "basename"):
+        basename = getattr(collection_path, "basename")
         if callable(basename):
             basename = basename()
-    if basename is None and hasattr(path, "name"):
-        basename = getattr(path, "name")
+    if basename is None and hasattr(collection_path, "name"):
+        basename = getattr(collection_path, "name")
 
     # These tests pull in backend_inference local HF engine.
     if str(basename) in {

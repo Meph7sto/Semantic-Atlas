@@ -381,7 +381,7 @@ class RequirementsExecutor:
         normalized = text.strip().lower()
         normalized = re.sub(r"\s+", "", normalized)
         normalized = re.sub(
-            r"[，,。.!！？?；;:：\-—（）()\[\]【】""\"'`]", "", normalized
+            r"[，,。.!！？?；;:：\-—（）()\[\]【】\"'`]", "", normalized
         )
         return normalized
 
@@ -445,7 +445,7 @@ class RequirementsExecutor:
         with self._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 existing_texts = self._load_existing_texts(cur, session_id)
-                for call in toolcalls:
+                for idx, call in enumerate(toolcalls):
                     level = call["level"]
                     text = call["text"].strip()
                     normalized_text = self._normalize_similarity_text(text)
@@ -457,6 +457,8 @@ class RequirementsExecutor:
                     fingerprint = self.compute_fingerprint(session_id, level, text)
                     req_id = str(uuid.uuid4())
 
+                    savepoint_name = f"req_insert_{idx}"
+                    cur.execute(f"SAVEPOINT {savepoint_name}")
                     try:
                         cur.execute(
                             """
@@ -479,7 +481,10 @@ class RequirementsExecutor:
                             existing_texts.setdefault(level, []).append(normalized_text)
                         else:
                             duplicates += 1
+                        cur.execute(f"RELEASE SAVEPOINT {savepoint_name}")
                     except Exception as e:
+                        cur.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
+                        cur.execute(f"RELEASE SAVEPOINT {savepoint_name}")
                         errors.append({"call": call, "error": str(e)})
 
         return {
