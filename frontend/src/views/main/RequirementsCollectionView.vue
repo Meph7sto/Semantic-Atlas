@@ -1035,7 +1035,7 @@ onMounted(() => {
 .analysis-layout {
   display: grid;
   grid-template-columns: 380px 1fr;
-  gap: 24px;
+  gap: 16px;
   flex: 1;
   min-height: 0; /* Important for nested scrolling */
 }
@@ -1044,10 +1044,10 @@ onMounted(() => {
 .control-panel {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
   background: rgba(255, 255, 255, 0.95);
   border: 1px solid rgba(28, 40, 52, 0.1);
-  padding: 24px;
+  padding: 16px;
   overflow-y: auto;
 }
 
@@ -1206,7 +1206,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 16px 24px;
+  padding: 10px 16px;
   border-bottom: 1px solid rgba(28, 40, 52, 0.08);
   background: rgba(28, 40, 52, 0.02);
 }
@@ -1214,7 +1214,7 @@ onMounted(() => {
 .result-content {
   flex: 1;
   overflow-y: auto;
-  padding: 24px;
+  padding: 16px;
 }
 
 /* 宽高度工具类兼容 */

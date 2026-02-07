@@ -1115,7 +1115,7 @@ onMounted(async () => {
 .analysis-layout {
   display: grid;
   grid-template-columns: 380px 1fr;
-  gap: 24px;
+  gap: 16px;
   height: calc(100vh - 180px);
 }
 
@@ -1126,7 +1126,7 @@ onMounted(async () => {
   gap: 16px;
   background: rgba(255, 255, 255, 0.95);
   border: 1px solid rgba(28, 40, 52, 0.1);
-  padding: 20px;
+  padding: 16px;
   overflow-y: auto;
 }
 
@@ -1345,7 +1345,7 @@ onMounted(async () => {
 .result-tabs {
   display: flex;
   gap: 4px;
-  padding: 12px 16px;
+  padding: 8px 12px;
   border-bottom: 1px solid rgba(28, 40, 52, 0.1);
   background: rgba(28, 40, 52, 0.02);
 }

@@ -1287,10 +1287,10 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 26px;
+  padding: 10px 16px;
   background: rgba(255, 255, 255, 0.9);
   border: 1px solid rgba(28, 40, 52, 0.1);
-  margin-bottom: 20px;
+  margin-bottom: 12px;
 }
 
 .level-tabs {
@@ -1302,7 +1302,7 @@ onUnmounted(() => {
 }
 
 .level-tab {
-  padding: 8px 16px;
+  padding: 6px 12px;
   font-size: 13px;
   font-family: "BodyWithTimesDigits", "Noto Sans SC", sans-serif;
   background: transparent;
@@ -1461,7 +1461,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 12px 16px;
+  padding: 8px 12px;
   border-bottom: 1px solid rgba(28, 40, 52, 0.1);
   background: rgba(255, 255, 255, 0.95);
 }
@@ -1708,7 +1708,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px;
+  padding: 10px 14px;
   border-bottom: 1px solid rgba(28, 40, 52, 0.1);
 }
 
@@ -1761,7 +1761,7 @@ onUnmounted(() => {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   min-height: 200px;
 }
 
@@ -1824,7 +1824,7 @@ onUnmounted(() => {
 
 .card-content {
   flex: 1;
-  padding: 12px;
+  padding: 8px;
   min-width: 0;
 }
 
