@@ -454,6 +454,7 @@ const routeNameToPageKey = {
   "main-dashboard": "dashboard",
   "main-project": "project-management",
   "main-requirements": "requirements",
+  "main-requirements-session": "requirements-session",
   "main-requirements-analysis": "requirements-analysis",
   "main-requirements-collection": "requirements-collection",
   "main-products": "products",
@@ -463,6 +464,7 @@ const pageKeyToRouteName = {
   "dashboard": "main-dashboard",
   "project-management": "main-project",
   "requirements": "main-requirements",
+  "requirements-session": "main-requirements-session",
   "requirements-analysis": "main-requirements-analysis",
   "requirements-collection": "main-requirements-collection",
   "products": "main-products",
@@ -694,6 +696,7 @@ const handleCreateProject = async () => {
 const goToProject = (project) => {
   // 兼容现有项目工作流：写入 lastProjectId，跳转到需求页
   localStorage.setItem("lastProjectId", project.project_id);
+  window.dispatchEvent(new CustomEvent('project-changed', { detail: { projectId: project.project_id } }));
   router.push({ name: "main-requirements" });
 };
 

@@ -407,7 +407,7 @@ async function importFromL123() {
   reqError.value = ''
   if (!importForm.value.session_id.trim()) return
   try {
-    const result = await manageApi.importFromL123(selectedProjectId.value, { session_id: importForm.value.session_id })
+    const result = await manageApi.importFromSession(selectedProjectId.value, { session_id: importForm.value.session_id })
     importStats.value = result.stats || null
     importMessage.value = `导入完成：L123新增 ${result.inserted_l123 || 0}，L4新增 ${result.inserted_l4 || 0}`
     await loadRequirements()
@@ -975,3 +975,4 @@ onMounted(loadProjects)
     </div>
   </div>
 </template>
+

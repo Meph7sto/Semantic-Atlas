@@ -432,10 +432,15 @@ export const manageApi = {
         return resp.data
     },
 
-    async importFromL123(projectId, payload) {
+    async importFromSession(projectId, payload) {
         const resp = await api.post(`/manage/projects/${encodeURIComponent(projectId)}/requirements/import`, payload)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
+    },
+
+    // Backward-compatible alias (old naming).
+    async importFromL123(projectId, payload) {
+        return this.importFromSession(projectId, payload)
     },
 
     async createMilestone(projectId, payload) {
@@ -959,6 +964,32 @@ export const aiChatApi = {
         if (useThinking) payload.use_thinking = useThinking
 
         const response = await fetch(`/api/ai-chat/sessions/${encodeURIComponent(sessionId)}/messages/stream`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Actor': localStorage.getItem('actor') || '',
+                'X-Role': localStorage.getItem('role') || '',
+            },
+            body: JSON.stringify(payload),
+        })
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`)
+        }
+
+        return response
+    },
+
+    /**
+     * Agent 流式发送消息（支持工具调用）
+     * 返回的 SSE 事件包含：user_message, thinking, token, tool_call, tool_result, task_created, assistant_message, finish, error, done
+     * @returns {Promise<Response>} Fetch Response for SSE streaming
+     */
+    async sendAgentMessageStream({ sessionId, content, projectId = null }) {
+        const payload = { content }
+        if (projectId) payload.project_id = projectId
+
+        const response = await fetch(`/api/ai-chat/sessions/${encodeURIComponent(sessionId)}/messages/agent/stream`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

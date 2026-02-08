@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import AlphaSidebar from '@/components/alpha/AlphaSidebar.vue'
 import AiFloatingBall from '@/components/ai-chat/AiFloatingBall.vue'
@@ -17,12 +17,41 @@ const isSidebarOpen = ref(true)
 // Main routes: use lastProjectId if available
 const lastProjectId = ref(localStorage.getItem('lastProjectId') || null)
 
+const syncLastProjectId = () => {
+  lastProjectId.value = localStorage.getItem('lastProjectId') || null
+}
+
 watch(
   () => route.fullPath,
   () => {
-    lastProjectId.value = localStorage.getItem('lastProjectId') || null
+    syncLastProjectId()
   }
 )
+
+const onProjectChanged = (e) => {
+  const pid = e?.detail?.projectId
+  if (pid !== undefined) {
+    lastProjectId.value = pid || null
+    return
+  }
+  syncLastProjectId()
+}
+
+const onStorage = (e) => {
+  if (e?.key === 'lastProjectId') syncLastProjectId()
+}
+
+onMounted(() => {
+  // Ensure we pick up latest value even if set during child mounts.
+  syncLastProjectId()
+  window.addEventListener('project-changed', onProjectChanged)
+  window.addEventListener('storage', onStorage)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('project-changed', onProjectChanged)
+  window.removeEventListener('storage', onStorage)
+})
 </script>
 
 <template>

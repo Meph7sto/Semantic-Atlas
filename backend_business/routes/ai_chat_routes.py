@@ -7,6 +7,7 @@ Handles AI chat sessions and messages with LLM integration.
 from flask import Blueprint, Response, jsonify, request
 
 from backend_business.services.ai_chat_service import ai_chat_service
+from backend_business.services.agent_tools_service import agent_stream_service
 
 ai_chat_bp = Blueprint("ai_chat", __name__)
 
@@ -231,6 +232,53 @@ def send_message_stream(session_id: str):
                 user_content=content,
                 system_prompt=system_prompt,
                 use_thinking_mode=use_thinking,
+            )
+        except Exception as e:
+            import json
+
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+
+    return Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@ai_chat_bp.route("/sessions/<session_id>/messages/agent/stream", methods=["POST"])
+def send_agent_message_stream(session_id: str):
+    """
+    Send a message and stream the AI agent reply with tool calling support.
+
+    This endpoint:
+    - Saves user message to database
+    - Calls inference backend with tools definition
+    - Streams tool_call, task_created, and content events
+    - Creates pending tasks for write operations (require user approval)
+    """
+    if not agent_stream_service:
+        return jsonify({"success": False, "error": "Agent 服务未初始化"}), 500
+
+    payload = request.get_json(silent=True) or {}
+    content = (payload.get("content") or "").strip()
+    project_id = payload.get("project_id")
+
+    user_id = _get_actor()
+
+    if not content:
+        return jsonify({"success": False, "error": "缺少 content"}), 400
+
+    def generate():
+        try:
+            yield from agent_stream_service.stream_agent_reply(
+                session_id=session_id,
+                user_id=user_id,
+                user_content=content,
+                project_id=project_id,
             )
         except Exception as e:
             import json

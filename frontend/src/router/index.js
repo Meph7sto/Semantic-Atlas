@@ -19,6 +19,7 @@ import LoginView from '../views/main/LoginView.vue'
 import DashboardView from '../views/main/DashboardView.vue'
 import ProjectManageView from '../views/main/ProjectManageView.vue'
 import RequirementsView from '../views/main/RequirementsView.vue'
+import RequirementsSessionView from '../views/main/RequirementsSessionView.vue'
 import RequirementsAnalysisView from '../views/main/RequirementsAnalysisView.vue'
 import RequirementsCollectionView from '../views/main/RequirementsCollectionView.vue'
 import ProductManageView from '../views/main/ProductManageView.vue'
@@ -64,6 +65,11 @@ const router = createRouter({
                     path: 'requirements',
                     name: 'main-requirements',
                     component: RequirementsView
+                },
+                {
+                    path: 'requirements-session',
+                    name: 'main-requirements-session',
+                    component: RequirementsSessionView
                 },
                 {
                     path: 'requirements-analysis',
