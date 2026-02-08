@@ -417,6 +417,7 @@ const routeNameToPageKey = {
   "main-products": "products",
   "main-project": "project-management",
   "main-requirements": "requirements",
+  "main-requirements-session": "requirements-session",
   "main-requirements-analysis": "requirements-analysis",
   "main-requirements-collection": "requirements-collection",
 };
@@ -426,6 +427,7 @@ const pageKeyToRouteName = {
   "products": "main-products",
   "project-management": "main-project",
   "requirements": "main-requirements",
+  "requirements-session": "main-requirements-session",
   "requirements-analysis": "main-requirements-analysis",
   "requirements-collection": "main-requirements-collection",
 };
@@ -981,6 +983,7 @@ function handleExit() {
 watch(selectedProjectId, (val) => {
   if (val) {
     localStorage.setItem('lastProjectId', val);
+    window.dispatchEvent(new CustomEvent('project-changed', { detail: { projectId: val } }));
   }
 });
 

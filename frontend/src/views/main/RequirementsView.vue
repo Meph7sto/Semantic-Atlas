@@ -17,14 +17,13 @@
             <span class="nav-title">项目管理 · 需求</span>
           </div>
           <div class="nav-center" style="gap: 8px; background: rgba(47, 143, 137, 0.06); padding: 6px 16px; border-radius: 4px; border: 1px solid rgba(47, 143, 137, 0.15);">
-            <!-- 项目选择 -->
             <div class="session-indicator">
               <Briefcase class="w-3 h-3" />
               <span class="session-label">项目:</span>
               <select
                 v-model="selectedProjectId"
                 class="session-input"
-                style="width: min(200px, 18vw); padding: 3px 6px;"
+                style="width: min(220px, 20vw); padding: 3px 6px;"
               >
                 <option value="">未选择</option>
                 <option v-for="p in projects" :key="p.project_id" :value="p.project_id">
@@ -32,40 +31,14 @@
                 </option>
               </select>
             </div>
-            <!-- Session 输入 -->
-            <div class="session-indicator">
-              <Database class="w-3 h-3" />
-              <span class="session-label">Session:</span>
-              <input
-                v-model="sessionIdDraft"
-                type="text"
-                class="session-input"
-                placeholder="输入 Session ID"
-                spellcheck="false"
-                autocomplete="off"
-                @keydown.enter.prevent="commitSessionId"
-                @blur="commitSessionId"
-              />
-              <button
-                v-if="sessionIdDraft"
-                type="button"
-                class="session-clear"
-                title="清空 Session"
-                @click="clearSessionId"
-              >
-                清空
-              </button>
-              <button
-                v-if="sessionMismatch"
-                type="button"
-                class="session-clear"
-                style="background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.3); color: #d97706;"
-                title="当前 Session 与项目绑定的不一致"
-                @click="useProjectSession"
-              >
-                切换为项目Session
-              </button>
-            </div>
+            <button
+              type="button"
+              class="session-clear"
+              title="查看 session 原始需求"
+              @click="router.push({ name: 'main-requirements-session' })"
+            >
+              查看会话需求
+            </button>
           </div>
           <div class="page-actions">
             <button type="button" class="action-btn primary" @click="openAddRequirementModal" :disabled="!selectedProjectId">
@@ -191,6 +164,86 @@
           </div>
         </div>
 
+        <!-- 编辑需求弹窗 -->
+        <div v-if="showEditRequirementModal" class="modal-overlay" @click.self="closeEditRequirementModal">
+          <div class="modal-container">
+            <div class="modal-header">
+              <h3>编辑需求</h3>
+              <button type="button" class="modal-close" @click="closeEditRequirementModal">
+                <X class="w-5 h-5" />
+              </button>
+            </div>
+            <form class="modal-body" @submit.prevent="submitEditRequirement">
+              <!-- 需求标题 -->
+              <div class="form-group">
+                <label class="form-label required">需求标题</label>
+                <input
+                  v-model="editRequirement.title"
+                  type="text"
+                  class="form-input"
+                  placeholder="输入需求标题"
+                  required
+                />
+              </div>
+
+              <!-- 需求描述 -->
+              <div class="form-group">
+                <label class="form-label">需求描述</label>
+                <textarea
+                  v-model="editRequirement.description"
+                  class="form-textarea"
+                  placeholder="详细描述需求内容..."
+                  rows="4"
+                ></textarea>
+              </div>
+
+              <!-- 优先级和状态 -->
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">优先级</label>
+                  <select v-model="editRequirement.priority" class="form-select">
+                    <option value="high">高</option>
+                    <option value="medium">中</option>
+                    <option value="low">低</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">状态</label>
+                  <select v-model="editRequirement.status" class="form-select">
+                    <option value="draft">草稿</option>
+                    <option value="under_review">审核中</option>
+                    <option value="confirmed">已确认</option>
+                    <option value="in_progress">进行中</option>
+                    <option value="completed">已完成</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- 标签 -->
+              <div class="form-group">
+                <label class="form-label">标签（用逗号分隔）</label>
+                <input
+                  v-model="editRequirement.tags"
+                  type="text"
+                  class="form-input"
+                  placeholder="例如: 功能, 性能, 安全"
+                />
+              </div>
+
+              <!-- 操作按钮 -->
+              <div class="modal-footer">
+                <button type="button" class="action-btn secondary" @click="closeEditRequirementModal">
+                  取消
+                </button>
+                <button type="submit" class="action-btn primary" :disabled="isEditSubmitting">
+                  <Loader2 v-if="isEditSubmitting" class="w-4 h-4 animate-spin" />
+                  {{ isEditSubmitting ? '保存中...' : '保存修改' }}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+
         <!-- 筛选和视图切换区域 -->
         <section class="requirements-toolbar" data-animate style="--delay: 0.1s">
           <!-- 左侧: 层级筛选 -->
@@ -263,18 +316,18 @@
           <!-- 空状态 -->
           <div v-else-if="filteredRequirements.length === 0 && !isLoading" class="empty-state">
             <FileText class="empty-icon" />
-            <p v-if="!sessionId">未选择 Session ID</p>
+            <p v-if="!selectedProjectId">未选择项目</p>
             <p v-else>暂无需求数据</p>
             <p class="empty-hint">
-              {{ !sessionId ? '请先前往「需求分析」界面选择或输入 Session ID' : '请先在「需求分析」界面进行一键分析' }}
+              {{ !selectedProjectId ? '请先选择一个项目' : '当前项目下还没有导入或创建需求' }}
             </p>
             <button 
-              v-if="!sessionId"
+              v-if="!selectedProjectId"
               type="button" 
               class="action-btn brown mt-4"
-              @click="router.push({ name: 'main-requirements-analysis' })"
+              @click="router.push({ name: 'main-project' })"
             >
-              前往需求分析
+              前往项目管理
             </button>
           </div>
 
@@ -361,6 +414,7 @@
                         </div>
                       </div>
                     </th>
+                    <th class="w-16">操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -406,9 +460,19 @@
                         {{ req.rationale || '-' }}
                       </span>
                     </td>
+                    <td>
+                      <button
+                        type="button"
+                        class="edit-btn"
+                        title="编辑需求"
+                        @click="openEditRequirementModal(req)"
+                      >
+                        <Pencil class="w-3.5 h-3.5" />
+                      </button>
+                    </td>
                   </tr>
                   <tr v-if="tableRequirements.length === 0">
-                    <td :colspan="tableVisibleColumns.length" class="table-empty">
+                    <td :colspan="tableVisibleColumns.length + 1" class="table-empty">
                       暂无需求数据
                     </td>
                   </tr>
@@ -590,8 +654,8 @@ import { useRouter, useRoute } from "vue-router";
 import draggable from "vuedraggable";
 import Sidebar from "../../components/main/Sidebar.vue";
 import RequirementTree from "../../components/charts/RequirementTree.vue";
-import { requirementsL123Api, l4RequirementsApi, analysisApi, manageApi } from "../../utils/api";
-import { Loader2, FileText, RefreshCw, Briefcase, Users, Layout, Layers, Database, Circle, Clock, CheckCircle, GripVertical, Search, Filter, ChevronDown, ChevronUp, CheckCircle2, Plus, X } from "lucide-vue-next";
+import { manageApi } from "../../utils/api";
+import { Loader2, FileText, RefreshCw, Briefcase, Users, Layout, Layers, Circle, Clock, CheckCircle, GripVertical, Search, Filter, ChevronDown, ChevronUp, CheckCircle2, Plus, X, Pencil } from "lucide-vue-next";
 
 const router = useRouter();
 const route = useRoute();
@@ -606,6 +670,7 @@ const routeNameToPageKey = {
   "main-products": "products",
   "main-project": "project-management",
   "main-requirements": "requirements",
+  "main-requirements-session": "requirements-session",
   "main-requirements-analysis": "requirements-analysis",
   "main-requirements-collection": "requirements-collection",
 };
@@ -615,6 +680,7 @@ const pageKeyToRouteName = {
   "products": "main-products",
   "project-management": "main-project",
   "requirements": "main-requirements",
+  "requirements-session": "main-requirements-session",
   "requirements-analysis": "main-requirements-analysis",
   "requirements-collection": "main-requirements-collection",
 };
@@ -734,6 +800,88 @@ async function submitNewRequirement() {
     alert('新增需求失败: ' + (err.message || '未知错误'));
   } finally {
     isSubmitting.value = false;
+  }
+}
+
+// 编辑需求相关状态
+const showEditRequirementModal = ref(false);
+const isEditSubmitting = ref(false);
+const editRequirementId = ref('');
+const editRequirement = ref({
+  title: '',
+  description: '',
+  priority: 'medium',
+  status: 'draft',
+  tags: ''
+});
+
+// 打开编辑需求弹窗
+async function openEditRequirementModal(req) {
+  if (!selectedProjectId.value) {
+    alert('请先选择项目');
+    return;
+  }
+
+  const reqId = resolveManageReqId(req);
+  if (!reqId) {
+    alert('无法关联到项目需求，请刷新后重试');
+    return;
+  }
+
+  editRequirementId.value = reqId;
+  editRequirement.value = {
+    title: req.title || req.text || req.statement || '',
+    description: req.description || '',
+    priority: req.priority || 'medium',
+    status: req.status || 'draft',
+    tags: Array.isArray(req.tags) ? req.tags.join(', ') : (req.tags || '')
+  };
+  showEditRequirementModal.value = true;
+}
+
+// 关闭编辑需求弹窗
+function closeEditRequirementModal() {
+  showEditRequirementModal.value = false;
+  editRequirementId.value = '';
+}
+
+// 提交编辑需求
+async function submitEditRequirement() {
+  if (!editRequirementId.value) {
+    alert('需求 ID 丢失');
+    return;
+  }
+  if (!editRequirement.value.title.trim()) {
+    alert('请输入需求标题');
+    return;
+  }
+
+  isEditSubmitting.value = true;
+  try {
+    const payload = {
+      title: editRequirement.value.title.trim(),
+      description: editRequirement.value.description.trim(),
+      priority: editRequirement.value.priority,
+      status: editRequirement.value.status,
+    };
+
+    if (editRequirement.value.tags.trim()) {
+      payload.tags = editRequirement.value.tags.split(',').map(t => t.trim()).filter(Boolean);
+    } else {
+      payload.tags = [];
+    }
+
+    await manageApi.updateRequirement(editRequirementId.value, payload);
+
+    closeEditRequirementModal();
+    await loadRequirements();
+    await loadManageRequirementMap();
+
+  } catch (err) {
+    console.error('编辑需求失败:', err);
+    alert('编辑需求失败: ' + (err.message || '未知错误'));
+  } finally {
+    isEditSubmitting.value = false;
   }
 }
 
@@ -917,6 +1065,27 @@ function commitSessionId() {
   sessionId.value = next;
 }
 
+function syncProjectFromStorage() {
+  const pid = localStorage.getItem('lastProjectId') || '';
+  if (pid && pid !== selectedProjectId.value) {
+    selectedProjectId.value = pid;
+  }
+}
+
+function syncProjectFromLocation() {
+  try {
+    const url = new URL(window.location.href);
+    const pid = (url.searchParams.get('project_id') || url.searchParams.get('projectId') || '').trim();
+    if (pid && pid !== selectedProjectId.value) {
+      selectedProjectId.value = pid;
+      localStorage.setItem('lastProjectId', pid);
+      window.dispatchEvent(new CustomEvent('project-changed', { detail: { projectId: pid } }));
+    }
+  } catch (_) {
+    // ignore
+  }
+}
+
 function clearSessionId() {
   sessionIdDraft.value = '';
   if (sessionId.value) sessionId.value = '';
@@ -946,15 +1115,19 @@ function handleAnalysisCompleted(event) {
 watch(selectedProjectId, async (val) => {
   if (val) {
     localStorage.setItem('lastProjectId', val);
+    window.dispatchEvent(new CustomEvent('project-changed', { detail: { projectId: val } }));
     await loadProjectSession();
     // 自动切换到项目 session
     if (projectSessionId.value && projectSessionId.value !== sessionId.value) {
       sessionId.value = projectSessionId.value;
       sessionIdDraft.value = projectSessionId.value;
     }
+    // 切换项目后立刻刷新（确保需求数据/映射与项目一致）
+    await loadRequirements();
   } else {
     projectSessionId.value = '';
     sessionMismatch.value = false;
+    window.dispatchEvent(new CustomEvent('project-changed', { detail: { projectId: '' } }));
   }
 });
 
@@ -1253,48 +1426,62 @@ async function refreshData() {
 
 // 数据加载
 async function loadRequirements() {
-  const sid = sessionId.value?.trim();
-  if (!sid) {
+  if (!selectedProjectId.value) {
     highLevelRequirements.value = [];
     lowLevelRequirements.value = [];
     requirementTree.value = [];
+    traceRelations.value = [];
     return;
   }
   
   isLoading.value = true;
   try {
-    // 并行加载L1/L2/L3需求、L4需求和追溯关系
-    const [l123Data, l4Data, traceData] = await Promise.all([
-      requirementsL123Api.listBySession(sid, { page: 1, perPage: 500 }).catch(() => ({ requirements: [] })),
-      l4RequirementsApi.getBySession(sid, { perPage: 500 }).catch(() => ({ requirements: [] })),
-      analysisApi.getLatestTrace(sid).catch(() => null)
-    ]);
-    
-    // 处理L1/L2/L3需求
-    highLevelRequirements.value = (l123Data.requirements || []).map(req => ({
-      ...req,
-      level: normalizeLevel(req.level || req.category),
-    }));
-    
-    // 处理L4需求
-    lowLevelRequirements.value = (l4Data.requirements || []).map(r => ({
-      ...r,
-      level: 'L4',
-      statement: r.text || r.shall_statement || r.statement || '',
-    }));
-    
-    // 保存追溯关系
-    traceRelations.value = traceData?.relations || [];
+    const data = await manageApi.listRequirements(selectedProjectId.value);
+    const reqs = data?.requirements || [];
+
+    const toLevel = (req) => {
+      const sourceLevel = normalizeLevel(req.source_level || req.level || req.category);
+      if (sourceLevel === "L1" || sourceLevel === "L2" || sourceLevel === "L3") {
+        return sourceLevel;
+      }
+      if (req.requirement_type === "low_level" || sourceLevel === "L4") return "L4";
+      if (req.requirement_type === "task") return "L4";
+      return "L3";
+    };
+
+    highLevelRequirements.value = reqs
+      .filter((r) => r.requirement_type !== "low_level")
+      .map((r) => ({
+        ...r,
+        id: r.req_id,
+        text: r.title || r.description || "",
+        statement: r.description || r.title || "",
+        level: toLevel(r),
+        category: toLevel(r),
+      }));
+
+    lowLevelRequirements.value = reqs
+      .filter((r) => r.requirement_type === "low_level")
+      .map((r) => ({
+        ...r,
+        id: r.req_id,
+        text: r.title || r.description || "",
+        statement: r.description || r.title || "",
+        shall_statement: r.title || "",
+        source_top_id: r.parent_id || null,
+        level: "L4",
+      }));
+
+    traceRelations.value = [];
     
     // 构建树形结构（包含追溯关系）
     requirementTree.value = buildTreeWithRelations(
       highLevelRequirements.value,
       lowLevelRequirements.value,
-      traceRelations.value
+      []
     );
 
     // 同步 manage_requirements 状态映射
-    await ensureProjectId();
     await loadManageRequirementMap();
     
   } catch (err) {
@@ -1414,6 +1601,11 @@ onMounted(async () => {
   // 监听来自需求分析界面的事件
   window.addEventListener('session-changed', handleSessionChanged);
   window.addEventListener('analysis-completed', handleAnalysisCompleted);
+  window.addEventListener('project-changed', syncProjectFromStorage);
+
+  // 初始同步一次，避免刷新后浮窗与页面项目不一致
+  syncProjectFromLocation();
+  syncProjectFromStorage();
 
   // 加载项目列表
   await loadProjects();
@@ -1438,6 +1630,7 @@ onUnmounted(() => {
   // 清理事件监听
   window.removeEventListener('session-changed', handleSessionChanged);
   window.removeEventListener('analysis-completed', handleAnalysisCompleted);
+  window.removeEventListener('project-changed', syncProjectFromStorage);
 });
 </script>
 
@@ -1868,6 +2061,25 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   color: rgba(28, 40, 52, 0.6);
+}
+
+.edit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 1px solid rgba(28, 40, 52, 0.15);
+  color: rgba(28, 40, 52, 0.5);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.edit-btn:hover {
+  background: rgba(47, 143, 137, 0.08);
+  border-color: rgba(47, 143, 137, 0.3);
+  color: #2f8f89;
 }
 
 .table-empty {

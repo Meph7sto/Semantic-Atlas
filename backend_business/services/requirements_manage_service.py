@@ -471,9 +471,9 @@ class RequirementsManageService:
         return found
 
     # ----------------------
-    # Import from L123
+    # Import from Session
     # ----------------------
-    def import_from_l123(
+    def import_from_session(
         self,
         session_id: str,
         project_id: str,
@@ -717,6 +717,21 @@ class RequirementsManageService:
                 "unlinked_l4": unlinked_l4,
             },
         }
+
+    # Backward-compatible alias: historically named import_from_l123.
+    def import_from_l123(
+        self,
+        session_id: str,
+        project_id: str,
+        created_by: str = "",
+        mapping_mode: str = "tree",
+    ) -> Dict[str, Any]:
+        return self.import_from_session(
+            session_id=session_id,
+            project_id=project_id,
+            created_by=created_by,
+            mapping_mode=mapping_mode,
+        )
 
     # ----------------------
     # Test cases & binding

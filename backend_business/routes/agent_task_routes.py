@@ -6,7 +6,7 @@ Handles task approval/rejection for agent actions.
 
 from flask import Blueprint, jsonify, request
 
-from backend_business.services.agent_task_service import agent_task_service
+from backend_business.services.agent import agent_task_queue as agent_task_service
 
 agent_task_bp = Blueprint("agent_task", __name__)
 

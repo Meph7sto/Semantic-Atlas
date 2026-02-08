@@ -149,7 +149,7 @@ def import_requirements(project_id: str):
     if not session_id:
         return _json_error("Missing session_id")
     actor = _get_actor()
-    result = service.import_from_l123(
+    result = service.import_from_session(
         session_id=session_id,
         project_id=project_id,
         created_by=actor,
