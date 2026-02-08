@@ -267,6 +267,7 @@ def send_agent_message_stream(session_id: str):
     content = (payload.get("content") or "").strip()
     project_id = payload.get("project_id")
     agent_id = payload.get("agent_id", "requirements_agent")
+    use_thinking = payload.get("use_thinking", False)
 
     user_id = _get_actor()
 
@@ -281,6 +282,7 @@ def send_agent_message_stream(session_id: str):
                 user_id=user_id,
                 user_content=content,
                 project_id=project_id,
+                use_thinking_mode=use_thinking,
             )
         except Exception as e:
             import json

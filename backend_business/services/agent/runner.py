@@ -28,6 +28,7 @@ class AgentRunner:
         user_id: str,
         user_content: str,
         project_id: Optional[str] = None,
+        use_thinking_mode: bool = False,
     ) -> Generator[str, None, None]:
         """Stream agent reply with tool-calling support. Yields SSE-formatted events."""
         agent_def = agent_registry.get(agent_id)
@@ -69,20 +70,23 @@ class AgentRunner:
         thinking_content = ""
 
         try:
+            model_name = "deepseek-reasoner" if use_thinking_mode else "deepseek-chat"
             for _round in range(agent_def.max_tool_rounds):
                 tool_call_buffers: Dict[int, Dict[str, Any]] = {}
                 need_another_round = False
+                request_payload: Dict[str, Any] = {
+                    "messages": messages,
+                    "tools": tools_schema,
+                    "model": model_name,
+                    "max_tokens": 4096,
+                    "tool_choice": "auto",
+                }
+                if not use_thinking_mode:
+                    request_payload["temperature"] = 0.3
 
                 response = requests.post(
                     f"{_inference_base_url()}/chat/completions/tools/stream",
-                    json={
-                        "messages": messages,
-                        "tools": tools_schema,
-                        "model": "deepseek-chat",
-                        "max_tokens": 4096,
-                        "temperature": 0.3,
-                        "tool_choice": "auto",
-                    },
+                    json=request_payload,
                     stream=True,
                     timeout=180,
                 )

@@ -12,6 +12,7 @@ from backend_business.services.db_service import db_service
 from backend_business.services.agent.context import AgentContext
 from backend_business.services.agent.tools.base import ToolDefinition, tool_registry
 from backend_business.services.agent.tasks.queue import agent_task_queue
+from backend_business.services.requirements_manage_service import normalize_priority
 
 ALLOWED_UPDATE_FIELDS = {
     "title",
@@ -103,7 +104,7 @@ _UPDATE_SCHEMA = {
                         },
                         "priority": {
                             "type": "string",
-                            "enum": ["low", "medium", "high", "critical"],
+                            "enum": ["low", "medium", "high"],
                         },
                         "assignee": {"type": "string"},
                         "tags": {"type": "array", "items": {"type": "string"}},
@@ -211,6 +212,10 @@ def _update_handler(args: dict, ctx: AgentContext) -> dict:
     filtered_fields = {k: v for k, v in fields.items() if k in ALLOWED_UPDATE_FIELDS}
     if not filtered_fields:
         raise ValueError(f"No valid fields. Allowed: {sorted(ALLOWED_UPDATE_FIELDS)}")
+    if "priority" in filtered_fields:
+        filtered_fields["priority"] = normalize_priority(
+            filtered_fields.get("priority"), allow_none=True
+        )
 
     # Fetch before-snapshot
     before = _get_handler(

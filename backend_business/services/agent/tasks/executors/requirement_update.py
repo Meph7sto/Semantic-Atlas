@@ -141,6 +141,14 @@ class RequirementUpdateExecutor(BaseTaskExecutor):
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             raise ValueError("没有可更新字段")
+        if "priority" in updates:
+            from backend_business.services.requirements_manage_service import (
+                normalize_priority,
+            )
+
+            updates["priority"] = normalize_priority(
+                updates.get("priority"), allow_none=True
+            )
 
         set_clauses = []
         values = []

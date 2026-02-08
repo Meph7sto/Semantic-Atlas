@@ -28,7 +28,7 @@ _SYSTEM_PROMPT = """你是一个专业的需求管理助手，帮助用户分析
 
 - 可更新的字段仅限于：title、description、status、priority、assignee、tags、due_date、custom_fields、order_index
 - status 的可选值：draft、under_review、confirmed、in_progress、completed、archived
-- priority 的可选值：low、medium、high、critical
+- priority 的可选值：low、medium、high
 - 不要声称已经完成修改，要说明"已创建待审批任务"
 - 如果用户的请求涉及不支持的字段，说明限制并建议替代方案
 """

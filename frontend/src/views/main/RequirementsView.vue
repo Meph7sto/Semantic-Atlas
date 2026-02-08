@@ -696,6 +696,7 @@ const traceRelations = ref([]); // 追溯关系用于构建树
 const selectedProjectId = ref(localStorage.getItem('lastProjectId') || '');
 const manageReqIdMap = ref(new Map());
 const manageStatusMap = ref(new Map());
+const managePriorityMap = ref(new Map());
 const isSyncingStatus = ref(false);
 const projects = ref([]);
 const isLoadingProjects = ref(false);
@@ -777,7 +778,7 @@ async function submitNewRequirement() {
       description: newRequirement.value.description.trim(),
       requirement_type: newRequirement.value.requirement_type,
       status: newRequirement.value.status,
-      priority: newRequirement.value.priority,
+      priority: normalizePriority(newRequirement.value.priority, 'medium'),
     };
 
     // 可选字段
@@ -829,10 +830,12 @@ async function openEditRequirementModal(req) {
   }
 
   editRequirementId.value = reqId;
+  const sourceKey = req.req_id || req.id;
+  const mappedPriority = managePriorityMap.value.get(sourceKey) || managePriorityMap.value.get(reqId);
   editRequirement.value = {
     title: req.title || req.text || req.statement || '',
     description: req.description || '',
-    priority: req.priority || 'medium',
+    priority: normalizePriority(mappedPriority ?? req.priority, 'medium'),
     status: req.status || 'draft',
     tags: Array.isArray(req.tags) ? req.tags.join(', ') : (req.tags || '')
   };
@@ -861,7 +864,7 @@ async function submitEditRequirement() {
     const payload = {
       title: editRequirement.value.title.trim(),
       description: editRequirement.value.description.trim(),
-      priority: editRequirement.value.priority,
+      priority: normalizePriority(editRequirement.value.priority, 'medium'),
       status: editRequirement.value.status,
     };
 
@@ -1025,20 +1028,24 @@ async function loadManageRequirementMap() {
     const reqs = data?.requirements || [];
     const idMap = new Map();
     const statusMap = new Map();
+    const priorityMap = new Map();
 
     reqs.forEach((req) => {
       if (req.req_id) {
         idMap.set(req.req_id, req.req_id);
         statusMap.set(req.req_id, req.status);
+        priorityMap.set(req.req_id, normalizePriority(req.priority, null));
       }
       if (req.source_req_id) {
         idMap.set(req.source_req_id, req.req_id);
         statusMap.set(req.source_req_id, req.status);
+        priorityMap.set(req.source_req_id, normalizePriority(req.priority, null));
       }
     });
 
     manageReqIdMap.value = idMap;
     manageStatusMap.value = statusMap;
+    managePriorityMap.value = priorityMap;
 
     // 同步数据库状态到本地状态映射
     statusMap.forEach((status, key) => {
@@ -1258,6 +1265,13 @@ function normalizeLevel(raw) {
   return 'L1';
 }
 
+function normalizePriority(raw, fallback = 'medium') {
+  const text = String(raw ?? '').trim();
+  if (!text) return fallback;
+  const normalized = text.toLowerCase();
+  return ['low', 'medium', 'high'].includes(normalized) ? normalized : fallback;
+}
+
 function filterTreeByLevel(nodes, level) {
   if (!nodes || nodes.length === 0) return [];
   return nodes.map(node => {
@@ -1456,6 +1470,7 @@ async function loadRequirements() {
         id: r.req_id,
         text: r.title || r.description || "",
         statement: r.description || r.title || "",
+        priority: normalizePriority(r.priority, null),
         level: toLevel(r),
         category: toLevel(r),
       }));
@@ -1469,6 +1484,7 @@ async function loadRequirements() {
         statement: r.description || r.title || "",
         shall_statement: r.title || "",
         source_top_id: r.parent_id || null,
+        priority: normalizePriority(r.priority, null),
         level: "L4",
       }));
 

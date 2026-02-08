@@ -985,9 +985,10 @@ export const aiChatApi = {
      * 返回的 SSE 事件包含：user_message, thinking, token, tool_call, tool_result, task_created, assistant_message, finish, error, done
      * @returns {Promise<Response>} Fetch Response for SSE streaming
      */
-    async sendAgentMessageStream({ sessionId, content, projectId = null }) {
+    async sendAgentMessageStream({ sessionId, content, projectId = null, useThinking = false }) {
         const payload = { content }
         if (projectId) payload.project_id = projectId
+        if (useThinking) payload.use_thinking = useThinking
 
         const response = await fetch(`/api/ai-chat/sessions/${encodeURIComponent(sessionId)}/messages/agent/stream`, {
             method: 'POST',

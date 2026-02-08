@@ -38,6 +38,8 @@ const isSending = ref(false)
 const streamingContent = ref('')
 const streamingThinking = ref('')
 const isStreaming = ref(false)
+const REASONER_PREF_KEY = 'ai_chat_use_reasoner'
+const useReasonerMode = ref(false)
 
 // Agent stream cards
 const streamingToolCalls = ref([])
@@ -68,6 +70,14 @@ const canSend = computed(() => messageInput.value.trim() && !isSending.value && 
 const panelPositionClass = computed(() => (props.anchorSide === 'left' ? 'left-0' : 'right-0'))
 
 const PAGE_SIZE = 50
+
+const loadReasonerPreference = () => {
+    try {
+        return localStorage.getItem(REASONER_PREF_KEY) === '1'
+    } catch (_) {
+        return false
+    }
+}
 
 const filteredSessions = computed(() => {
     const q = sessionSearch.value.trim().toLowerCase()
@@ -293,6 +303,7 @@ const sendMessage = async () => {
             sessionId: session.value.session_id,
             content: content,
             projectId: props.projectId,
+            useThinking: useReasonerMode.value,
         })
         
         const reader = response.body.getReader()
@@ -505,8 +516,17 @@ watch(
     }
 )
 
+watch(useReasonerMode, (enabled) => {
+    try {
+        localStorage.setItem(REASONER_PREF_KEY, enabled ? '1' : '0')
+    } catch (_) {
+        // ignore storage errors
+    }
+})
+
 // Lifecycle
 onMounted(() => {
+    useReasonerMode.value = loadReasonerPreference()
     initSession()
     loadTasks()
     nextTick(() => {
@@ -727,6 +747,20 @@ onBeforeUnmount(() => {
 
             <!-- Input -->
             <div class="ai-input-bar p-3 border-t">
+                <div class="mb-2 flex items-center justify-between">
+                    <label class="inline-flex items-center gap-2 text-xs text-zinc-600">
+                        <input
+                            v-model="useReasonerMode"
+                            type="checkbox"
+                            :disabled="isSending || isStreaming"
+                            class="h-3.5 w-3.5 rounded border-zinc-300 text-amber-600 focus:ring-amber-500 disabled:opacity-60"
+                        />
+                        <span>思考模式 (Reasoner)</span>
+                    </label>
+                    <span class="text-[11px] text-zinc-500">
+                        {{ useReasonerMode ? 'deepseek-reasoner' : 'deepseek-chat' }}
+                    </span>
+                </div>
                 <div class="flex gap-2">
                     <textarea
                         ref="inputRef"

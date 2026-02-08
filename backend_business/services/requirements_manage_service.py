@@ -18,6 +18,24 @@ def _utc_now_iso() -> str:
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
 
+_ALLOWED_PRIORITIES = {"low", "medium", "high"}
+
+
+def normalize_priority(priority: Any, allow_none: bool = True) -> Optional[str]:
+    """Normalize priority values to low/medium/high."""
+    if priority is None:
+        return None if allow_none else "medium"
+
+    text = str(priority).strip()
+    if not text:
+        return None if allow_none else "medium"
+
+    normalized = text.lower()
+    if normalized in _ALLOWED_PRIORITIES:
+        return normalized
+    raise ValueError("priority 必须是 low、medium、high")
+
+
 class RequirementsManageService:
     def __init__(self, dsn: str):
         self.dsn = dsn
@@ -129,6 +147,7 @@ class RequirementsManageService:
         custom_fields: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         req_id = str(uuid.uuid4())
+        priority = normalize_priority(priority, allow_none=True)
         tags_payload = json.dumps(tags or [])
         custom_payload = json.dumps(custom_fields or {})
 
@@ -248,6 +267,8 @@ class RequirementsManageService:
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             raise ValueError("没有可更新字段")
+        if "priority" in updates:
+            updates["priority"] = normalize_priority(updates.get("priority"), allow_none=True)
 
         set_clauses = []
         values = []
