@@ -413,6 +413,146 @@ class AIProxy:
             if should_close_session:
                 await session.close()
 
+    def context_builder_completion(
+        self,
+        prompt: str,
+        system_prompt: str,
+        max_new_tokens: int = 8000,
+        model: Optional[str] = None,
+    ) -> str:
+        """
+        调用推理后端 context-builder 专用补全接口。
+        """
+        payload: Dict[str, Any] = {
+            "prompt": prompt,
+            "system_prompt": system_prompt,
+            "max_tokens": max_new_tokens,
+        }
+        if model:
+            payload["model"] = model
+
+        resp = requests.post(
+            f"{self.base_url}/chat/context-completion",
+            json=payload,
+            timeout=300,
+        )
+        if resp.status_code in (404, 405):
+            return self._context_builder_completion_fallback(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                max_new_tokens=max_new_tokens,
+                model=model,
+            )
+        resp.raise_for_status()
+        data = resp.json()
+        return str(data.get("content", "")).strip()
+
+    async def context_builder_completion_async(
+        self,
+        prompt: str,
+        system_prompt: str,
+        max_new_tokens: int = 8000,
+        model: Optional[str] = None,
+        session: Optional[aiohttp.ClientSession] = None,
+    ) -> str:
+        """
+        context-builder 专用补全接口的异步版本。
+        """
+        payload: Dict[str, Any] = {
+            "prompt": prompt,
+            "system_prompt": system_prompt,
+            "max_tokens": max_new_tokens,
+        }
+        if model:
+            payload["model"] = model
+
+        url = f"{self.base_url}/chat/context-completion"
+
+        should_close_session = False
+        if session is None:
+            session = aiohttp.ClientSession()
+            should_close_session = True
+
+        try:
+            async with session.post(
+                url,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=300),
+            ) as resp:
+                if resp.status in (404, 405):
+                    return await self._context_builder_completion_fallback_async(
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                        max_new_tokens=max_new_tokens,
+                        model=model,
+                        session=session,
+                    )
+                resp.raise_for_status()
+                data = await resp.json()
+                return str(data.get("content", "")).strip()
+        finally:
+            if should_close_session:
+                await session.close()
+
+    def _context_builder_completion_fallback(
+        self,
+        prompt: str,
+        system_prompt: str,
+        max_new_tokens: int,
+        model: Optional[str],
+    ) -> str:
+        messages: List[Dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        payload: Dict[str, Any] = {
+            "messages": messages,
+            "max_tokens": max_new_tokens,
+            "temperature": 0.7,
+        }
+        if model:
+            payload["model"] = model
+
+        resp = requests.post(
+            f"{self.base_url}/chat/completions",
+            json=payload,
+            timeout=300,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return str(data.get("content", "")).strip()
+
+    async def _context_builder_completion_fallback_async(
+        self,
+        prompt: str,
+        system_prompt: str,
+        max_new_tokens: int,
+        model: Optional[str],
+        session: aiohttp.ClientSession,
+    ) -> str:
+        messages: List[Dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        payload: Dict[str, Any] = {
+            "messages": messages,
+            "max_tokens": max_new_tokens,
+            "temperature": 0.7,
+        }
+        if model:
+            payload["model"] = model
+
+        async with session.post(
+            f"{self.base_url}/chat/completions",
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=300),
+        ) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
+            return str(data.get("content", "")).strip()
+
 
 ai_proxy = AIProxy(settings.INFERENCE_BASE_URL)
 

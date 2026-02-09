@@ -81,6 +81,17 @@ class ChatCompletionResponse(BaseModel):
     )
 
 
+class ContextCompletionRequest(BaseModel):
+    prompt: str = Field(..., description="Prompt content")
+    system_prompt: str = Field(default="", description="System prompt")
+    model: Optional[str] = Field(default=None, description="Model override")
+    max_tokens: int = Field(default=8000, ge=1, le=12000)
+
+
+class ContextCompletionResponse(BaseModel):
+    content: str = Field(..., description="Generated content")
+
+
 class ChatCompletionWithToolsResponse(BaseModel):
     """带工具调用的 chat completions 响应"""
 
@@ -176,15 +187,21 @@ async def chat_completions(request: ChatCompletionRequest):
         # 调用模型生成
         result = model_engine.generate(
             prompt=user_prompt,
-            system_prompt=system_prompt if system_prompt else None,
+            system_prompt=system_prompt or "",
             max_new_tokens=request.max_tokens,
-            temperature=request.temperature,
+            model=request.model,
         )
 
-        # 返回结果
+        if isinstance(result, dict):
+            content = str(result.get("output") or result.get("content") or "").strip()
+            usage = result.get("usage")
+        else:
+            content = str(result or "").strip()
+            usage = None
+
         return ChatCompletionResponse(
-            content=result.get("output", ""),
-            usage=result.get("usage"),
+            content=content,
+            usage=usage,
         )
 
     except RuntimeError:
@@ -194,6 +211,32 @@ async def chat_completions(request: ChatCompletionRequest):
         )
     except Exception as e:
         logger.exception("Chat completion failed with unexpected exception.")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/context-completion", response_model=ContextCompletionResponse)
+async def context_completion(request: ContextCompletionRequest):
+    """
+    Context builder 专用补全接口。
+    """
+    if not request.prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt is required.")
+
+    try:
+        content = model_engine.generate(
+            prompt=request.prompt,
+            system_prompt=request.system_prompt or "",
+            max_new_tokens=request.max_tokens,
+            model=request.model,
+        )
+        return ContextCompletionResponse(content=content or "")
+    except RuntimeError:
+        logger.exception("Context completion failed with RuntimeError.")
+        raise HTTPException(
+            status_code=503, detail="Model service not initialized or unavailable."
+        )
+    except Exception as e:
+        logger.exception("Context completion failed with unexpected exception.")
         raise HTTPException(status_code=500, detail=str(e))
 
 
