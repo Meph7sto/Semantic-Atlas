@@ -1,10 +1,15 @@
 """Collaboration strategies for multi-agent orchestration.
+多 Agent 编排的协作策略。
 
 Each strategy defines *how* a workflow step with multiple agents is executed:
+每个策略定义*如何*执行包含多个 Agent 的工作流步骤：
 
 - **Sequential**: agents run one after another; output of N feeds into N+1.
+  **Sequential**：Agent 依次运行；第 N 个的输出输入到第 N+1 个。
 - **Parallel**: agents run concurrently; results are collected.
+  **Parallel**：Agent 并发运行；收集结果。
 - **Vote**: agents independently answer; majority wins.
+  **Vote**：Agent 独立回答；少数服从多数。
 """
 
 import json
@@ -23,7 +28,9 @@ logger = logging.getLogger(__name__)
 
 
 class CollaborationStrategy(ABC):
-    """Base class for collaboration strategies."""
+    """Base class for collaboration strategies.
+    协作策略的基类。
+    """
 
     name: str = "base"
 
@@ -34,12 +41,16 @@ class CollaborationStrategy(ABC):
         ctx: AgentContext,
         input_data: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Execute the step and return the combined result."""
+        """Execute the step and return the combined result.
+        执行步骤并返回合并的结果。
+        """
         ...
 
 
 class SequentialStrategy(CollaborationStrategy):
-    """Run agents one-by-one; each receives the previous agent's output."""
+    """Run agents one-by-one; each receives the previous agent's output.
+    逐个运行 Agent；每个 Agent 接收前一个 Agent 的输出。
+    """
 
     name = "sequential"
 
@@ -59,12 +70,14 @@ class SequentialStrategy(CollaborationStrategy):
         step.started_at = datetime.now(timezone.utc)
 
         for i, agent_id in enumerate(step.agent_ids):
+            # 构建提示词，包含步骤进度和累积数据
             prompt = (
                 f"你是工作流「{step.name}」的第 {i + 1}/{len(step.agent_ids)} 步执行者。\n"
                 f"输入数据:\n{json.dumps(accumulated, ensure_ascii=False, indent=2)}"
             )
 
             try:
+                # 同步运行 Agent
                 result = runner.run_once(
                     agent_id=agent_id,
                     user_id=ctx.user_id,
@@ -74,6 +87,7 @@ class SequentialStrategy(CollaborationStrategy):
                     parent_context=ctx,
                 )
                 results.append(result)
+                # 将结果累积到上下文中，供后续步骤使用
                 accumulated[f"step_{i}_{agent_id}"] = result
             except Exception as e:
                 logger.error("Sequential step %d (%s) failed: %s", i, agent_id, e)
@@ -89,7 +103,9 @@ class SequentialStrategy(CollaborationStrategy):
 
 
 class ParallelStrategy(CollaborationStrategy):
-    """Run all agents concurrently; collect results."""
+    """Run all agents concurrently; collect results.
+    并发运行所有 Agent；收集结果。
+    """
 
     name = "parallel"
 
@@ -126,6 +142,7 @@ class ParallelStrategy(CollaborationStrategy):
         results: Dict[str, Any] = {}
         errors: Dict[str, str] = {}
 
+        # 使用线程池并发执行
         with ThreadPoolExecutor(max_workers=self._max_workers) as pool:
             futures = {pool.submit(_run, aid): aid for aid in step.agent_ids}
             for future in as_completed(futures):
@@ -148,7 +165,9 @@ class ParallelStrategy(CollaborationStrategy):
 
 
 class VoteStrategy(CollaborationStrategy):
-    """Each agent answers independently; majority vote determines the outcome."""
+    """Each agent answers independently; majority vote determines the outcome.
+    每个 Agent 独立回答；少数服从多数决定结果。
+    """
 
     name = "vote"
 
@@ -159,6 +178,7 @@ class VoteStrategy(CollaborationStrategy):
         input_data: Dict[str, Any],
     ) -> Dict[str, Any]:
         # First run all agents in parallel
+        # 首先并行运行所有 Agent
         parallel = ParallelStrategy()
         parallel_result = parallel.execute(step, ctx, input_data)
 
@@ -167,12 +187,14 @@ class VoteStrategy(CollaborationStrategy):
             return parallel_result
 
         # Collect answers (using content as the "vote")
+        # 收集答案（使用 content 作为“投票”）
         votes: Dict[str, int] = {}
         for agent_id, r in results.items():
             answer = r.get("content", "").strip()
             votes[answer] = votes.get(answer, 0) + 1
 
         # Determine winner
+        # 确定获胜者
         winner = max(votes, key=votes.get) if votes else ""
 
         step.result = {
@@ -192,6 +214,7 @@ class VoteStrategy(CollaborationStrategy):
 
 
 # Strategy registry
+# 策略注册表
 _STRATEGIES: Dict[str, CollaborationStrategy] = {
     "sequential": SequentialStrategy(),
     "parallel": ParallelStrategy(),
@@ -200,7 +223,9 @@ _STRATEGIES: Dict[str, CollaborationStrategy] = {
 
 
 def get_strategy(name: str) -> CollaborationStrategy:
-    """Look up a strategy by name."""
+    """Look up a strategy by name.
+    按名称查找策略。
+    """
     strategy = _STRATEGIES.get(name)
     if not strategy:
         raise ValueError(f"Unknown collaboration strategy: {name}. Available: {list(_STRATEGIES.keys())}")
@@ -208,5 +233,7 @@ def get_strategy(name: str) -> CollaborationStrategy:
 
 
 def register_strategy(strategy: CollaborationStrategy) -> None:
-    """Register a custom strategy."""
+    """Register a custom strategy.
+    注册自定义策略。
+    """
     _STRATEGIES[strategy.name] = strategy

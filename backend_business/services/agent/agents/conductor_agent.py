@@ -1,4 +1,6 @@
-"""Conductor agent - orchestrates multi-agent collaboration."""
+"""Conductor agent - orchestrates multi-agent collaboration.
+Conductor Agent - 编排多 Agent 协作。
+"""
 
 from backend_business.services.agent.registry import AgentDefinition, agent_registry
 
@@ -63,13 +65,15 @@ _SYSTEM_PROMPT = """你是一个智能编排助手（Conductor），负责协调
 - 始终向用户说明你在做什么，保持透明
 """
 
+# Register the Conductor Agent
+# 注册 Conductor Agent
 agent_registry.register(
     AgentDefinition(
         agent_id="conductor_agent",
         name="智能编排助手",
         system_prompt=_SYSTEM_PROMPT,
         tool_names=["delegate_task", "query_agent", "broadcast_notification"],
-        child_agent_ids=["requirements_agent"],  # Can coordinate requirements_agent
-        max_tool_rounds=10,  # More rounds for orchestration
+        child_agent_ids=["requirements_agent"],  # Can coordinate requirements_agent; 可协调 requirements_agent
+        max_tool_rounds=10,  # More rounds for orchestration; 更多轮次用于编排
     )
 )

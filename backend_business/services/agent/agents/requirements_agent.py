@@ -1,4 +1,6 @@
-"""Requirements management agent definition."""
+"""Requirements management agent definition.
+需求管理 Agent 定义。
+"""
 
 from backend_business.services.agent.registry import AgentDefinition, agent_registry
 
@@ -50,6 +52,8 @@ _SYSTEM_PROMPT = """你是一个专业的需求管理助手，帮助用户分析
 - 如果用户的请求涉及不支持的字段，说明限制并建议替代方案
 """
 
+# Register the Requirements Agent
+# 注册需求管理 Agent
 agent_registry.register(
     AgentDefinition(
         agent_id="requirements_agent",

@@ -1,223 +1,152 @@
-"""Message bus - central hub for agent communication.
-
-This is the **core routing engine** of the multi-agent architecture.
-All inter-agent messages flow through the bus, which:
-
-1. Runs the middleware pipeline (logging, rate-limit …)
-2. Delegates recipient resolution to the Router
-3. Delivers to subscriber callbacks
-4. Stores history for replay / audit
-
-Supports:
-- Async notification (fire-and-forget via ``send_notify``)
-- Synchronous request-response (``send_request`` + ``wait_for_response``)
+"""Core Message Bus implementation.
+核心消息总线实现。
 """
 
 import logging
-import json
 import threading
-from collections import defaultdict, deque
-from typing import Any, Callable, Deque, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
-from backend_business.services.db_service import db_service
-from .channel import channel_manager, Channel, ChannelType
-from .message import AgentMessage, MessageType
-from .router import MessageRouter
-from .middleware import (
+from backend_business.services.agent.messaging.message import AgentMessage, MessageType
+from backend_business.services.agent.messaging.channel import channel_manager, ChannelType
+from backend_business.services.agent.messaging.middleware import (
     Middleware,
     LoggingMiddleware,
     RateLimitMiddleware,
     AuthorizationMiddleware,
     MetricsMiddleware,
 )
+from backend_business.services.agent.messaging.router import MessageRouter
 
 logger = logging.getLogger(__name__)
 
 
 class MessageBus:
-    """Central message bus for routing messages between agents.
+    """In-process message bus for agent communication.
+    用于 Agent 通信的进程内消息总线。
 
-    Unlike the previous implementation, the bus now:
-    - Uses ``MessageRouter`` for recipient resolution instead of inline logic.
-    - Runs a configurable middleware pipeline before/after every publish.
-    - Supports blocking ``wait_for_response`` for synchronous request-response.
+    Responsibilities:
+    职责：
+    1. Manage subscriptions (agent_id -> callback)
+       管理订阅（agent_id -> 回调）
+    2. Route messages to recipients
+       将消息路由到接收者
+    3. Apply middleware pipeline (logging, auth, rate-limit)
+       应用中间件管道（日志记录、授权、速率限制）
+    4. Provide sync request-response helpers
+       提供同步请求-响应辅助函数
     """
 
-    def __init__(self, max_history: int = 1000) -> None:
-        # Agent callbacks
-        self._subscribers: Dict[str, List[Callable[[AgentMessage], None]]] = defaultdict(list)
-
-        # History / audit
-        self._message_history: Deque[AgentMessage] = deque(maxlen=max_history)
-        self._message_index: Dict[str, AgentMessage] = {}  # message_id -> message
-
-        # Synchronous request-response support
-        self._pending_requests: Dict[str, AgentMessage] = {}
-        self._response_events: Dict[str, threading.Event] = {}
-        self._response_store: Dict[str, AgentMessage] = {}
-
-        # Router & middlewares
+    def __init__(self) -> None:
+        self._subscribers: Dict[str, List[Callable[[AgentMessage], None]]] = {}  # agent_id -> [callbacks]
         self._router = MessageRouter()
         self._middlewares: List[Middleware] = []
 
-        # Install default middlewares
+        # Request-Response correlation (for synchronous wait)
+        # 请求-响应关联（用于同步等待）
+        self._response_events: Dict[str, threading.Event] = {}  # message_id -> Event
+        self._response_store: Dict[str, AgentMessage] = {}  # message_id -> ResponseMessage
+
+        # Basic history (in-memory ring buffer)
+        # 基本历史记录（内存环形缓冲区）
+        self._message_history: List[AgentMessage] = []
+        self._history_limit = 1000
+        self._message_index: Dict[str, AgentMessage] = {}
+
+        # Register default middlewares
+        # 注册默认中间件
         self.add_middleware(LoggingMiddleware())
         self.add_middleware(RateLimitMiddleware())
         self.add_middleware(AuthorizationMiddleware())
-        self._metrics = MetricsMiddleware()
-        self.add_middleware(self._metrics)
+        self.add_middleware(MetricsMiddleware())
 
-    # ==================================================================
-    # Middleware management
-    # ==================================================================
-
-    def add_middleware(self, mw: Middleware) -> None:
-        self._middlewares.append(mw)
-
-    def remove_middleware(self, name: str) -> None:
-        self._middlewares = [m for m in self._middlewares if m.name != name]
-
-    @property
-    def metrics(self) -> MetricsMiddleware:
-        return self._metrics
-
-    # ==================================================================
-    # Router access
-    # ==================================================================
-
-    @property
-    def router(self) -> MessageRouter:
-        return self._router
-
-    # ==================================================================
-    # Subscription
-    # ==================================================================
+    def add_middleware(self, middleware: Middleware) -> None:
+        """Add a middleware to the pipeline.
+        向管道添加中间件。
+        """
+        self._middlewares.append(middleware)
 
     def subscribe(self, agent_id: str, callback: Callable[[AgentMessage], None]) -> None:
-        """Subscribe an agent to receive messages."""
-        if callback not in self._subscribers[agent_id]:
-            self._subscribers[agent_id].append(callback)
-            logger.info("Agent %s subscribed to message bus", agent_id)
+        """Subscribe an agent to receive messages.
+        订阅 Agent 以接收消息。
+        """
+        if agent_id not in self._subscribers:
+            self._subscribers[agent_id] = []
+        self._subscribers[agent_id].append(callback)
 
-    def unsubscribe(self, agent_id: str, callback: Optional[Callable[[AgentMessage], None]] = None) -> None:
-        """Unsubscribe an agent from receiving messages."""
-        if callback:
-            if callback in self._subscribers[agent_id]:
+    def unsubscribe(self, agent_id: str, callback: Callable[[AgentMessage], None]) -> None:
+        """Unsubscribe a callback.
+        取消订阅回调。
+        """
+        if agent_id in self._subscribers:
+            try:
                 self._subscribers[agent_id].remove(callback)
-        else:
-            self._subscribers.pop(agent_id, None)
-        logger.info("Agent %s unsubscribed from message bus", agent_id)
-
-    def is_subscribed(self, agent_id: str) -> bool:
-        return bool(self._subscribers.get(agent_id))
-
-    # ==================================================================
-    # Publishing (core)
-    # ==================================================================
+            except ValueError:
+                pass
 
     def publish(self, message: AgentMessage) -> str:
-        """Publish a message through the full pipeline.
+        """Publish a message to the bus.
+        向总线发布消息。
 
-        1. Run pre_publish middlewares (may block)
-        2. Resolve recipients via Router
-        3. Deliver to subscriber callbacks
-        4. Fulfil pending synchronous waits
-        5. Run post_publish middlewares
+        Returns the message_id.
+        返回 message_id。
         """
-
-        # 1) Pre-publish middleware pipeline
+        # 1. Pre-publish middleware
+        # 1. 预发布中间件处理
         for mw in self._middlewares:
-            result = mw.pre_publish(message)
-            if result is None:
-                logger.info("Message %s blocked by middleware '%s'", message.message_id, mw.name)
-                return message.message_id
-            message = result
+            message = mw.pre_publish(message)
+            if message is None:
+                # Middleware blocked the message
+                # 中间件拦截了消息
+                return ""
 
-        # 2) Store in history + index
+        # 2. Persist to history
+        # 2. 持久化到历史记录
         self._message_history.append(message)
         self._message_index[message.message_id] = message
+        if len(self._message_history) > self._history_limit:
+            removed = self._message_history.pop(0)
+            self._message_index.pop(removed.message_id, None)
 
-        # 3) Resolve recipients via router
+        # 3. Resolve recipients
+        # 3. 解析接收者
         channel = channel_manager.get_channel(message.channel_id)
         if not channel:
-            logger.warning("Channel %s not found for message %s", message.channel_id, message.message_id)
+            # Create ad-hoc channel if needed, or fail? For now, fail soft.
+            # 如果需要则创建临时频道，或者失败？目前暂时软失败。
+            logger.warning("Unknown channel %s for message %s", message.channel_id, message.message_id)
             return message.message_id
-
-        channel_manager.sync_channel(channel.channel_id, replace_members=False)
-        self._persist_message(message)
 
         recipients = self._router.resolve_recipients(message, channel)
 
-        # Track requests before delivery so nested RESPONSE handling can pop it.
-        if message.message_type == MessageType.REQUEST:
-            self._pending_requests[message.message_id] = message
-
-        # For RESPONSE messages, narrow down to only the original requester
-        if message.message_type == MessageType.RESPONSE and message.reply_to:
-            original = self._pending_requests.get(message.reply_to) or self.get_message(message.reply_to)
-            if original:
-                recipients = [original.sender_id]
-
-        # 4) Deliver to subscriber callbacks
-        delivered = 0
+        # 4. Deliver
+        # 4. 投递消息
+        delivered_count = 0
         for recipient_id in recipients:
             callbacks = self._subscribers.get(recipient_id, [])
-            for callback in callbacks:
+            for cb in callbacks:
                 try:
-                    callback(message)
-                    delivered += 1
+                    cb(message)
+                    delivered_count += 1
                 except Exception as e:
-                    logger.error("Error delivering msg %s to %s: %s", message.message_id, recipient_id, e)
+                    logger.error("Error delivering message %s to %s: %s", message.message_id, recipient_id, e)
 
-        # 5) Track requests / fulfil responses
+        # 5. Handle synchronous response correlation
+        # 5. 处理同步响应关联
         if message.message_type == MessageType.RESPONSE and message.reply_to:
-            self._pending_requests.pop(message.reply_to, None)
-            # Fulfil any synchronous waiter
             if message.reply_to in self._response_events:
                 self._response_store[message.reply_to] = message
                 self._response_events[message.reply_to].set()
 
-        # 6) Post-publish middleware pipeline
-        for mw in self._middlewares:
-            try:
-                mw.post_publish(message, delivered)
-            except Exception as e:
-                logger.error("post_publish error in middleware '%s': %s", mw.name, e)
+        # 6. Post-publish middleware
+        # 6. 后发布中间件处理
+        for mw in reversed(self._middlewares):
+            mw.post_publish(message, delivered_count)
 
         return message.message_id
 
-    def _persist_message(self, message: AgentMessage) -> None:
-        """Persist message to DB for audit/replay when DB is configured."""
-        if not db_service:
-            return
-
-        msg_type = message.message_type.value if hasattr(message.message_type, "value") else str(message.message_type)
-        try:
-            with db_service._connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        INSERT INTO agent_messages (
-                            message_id, channel_id, sender_id, message_type, content, reply_to, metadata
-                        )
-                        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s::jsonb)
-                        ON CONFLICT (message_id) DO NOTHING
-                        """,
-                        (
-                            message.message_id,
-                            message.channel_id,
-                            message.sender_id,
-                            msg_type,
-                            json.dumps(message.content or {}, ensure_ascii=False),
-                            message.reply_to,
-                            json.dumps(message.metadata or {}, ensure_ascii=False),
-                        ),
-                    )
-        except Exception as e:
-            logger.warning("Failed to persist message %s: %s", message.message_id, e)
-
     # ==================================================================
-    # High-level send helpers
+    # Convenience senders
+    # 便捷发送方法
     # ==================================================================
 
     def send_request(
@@ -228,7 +157,9 @@ class MessageBus:
         channel_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """Send a REQUEST and return its message_id for tracking."""
+        """Send a REQUEST message.
+        发送 REQUEST 消息。
+        """
         if not channel_id:
             channel = channel_manager.get_or_create_direct_channel(sender_id, recipient_id)
             channel_id = channel.channel_id
@@ -249,7 +180,9 @@ class MessageBus:
         reply_to: str,
         content: Dict,
     ) -> str:
-        """Send a RESPONSE to a previous request."""
+        """Send a RESPONSE message.
+        发送 RESPONSE 消息。
+        """
         message = AgentMessage(
             channel_id=channel_id,
             sender_id=sender_id,
@@ -265,7 +198,9 @@ class MessageBus:
         channel_id: str,
         content: Dict,
     ) -> str:
-        """Send a one-way notification (fire-and-forget)."""
+        """Send a one-way notification (fire-and-forget).
+        发送单向通知（发送即忘）。
+        """
         message = AgentMessage(
             channel_id=channel_id,
             sender_id=sender_id,
@@ -276,6 +211,7 @@ class MessageBus:
 
     # ==================================================================
     # Synchronous request-response
+    # 同步请求-响应
     # ==================================================================
 
     def request_and_wait(
@@ -288,8 +224,10 @@ class MessageBus:
         timeout: float = 180.0,
     ) -> Optional[AgentMessage]:
         """Send a REQUEST and block until the matching RESPONSE arrives.
+        发送 REQUEST 并阻塞直到收到匹配的 RESPONSE。
 
         Returns the response AgentMessage, or None on timeout.
+        返回响应消息 AgentMessage，如果超时则返回 None。
         """
         if not channel_id:
             channel = channel_manager.get_or_create_direct_channel(sender_id, recipient_id)
@@ -315,6 +253,7 @@ class MessageBus:
 
     # ==================================================================
     # History / lookup
+    # 历史记录 / 查找
     # ==================================================================
 
     def get_history(
@@ -322,16 +261,21 @@ class MessageBus:
         channel_id: Optional[str] = None,
         limit: int = 50,
     ) -> List[AgentMessage]:
-        """Get message history, optionally filtered by channel."""
+        """Get message history, optionally filtered by channel.
+        获取消息历史记录，可选择按频道过滤。
+        """
         messages = list(self._message_history)
         if channel_id:
             messages = [m for m in messages if m.channel_id == channel_id]
         return messages[-limit:]
 
     def get_message(self, message_id: str) -> Optional[AgentMessage]:
-        """Get a specific message by ID (O(1) via index)."""
+        """Get a specific message by ID (O(1) via index).
+        通过 ID 获取特定消息（通过索引 O(1)）。
+        """
         return self._message_index.get(message_id)
 
 
 # Global singleton instance
+# 全局单例实例
 message_bus = MessageBus()

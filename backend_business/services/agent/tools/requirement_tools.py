@@ -1,7 +1,10 @@
 """Requirement management tools (search, get, update).
+需求管理工具（搜索、获取、更新）。
 
 Read tools execute immediately.
 Write tools create a pending task via the task queue.
+读工具立即执行。
+写工具通过任务队列创建待处理任务。
 """
 
 from typing import Any, Dict
@@ -14,6 +17,8 @@ from backend_business.services.agent.tools.base import ToolDefinition, tool_regi
 from backend_business.services.agent.tasks.queue import agent_task_queue
 from backend_business.services.requirements_manage_service import normalize_priority
 
+# Allowed fields for update operations
+# 允许更新的字段
 ALLOWED_UPDATE_FIELDS = {
     "title",
     "description",
@@ -28,6 +33,7 @@ ALLOWED_UPDATE_FIELDS = {
 
 # ========================
 # OpenAI Schemas
+# OpenAI Schema 定义
 # ========================
 
 _SEARCH_SCHEMA = {
@@ -170,10 +176,14 @@ _UPDATE_SCHEMA = {
 
 # ========================
 # Handlers
+# 处理函数
 # ========================
 
 
 def _search_handler(args: dict, ctx: AgentContext) -> dict:
+    """Handler for requirement_search tool.
+    requirement_search 工具的处理函数。
+    """
     project_id = args.get("project_id", "")
     query = args.get("query", "")
     limit = args.get("limit", 10)
@@ -207,6 +217,9 @@ def _search_handler(args: dict, ctx: AgentContext) -> dict:
 
 
 def _get_handler(args: dict, ctx: AgentContext) -> dict:
+    """Handler for requirement_get tool.
+    requirement_get 工具的处理函数。
+    """
     project_id = args.get("project_id", "")
     req_id = args.get("req_id", "")
 
@@ -242,6 +255,9 @@ def _get_handler(args: dict, ctx: AgentContext) -> dict:
 
 
 def _list_handler(args: dict, ctx: AgentContext) -> dict:
+    """Handler for requirement_list tool.
+    requirement_list 工具的处理函数。
+    """
     project_id = args.get("project_id", "")
     parent_id = args.get("parent_id")
     requirement_type = args.get("requirement_type")
@@ -308,7 +324,9 @@ def _list_handler(args: dict, ctx: AgentContext) -> dict:
 
 
 def _update_handler(args: dict, ctx: AgentContext) -> dict:
-    """Create a pending task for requirement_update (write op, requires approval)."""
+    """Create a pending task for requirement_update (write op, requires approval).
+    为 requirement_update 创建待处理任务（写操作，需要批准）。
+    """
     req_project_id = args.get("project_id", "")
     req_id = args.get("req_id", "")
     fields = args.get("fields", {})
@@ -328,6 +346,7 @@ def _update_handler(args: dict, ctx: AgentContext) -> dict:
         )
 
     # Fetch before-snapshot
+    # 获取修改前的快照
     before = _get_handler(
         {"project_id": req_project_id or ctx.project_id or "", "req_id": req_id}, ctx
     )
@@ -337,6 +356,7 @@ def _update_handler(args: dict, ctx: AgentContext) -> dict:
     current_req = before.get("requirement", {})
 
     # Build diff preview
+    # 构建差异预览
     diff_preview = {}
     for key, new_val in filtered_fields.items():
         old_val = current_req.get(key)
@@ -377,6 +397,7 @@ def _update_handler(args: dict, ctx: AgentContext) -> dict:
 
 # ========================
 # Registration
+# 注册
 # ========================
 
 tool_registry.register(

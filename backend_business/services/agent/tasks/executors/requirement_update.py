@@ -1,4 +1,6 @@
-"""Executor for requirement_update tasks."""
+"""Executor for requirement_update tasks.
+需求更新任务的执行器。
+"""
 
 import json
 import uuid
@@ -10,6 +12,10 @@ from backend_business.services.agent.tasks.executors.base import BaseTaskExecuto
 
 
 class RequirementUpdateExecutor(BaseTaskExecutor):
+    """Handles requirement update tasks (write operations).
+    处理需求更新任务（写操作）。
+    """
+
     task_type = "requirement_update"
 
     def execute(
@@ -18,6 +24,9 @@ class RequirementUpdateExecutor(BaseTaskExecutor):
         actor: str,
         conn: Optional[Any] = None,
     ) -> Dict[str, Any]:
+        """Apply the updates to the requirement.
+        应用更新到需求。
+        """
         req_id = payload.get("req_id") or payload.get("requirement_id")
         fields = payload.get("fields") or {}
         project_id = payload.get("project_id")
@@ -28,6 +37,8 @@ class RequirementUpdateExecutor(BaseTaskExecutor):
             raise ValueError("payload.fields is required")
 
         if conn is not None:
+            # Execute within existing transaction
+            # 在现有事务中执行
             updated_req = self._update_requirement_with_conn(
                 conn=conn,
                 req_id=req_id,
@@ -50,8 +61,10 @@ class RequirementUpdateExecutor(BaseTaskExecutor):
                     },
                 )
             except Exception:
-                pass  # audit failures must not block execution
+                pass  # audit failures must not block execution; 审计失败不应阻止执行
         else:
+            # Use service layer (creates own connection/transaction)
+            # 使用服务层（创建自己的连接/事务）
             svc = self._req_service()
             updated_req = svc.update_requirement(
                 req_id=req_id,
@@ -83,6 +96,9 @@ class RequirementUpdateExecutor(BaseTaskExecutor):
         }
 
     def confirmation_message(self, task: Dict[str, Any], result: Dict[str, Any]) -> str:
+        """Format a rich confirmation message with diffs.
+        格式化包含差异的丰富确认消息。
+        """
         task_title = task.get("title", "")
         req_id = result.get("requirement_id", "")
         updated_fields = result.get("updated_fields", [])
@@ -113,6 +129,9 @@ class RequirementUpdateExecutor(BaseTaskExecutor):
 
     @staticmethod
     def _req_service():
+        """Get RequirementsManageService instance.
+        获取 RequirementsManageService 实例。
+        """
         from backend_business.services.requirements_manage_service import (
             RequirementsManageService,
         )
@@ -127,6 +146,9 @@ class RequirementUpdateExecutor(BaseTaskExecutor):
         fields: Dict[str, Any],
         updated_by: str,
     ) -> Dict[str, Any]:
+        """Update a requirement record using an existing connection.
+        使用现有连接更新需求记录。
+        """
         allowed = {
             "title",
             "description",
@@ -195,6 +217,9 @@ class RequirementUpdateExecutor(BaseTaskExecutor):
         target_id: str,
         detail: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """Add an audit log entry using an existing connection.
+        使用现有连接添加审计日志条目。
+        """
         log_id = str(uuid.uuid4())
         with conn.cursor() as cur:
             cur.execute(

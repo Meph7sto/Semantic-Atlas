@@ -1,13 +1,21 @@
 """Messaging tools for inter-agent communication.
+用于 Agent 间通信的消息工具。
 
 All three tools (delegate_task, query_agent, broadcast_notification) route
 messages through the MessageBus. The request-response path is:
+所有三个工具（delegate_task, query_agent, broadcast_notification）都通过 MessageBus 路由消息。
+请求-响应路径为：
 
 - Channel creation/lookup
+  频道创建/查找
 - Message persistence & history
+  消息持久化和历史记录
 - Middleware pipeline (logging, rate limit, metrics)
+  中间件管道（日志、速率限制、指标）
 - Recipient resolution via Router
+  通过路由器解析接收者
 - Synchronous request-response lifecycle
+  同步请求-响应生命周期
 """
 
 import logging
@@ -27,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 # ======================================================================
 # Tool schemas (OpenAI function-calling format)
+# 工具 schema（OpenAI 函数调用格式）
 # ======================================================================
 
 _DELEGATE_TASK_SCHEMA = {
@@ -107,9 +116,13 @@ _BROADCAST_NOTIFICATION_SCHEMA = {
 
 # ======================================================================
 # Permission helpers
+# 权限辅助函数
 # ======================================================================
 
 def _validate_child_agent_permission(sender_id: str, target_agent_id: str) -> Optional[str]:
+    """Validate if the sender is allowed to delegate to the target agent.
+    验证发送者是否被允许委派给目标 Agent。
+    """
     sender_def = agent_registry.get(sender_id)
     if not sender_def:
         return f"Unknown sender agent: {sender_id}"
@@ -125,6 +138,9 @@ def _validate_child_agent_permission(sender_id: str, target_agent_id: str) -> Op
 
 
 def _read_only_tool_names(agent_id: str) -> List[str]:
+    """Get list of read-only tools for an agent.
+    获取 Agent 的只读工具列表。
+    """
     agent_def = agent_registry.get(agent_id)
     if not agent_def:
         return []
@@ -137,7 +153,9 @@ def _run_target_agent(
     parent_context: AgentContext,
     tool_names_override: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Execute target agent for a bus request (compatibility seam for tests)."""
+    """Execute target agent for a bus request (compatibility seam for tests).
+    为总线请求执行目标 Agent（用于测试的兼容性接缝）。
+    """
     from backend_business.services.agent.runner import AgentRunner
 
     runner = AgentRunner()
@@ -151,6 +169,7 @@ def _run_target_agent(
 
 # ======================================================================
 # Core: send REQUEST via bus → runner handles → RESPONSE comes back
+# 核心：通过总线发送 REQUEST → 运行器处理 → RESPONSE 返回
 # ======================================================================
 
 def _send_request_via_bus(
@@ -161,19 +180,26 @@ def _send_request_via_bus(
     tool_names_override: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Send a REQUEST through the message bus and wait for target execution.
+    通过消息总线发送 REQUEST 并等待目标执行。
 
     Flow:
     1. Create/get direct channel between sender and target
+       创建/获取发送者和目标之间的直连频道
     2. Register a temporary bus handler for target agent execution
+       注册一个临时的总线处理程序用于目标 Agent 执行
     3. Send REQUEST via ``send_request``
+       通过 ``send_request`` 发送 REQUEST
     4. Wait for handler completion (or use compatibility fallback)
+       等待处理程序完成（或使用兼容性回退）
     4. Return response payload
+       返回响应载荷
     """
     channel = channel_manager.get_or_create_direct_channel(
         sender_id, target_agent_id, project_id=ctx.project_id
     )
 
     # Enrich content with session/project info
+    # 使用会话/项目信息丰富内容
     content.setdefault("user_id", ctx.user_id)
     content.setdefault("session_id", ctx.session_id)
     content.setdefault("project_id", ctx.project_id)
@@ -188,6 +214,7 @@ def _send_request_via_bus(
 
     def _auto_execute_request(msg: AgentMessage) -> None:
         # Only process this specific request dispatch.
+        # 仅处理此特定的请求分发。
         if msg.message_type != MessageType.REQUEST:
             return
         if msg.channel_id != channel.channel_id:
@@ -250,6 +277,7 @@ def _send_request_via_bus(
 
         if request_message is None and not state["handled"]:
             # Compatibility fallback (e.g., unit tests mocking send_request):
+            # 兼容性回退（例如，单元测试模拟 send_request）：
             request_message = AgentMessage(
                 message_id=request_message_id,
                 channel_id=channel.channel_id,
@@ -319,9 +347,13 @@ def _send_request_via_bus(
 
 # ======================================================================
 # Tool handlers
+# 工具处理函数
 # ======================================================================
 
 def _delegate_task(args: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
+    """Handler for delegate_task tool.
+    delegate_task 工具的处理函数。
+    """
     target_agent_id = args.get("target_agent_id")
     task_description = args.get("task_description")
     task_context = args.get("task_context", {})
@@ -355,6 +387,7 @@ def _delegate_task(args: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
         }
     except Exception as e:
         # Send failure notification through the bus
+        # 通过总线发送失败通知
         channel = channel_manager.get_or_create_direct_channel(
             sender_id, target_agent_id, project_id=ctx.project_id
         )
@@ -376,6 +409,9 @@ def _delegate_task(args: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
 
 
 def _query_agent(args: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
+    """Handler for query_agent tool.
+    query_agent 工具的处理函数。
+    """
     target_agent_id = args.get("target_agent_id")
     query = args.get("query")
     query_context = args.get("query_context", {})
@@ -393,6 +429,7 @@ def _query_agent(args: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
         return {"error": perm_error}
 
     # For queries, restrict target agent to read-only tools
+    # 对于查询，限制目标 Agent 仅使用只读工具
     read_only_tools = _read_only_tool_names(target_agent_id)
     if not read_only_tools:
         channel = channel_manager.get_or_create_direct_channel(
@@ -451,6 +488,9 @@ def _query_agent(args: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
 
 
 def _broadcast_notification(args: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
+    """Handler for broadcast_notification tool.
+    broadcast_notification 工具的处理函数。
+    """
     notification = args.get("notification")
     notification_type = args.get("notification_type", "info")
 
@@ -463,6 +503,7 @@ def _broadcast_notification(args: Dict[str, Any], ctx: AgentContext) -> Dict[str
     project_id = ctx.project_id
 
     # Get or create a project-level broadcast channel
+    # 获取或创建项目级广播频道
     channel = channel_manager.create_channel(
         channel_type=ChannelType.BROADCAST,
         created_by=sender_id,
@@ -472,6 +513,7 @@ def _broadcast_notification(args: Dict[str, Any], ctx: AgentContext) -> Dict[str
     )
 
     # Send through the bus (routed to all members via broadcast channel)
+    # 通过总线发送（通过广播频道路由到所有成员）
     message_id = message_bus.send_notify(
         sender_id=sender_id,
         channel_id=channel.channel_id,
@@ -492,6 +534,7 @@ def _broadcast_notification(args: Dict[str, Any], ctx: AgentContext) -> Dict[str
 
 # ======================================================================
 # Register tools
+# 注册工具
 # ======================================================================
 
 tool_registry.register(

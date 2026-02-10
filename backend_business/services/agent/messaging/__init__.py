@@ -1,40 +1,16 @@
-"""Multi-agent messaging infrastructure.
-
-Provides the message bus, channels, routing, and middleware pipeline
-that form the communication backbone for inter-agent collaboration.
+"""Messaging package - bus, channels, and message definitions.
+消息包 - 总线、频道和消息定义。
 """
 
-from .message import AgentMessage, MessageType
-from .bus import message_bus, MessageBus
-from .channel import Channel, ChannelType, channel_manager, ChannelManager
-from .router import MessageRouter, RoutingRule
-from .middleware import (
-    Middleware,
-    LoggingMiddleware,
-    RateLimitMiddleware,
-    AuthorizationMiddleware,
-    MetricsMiddleware,
-)
+from backend_business.services.agent.messaging.message import AgentMessage, MessageType
+from backend_business.services.agent.messaging.channel import Channel, ChannelType, channel_manager
+from backend_business.services.agent.messaging.bus import message_bus
 
 __all__ = [
-    # Message protocol
     "AgentMessage",
     "MessageType",
-    # Bus
-    "MessageBus",
-    "message_bus",
-    # Channel
     "Channel",
     "ChannelType",
-    "ChannelManager",
     "channel_manager",
-    # Router
-    "MessageRouter",
-    "RoutingRule",
-    # Middleware
-    "Middleware",
-    "LoggingMiddleware",
-    "RateLimitMiddleware",
-    "AuthorizationMiddleware",
-    "MetricsMiddleware",
+    "message_bus",
 ]
