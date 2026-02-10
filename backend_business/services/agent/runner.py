@@ -9,7 +9,7 @@ import requests
 from backend_business.config import settings
 from backend_business.services.db_service import db_service
 from backend_business.services.ai_chat_service import ai_chat_service
-from backend_business.services.agent.context import AgentContext
+from backend_business.services.agent.context import AgentContext, BaseContext, ExecutionContext
 from backend_business.services.agent.registry import agent_registry
 from backend_business.services.agent.tools.base import tool_registry
 
@@ -48,10 +48,16 @@ class AgentRunner:
         yield f"event: user_message\ndata: {json.dumps(user_msg, ensure_ascii=False)}\n\n"
 
         ctx = AgentContext(
-            user_id=user_id,
-            session_id=session_id,
-            project_id=project_id,
-            user_message_id=user_message_id,
+            base=BaseContext(
+                user_id=user_id,
+                session_id=session_id,
+                project_id=project_id,
+            ),
+            execution=ExecutionContext(
+                agent_id=agent_id,
+                user_message_id=user_message_id,
+                max_rounds=agent_def.max_tool_rounds,
+            ),
         )
 
         # 2) Build conversation history + system prompt
