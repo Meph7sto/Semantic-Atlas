@@ -40,6 +40,7 @@ const streamingThinking = ref('')
 const isStreaming = ref(false)
 const REASONER_PREF_KEY = 'ai_chat_use_reasoner'
 const useReasonerMode = ref(false)
+const selectedAgentId = ref('conductor_agent')
 
 // Agent stream cards
 const streamingToolCalls = ref([])
@@ -303,6 +304,7 @@ const sendMessage = async () => {
             sessionId: session.value.session_id,
             content: content,
             projectId: props.projectId,
+            agentId: selectedAgentId.value,
             useThinking: useReasonerMode.value,
         })
         

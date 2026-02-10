@@ -914,3 +914,75 @@ def init_db(conn):
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_agent_tasks_pending ON agent_pending_tasks(user_id, status) WHERE status = 'pending'"
         )
+
+        # ========================
+        # Agent Communication Tables (多 Agent 通信持久化)
+        # ========================
+
+        # 通信通道
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_channels (
+                channel_id    TEXT PRIMARY KEY,
+                channel_type  TEXT NOT NULL CHECK (channel_type IN ('direct','group','broadcast')),
+                name          TEXT,
+                project_id    TEXT REFERENCES manage_projects(project_id) ON DELETE SET NULL,
+                created_by    TEXT NOT NULL,
+                created_at    TIMESTAMPTZ DEFAULT NOW(),
+                is_archived   BOOLEAN DEFAULT FALSE
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_channels_project ON agent_channels(project_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_channels_type ON agent_channels(channel_type)"
+        )
+
+        # 通道成员
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_channel_members (
+                channel_id  TEXT NOT NULL REFERENCES agent_channels(channel_id) ON DELETE CASCADE,
+                agent_id    TEXT NOT NULL,
+                role        TEXT DEFAULT 'member',
+                joined_at   TIMESTAMPTZ DEFAULT NOW(),
+                PRIMARY KEY (channel_id, agent_id)
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_channel_members_agent ON agent_channel_members(agent_id)"
+        )
+
+        # Agent 消息记录
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_messages (
+                message_id   TEXT PRIMARY KEY,
+                channel_id   TEXT NOT NULL REFERENCES agent_channels(channel_id) ON DELETE CASCADE,
+                sender_id    TEXT NOT NULL,
+                message_type TEXT NOT NULL CHECK (message_type IN ('request','response','notify','vote','heartbeat','task_result')),
+                content      JSONB,
+                reply_to     TEXT REFERENCES agent_messages(message_id) ON DELETE SET NULL,
+                metadata     JSONB DEFAULT '{}',
+                created_at   TIMESTAMPTZ DEFAULT NOW()
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_messages_channel ON agent_messages(channel_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_messages_sender ON agent_messages(sender_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_messages_type ON agent_messages(message_type)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_messages_reply_to ON agent_messages(reply_to)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_messages_created ON agent_messages(created_at)"
+        )

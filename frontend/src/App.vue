@@ -57,7 +57,20 @@ onBeforeUnmount(() => {
 <template>
   <!-- Main routes: Self-contained layout -->
   <div v-if="isMainRoute" class="min-h-screen">
-    <RouterView />
+    <RouterView v-slot="{ Component, route: viewRoute }">
+      <KeepAlive>
+        <component
+          :is="Component"
+          v-if="viewRoute.meta?.keepAlive"
+          :key="viewRoute.name || viewRoute.path"
+        />
+      </KeepAlive>
+      <component
+        :is="Component"
+        v-if="!viewRoute.meta?.keepAlive"
+        :key="viewRoute.fullPath"
+      />
+    </RouterView>
     <!-- AI Floating Ball -->
     <AiFloatingBall :project-id="lastProjectId" />
   </div>
@@ -72,7 +85,20 @@ onBeforeUnmount(() => {
     <AlphaSidebar v-model:isOpen="isSidebarOpen" />
 
     <main class="flex-1 flex flex-col h-full overflow-hidden bg-white relative transition-all duration-300">
-      <RouterView />
+      <RouterView v-slot="{ Component, route: viewRoute }">
+        <KeepAlive>
+          <component
+            :is="Component"
+            v-if="viewRoute.meta?.keepAlive"
+            :key="viewRoute.name || viewRoute.path"
+          />
+        </KeepAlive>
+        <component
+          :is="Component"
+          v-if="!viewRoute.meta?.keepAlive"
+          :key="viewRoute.fullPath"
+        />
+      </RouterView>
     </main>
   </div>
 </template>

@@ -17,9 +17,11 @@ def bootstrap() -> None:
 
     # 2. Register tools
     from backend_business.services.agent.tools import requirement_tools as _  # noqa
+    from backend_business.services.agent.tools import messaging_tools as _  # noqa
 
     # 3. Register agent definitions
     from backend_business.services.agent.agents import requirements_agent as _  # noqa
+    from backend_business.services.agent.agents import conductor_agent as _  # noqa
 
     _bootstrapped = True
 

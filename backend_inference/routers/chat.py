@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 class ChatMessage(BaseModel):
     role: str = Field(..., description="Role: system, user, or assistant")
     content: Optional[str] = Field(default=None, description="Message content")
+    reasoning_content: Optional[str] = Field(
+        default=None, description="Reasoning content for assistant tool-call messages"
+    )
     tool_call_id: Optional[str] = Field(
         default=None, description="Tool call ID for tool role"
     )
@@ -116,6 +119,8 @@ def _convert_messages(messages: List[ChatMessage]) -> List[Dict[str, Any]]:
         msg_dict = {"role": msg.role}
         if msg.content is not None:
             msg_dict["content"] = msg.content
+        if msg.reasoning_content is not None:
+            msg_dict["reasoning_content"] = msg.reasoning_content
         if msg.tool_call_id is not None:
             msg_dict["tool_call_id"] = msg.tool_call_id
         if msg.tool_calls is not None:

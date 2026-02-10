@@ -266,7 +266,7 @@ def send_agent_message_stream(session_id: str):
     payload = request.get_json(silent=True) or {}
     content = (payload.get("content") or "").strip()
     project_id = payload.get("project_id")
-    agent_id = payload.get("agent_id", "requirements_agent")
+    agent_id = payload.get("agent_id", "conductor_agent")
     use_thinking = payload.get("use_thinking", False)
 
     user_id = _get_actor()

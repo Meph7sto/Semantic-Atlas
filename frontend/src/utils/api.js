@@ -985,9 +985,10 @@ export const aiChatApi = {
      * 返回的 SSE 事件包含：user_message, thinking, token, tool_call, tool_result, task_created, assistant_message, finish, error, done
      * @returns {Promise<Response>} Fetch Response for SSE streaming
      */
-    async sendAgentMessageStream({ sessionId, content, projectId = null, useThinking = false }) {
+    async sendAgentMessageStream({ sessionId, content, projectId = null, agentId = null, useThinking = false }) {
         const payload = { content }
         if (projectId) payload.project_id = projectId
+        if (agentId) payload.agent_id = agentId
         if (useThinking) payload.use_thinking = useThinking
 
         const response = await fetch(`/api/ai-chat/sessions/${encodeURIComponent(sessionId)}/messages/agent/stream`, {
@@ -1033,6 +1034,33 @@ export const aiChatApi = {
     // ========================
     createSSEConnection(sessionId) {
         return new EventSource(`/api/ai-chat/sessions/${encodeURIComponent(sessionId)}/stream`)
+    },
+}
+
+// Agent 协作监控 API
+export const agentMonitorApi = {
+    async getOverview({ projectId = null, limitMessages = 300, limitTasks = 200, limitEvents = 500 } = {}) {
+        const params = {
+            limit_messages: limitMessages,
+            limit_tasks: limitTasks,
+            limit_events: limitEvents,
+        }
+        if (projectId) params.project_id = projectId
+        const resp = await api.get('/agent-monitor/overview', { params })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '获取 Agent 监控数据失败')
+        }
+        return resp.data
+    },
+
+    async getChannelMessages(channelId, { projectId = null, limit = 200 } = {}) {
+        const params = { limit }
+        if (projectId) params.project_id = projectId
+        const resp = await api.get(`/agent-monitor/channels/${encodeURIComponent(channelId)}/messages`, { params })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '获取频道消息失败')
+        }
+        return resp.data.messages || []
     },
 }
 

@@ -247,6 +247,7 @@ def _update_handler(args: dict, ctx: AgentContext) -> dict:
         "before": current_req,
         "diff_preview": diff_preview,
         "source": {
+            "agent_id": ctx.agent_id,
             "session_id": ctx.session_id,
             "user_message_id": ctx.user_message_id,
             "tool_call_id": ctx.tool_call_id,

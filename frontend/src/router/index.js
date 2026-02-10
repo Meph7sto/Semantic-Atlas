@@ -10,9 +10,12 @@ import ContextBuilder from '../views/alpha/ContextBuilder.vue'
 import RequirementsExtraction from '../views/alpha/RequirementsExtraction.vue'
 import L4Testing from '../views/alpha/L4Testing.vue'
 import RequirementsManage from '../views/alpha/RequirementsManage.vue'
+import RequirementsManageTableDebug from '../views/alpha/RequirementsManageTableDebug.vue'
 import MessagePush from '../views/alpha/MessagePush.vue'
 import MobileBridge from '../views/alpha/MobileBridge.vue'
 import FileReceive from '../views/alpha/FileReceive.vue'
+import AgentCollaboration from '../views/alpha/AgentCollaboration.vue'
+import AgentChat from '../views/alpha/AgentChat.vue'
 
 // Main views (migrated from frontend_ref)
 import LoginView from '../views/main/LoginView.vue'
@@ -121,7 +124,14 @@ const router = createRouter({
                 {
                     path: 'requirements-manage',
                     name: 'requirements-manage',
-                    component: RequirementsManage
+                    component: RequirementsManage,
+                    meta: { keepAlive: true }
+                },
+                {
+                    path: 'requirements-manage-table',
+                    name: 'requirements-manage-table',
+                    component: RequirementsManageTableDebug,
+                    meta: { keepAlive: true }
                 },
                 {
                     path: 'traceability',
@@ -161,7 +171,20 @@ const router = createRouter({
                 {
                     path: 'file-receive',
                     name: 'file-receive',
-                    component: FileReceive
+                    component: FileReceive,
+                    meta: { keepAlive: true }
+                },
+                {
+                    path: 'agent-collaboration',
+                    name: 'agent-collaboration',
+                    component: AgentCollaboration,
+                    meta: { keepAlive: true }
+                },
+                {
+                    path: 'agent-chat',
+                    name: 'agent-chat',
+                    component: AgentChat,
+                    meta: { keepAlive: true }
                 }
             ]
         },
@@ -174,5 +197,3 @@ const router = createRouter({
 })
 
 export default router
-
-
