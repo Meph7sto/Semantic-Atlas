@@ -34,14 +34,30 @@ _SEARCH_SCHEMA = {
     "type": "function",
     "function": {
         "name": "requirement_search",
-        "description": "搜索项目中的需求。用于定位匹配查询条件的需求列表。这是一个读操作，可直接执行。",
+        "description": (
+            "搜索项目中的需求。用于定位匹配查询条件的需求列表。这是一个读操作，可直接执行。"
+            "支持多关键词搜索：使用 keywords 传入多个关键词，配合 mode 指定 and/or 逻辑。"
+            "and 模式下每个关键词都必须出现在标题或描述中；"
+            "or 模式下任一关键词出现即匹配。"
+        ),
         "parameters": {
             "type": "object",
             "properties": {
                 "project_id": {"type": "string", "description": "项目ID，必须提供"},
                 "query": {
                     "type": "string",
-                    "description": "搜索关键词，会匹配需求标题和描述",
+                    "description": "单个搜索关键词（向后兼容）。若同时提供 keywords 则优先使用 keywords",
+                },
+                "keywords": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "多个搜索关键词列表，每个关键词会匹配需求标题和描述",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["and", "or"],
+                    "description": "多关键词匹配模式：and 表示所有关键词都需匹配，or 表示任一关键词匹配即可。默认 or",
+                    "default": "or",
                 },
                 "limit": {
                     "type": "integer",
@@ -49,7 +65,7 @@ _SEARCH_SCHEMA = {
                     "default": 10,
                 },
             },
-            "required": ["project_id", "query"],
+            "required": ["project_id"],
         },
     },
 }
@@ -175,33 +191,63 @@ _UPDATE_SCHEMA = {
 
 def _search_handler(args: dict, ctx: AgentContext) -> dict:
     project_id = args.get("project_id", "")
+    keywords = args.get("keywords") or []
     query = args.get("query", "")
+    mode = args.get("mode", "or").lower()
     limit = args.get("limit", 10)
 
     if not project_id:
         return {"error": "project_id is required", "results": []}
 
+    # Build keyword list: prefer keywords array, fall back to query string
+    if not keywords and query:
+        keywords = [query]
+
+    if not keywords:
+        return {"error": "query or keywords is required", "results": []}
+
+    if mode not in ("and", "or"):
+        mode = "or"
+
     limit = max(1, min(50, int(limit)))
-    pattern = f"%{query}%"
+
+    # Build keyword matching conditions
+    # Each keyword matches title OR description (ILIKE)
+    # mode=and: ALL keywords must match; mode=or: ANY keyword must match
+    keyword_clauses = []
+    params: list = [project_id]
+    for kw in keywords:
+        pattern = f"%{kw}%"
+        keyword_clauses.append("(title ILIKE %s OR description ILIKE %s)")
+        params.extend([pattern, pattern])
+
+    joiner = " AND " if mode == "and" else " OR "
+    keyword_sql = joiner.join(keyword_clauses)
 
     try:
         with db_service._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
-                    """
+                    f"""
                     SELECT req_id, project_id, requirement_type, status, title,
                            description, priority, assignee, parent_id
                     FROM manage_requirements
                     WHERE project_id = %s
                       AND deleted = FALSE
-                      AND (title ILIKE %s OR description ILIKE %s)
+                      AND ({keyword_sql})
                     ORDER BY updated_at DESC
                     LIMIT %s
                     """,
-                    (project_id, pattern, pattern, limit),
+                    params + [limit],
                 )
                 rows = cur.fetchall()
-        return {"success": True, "count": len(rows), "results": [dict(r) for r in rows]}
+        return {
+            "success": True,
+            "count": len(rows),
+            "mode": mode,
+            "keywords": keywords,
+            "results": [dict(r) for r in rows],
+        }
     except Exception as e:
         return {"error": str(e), "results": []}
 
