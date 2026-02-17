@@ -19,6 +19,7 @@ import AgentChat from '../views/alpha/AgentChat.vue'
 
 // Main views (migrated from frontend_ref)
 import LoginView from '../views/main/LoginView.vue'
+import RegisterView from '../views/main/RegisterView.vue'
 import DashboardView from '../views/main/DashboardView.vue'
 import ProjectManageView from '../views/main/ProjectManageView.vue'
 import RequirementsView from '../views/main/RequirementsView.vue'
@@ -52,42 +53,56 @@ const router = createRouter({
                 {
                     path: 'login',
                     name: 'main-login',
-                    component: LoginView
+                    component: LoginView,
+                    meta: { requiresAuth: false }
+                },
+                {
+                    path: 'register',
+                    name: 'main-register',
+                    component: RegisterView,
+                    meta: { requiresAuth: false }
                 },
                 {
                     path: 'dashboard',
                     name: 'main-dashboard',
-                    component: DashboardView
+                    component: DashboardView,
+                    meta: { requiresAuth: true }
                 },
                 {
                     path: 'project',
                     name: 'main-project',
-                    component: ProjectManageView
+                    component: ProjectManageView,
+                    meta: { requiresAuth: true }
                 },
                 {
                     path: 'requirements',
                     name: 'main-requirements',
-                    component: RequirementsView
+                    component: RequirementsView,
+                    meta: { requiresAuth: true }
                 },
                 {
                     path: 'requirements-session',
                     name: 'main-requirements-session',
-                    component: RequirementsSessionView
+                    component: RequirementsSessionView,
+                    meta: { requiresAuth: true }
                 },
                 {
                     path: 'requirements-analysis',
                     name: 'main-requirements-analysis',
-                    component: RequirementsAnalysisView
+                    component: RequirementsAnalysisView,
+                    meta: { requiresAuth: true }
                 },
                 {
                     path: 'requirements-collection',
                     name: 'main-requirements-collection',
-                    component: RequirementsCollectionView
+                    component: RequirementsCollectionView,
+                    meta: { requiresAuth: true }
                 },
                 {
                     path: 'products',
                     name: 'main-products',
-                    component: ProductManageView
+                    component: ProductManageView,
+                    meta: { requiresAuth: true }
                 }
             ]
         },
@@ -95,6 +110,7 @@ const router = createRouter({
             path: '/alpha',
             name: 'alpha',
             redirect: '/alpha/transcript-ingestion',
+            meta: { requiresAuth: true },
             children: [
                 {
                     path: 'conflict',
@@ -194,6 +210,19 @@ const router = createRouter({
             redirect: '/guide'
         }
     ]
+})
+
+// 路由守卫：检查认证状态
+router.beforeEach((to, from, next) => {
+    const token = localStorage.getItem('token')
+    const requiresAuth = to.meta?.requiresAuth !== false // 默认需要认证，除非显式设置为 false
+
+    // 如果页面需要认证但没有 token，重定向到登录页
+    if (requiresAuth && !token) {
+        next({ name: 'main-login', query: { redirect: to.fullPath } })
+    } else {
+        next()
+    }
 })
 
 export default router

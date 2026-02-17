@@ -41,6 +41,15 @@
             </button>
           </div>
           <div class="page-actions">
+            <button
+              type="button"
+              class="action-btn secondary"
+              @click="exportRequirements"
+              :disabled="!selectedProjectId || isExporting"
+            >
+              <Download class="w-4 h-4" />
+              {{ isExporting ? '导出中...' : '导出需求' }}
+            </button>
             <button type="button" class="action-btn primary" @click="openAddRequirementModal" :disabled="!selectedProjectId">
               <Plus class="w-4 h-4" />
               新增需求
@@ -655,7 +664,7 @@ import draggable from "vuedraggable";
 import Sidebar from "../../components/main/Sidebar.vue";
 import RequirementTree from "../../components/charts/RequirementTree.vue";
 import { manageApi } from "../../utils/api";
-import { Loader2, FileText, RefreshCw, Briefcase, Users, Layout, Layers, Circle, Clock, CheckCircle, GripVertical, Search, Filter, ChevronDown, ChevronUp, CheckCircle2, Plus, X, Pencil } from "lucide-vue-next";
+import { Loader2, FileText, RefreshCw, Briefcase, Users, Layout, Layers, Circle, Clock, CheckCircle, GripVertical, Search, Filter, ChevronDown, ChevronUp, CheckCircle2, Plus, X, Pencil, Download } from "lucide-vue-next";
 
 const router = useRouter();
 const route = useRoute();
@@ -702,6 +711,7 @@ const projects = ref([]);
 const isLoadingProjects = ref(false);
 const projectSessionId = ref(''); // 项目绑定的 session
 const sessionMismatch = ref(false); // session 与项目不一致
+const isExporting = ref(false); // 导出状态
 
 // 新增需求相关状态
 const showAddRequirementModal = ref(false);
@@ -780,6 +790,12 @@ async function submitNewRequirement() {
       status: newRequirement.value.status,
       priority: normalizePriority(newRequirement.value.priority, 'medium'),
     };
+
+    if (newRequirement.value.requirement_type === 'top_level') {
+      payload.source_level = normalizeLevel(newRequirement.value.level || 'L1');
+    } else if (newRequirement.value.requirement_type === 'low_level') {
+      payload.source_level = 'L4';
+    }
 
     // 可选字段
     if (newRequirement.value.parent_id) {
@@ -1436,6 +1452,178 @@ function viewDetail(req) {
 
 async function refreshData() {
   await loadRequirements();
+}
+
+// 导出需求到CSV
+async function exportRequirements() {
+  if (!selectedProjectId.value) {
+    alert('请先选择项目');
+    return;
+  }
+
+  isExporting.value = true;
+  try {
+    // 获取所有需求（从管理API获取完整数据）
+    const data = await manageApi.listRequirements(selectedProjectId.value);
+    const requirements = data?.requirements || [];
+
+    if (requirements.length === 0) {
+      alert('当前项目没有可导出的需求');
+      return;
+    }
+
+    // 转换为CSV格式
+    const csvContent = requirementsToCsv(requirements);
+
+    // 获取项目名称作为文件名
+    const project = projects.value.find(p => p.project_id === selectedProjectId.value);
+    const projectName = project?.name || 'project';
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const filename = `${projectName}_requirements_${timestamp}.csv`;
+
+    // 创建blob并下载
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    triggerDownload(blob, filename);
+
+  } catch (err) {
+    console.error('导出需求失败:', err);
+    alert('导出需求失败: ' + (err.message || '未知错误'));
+  } finally {
+    isExporting.value = false;
+  }
+}
+
+// 触发文件下载
+function triggerDownload(blob, filename) {
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.URL.revokeObjectURL(url);
+}
+
+// 将需求数据转换为CSV格式
+function requirementsToCsv(requirements) {
+  // 定义CSV表头
+  const headers = ['需求ID', '需求标题', '需求描述', '需求类型', '层级', '优先级', '状态', '父需求ID', '标签', '创建时间'];
+
+  // 映射需求类型到中文标签
+  const typeMap = {
+    'top_level': '顶层需求',
+    'low_level': '底层需求',
+    'task': '任务'
+  };
+
+  // 映射层级
+  const levelMap = {
+    'L1': 'L1 - 业务需求',
+    'L2': 'L2 - 利益相关者需求',
+    'L3': 'L3 - 系统需求',
+    'L4': 'L4 - 底层需求'
+  };
+
+  // 映射状态
+  const statusMap = {
+    'draft': '草稿',
+    'under_review': '审核中',
+    'confirmed': '已确认',
+    'in_progress': '进行中',
+    'completed': '已完成'
+  };
+
+  // 映射优先级
+  const priorityMap = {
+    'high': '高',
+    'medium': '中',
+    'low': '低'
+  };
+
+  // 层级排序权重 - 按 L1→L2→L3→L4 顺序排列
+  const levelWeight = {
+    'L1': 1,
+    'L2': 2,
+    'L3': 3,
+    'L4': 4,
+    'L5': 5,
+    '': 99  // 其他层级放最后
+  };
+
+  // 按 L1→L2→L3→L4 排序，同层级内按 order_index 排序
+  requirements.sort((a, b) => {
+    const levelA = resolveRequirementLevelForCsv(a) || '';
+    const levelB = resolveRequirementLevelForCsv(b) || '';
+    const weightA = levelWeight[levelA] ?? 99;
+    const weightB = levelWeight[levelB] ?? 99;
+
+    if (weightA !== weightB) {
+      return weightA - weightB;
+    }
+
+    // 同层级内按 order_index 排序
+    const orderA = a.order_index ?? 0;
+    const orderB = b.order_index ?? 0;
+    if (orderA !== orderB) {
+      return orderA - orderB;
+    }
+
+    // 最后按创建时间排序
+    return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+  });
+
+  // 构建CSV行
+  const rows = requirements.map(req => {
+    const levelCode = resolveRequirementLevelForCsv(req);
+    return [
+    req.req_id || '',
+    escapeCsvField(req.title || req.text || req.statement || ''),
+    escapeCsvField(req.description || ''),
+    typeMap[req.requirement_type] || req.requirement_type || '',
+    levelMap[levelCode] || levelCode || '',
+    priorityMap[req.priority] || req.priority || '',
+    statusMap[req.status] || req.status || '',
+    req.parent_id || '',
+    escapeCsvField(Array.isArray(req.tags) ? req.tags.join('; ') : (req.tags || '')),
+    req.created_at || ''
+    ];
+  });
+
+  // 合并表头和行
+  const csvContent = [headers, ...rows]
+    .map(row => row.join(','))
+    .join('\n');
+
+  // 添加BOM以支持Excel UTF-8
+  return '\uFEFF' + csvContent;
+}
+
+function resolveRequirementLevelForCsv(req) {
+  const raw = ([req?.source_level, req?.level, req?.category]
+    .map(v => String(v || '').trim().toUpperCase())
+    .find(Boolean)) || '';
+
+  if (raw === 'L1' || raw === 'L2' || raw === 'L3' || raw === 'L4' || raw === 'L5') {
+    return raw;
+  }
+  if (raw.includes('L1')) return 'L1';
+  if (raw.includes('L2')) return 'L2';
+  if (raw.includes('L3')) return 'L3';
+  if (raw.includes('L4')) return 'L4';
+  if (raw.includes('L5')) return 'L5';
+
+  if (req?.requirement_type === 'low_level') return 'L4';
+  return '';
+}
+
+// 转义CSV字段
+function escapeCsvField(field) {
+  const text = String(field || '');
+  if (text.includes(',') || text.includes('"') || text.includes('\n')) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
 }
 
 // 数据加载

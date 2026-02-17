@@ -17,11 +17,31 @@ const inferenceAxios = axios.create({
 
 api.interceptors.response.use(
     (resp) => resp,
-    (err) => Promise.reject(err)
+    (err) => {
+        // 处理 401 未授权错误，清除本地存储的认证信息
+        if (err.response?.status === 401) {
+            // 清除认证信息
+            localStorage.removeItem('token')
+            localStorage.removeItem('user')
+            // 如果不是在登录页面，可以重定向到登录页
+            if (window.location.pathname !== '/main/login' && !window.location.pathname.startsWith('/guide')) {
+                window.location.href = '/main/login'
+            }
+        }
+        return Promise.reject(err)
+    }
 )
 
 api.interceptors.request.use((config) => {
     try {
+        // 优先使用 JWT Token 认证
+        const token = localStorage.getItem('token')
+        if (token) {
+            config.headers = config.headers || {}
+            config.headers['Authorization'] = `Bearer ${token}`
+        }
+
+        // 兼容旧的 X-Actor / X-Role 头
         const actor = localStorage.getItem('actor') || ''
         const role = localStorage.getItem('role') || ''
         if (actor) {
@@ -1122,6 +1142,89 @@ export const agentTaskApi = {
             throw new Error(resp.data?.error || '获取待审数失败')
         }
         return resp.data.count
+    },
+}
+
+// 认证 API
+export const authApi = {
+    // 登录
+    async login(username, password, role = 'member') {
+        const resp = await api.post('/auth/login', {
+            username,
+            password,
+            role
+        })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '登录失败')
+        }
+        return resp.data.data
+    },
+
+    // 注册
+    async register(username, password, displayName, role = 'member') {
+        const resp = await api.post('/auth/register', {
+            username,
+            password,
+            display_name: displayName,
+            role
+        })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '注册失败')
+        }
+        return resp.data.data
+    },
+
+    // 验证 Token
+    async verify() {
+        const resp = await api.get('/auth/verify')
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || 'Token 无效')
+        }
+        return resp.data.data
+    },
+
+    // 获取当前用户信息
+    async getCurrentUser() {
+        const resp = await api.get('/auth/me')
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '获取用户信息失败')
+        }
+        return resp.data.data
+    },
+
+    // 登出
+    async logout() {
+        const resp = await api.post('/auth/logout')
+        return resp.data
+    },
+
+    // 列出用户（仅管理员）
+    async listUsers({ role, limit = 100, offset = 0 } = {}) {
+        const params = { limit, offset }
+        if (role) params.role = role
+        const resp = await api.get('/auth/users', { params })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '获取用户列表失败')
+        }
+        return resp.data.data
+    },
+
+    // 创建用户（仅管理员）
+    async createUser(data) {
+        const resp = await api.post('/auth/users', data)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '创建用户失败')
+        }
+        return resp.data.data
+    },
+
+    // 更新用户（仅管理员）
+    async updateUser(userId, data) {
+        const resp = await api.patch(`/auth/users/${userId}`, data)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '更新用户失败')
+        }
+        return resp.data.data
     },
 }
 

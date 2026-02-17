@@ -1,6 +1,7 @@
 import os
 
 from backend_business.config import settings
+from backend_business.services.db_service_parts.auth import AuthMixin
 from backend_business.services.db_service_parts.base import DBServiceBase
 from backend_business.services.db_service_parts.classification import (
     ClassificationAnalysisMixin,
@@ -18,6 +19,7 @@ class DBService(
     ClassificationAnalysisMixin,
     L4RequirementsMixin,
     SpansMixin,
+    AuthMixin,
     DBServiceBase,
 ):
     """

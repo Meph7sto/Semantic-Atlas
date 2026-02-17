@@ -73,7 +73,7 @@
               {{ message }}
             </div>
             <div class="login-hint">
-              提示：借用人员需提前 1-7 天预约，校外借用需缴费确认后生效。
+              提示：测试账号 test / 密码 test
             </div>
           </form>
         </div>
@@ -85,6 +85,7 @@
 <script setup>
 import { ref, watch } from "vue";
 import { useRouter } from "vue-router";
+import { authApi } from "@/utils/api.js";
 
 const router = useRouter();
 
@@ -102,18 +103,18 @@ const roles = [
     tag: "管理人员",
   },
   {
-    value: "teacher",
+    value: "member",
     title: "成员（Contributor）",
     tag: "项目成员",
   },
   {
-    value: "external",
+    value: "viewer",
     title: "访客（Viewer）",
     tag: "只读权限",
   },
 ];
 
-const selectedRole = ref(props.defaultRole || roles[0].value);
+const selectedRole = ref(props.defaultRole || roles[1].value); // 默认选择 member
 const account = ref("");
 const password = ref("");
 const loading = ref(false);
@@ -127,53 +128,68 @@ const showMessage = (text, type = "success") => {
   messageType.value = type;
 };
 
+const clearAuthStorage = () => {
+  try {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+  } catch (_) {
+    // ignore
+  }
+};
+
 const handleEnter = async () => {
   message.value = "";
   const trimmedAccount = account.value.trim();
+  const trimmedPassword = password.value;
+
+  if (!trimmedAccount) {
+    showMessage("请输入账号", "error");
+    return;
+  }
+
+  if (!trimmedPassword) {
+    showMessage("请输入密码", "error");
+    return;
+  }
 
   loading.value = true;
   try {
-    // Prototyping Mode: Bypass actual login
-    await new Promise(resolve => setTimeout(resolve, 600)); // Simulate delay
+    // 调用真实登录 API
+    const result = await authApi.login(trimmedAccount, trimmedPassword, selectedRole.value);
+
+    // 保存 token 和用户信息到 localStorage
+    try {
+      localStorage.setItem("token", result.token);
+      localStorage.setItem("user", JSON.stringify(result));
+      // 兼容旧的 actor/role 字段
+      localStorage.setItem("actor", result.username || trimmedAccount);
+      localStorage.setItem("role", result.role || selectedRole.value);
+    } catch (e) {
+      console.error("Failed to save auth data:", e);
+    }
+
+    showMessage("登录成功", "success");
 
     // Navigate to dashboard
     router.push({ name: 'main-dashboard' });
 
-    // Persist minimal identity for audit/permission headers
-    try {
-      const actor = trimmedAccount || "Test User";
-      localStorage.setItem("actor", actor);
-      localStorage.setItem("role", selectedRole.value);
-    } catch (_) {
-      // ignore
-    }
-
     emit("enter", {
-      role: selectedRole.value,
-      user: {
-        name: "Test User",
-        role: selectedRole.value,
-        token: "mock-token"
-      }
+      role: result.role || selectedRole.value,
+      user: result
     });
   } catch (error) {
-    console.error(error);
-    // Even on error, for prototype, just enter
-    router.push({ name: 'main-dashboard' });
-    try {
-      const actor = trimmedAccount || "Test User";
-      localStorage.setItem("actor", actor);
-      localStorage.setItem("role", selectedRole.value);
-    } catch (_) {
-      // ignore
-    }
-    emit("enter", { role: selectedRole.value, user: { role: selectedRole.value } });
+    console.error("Login error:", error);
+    const errorMsg = error.response?.data?.error || error.message || "登录失败，请检查账号和密码";
+    showMessage(errorMsg, "error");
   } finally {
     loading.value = false;
   }
 };
 
 const handleRegister = () => {
+  // 跳转到注册页面
+  router.push({ name: 'main-register' });
+  // 保留 emit 以兼容可能的父组件调用
   emit("register", selectedRole.value);
 };
 

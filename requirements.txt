@@ -27,3 +27,7 @@ faiss-cpu>=1.7.4
 
 psycopg2-binary
 
+# JWT 认证
+PyJWT==2.9.0
+bcrypt==4.2.1
+

@@ -818,6 +818,12 @@ async function submitNewRequirement() {
       priority: normalizePriority(newRequirement.value.priority, 'medium'),
     };
 
+    if (newRequirement.value.requirement_type === 'top_level') {
+      payload.source_level = normalizeLevel(newRequirement.value.level || 'L1');
+    } else if (newRequirement.value.requirement_type === 'low_level') {
+      payload.source_level = 'L4';
+    }
+
     // 可选字段
     if (newRequirement.value.parent_id) {
       payload.parent_id = newRequirement.value.parent_id;

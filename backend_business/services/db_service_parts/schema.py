@@ -986,3 +986,46 @@ def init_db(conn):
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_agent_messages_created ON agent_messages(created_at)"
         )
+
+        # ========================
+        # Authentication: Users Table (用户认证表)
+        # ========================
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS auth_users (
+                user_id TEXT PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member', 'viewer')),
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_auth_users_username ON auth_users(username)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_auth_users_role ON auth_users(role)"
+        )
+
+        # 初始化测试用户（仅在用户表为空时插入）
+        cur.execute(
+            """
+            INSERT INTO auth_users (user_id, username, password_hash, display_name, role, is_active)
+            VALUES ('test-user-001', 'test', '$2b$12$6m.Xy3YEOvHNSXvq79T/meEpiTFFOOYVaR2aEp8pbFlfqsr/XkLki', '测试用户', 'member', TRUE)
+            ON CONFLICT (user_id) DO NOTHING
+            """
+        )
+        # 强制更新测试用户密码（如果已存在旧密码）
+        cur.execute(
+            """
+            UPDATE auth_users
+            SET username = 'test',
+                password_hash = '$2b$12$6m.Xy3YEOvHNSXvq79T/meEpiTFFOOYVaR2aEp8pbFlfqsr/XkLki',
+                updated_at = NOW()
+            WHERE user_id = 'test-user-001'
+            """
+        )

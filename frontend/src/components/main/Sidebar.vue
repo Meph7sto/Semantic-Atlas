@@ -95,7 +95,7 @@
     <div class="rail-meta">
       <div class="meta-block">
       <div class="meta-title">当前身份</div>
-      <div class="meta-value">{{ isCollapsed ? roleLabel.charAt(0) : roleLabel || "未登录" }}</div>
+      <div class="meta-value">{{ isCollapsed ? displayLabel.charAt(0) : displayLabel || "未登录" }}</div>
       <div class="meta-caption">
           {{ roleCaption }}
       </div>
@@ -108,16 +108,16 @@
         <Compass class="rail-action-icon" />
         <span v-if="!isCollapsed">返回 Guide</span>
       </button>
-      <button type="button" class="ghost rail-exit" @click="$emit('exit')" :title="isCollapsed ? '返回登录' : ''">
+      <button type="button" class="ghost rail-exit" @click="handleLogout" :title="isCollapsed ? '退出登录' : ''">
         <LogOut class="rail-action-icon" />
-        <span v-if="!isCollapsed">返回登录</span>
+        <span v-if="!isCollapsed">退出登录</span>
       </button>
     </div>
   </aside>
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import {
   LayoutDashboard,
@@ -140,7 +140,8 @@ const router = useRouter();
 const props = defineProps({
   roleType: {
     type: String,
-    required: true,
+    required: false, // 改为非必需，从 localStorage 获取
+    default: "",
   },
   roleLabel: {
     type: String,
@@ -168,6 +169,20 @@ defineEmits(["exit", "navigate"]);
 
 const isCollapsed = ref(false);
 const isSidebarTransitioning = ref(false);
+
+// 从 localStorage 获取当前用户信息
+const currentUser = ref(null);
+
+onMounted(() => {
+  try {
+    const userStr = localStorage.getItem('user');
+    if (userStr) {
+      currentUser.value = JSON.parse(userStr);
+    }
+  } catch (e) {
+    console.error('Failed to parse user data:', e);
+  }
+});
 let sidebarTransitionTimer = null;
 
 // 展开的菜单状态
@@ -297,12 +312,38 @@ const isChildActive = (item) => {
 
 const navItems = computed(() => commonNav);
 
+// 计算显示的用户名或显示名
+const displayLabel = computed(() => {
+  if (currentUser.value?.display_name) {
+    return currentUser.value.display_name;
+  }
+  if (currentUser.value?.username) {
+    return currentUser.value.username;
+  }
+  return props.roleLabel;
+});
+
+// 计算当前用户的角色说明
 const roleCaption = computed(() => {
-  if (props.roleType === "unified_admin") return "项目管理员";
-  if (props.roleType === "unified_member") return "项目成员";
-  if (props.roleType === "unified_viewer") return "访客视图";
+  const role = currentUser.value?.role || props.roleType;
+  if (role === "admin") return "管理员";
+  if (role === "member") return "项目成员";
+  if (role === "viewer") return "访客";
   return "项目成员";
 });
+
+// 处理退出登录
+const handleLogout = () => {
+  try {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    localStorage.removeItem('actor');
+    localStorage.removeItem('role');
+  } catch (e) {
+    console.error('Failed to clear auth data:', e);
+  }
+  router.push({ name: 'main-login' });
+};
 </script>
 
 <style scoped>
