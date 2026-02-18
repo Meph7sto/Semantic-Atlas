@@ -50,7 +50,13 @@
               <Download class="w-4 h-4" />
               {{ isExporting ? '导出中...' : '导出需求' }}
             </button>
-            <button type="button" class="action-btn primary" @click="openAddRequirementModal" :disabled="!selectedProjectId">
+            <button
+              type="button"
+              class="action-btn primary"
+              @click="openAddRequirementModal"
+              :disabled="!selectedProjectId"
+              v-if="hasPermission('req:create')"
+            >
               <Plus class="w-4 h-4" />
               新增需求
             </button>
@@ -660,6 +666,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
+import { useAuthStore } from "@/stores/auth.js";
 import draggable from "vuedraggable";
 import Sidebar from "../../components/main/Sidebar.vue";
 import RequirementTree from "../../components/charts/RequirementTree.vue";
@@ -668,12 +675,57 @@ import { Loader2, FileText, RefreshCw, Briefcase, Users, Layout, Layers, Circle,
 
 const router = useRouter();
 const route = useRoute();
+const authStore = useAuthStore();
 
 // 侧边栏状态
-const roleType = ref("unified_admin");
-const roleLabel = ref("管理员");
+const roleType = computed(() => {
+  const role = authStore.systemIdentity || authStore.systemRole
+  const roleMap = {
+    'SYS_ADMIN': 'unified_admin',
+    'SYS_USER': 'unified_member',
+    'SYS_CLIENT': 'unified_client',
+    'SYS_CONTRACTOR': 'unified_contractor',
+    'admin': 'unified_admin',
+    'member': 'unified_member',
+    'viewer': 'unified_viewer'
+  }
+  return roleMap[role] || 'unified_member'
+})
+
+const roleLabel = computed(() => authStore.user?.display_name || authStore.user?.username || roleType.value)
 const timestamp = ref(new Date().toLocaleString());
 const notificationCount = ref(3);
+
+// ========================
+// 权限检查辅助函数
+// ========================
+
+/**
+ * 检查当前项目是否有指定权限
+ */
+const hasPermission = (permission) => {
+  return authStore.hasPermission(selectedProjectId.value, permission)
+}
+
+/**
+ * 检查当前项目是否有任一权限
+ */
+const hasAnyPermission = (permissions) => {
+  return authStore.hasAnyPermission(selectedProjectId.value, permissions)
+}
+
+/**
+ * 检查当前项目是否有指定角色
+ */
+const hasRole = (role) => {
+  return authStore.hasRole(selectedProjectId.value, role)
+}
+
+/**
+ * 获取系统级身份
+ */
+const systemIdentity = computed(() => authStore.systemIdentity)
+
 const routeNameToPageKey = {
   "main-dashboard": "dashboard",
   "main-products": "products",
@@ -1139,6 +1191,11 @@ watch(selectedProjectId, async (val) => {
   if (val) {
     localStorage.setItem('lastProjectId', val);
     window.dispatchEvent(new CustomEvent('project-changed', { detail: { projectId: val } }));
+    try {
+      await authStore.loadProjectContext(val);
+    } catch (error) {
+      console.error('Failed to load project context:', error);
+    }
     await loadProjectSession();
     // 自动切换到项目 session
     if (projectSessionId.value && projectSessionId.value !== sessionId.value) {
@@ -1797,7 +1854,12 @@ function handleNavigate(page) {
   }
 }
 
-function handleExit() {
+async function handleExit() {
+  try {
+    await authStore.logout()
+  } catch (e) {
+    console.error('Failed to logout:', e);
+  }
   router.push({ name: "main-login" });
 }
 

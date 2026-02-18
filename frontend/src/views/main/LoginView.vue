@@ -85,9 +85,10 @@
 <script setup>
 import { ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { authApi } from "@/utils/api.js";
+import { useAuthStore } from "@/stores/auth.js";
 
 const router = useRouter();
+const authStore = useAuthStore();
 
 const props = defineProps({
   defaultRole: {
@@ -99,17 +100,27 @@ const props = defineProps({
 const roles = [
   {
     value: "admin",
-    title: "管理员（Project Admin）",
-    tag: "管理人员",
+    title: "超级管理员 (SYS_ADMIN)",
+    tag: "全平台管理",
+  },
+  {
+    value: "client",
+    title: "甲方客户 (SYS_CLIENT)",
+    tag: "查看已发布需求",
+  },
+  {
+    value: "contractor",
+    title: "外包成员 (SYS_CONTRACTOR)",
+    tag: "执行分配任务",
   },
   {
     value: "member",
-    title: "成员（Contributor）",
-    tag: "项目成员",
+    title: "项目成员 (SYS_USER)",
+    tag: "内部员工",
   },
   {
     value: "viewer",
-    title: "访客（Viewer）",
+    title: "访客 (SYS_USER - 只读)",
     tag: "只读权限",
   },
 ];
@@ -154,19 +165,8 @@ const handleEnter = async () => {
 
   loading.value = true;
   try {
-    // 调用真实登录 API
-    const result = await authApi.login(trimmedAccount, trimmedPassword, selectedRole.value);
-
-    // 保存 token 和用户信息到 localStorage
-    try {
-      localStorage.setItem("token", result.token);
-      localStorage.setItem("user", JSON.stringify(result));
-      // 兼容旧的 actor/role 字段
-      localStorage.setItem("actor", result.username || trimmedAccount);
-      localStorage.setItem("role", result.role || selectedRole.value);
-    } catch (e) {
-      console.error("Failed to save auth data:", e);
-    }
+    // 使用 Pinia Store 登录
+    const result = await authStore.login(trimmedAccount, trimmedPassword, selectedRole.value);
 
     showMessage("登录成功", "success");
 

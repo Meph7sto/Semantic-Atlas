@@ -119,6 +119,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
+import { useAuthStore } from "@/stores/auth.js";
 import {
   LayoutDashboard,
   FolderKanban,
@@ -132,10 +133,13 @@ import {
   Sparkles,
   Package,
   Compass,
-  LogOut
+  LogOut,
+  ClipboardList,
+  CheckSquare
 } from 'lucide-vue-next';
 
 const router = useRouter();
+const authStore = useAuthStore();
 
 const props = defineProps({
   roleType: {
@@ -181,6 +185,93 @@ onMounted(() => {
     }
   } catch (e) {
     console.error('Failed to parse user data:', e);
+  }
+});
+
+// 导航菜单配置（根据身份动态显示）
+const navItemsConfig = computed(() => {
+  const identity = authStore.systemIdentity;
+
+  // 超级管理员：全部菜单
+  const adminNav = [
+    { key: "dashboard", label: "概览", icon: LayoutDashboard },
+    { key: "products", label: "产品管理", icon: Package },
+    {
+      key: "project-management",
+      label: "项目管理",
+      icon: FolderKanban,
+      children: [
+        { key: "requirements-collection", label: "需求采集", icon: Sparkles },
+        { key: "requirements", label: "需求管理", icon: FileText },
+        { key: "requirements-session", label: "会话需求", icon: Layers },
+        { key: "requirements-analysis", label: "需求分析", icon: BarChart3 },
+      ]
+    },
+    { key: "defects", label: "缺陷与问题", icon: Bug },
+    { key: "tracking", label: "追踪", icon: GitBranch },
+    { key: "reviews", label: "评审", icon: FileCheck },
+    { key: "reports", label: "报告", icon: FileBarChart },
+  ];
+
+  // 普通用户 (SYS_USER - member/viewer)
+  const userNav = [
+    { key: "dashboard", label: "概览", icon: LayoutDashboard },
+    { key: "products", label: "产品管理", icon: Package },
+    {
+      key: "project-management",
+      label: "项目管理",
+      icon: FolderKanban,
+      children: [
+        { key: "requirements-collection", label: "需求采集", icon: Sparkles },
+        { key: "requirements", label: "需求管理", icon: FileText },
+        { key: "requirements-session", label: "会话需求", icon: Layers },
+        { key: "requirements-analysis", label: "需求分析", icon: BarChart3 },
+      ]
+    },
+    { key: "defects", label: "缺陷与问题", icon: Bug },
+    { key: "tracking", label: "追踪", icon: GitBranch },
+    { key: "reviews", label: "评审", icon: FileCheck },
+    { key: "reports", label: "报告", icon: FileBarChart },
+  ];
+
+  // 甲方客户 (SYS_CLIENT)：只关注已发布/已确认的需求
+  const clientNav = [
+    { key: "dashboard", label: "需求概览", icon: LayoutDashboard },
+    {
+      key: "project-management",
+      label: "已发布需求",
+      icon: FileCheck,
+      children: [
+        { key: "requirements", label: "需求列表", icon: FileText },
+      ]
+    },
+    { key: "reviews", label: "验收确认", icon: CheckSquare },
+  ];
+
+  // 外包成员 (SYS_CONTRACTOR)：聚焦分配给我的任务
+  const contractorNav = [
+    { key: "dashboard", label: "我的任务", icon: LayoutDashboard },
+    {
+      key: "project-management",
+      label: "分配给我的",
+      icon: ClipboardList,
+      children: [
+        { key: "requirements", label: "需求列表", icon: FileText },
+      ]
+    },
+    { key: "tracking", label: "提交记录", icon: GitBranch },
+  ];
+
+  switch (identity) {
+    case 'SYS_ADMIN':
+      return adminNav;
+    case 'SYS_CLIENT':
+      return clientNav;
+    case 'SYS_CONTRACTOR':
+      return contractorNav;
+    case 'SYS_USER':
+    default:
+      return userNav;
   }
 });
 let sidebarTransitionTimer = null;
@@ -262,25 +353,7 @@ onBeforeUnmount(() => {
   }
 });
 
-const commonNav = [
-  { key: "dashboard", label: "概览", icon: LayoutDashboard },
-  { key: "products", label: "产品管理", icon: Package },
-  {
-    key: "project-management",
-    label: "项目管理",
-    icon: FolderKanban,
-    children: [
-      { key: "requirements-collection", label: "需求采集", icon: Sparkles },
-      { key: "requirements", label: "需求管理", icon: FileText },
-      { key: "requirements-session", label: "会话需求", icon: Layers },
-      { key: "requirements-analysis", label: "需求分析", icon: BarChart3 },
-    ]
-  },
-  { key: "defects", label: "缺陷与问题", icon: Bug },
-  { key: "tracking", label: "追踪", icon: GitBranch },
-  { key: "reviews", label: "评审", icon: FileCheck },
-  { key: "reports", label: "报告", icon: FileBarChart },
-];
+const navItems = computed(() => navItemsConfig.value);
 
 const getIconColor = (key) => {
   const colors = {
@@ -310,8 +383,6 @@ const isChildActive = (item) => {
   return item.children.some(child => child.key === props.activePage);
 };
 
-const navItems = computed(() => commonNav);
-
 // 计算显示的用户名或显示名
 const displayLabel = computed(() => {
   if (currentUser.value?.display_name) {
@@ -325,6 +396,11 @@ const displayLabel = computed(() => {
 
 // 计算当前用户的角色说明
 const roleCaption = computed(() => {
+  // 优先使用 authStore 中的 identityLabel
+  if (authStore.identityLabel) {
+    return authStore.identityLabel;
+  }
+  // 兼容旧逻辑
   const role = currentUser.value?.role || props.roleType;
   if (role === "admin") return "管理员";
   if (role === "member") return "项目成员";

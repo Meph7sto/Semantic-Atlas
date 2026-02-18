@@ -11,6 +11,13 @@ from backend_business.services.db_service_parts.requirements import L4Requiremen
 from backend_business.services.db_service_parts.spans import SpansMixin
 from backend_business.services.db_service_parts.trace import TraceAnalysisMixin
 from backend_business.services.db_service_parts.utils import _utc_now_iso
+# 权限系统 Mixins
+from backend_business.services.db_service_parts.project_members import ProjectMembersMixin
+from backend_business.services.db_service_parts.member_roles import MemberRolesMixin
+from backend_business.services.db_service_parts.review_assignments import ReviewAssignmentsMixin
+from backend_business.services.db_service_parts.baselines import BaselinesMixin
+from backend_business.services.db_service_parts.change_requests import ChangeRequestsMixin
+from backend_business.services.db_service_parts.permissions import PermissionsMixin
 
 
 class DBService(
@@ -20,6 +27,12 @@ class DBService(
     L4RequirementsMixin,
     SpansMixin,
     AuthMixin,
+    ProjectMembersMixin,
+    MemberRolesMixin,
+    ReviewAssignmentsMixin,
+    BaselinesMixin,
+    ChangeRequestsMixin,
+    PermissionsMixin,
     DBServiceBase,
 ):
     """

@@ -63,7 +63,7 @@ class AuthService:
         random_str = secrets.token_hex(4)
         return f"user-{timestamp}-{random_str}"
 
-    def generate_token(self, user_id: str, username: str, role: str) -> str:
+    def generate_token(self, user_id: str, username: str, role: str, external_type: Optional[str] = None) -> str:
         """
         生成 JWT Token
 
@@ -71,6 +71,7 @@ class AuthService:
             user_id: 用户 ID
             username: 用户名
             role: 用户角色
+            external_type: 外部身份类型
 
         Returns:
             JWT Token 字符串
@@ -82,6 +83,7 @@ class AuthService:
             "user_id": user_id,
             "username": username,
             "role": role,
+            "external_type": external_type,
             "iat": now,
             "exp": expiry,
         }

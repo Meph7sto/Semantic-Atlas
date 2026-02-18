@@ -1015,17 +1015,244 @@ def init_db(conn):
         cur.execute(
             """
             INSERT INTO auth_users (user_id, username, password_hash, display_name, role, is_active)
-            VALUES ('test-user-001', 'test', '$2b$12$6m.Xy3YEOvHNSXvq79T/meEpiTFFOOYVaR2aEp8pbFlfqsr/XkLki', '测试用户', 'member', TRUE)
+            VALUES ('test-user-001', 'test', '$2b$12$6m.Xy3YEOvHNSXvq79T/meEpiTFFOOYVaR2aEp8pbFlfqsr/XkLki', '测试用户 (全权限)', 'admin', TRUE)
             ON CONFLICT (user_id) DO NOTHING
             """
         )
-        # 强制更新测试用户密码（如果已存在旧密码）
+        # 强制更新测试用户为 admin 角色，拥有所有权限
         cur.execute(
             """
             UPDATE auth_users
             SET username = 'test',
                 password_hash = '$2b$12$6m.Xy3YEOvHNSXvq79T/meEpiTFFOOYVaR2aEp8pbFlfqsr/XkLki',
+                role = 'admin',
+                display_name = '测试用户 (全权限)',
                 updated_at = NOW()
             WHERE user_id = 'test-user-001'
+            """
+        )
+
+        # ========================
+        # Permission System: Schema Changes
+        # ========================
+
+        # 1.1 添加 external_type 到 auth_users 表（外部身份标识）
+        cur.execute(
+            """
+            ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS external_type TEXT
+            """
+        )
+        cur.execute(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'auth_users'::regclass
+                      AND conname = 'chk_auth_users_external_type'
+                ) THEN
+                    ALTER TABLE auth_users
+                    ADD CONSTRAINT chk_auth_users_external_type
+                    CHECK (external_type IS NULL OR external_type IN ('CLIENT', 'CONTRACTOR'));
+                END IF;
+            END $$;
+            """
+        )
+
+        # 1.2 添加优先级相关字段到 manage_requirements 表
+        cur.execute(
+            """
+            ALTER TABLE manage_requirements
+            ADD COLUMN IF NOT EXISTS priority_suggested INTEGER
+            """
+        )
+        cur.execute(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'manage_requirements'::regclass
+                      AND conname = 'chk_manage_requirements_priority_suggested'
+                ) THEN
+                    ALTER TABLE manage_requirements
+                    ADD CONSTRAINT chk_manage_requirements_priority_suggested
+                    CHECK (priority_suggested IS NULL OR (priority_suggested >= 1 AND priority_suggested <= 5));
+                END IF;
+            END $$;
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE manage_requirements
+            ADD COLUMN IF NOT EXISTS priority_final INTEGER
+            """
+        )
+        cur.execute(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'manage_requirements'::regclass
+                      AND conname = 'chk_manage_requirements_priority_final'
+                ) THEN
+                    ALTER TABLE manage_requirements
+                    ADD CONSTRAINT chk_manage_requirements_priority_final
+                    CHECK (priority_final IS NULL OR (priority_final >= 1 AND priority_final <= 5));
+                END IF;
+            END $$;
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE manage_requirements
+            ADD COLUMN IF NOT EXISTS priority_decided_by TEXT
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE manage_requirements
+            ADD COLUMN IF NOT EXISTS priority_decided_at TIMESTAMPTZ
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE manage_requirements
+            ADD COLUMN IF NOT EXISTS baseline_id BIGINT
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_manage_requirements_baseline ON manage_requirements(baseline_id)"
+        )
+
+        # 1.3 项目成员表：记录谁在哪个项目
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS project_members (
+                id BIGSERIAL PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES manage_projects(project_id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL REFERENCES auth_users(user_id) ON DELETE CASCADE,
+                joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE(project_id, user_id)
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_project_members_project ON project_members(project_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_project_members_user ON project_members(user_id)"
+        )
+
+        # 1.4 成员角色表：支持一个成员拥有多个角色
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS member_roles (
+                id BIGSERIAL PRIMARY KEY,
+                member_id BIGINT NOT NULL REFERENCES project_members(id) ON DELETE CASCADE,
+                role_id TEXT NOT NULL CHECK (role_id IN ('PO', 'BA', 'DEV', 'REVIEWER', 'QA', 'CONTRACTOR', 'CLIENT')),
+                granted_by TEXT NOT NULL REFERENCES auth_users(user_id),
+                granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE(member_id, role_id)
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_member_roles_member ON member_roles(member_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_member_roles_role ON member_roles(role_id)"
+        )
+
+        # 1.5 评审指派表：记录需求的评审实例
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS review_assignments (
+                id BIGSERIAL PRIMARY KEY,
+                requirement_id TEXT NOT NULL REFERENCES manage_requirements(req_id) ON DELETE CASCADE,
+                reviewer_id TEXT NOT NULL REFERENCES auth_users(user_id) ON DELETE CASCADE,
+                initiated_by TEXT NOT NULL REFERENCES auth_users(user_id),
+                seq SMALLINT NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'WITHDRAWN')),
+                comment TEXT,
+                decided_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_review_assignments_req ON review_assignments(requirement_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_review_assignments_reviewer ON review_assignments(reviewer_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_review_assignments_status ON review_assignments(status)"
+        )
+
+        # 1.6 基线表：记录项目基线版本
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS baselines (
+                id BIGSERIAL PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES manage_projects(project_id) ON DELETE CASCADE,
+                version TEXT NOT NULL CHECK (char_length(version) >= 1),
+                locked BOOLEAN NOT NULL DEFAULT FALSE,
+                created_by TEXT NOT NULL REFERENCES auth_users(user_id),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_baselines_project ON baselines(project_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_baselines_version ON baselines(project_id, version)"
+        )
+
+        # 1.7 变更请求表：记录需求变更申请
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS change_requests (
+                id BIGSERIAL PRIMARY KEY,
+                requirement_id TEXT NOT NULL REFERENCES manage_requirements(req_id) ON DELETE CASCADE,
+                baseline_id BIGINT NOT NULL REFERENCES baselines(id) ON DELETE RESTRICT,
+                requested_by TEXT NOT NULL REFERENCES auth_users(user_id),
+                reason TEXT NOT NULL CHECK (char_length(reason) >= 1),
+                change_summary TEXT NOT NULL CHECK (char_length(change_summary) >= 1),
+                status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED')),
+                reviewed_by TEXT REFERENCES auth_users(user_id),
+                review_comment TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                resolved_at TIMESTAMPTZ
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_change_requests_req ON change_requests(requirement_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_change_requests_baseline ON change_requests(baseline_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_change_requests_status ON change_requests(status)"
+        )
+
+        # 1.8 添加基线外键约束（在 baselines 表创建后）
+        cur.execute(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'manage_requirements'::regclass
+                      AND conname = 'fk_manage_requirements_baseline'
+                ) THEN
+                    ALTER TABLE manage_requirements
+                    ADD CONSTRAINT fk_manage_requirements_baseline
+                    FOREIGN KEY (baseline_id) REFERENCES baselines(id) ON DELETE SET NULL;
+                END IF;
+            END $$;
             """
         )

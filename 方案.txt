@@ -1,0 +1,363 @@
+# 需求管理系统
+
+# 身份与权限体系设计方案（V2.0）
+
+| 字段 | 值 |
+| --- | --- |
+| 版本 | V2.0 |
+| 日期 | 2026-02-18 |
+| 状态 | 正式归档 |
+| 核心变更 | 多角色支持，动态审批流，外部身份细化，变更控制 |
+
+## 1. 方案范围与原则
+
+本方案定义需求管理系统的身份分层、项目角色、多角色鉴权、动态审批流、外部身份访问控制、基线与变更控制，并给出落地所需的数据表与前端集成接口。
+
+鉴权计算建议按以下顺序执行：系统级身份约束，项目级角色权限并集，数据级动态身份校验，外部身份强制可见性过滤。
+
+## 2. 身份体系
+
+### 2.1 系统级身份
+
+| 身份 | Key | 权限描述 | 适用人群 |
+| --- | --- | --- | --- |
+| 超级管理员 | SYS_ADMIN | 全平台管理：租户、计费、全局用户、创建项目 | CTO / 运维负责人 |
+| 普通用户 | SYS_USER | 登录权 + 个人中心。需被邀请进入项目 | 内部员工 |
+| 甲方客户 | SYS_CLIENT | 受限访问，关注需求状态与评审结果（新） | 甲方项目对接人 |
+| 外包成员 | SYS_CONTRACTOR | 受限访问，可领取任务、提交交付物（新） | 外部承包商 |
+
+说明：系统级身份用于描述账号类型与全局访问边界，项目内的具体操作权限由项目级角色与数据级上下文共同决定。
+
+### 2.2 项目级角色
+
+同一用户在同一项目可绑定多个角色，鉴权时取所有角色权限点的并集。
+
+| 角色 | 标识 | 核心职责 | 关键权限点 |
+| --- | --- | --- | --- |
+| 产品负责人 | PO | 需求决策与排期 | req:create, req:priority_decide, req:baseline_manage, proj:add_member |
+| 需求分析师 | BA | 需求细化与评审发起 | req:create, req:edit, req:priority_suggest, req:review_initiate |
+| 研发/执行 | DEV | 需求落地与状态流转 | req:view, req:status_dev, code:link |
+| 评审专家 | REVIEWER | 审核把关（可动态指派） | req:approve, req:reject, req:review_comment, req:view |
+| 测试/QA | QA | 质量验收与缺陷管理 | req:view, test:link_case, test:reject_release |
+| 外包成员 | CONTRACTOR | 领取任务、提交交付 | req:view_assigned, delivery:submit |
+| 甲方观察者 | CLIENT | 只读 + 签收确认 | req:view_shared, req:client_confirm |
+
+### 2.3 数据级动态身份
+
+当静态角色权限不足时，系统额外检查资源归属关系，形成数据级动态特权。
+
+| 身份 | 判断逻辑 | 附加特权 |
+| --- | --- | --- |
+| 创建人 (Creator) | requirements.created_by = current_user_id | 草稿撤回、发起变更申请 |
+| 当前经办人 (Assignee) | requirements.assignee_id = current_user_id | 状态流转、提交节点产物 |
+| 指定审批人 (Reviewer) | review_assignments.reviewer_id = current_user_id | 在指定需求上执行 approve/reject |
+
+## 3. 权限与关键业务规则
+
+### 3.1 优先级建议与决策分离
+
+| 权限点 | 归属角色 | 含义 |
+| --- | --- | --- |
+| req:priority_suggest | BA（可写入建议值） | BA 可对需求填写「建议优先级」字段，触发通知 PO |
+| req:priority_decide | PO（最终写入） | PO 确认或修改后，正式写入 priority 字段，才生效 |
+| req:review_initiate | BA | BA 有权发起评审流程，但无权指定最终基线版本 |
+| req:baseline_manage | PO | PO 有权锁定/解锁基线，是最终拍板人 |
+
+需求表字段补充：
+
+```sql
+ALTER TABLE requirements
+  ADD COLUMN priority_suggested  TINYINT COMMENT 'BA 建议优先级 (1-5)',
+  ADD COLUMN priority_final      TINYINT COMMENT 'PO 最终确认优先级 (1-5)',
+  ADD COLUMN priority_decided_by BIGINT  COMMENT 'PO 确认人',
+  ADD COLUMN priority_decided_at TIMESTAMP;
+````
+
+字段语义建议如下：priority_suggested 用于 BA 建议值，priority_final 用于 PO 生效值，priority_decided_by 与 priority_decided_at 记录确认人和确认时间。
+
+### 3.2 多角色绑定与权限并集
+
+数据模型采用成员表与角色绑定表的多对多结构，支持同一成员拥有多个角色。
+
+```sql
+-- 项目成员基本表（仅记录「谁在项目里」）
+CREATE TABLE project_members (
+    id         BIGINT PRIMARY KEY AUTO_INCREMENT,
+    project_id BIGINT NOT NULL,
+    user_id    BIGINT NOT NULL,
+    joined_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_project_user (project_id, user_id),
+    CONSTRAINT fk_pm_project FOREIGN KEY (project_id) REFERENCES projects(id),
+    CONSTRAINT fk_pm_user    FOREIGN KEY (user_id)    REFERENCES sys_users(id)
+);
+
+-- 角色绑定表（一个成员可绑定多个角色）
+CREATE TABLE member_roles (
+    id         BIGINT PRIMARY KEY AUTO_INCREMENT,
+    member_id  BIGINT NOT NULL,   -- FK -> project_members.id
+    role_id    BIGINT NOT NULL,
+    granted_by BIGINT NOT NULL,   -- 谁授予的
+    granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_member_role (member_id, role_id),
+    CONSTRAINT fk_mr_member FOREIGN KEY (member_id) REFERENCES project_members(id),
+    CONSTRAINT fk_mr_role   FOREIGN KEY (role_id)   REFERENCES sys_roles(id)
+);
+```
+
+权限查询取并集：
+
+```sql
+-- 获取用户在项目中的全部权限（并集）
+SELECT DISTINCT p.code
+FROM   project_members  pm
+JOIN   member_roles      mr  ON mr.member_id = pm.id
+JOIN   sys_role_permissions rp ON rp.role_id  = mr.role_id
+JOIN   sys_permissions   p  ON p.id          = rp.permission_id
+WHERE  pm.project_id = :projectId
+AND    pm.user_id    = :userId;
+```
+
+注意：多角色并集意味着权限只会扩大。建议在项目管理界面提供角色组合预览，展示成员最终有效权限集。
+
+### 3.3 动态审批流
+
+审批能力由两部分共同决定。
+
+1. 角色侧：用户在项目内拥有 REVIEWER 角色并具备 req:approve 或 req:reject。
+2. 实例侧：用户被指派为某条需求的审批人，且该审批节点处于 PENDING。
+
+审批实例表：
+
+```sql
+-- 审批流实例表（每条需求可有多个审批节点）
+CREATE TABLE review_assignments (
+    id            BIGINT PRIMARY KEY AUTO_INCREMENT,
+    requirement_id BIGINT NOT NULL,
+    reviewer_id   BIGINT NOT NULL,   -- 被指派的评审人（必须拥有 REVIEWER 角色）
+    initiated_by  BIGINT NOT NULL,   -- 发起人（BA 或 PO）
+    seq           TINYINT DEFAULT 1, -- 审批顺序（支持多级串行）
+    status        ENUM('PENDING','APPROVED','REJECTED','WITHDRAWN') DEFAULT 'PENDING',
+    comment       TEXT,
+    decided_at    TIMESTAMP,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_ra_req      FOREIGN KEY (requirement_id) REFERENCES requirements(id),
+    CONSTRAINT fk_ra_reviewer FOREIGN KEY (reviewer_id)    REFERENCES sys_users(id)
+);
+```
+
+审批鉴权示例：
+
+```javascript
+async function canApprove(userId, projectId, requirementId) {
+    // 1. 静态角色检查：是否持有 REVIEWER 角色
+    const perms = await db.getPermissionsByUserAndProject(userId, projectId);
+    if (!perms.includes('req:approve')) return false;
+
+    // 2. 动态实例检查：是否被指派为该需求的评审人
+    const assignment = await db.query(`
+        SELECT id FROM review_assignments
+        WHERE requirement_id = ? AND reviewer_id = ? AND status = 'PENDING'
+    `, [requirementId, userId]);
+
+    return assignment.length > 0;
+}
+```
+
+多级串行审批通过 review_assignments.seq 表达，系统在上一级 APPROVED 后激活下一 seq 的节点。
+
+### 3.4 外部身份访问控制
+
+外部身份分为 CLIENT 与 CONTRACTOR，两者的诉求与可见范围不同。
+
+| 维度   | 甲方客户 (CLIENT)            | 外包成员 (CONTRACTOR)      |
+| ---- | ------------------------ | ---------------------- |
+| 核心诉求 | 了解需求进展、参与验收确认            | 领取明确任务、提交阶段交付物         |
+| 可见范围 | 仅「已发布/已确认」状态的需求，隐藏内部草稿   | 仅被分配给自己的需求卡片           |
+| 写操作  | req:client_confirm（签收确认） | delivery:submit（提交交付物） |
+| 禁止操作 | 所有内部流程操作、优先级修改           | 看到其他人的任务、访问基线          |
+| 数据隔离 | 看不到内部讨论和批注               | 看不到内部成员信息和定价           |
+
+外部身份权限点示例：
+
+```sql
+-- 新增外部身份权限点
+INSERT INTO sys_permissions (code, name, module) VALUES
+('req:view_shared',    '查看已发布需求（客户可见）', 'requirement'),
+('req:client_confirm', '客户签收确认',              'requirement'),
+('req:view_assigned',  '查看被分配给自己的需求',    'requirement'),
+('delivery:submit',    '提交交付物',                'delivery');
+```
+
+外部用户查询必须经过强制过滤层：
+
+```javascript
+function buildQueryFilter(user, projectId) {
+    const role = user.externalRole; // 'CLIENT' | 'CONTRACTOR' | null
+
+    if (role === 'CLIENT') {
+        // 甲方只看「已发布」状态
+        return { project_id: projectId, status: ['PUBLISHED', 'CONFIRMED'] };
+    }
+    if (role === 'CONTRACTOR') {
+        // 外包只看分配给自己的
+        return { project_id: projectId, assignee_id: user.id };
+    }
+    // 内部用户：按角色权限正常过滤
+    return { project_id: projectId };
+}
+```
+
+### 3.5 基线与变更控制
+
+当需求所属基线处于锁定状态时，直接编辑受控，需通过变更申请流程。
+
+| 权限点                 | 角色       | 说明                  |
+| ------------------- | -------- | ------------------- |
+| req:baseline_manage | PO       | 创建基线版本、锁定/解锁基线      |
+| req:change_request  | BA / 创建人 | 在基线锁定后，提交正式变更申请（CR） |
+| req:change_approve  | PO       | 审批变更申请，通过后解锁对应字段    |
+| req:change_reject   | PO       | 驳回变更申请，保持基线不变       |
+
+变更申请与基线表：
+
+```sql
+CREATE TABLE change_requests (
+    id             BIGINT PRIMARY KEY AUTO_INCREMENT,
+    requirement_id BIGINT NOT NULL,
+    baseline_id    BIGINT NOT NULL,       -- 针对哪个基线版本发起的变更
+    requested_by   BIGINT NOT NULL,       -- 申请人
+    reason         TEXT NOT NULL,         -- 变更理由（必填）
+    change_summary TEXT NOT NULL,         -- 变更内容描述
+    status         ENUM('PENDING','APPROVED','REJECTED') DEFAULT 'PENDING',
+    reviewed_by    BIGINT,                -- PO 处理人
+    review_comment TEXT,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    resolved_at    TIMESTAMP,
+    CONSTRAINT fk_cr_req  FOREIGN KEY (requirement_id) REFERENCES requirements(id),
+    CONSTRAINT fk_cr_user FOREIGN KEY (requested_by)   REFERENCES sys_users(id)
+);
+
+-- 基线表
+CREATE TABLE baselines (
+    id          BIGINT PRIMARY KEY AUTO_INCREMENT,
+    project_id  BIGINT NOT NULL,
+    version     VARCHAR(20) NOT NULL,  -- 如 'v2.0', 'v2.1'
+    locked      BOOLEAN DEFAULT FALSE, -- TRUE 时禁止直接修改关联需求
+    created_by  BIGINT NOT NULL,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+基线锁定下的编辑保护示例：
+
+```javascript
+async function checkEditPermission(user, requirement) {
+    // 1. 检查基线是否锁定
+    const baseline = await db.getBaseline(requirement.baseline_id);
+    if (baseline?.locked) {
+        // 2. 检查是否有已批准的变更申请
+        const approvedCR = await db.query(`
+            SELECT id FROM change_requests
+            WHERE requirement_id = ? AND status = 'APPROVED'
+            AND resolved_at > NOW() - INTERVAL 24 HOUR -- 24小时内有效
+        `, [requirement.id]);
+
+        if (approvedCR.length === 0) {
+            throw new Error('基线已锁定，请先提交变更申请（CR）');
+        }
+    }
+    // 3. 正常权限检查
+    return checkPermission(user, requirement.project_id, 'req:edit');
+}
+```
+
+## 4. 数据库表清单
+
+| 表名                   | 说明                                                   |
+| -------------------- | ---------------------------------------------------- |
+| sys_users            | 用户表， external_type 字段区分内外部                           |
+| projects             | 项目表                                                  |
+| sys_permissions      | 权限点表，外部身份及变更控制权限点                                    |
+| sys_roles            | 角色定义表， CONTRACTOR / CLIENT 角色                        |
+| sys_role_permissions | 角色-权限关联                                              |
+| project_members      | 去除 role_id，仅记录「谁在项目里」                                |
+| member_roles         | 成员-角色多对多绑定表                                          |
+| requirements         | priority_suggested / priority_final / baseline_id 字段 |
+| review_assignments   | 动态审批实例表（支持多级串行）                                      |
+| baselines            | 基线版本表，含 locked 标志                                    |
+| change_requests      | 变更申请表，记录 CR 生命周期                                     |
+
+## 5. 权限点字典
+
+| 权限点 (code)           | 模块 | 持有角色               |
+| -------------------- | -- | ------------------ |
+| req:view             | 需求 | ALL（含外部）           |
+| req:view_shared      | 需求 | CLIENT             |
+| req:view_assigned    | 需求 | CONTRACTOR         |
+| req:create           | 需求 | PO, BA             |
+| req:edit             | 需求 | PO, BA, Creator*   |
+| req:delete           | 需求 | PO                 |
+| req:priority_suggest | 需求 | BA                 |
+| req:priority_decide  | 需求 | PO                 |
+| req:approve          | 审批 | REVIEWER（+ 动态指派校验） |
+| req:reject           | 审批 | REVIEWER（+ 动态指派校验） |
+| req:review_comment   | 审批 | REVIEWER           |
+| req:review_initiate  | 审批 | BA, PO             |
+| req:client_confirm   | 外部 | CLIENT             |
+| req:baseline_manage  | 基线 | PO                 |
+| req:change_request   | 变更 | BA, Creator*       |
+| req:change_approve   | 变更 | PO                 |
+| req:change_reject    | 变更 | PO                 |
+| req:status_dev       | 状态 | DEV                |
+| code:link            | 研发 | DEV                |
+| test:link_case       | 测试 | QA                 |
+| test:reject_release  | 测试 | QA                 |
+| delivery:submit      | 交付 | CONTRACTOR         |
+| proj:config          | 项目 | PO, SYS_ADMIN      |
+| proj:add_member      | 项目 | PO                 |
+| proj:remove_member   | 项目 | PO, SYS_ADMIN      |
+
+注：Creator 为数据级动态身份。
+
+## 6. 前端集成
+
+### 6.1 用户上下文接口响应
+
+```json
+{
+  "user_context": {
+    "user_id": 101,
+    "project_id": 2005,
+    "roles": ["DEV", "REVIEWER"],
+    "permissions": [
+      "req:view", "req:comment", "code:link",
+      "req:approve", "req:reject", "req:review_comment"
+    ],
+    "dynamic_context": {
+      "pending_review_ids": [301, 458],
+      "is_creator_of": []
+    }
+  }
+}
+```
+
+### 6.2 前端组合判断示例（Vue）
+
+```html
+<!-- 优先级：BA 填写建议值，PO 最终确认 -->
+<input v-if="permissions.includes('req:priority_suggest')" v-model="req.priority_suggested" />
+<select v-if="permissions.includes('req:priority_decide')" v-model="req.priority_final" />
+
+<!-- 审批按钮：需同时有角色权限 + 被动态指派 -->
+<div v-if="permissions.includes('req:approve') && pendingReviewIds.includes(req.id)">
+  <button @click="handleApprove">通过</button>
+  <button @click="handleReject">驳回</button>
+</div>
+
+<!-- 变更申请：基线锁定时替换编辑按钮 -->
+<button v-if="!req.baselineLocked && canEdit" @click="editReq">编辑</button>
+<button v-if="req.baselineLocked && permissions.includes('req:change_request')"
+        @click="submitCR">申请变更</button>
+```
+
+```

@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from '@/stores/auth.js'
 import Classification from '../views/alpha/Classification.vue'
 import ConflictDetection from '../views/alpha/ConflictDetection.vue'
 import Traceability from '../views/alpha/Traceability.vue'
@@ -212,17 +213,52 @@ const router = createRouter({
     ]
 })
 
-// 路由守卫：检查认证状态
-router.beforeEach((to, from, next) => {
-    const token = localStorage.getItem('token')
+// 路由守卫：检查认证状态和权限
+router.beforeEach(async (to, from, next) => {
+    const authStore = useAuthStore()
+
+    // 初始化 authStore（从 localStorage 恢复）
+    authStore.init()
+
+    // 检查是否需要认证
     const requiresAuth = to.meta?.requiresAuth !== false // 默认需要认证，除非显式设置为 false
 
-    // 如果页面需要认证但没有 token，重定向到登录页
-    if (requiresAuth && !token) {
+    if (requiresAuth && !authStore.isAuthenticated) {
         next({ name: 'main-login', query: { redirect: to.fullPath } })
-    } else {
-        next()
+        return
     }
+
+    // 检查项目级权限（如果路由定义了 requiredPermissions）
+    if (to.meta?.requiredPermissions) {
+        const projectId = to.params.projectId || to.query.projectId
+        if (!projectId) {
+            next({ name: 'main-dashboard' }) // 没有 projectId，回退
+            return
+        }
+
+        // 加载项目上下文（如果未加载）
+        if (!authStore.projectContexts.has(projectId)) {
+            try {
+                await authStore.loadProjectContext(projectId)
+            } catch (e) {
+                console.error('Failed to load project context:', e)
+                next({ name: 'main-dashboard' })
+                return
+            }
+        }
+
+        // 检查权限
+        const required = to.meta.requiredPermissions
+        const hasAccess = authStore.hasAnyPermission(projectId, required)
+
+        if (!hasAccess) {
+            console.warn(`Access denied: missing required permissions`, { required, projectId })
+            next({ name: 'main-dashboard' }) // 无权限，回退
+            return
+        }
+    }
+
+    next()
 })
 
 export default router

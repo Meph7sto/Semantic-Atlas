@@ -48,6 +48,7 @@ def require_auth(f):
             "user_id": payload.get("user_id"),
             "username": payload.get("username"),
             "role": payload.get("role"),
+            "external_type": payload.get("external_type"),
         }
 
         return f(*args, **kwargs)
@@ -137,14 +138,26 @@ def login():
 
     # 使用用户数据库中的角色（如果前端指定了角色且用户有权限则使用前端指定的）
     user_role = user["role"]
-    # 这里简化处理：使用用户数据库中的角色
-    # 实际场景可能需要更复杂的权限判断
+    user_external_type = user.get("external_type")
+
+    # 特殊处理：test 用户可以模拟任何角色和外部身份
+    if username == "test":
+        if selected_role in ("admin", "member", "viewer"):
+            user_role = selected_role
+        # 如果前端选择了外部身份
+        if selected_role == "client":
+            user_role = "member"  # 外部客户的基础角色
+            user_external_type = "CLIENT"
+        elif selected_role == "contractor":
+            user_role = "member"  # 外包成员的基础角色
+            user_external_type = "CONTRACTOR"
 
     # 生成 JWT token
     token = auth_service.generate_token(
         user_id=user["user_id"],
         username=user["username"],
         role=user_role,
+        external_type=user_external_type,
     )
 
     return jsonify(
@@ -155,6 +168,7 @@ def login():
                 "username": user["username"],
                 "display_name": user["display_name"],
                 "role": user_role,
+                "external_type": user_external_type,
                 "token": token,
             },
         }
@@ -278,7 +292,8 @@ def create_user():
             "username": "new-user",
             "password": "password123",
             "display_name": "新用户",
-            "role": "member"
+            "role": "member",
+            "external_type": "CLIENT"  # 可选
         }
 
     Response:
@@ -288,7 +303,8 @@ def create_user():
                 "user_id": "user-xxx",
                 "username": "new-user",
                 "display_name": "新用户",
-                "role": "member"
+                "role": "member",
+                "external_type": "CLIENT"
             }
         }
     """
@@ -303,6 +319,7 @@ def create_user():
     password = data.get("password", "")
     display_name = data.get("display_name", "").strip()
     role = data.get("role", "member")
+    external_type = data.get("external_type")
 
     if not username or not password:
         return jsonify({"error": "用户名和密码不能为空"}), 400
@@ -312,6 +329,10 @@ def create_user():
 
     if role not in ("admin", "member", "viewer"):
         return jsonify({"error": "无效的角色"}), 400
+
+    # 验证 external_type
+    if external_type and external_type not in ("CLIENT", "CONTRACTOR"):
+        return jsonify({"error": "无效的外部身份类型"}), 400
 
     # 检查用户名是否已存在
     existing_user = db_service.get_user_by_username(username)
@@ -332,6 +353,7 @@ def create_user():
         password_hash=password_hash,
         display_name=display_name,
         role=role,
+        external_type=external_type,
     )
 
     # 不返回密码哈希
@@ -389,7 +411,8 @@ def register():
             "username": "new-user",
             "password": "password123",
             "display_name": "新用户",
-            "role": "member"  # 可选，默认为 member
+            "role": "member",  # 可选，默认为 member
+            "external_type": "CLIENT"  # 可选
         }
 
     Response:
@@ -399,7 +422,8 @@ def register():
                 "user_id": "user-xxx",
                 "username": "new-user",
                 "display_name": "新用户",
-                "role": "member"
+                "role": "member",
+                "external_type": "CLIENT"
             }
         }
     """
@@ -414,6 +438,7 @@ def register():
     password = data.get("password", "")
     display_name = data.get("display_name", "").strip()
     role = data.get("role", "member")
+    external_type = data.get("external_type")
 
     # 验证必填字段
     if not username:
@@ -438,6 +463,10 @@ def register():
     if role == "admin":
         return jsonify({"error": "不允许自注册为管理员"}), 400
 
+    # 验证 external_type
+    if external_type and external_type not in ("CLIENT", "CONTRACTOR"):
+        return jsonify({"error": "无效的外部身份类型"}), 400
+
     # 检查用户名是否已存在
     existing_user = db_service.get_user_by_username(username)
     if existing_user:
@@ -458,6 +487,7 @@ def register():
         display_name=display_name,
         role="member",  # 强制使用 member 角色
         is_active=True,
+        external_type=external_type,
     )
 
     # 不返回密码哈希

@@ -197,13 +197,28 @@
 <script setup>
 import { ref, computed } from "vue";
 import { useRouter, useRoute } from "vue-router";
+import { useAuthStore } from "@/stores/auth.js";
 import Sidebar from "../../components/main/Sidebar.vue";
 
 const router = useRouter();
 const route = useRoute();
+const authStore = useAuthStore();
 
-const roleType = ref("unified_admin");
-const roleLabel = ref("管理员");
+const roleType = computed(() => {
+  const role = authStore.systemIdentity || authStore.systemRole
+  const roleMap = {
+    'SYS_ADMIN': 'unified_admin',
+    'SYS_USER': 'unified_member',
+    'SYS_CLIENT': 'unified_client',
+    'SYS_CONTRACTOR': 'unified_contractor',
+    'admin': 'unified_admin',
+    'member': 'unified_member',
+    'viewer': 'unified_viewer'
+  }
+  return roleMap[role] || 'unified_member'
+})
+
+const roleLabel = computed(() => authStore.user?.display_name || authStore.user?.username || roleType.value)
 const timestamp = ref(new Date().toLocaleString());
 const notificationCount = ref(3);
 const routeNameToPageKey = {
@@ -235,7 +250,12 @@ const handleNavigate = (page) => {
   }
 };
 
-const handleExit = () => {
+const handleExit = async () => {
+  try {
+    await authStore.logout()
+  } catch (e) {
+    console.error('Failed to logout:', e);
+  }
   router.push({ name: "main-login" });
 };
 </script>

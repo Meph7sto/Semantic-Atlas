@@ -23,21 +23,55 @@
 <script setup>
 import { ref, computed, onMounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
+import { useAuthStore } from "@/stores/auth.js";
 import HeroSection from "../../components/main/HeroSection.vue";
 import AvailabilityMatrix from "../../components/main/AvailabilityMatrix.vue";
 import Sidebar from "../../components/main/Sidebar.vue";
 
 const router = useRouter();
 const route = useRoute();
+const authStore = useAuthStore();
 
-// 从 localStorage 获取当前用户信息
-const currentUser = ref(null);
+// 从 authStore 获取当前用户信息
+const currentUser = computed(() => authStore.user);
 
 // 向后兼容的旧字段
-const roleType = ref("");
-const roleLabel = ref("");
+const roleType = computed(() => {
+  const role = authStore.systemIdentity || authStore.systemRole
+  const roleMap = {
+    'SYS_ADMIN': 'unified_admin',
+    'SYS_USER': 'unified_member',
+    'SYS_CLIENT': 'unified_client',
+    'SYS_CONTRACTOR': 'unified_contractor',
+    'admin': 'unified_admin',
+    'member': 'unified_member',
+    'viewer': 'unified_viewer'
+  }
+  return roleMap[role] || 'unified_member'
+})
+
+const roleLabel = computed(() => currentUser.value?.display_name || currentUser.value?.username || roleType.value)
 const timestamp = ref(new Date().toLocaleString());
 const notificationCount = ref(3);
+
+// 加载项目权限上下文的标志
+const loadingContexts = ref(new Set())
+
+// 加载项目权限上下文
+async function loadProjectContext(projectId) {
+  if (!projectId || loadingContexts.value.has(projectId)) {
+    return
+  }
+
+  loadingContexts.value.add(projectId)
+  try {
+    await authStore.loadProjectContext(projectId)
+  } catch (error) {
+    console.error('Failed to load project context:', error)
+  } finally {
+    loadingContexts.value.delete(projectId)
+  }
+}
 
 // 页面路由映射
 const routeNameToPageKey = {
@@ -63,32 +97,23 @@ const pageKeyToRouteName = {
 const activePage = computed(() => routeNameToPageKey[route.name] || "dashboard");
 
 onMounted(() => {
-  try {
-    const userStr = localStorage.getItem('user');
-    if (userStr) {
-      currentUser.value = JSON.parse(userStr);
-    }
-  } catch (e) {
-    console.error('Failed to parse user data:', e);
-  }
+  // authStore.init() 已在路由守卫中调用
+  // 这里可以预加载常用项目的权限上下文
 });
+
+const handleExit = async () => {
+  try {
+    await authStore.logout()
+  } catch (e) {
+    console.error('Failed to logout:', e);
+  }
+  router.push({ name: "main-login" });
+};
 
 const handleNavigate = (page) => {
   const target = pageKeyToRouteName[page];
   if (target && target !== route.name) {
     router.push({ name: target });
   }
-};
-
-const handleExit = () => {
-  try {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    localStorage.removeItem('actor');
-    localStorage.removeItem('role');
-  } catch (e) {
-    console.error('Failed to clear auth data:', e);
-  }
-  router.push({ name: "main-login" });
 };
 </script>
