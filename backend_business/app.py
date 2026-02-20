@@ -1,7 +1,15 @@
 import os
 import sys
+import logging
 from flask import Flask
 from flask_cors import CORS
+
+class EndpointFilter(logging.Filter):
+    def filter(self, record):
+        msg = record.getMessage()
+        return '/api/ai-chat/unread-count' not in msg and '/api/agent-tasks/pending-count' not in msg
+
+logging.getLogger("werkzeug").addFilter(EndpointFilter())
 
 # Ensure project root is on sys.path so `python backend_business/app.py` works reliably
 current_dir = os.path.dirname(os.path.abspath(__file__))

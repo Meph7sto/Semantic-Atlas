@@ -1,6 +1,6 @@
 # 前端文件拆分指南
 
-> 本文档总结自 `frontend/REFACTOR_PLAN_ProductManage.md` 的实践经验，
+> 本文档总结自 `docs/REFACTOR_PLAN_ProductManage.md` 的实践经验，
 > 适用于所有超过 400 行的 Vue 单文件组件的拆分工作。
 
 ---
@@ -33,9 +33,9 @@ Composable 层
 
 | 信号 | 说明 |
 |---|---|
-| 单文件超过 **400 行** | 文件已难以通读 |
-| `<script setup>` 超过 **150 行** | 业务逻辑过于集中 |
-| `<style>` 超过 **200 行** | CSS 与多个 UI 块强耦合 |
+| 单文件超过 **800 行** | 文件已难以通读 |
+| `<script setup>` 超过 **300行** | 业务逻辑过于集中 |
+| `<style>` 超过 **400行** | CSS 与多个 UI 块强耦合 |
 | 同一 template 中有超过 **3 个独立 UI 区块** | 每个区块都是潜在的子组件 |
 | 多个页面共用相同的数据逻辑 | 应提取为 composable |
 
@@ -63,7 +63,7 @@ frontend/src/
 │
 ├── views/
 │   └── <module>/
-│       └── XxxView.vue            ← 只做骨架编排，目标 ≤ 100 行
+│       └── XxxView.vue            ← 只做骨架编排
 │
 ├── components/
 │   └── <module>/
@@ -145,23 +145,10 @@ const { handleCreate } = useXxxRelated(selectedItem, loadDetails)
 | 全局布局（canvas、grid、split-layout） | 保留在全局样式中，不放入组件 |
 | 响应式断点 | 各组件管理自己部分的响应式 |
 
----
-
-## 七、行数预算参考
-
-| 层级 | 典型行数 | 上限 |
-|---|---|---|
-| View | 80–120 行 | 150 行 |
-| 列表/卡片组件 | 150–250 行 | 350 行 |
-| 详情/面板组件 | 150–250 行 | 350 行 |
-| Modal 组件 | 60–120 行 | 200 行 |
-| Composable | 60–100 行 | 150 行 |
-
-超出上限时，重复本文第三节的流程，继续向下拆分。
 
 ---
 
-## 八、实际案例参考
+## 七、实际案例参考
 
 `ProductManageView` 重构（1365 行 → 9 个文件）：
 
