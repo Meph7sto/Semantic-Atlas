@@ -412,6 +412,12 @@ export const manageApi = {
         return this.updateProject(projectId, { current_session_id: sessionId })
     },
 
+    async deleteProject(projectId) {
+        const resp = await api.delete(`/manage/projects/${encodeURIComponent(projectId)}`)
+        if (resp.data?.error) throw new Error(resp.data.error)
+        return resp.data
+    },
+
     async listRequirements(projectId, { tree = false } = {}) {
         const resp = await api.get(`/manage/projects/${encodeURIComponent(projectId)}/requirements`, {
             params: tree ? { tree: true } : undefined,

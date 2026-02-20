@@ -46,12 +46,20 @@
                 <select v-model="selectedProjectId" class="control-select">
                   <option value="">请选择项目（必选）</option>
                   <option v-for="p in projects" :key="p.project_id" :value="p.project_id">
-                    {{ p.name }}{{ p.current_session_id ? ' · Session: ' + p.current_session_id.slice(0, 8) + '...' : '' }}
+                    {{ p.current_session_id ? '[已导入] ' : '[未导入] ' }}{{ p.name }}{{ p.current_session_id ? ' · ' + p.current_session_id.slice(0, 8) + '...' : '' }}
                   </option>
                 </select>
                 <div v-if="!selectedProjectId" class="notice-box" style="background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); color: #d97706; padding: 8px 12px; font-size: 12px; margin-top: 4px;">
                   <AlertCircle class="notice-icon" style="width: 14px; height: 14px;" />
                   请先选择项目，采集结果将绑定到该项目
+                </div>
+                <div v-else-if="selectedProjectHasSession" class="notice-box" style="background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); color: #b91c1c; padding: 8px 12px; font-size: 12px; margin-top: 4px;">
+                  <AlertCircle class="notice-icon" style="width: 14px; height: 14px;" />
+                  该项目已完成需求导入（Session: {{ selectedProject.current_session_id.slice(0, 8) }}...），暂不支持重复导入
+                </div>
+                <div v-else-if="selectedProjectId" class="notice-box" style="background: rgba(47,143,137,0.06); border: 1px solid rgba(47,143,137,0.15); color: var(--teal); padding: 8px 12px; font-size: 12px; margin-top: 4px;">
+                  <CheckCircle2 class="notice-icon" style="width: 14px; height: 14px;" />
+                  该项目尚未导入需求，可以开始采集
                 </div>
               </div>
 
@@ -508,8 +516,18 @@ const phases = [
 ];
 
 // 计算属性
+const selectedProject = computed(() => {
+  return projects.value.find(p => p.project_id === selectedProjectId.value) || null;
+});
+
+const selectedProjectHasSession = computed(() => {
+  return !!(selectedProject.value && selectedProject.value.current_session_id);
+});
+
 const canStart = computed(() => {
-  return transcriptText.value.trim().length > 0 && !!selectedProjectId.value;
+  return transcriptText.value.trim().length > 0
+    && !!selectedProjectId.value
+    && !selectedProjectHasSession.value;
 });
 
 // 辅助函数

@@ -41,6 +41,22 @@
             </button>
           </div>
           <div class="page-actions">
+            <input
+              ref="csvFileInputRef"
+              type="file"
+              accept=".csv"
+              style="display: none"
+              @change="handleCsvFileSelect"
+            />
+            <button
+              type="button"
+              class="action-btn secondary"
+              @click="csvFileInputRef.click()"
+              :disabled="!selectedProjectId || isImporting"
+            >
+              <Upload class="w-4 h-4" />
+              {{ isImporting ? '导入中...' : '导入需求' }}
+            </button>
             <button
               type="button"
               class="action-btn secondary"
@@ -671,7 +687,7 @@ import draggable from "vuedraggable";
 import Sidebar from "../../components/beta/Sidebar.vue";
 import RequirementTree from "../../components/charts/RequirementTree.vue";
 import { manageApi } from "../../utils/api";
-import { Loader2, FileText, RefreshCw, Briefcase, Users, Layout, Layers, Circle, Clock, CheckCircle, GripVertical, Search, Filter, ChevronDown, ChevronUp, CheckCircle2, Plus, X, Pencil, Download } from "lucide-vue-next";
+import { Loader2, FileText, RefreshCw, Briefcase, Users, Layout, Layers, Circle, Clock, CheckCircle, GripVertical, Search, Filter, ChevronDown, ChevronUp, CheckCircle2, Plus, X, Pencil, Download, Upload } from "lucide-vue-next";
 
 const router = useRouter();
 const route = useRoute();
@@ -764,6 +780,8 @@ const isLoadingProjects = ref(false);
 const projectSessionId = ref(''); // 项目绑定的 session
 const sessionMismatch = ref(false); // session 与项目不一致
 const isExporting = ref(false); // 导出状态
+const isImporting = ref(false); // 导入状态
+const csvFileInputRef = ref(null); // 导入文件input引用
 
 // 新增需求相关状态
 const showAddRequirementModal = ref(false);
@@ -1016,7 +1034,7 @@ const completedRequirements = ref([]);
 // 表格视图配置（复用原界面逻辑）
 const tableSearchQuery = ref('');
 const tableVisibleColumns = ref(['name', 'type', 'level', 'status', 'confidence', 'evidence']);
-const tableSortKey = ref('name');
+const tableSortKey = ref('level');
 const tableSortOrder = ref('asc'); // 'asc' | 'desc'
 const showColumnSelector = ref(false);
 
@@ -1278,12 +1296,18 @@ const tableRequirements = computed(() => {
   }
 
   // 排序
+  const levelOrder = { 'L1': 1, 'L2': 2, 'L3': 3, 'L4': 4 };
   result.sort((a, b) => {
     let aVal = a[tableSortKey.value] || '';
     let bVal = b[tableSortKey.value] || '';
     if (tableSortKey.value === 'name') {
       aVal = a.statement || a.text || a.title || '';
       bVal = b.statement || b.text || b.title || '';
+    }
+    if (tableSortKey.value === 'level') {
+      const wA = levelOrder[a.level] ?? 99;
+      const wB = levelOrder[b.level] ?? 99;
+      return tableSortOrder.value === 'asc' ? wA - wB : wB - wA;
     }
     if (tableSortOrder.value === 'asc') {
       return String(aVal).localeCompare(String(bVal));
@@ -1681,6 +1705,158 @@ function escapeCsvField(field) {
     return `"${text.replace(/"/g, '""')}"`;
   }
   return text;
+}
+
+// 解析CSV行（支持双引号转义）
+function parseCsvLine(line) {
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (i + 1 < line.length && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        current += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ',') {
+        result.push(current);
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+// 处理文件选择事件
+async function handleCsvFileSelect(event) {
+  const file = event.target.files?.[0];
+  // 重置input，允许重复选同一文件
+  event.target.value = '';
+  if (!file) return;
+
+  if (!selectedProjectId.value) {
+    alert('请先选择项目');
+    return;
+  }
+
+  isImporting.value = true;
+  try {
+    const text = await file.text();
+    // 移除UTF-8 BOM
+    const content = text.startsWith('\uFEFF') ? text.slice(1) : text;
+    const lines = content.split('\n').filter(l => l.trim() !== '');
+    if (lines.length < 2) {
+      alert('CSV文件为空或只有表头，无可导入数据');
+      return;
+    }
+
+    const headers = parseCsvLine(lines[0]);
+    // 预期表头顺序: 需求ID,需求标题,需求描述,需求类型,层级,优先级,状态,父需求ID,标签,创建时间
+    const colIndex = {};
+    headers.forEach((h, i) => { colIndex[h.trim()] = i; });
+
+    const expectedHeaders = ['需求ID', '需求标题', '需求类型'];
+    const missing = expectedHeaders.filter(h => colIndex[h] === undefined);
+    if (missing.length > 0) {
+      alert(`CSV格式不符合要求，缺少列: ${missing.join(', ')}\n请使用导出功能获取正确格式的模板。`);
+      return;
+    }
+
+    // 反向映射
+    const typeReverseMap = { '顶层需求': 'top_level', '底层需求': 'low_level', '任务': 'task' };
+    const priorityReverseMap = { '高': 'high', '中': 'medium', '低': 'low' };
+    const statusReverseMap = { '草稿': 'draft', '审核中': 'under_review', '已确认': 'confirmed', '进行中': 'in_progress', '已完成': 'completed' };
+
+    // 解析所有行
+    const rows = lines.slice(1).map(line => parseCsvLine(line));
+
+    // 第一遍：old_req_id → new_req_id 映射（支持父子关系重建）
+    const idMap = {}; // old_id -> new_id
+    let successCount = 0;
+    let failCount = 0;
+    const errors = [];
+
+    for (const row of rows) {
+      const oldReqId = (row[colIndex['需求ID']] || '').trim();
+      const title = (row[colIndex['需求标题']] || '').trim();
+      if (!title) {
+        failCount++;
+        errors.push(`跳过空标题行`);
+        continue;
+      }
+
+      const typeLabel = (row[colIndex['需求类型']] || '').trim();
+      const requirement_type = typeReverseMap[typeLabel] || 'top_level';
+
+      const levelRaw = (row[colIndex['层级']] || '').trim();
+      // 提取层级代码如 "L1 - 业务需求" → "L1"
+      const levelMatch = levelRaw.match(/^(L\d)/);
+      const source_level = levelMatch ? levelMatch[1] : undefined;
+
+      const priorityLabel = (row[colIndex['优先级']] || '').trim();
+      const priority = priorityReverseMap[priorityLabel] || undefined;
+
+      const statusLabel = (row[colIndex['状态']] || '').trim();
+      const status = statusReverseMap[statusLabel] || 'draft';
+
+      const oldParentId = (row[colIndex['父需求ID']] || '').trim();
+      // 优先使用映射后的父需求ID，若映射不存在则直接用原ID（可能已存在于项目中）
+      const parent_id = idMap[oldParentId] || (oldParentId || undefined);
+
+      const tagsRaw = (row[colIndex['标签']] || '').trim();
+      const tags = tagsRaw ? tagsRaw.split(';').map(t => t.trim()).filter(Boolean) : undefined;
+
+      const description = colIndex['需求描述'] !== undefined ? (row[colIndex['需求描述']] || '').trim() : '';
+
+      const payload = {
+        title,
+        description,
+        requirement_type,
+        status,
+        ...(priority && { priority }),
+        ...(source_level && { source_level }),
+        ...(parent_id && { parent_id }),
+        ...(tags && tags.length > 0 && { tags }),
+      };
+
+      try {
+        const created = await manageApi.createRequirement(selectedProjectId.value, payload);
+        if (oldReqId) idMap[oldReqId] = created.req_id;
+        successCount++;
+      } catch (err) {
+        failCount++;
+        errors.push(`"${title}": ${err.message || '创建失败'}`);
+      }
+    }
+
+    let msg = `导入完成：成功 ${successCount} 条，失败 ${failCount} 条。`;
+    if (errors.length > 0) {
+      msg += '\n\n失败详情（最多显示5条）:\n' + errors.slice(0, 5).join('\n');
+    }
+    alert(msg);
+
+    if (successCount > 0) {
+      await loadRequirements();
+    }
+  } catch (err) {
+    console.error('导入需求失败:', err);
+    alert('导入需求失败: ' + (err.message || '未知错误'));
+  } finally {
+    isImporting.value = false;
+  }
 }
 
 // 数据加载

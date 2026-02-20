@@ -590,12 +590,12 @@ const handleLogout = () => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--sidebar-text, #e8eaed);
+  color: var(--sidebar-text, var(--ink-950, #1b2730));
 }
 
 .account-role {
   font-size: 11px;
-  color: var(--sidebar-muted, #9eabb4);
+  color: var(--sidebar-muted, var(--ink-500, #5d6b76));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -606,6 +606,6 @@ const handleLogout = () => {
   height: 14px;
   flex-shrink: 0;
   opacity: 0.5;
-  color: var(--sidebar-muted, #9eabb4);
+  color: var(--sidebar-muted, var(--ink-500, #5d6b76));
 }
 </style>

@@ -116,6 +116,50 @@ class RequirementsManageService:
                     raise ValueError("项目不存在")
                 return dict(row)
 
+    def update_project_info(
+        self,
+        project_id: str,
+        name: str = None,
+        description: str = None,
+        updated_by: str = "",
+    ) -> Dict[str, Any]:
+        fields = []
+        values = []
+        if name is not None:
+            fields.append("name = %s")
+            values.append(name)
+        if description is not None:
+            fields.append("description = %s")
+            values.append(description)
+        if not fields:
+            return self.get_project(project_id)
+        fields.append("updated_at = NOW()")
+        values.append(project_id)
+        sql = (
+            f"UPDATE manage_projects SET {', '.join(fields)} WHERE project_id = %s"
+            " RETURNING project_id, name, description, status, product_id, current_session_id, created_by, created_at::text AS created_at"
+        )
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(sql, values)
+                row = cur.fetchone()
+                if not row:
+                    raise ValueError("项目不存在")
+                return dict(row)
+
+    def archive_project(self, project_id: str, updated_by: str = "") -> int:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE manage_projects
+                    SET status = 'archived', updated_at = NOW()
+                    WHERE project_id = %s AND status != 'archived'
+                    """,
+                    (project_id,),
+                )
+                return cur.rowcount
+
     # ----------------------
     # Requirements
     # ----------------------

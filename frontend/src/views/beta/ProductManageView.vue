@@ -336,8 +336,10 @@
                   </span>
                 </span>
                 <span>{{ formatDate(project.created_at) }}</span>
-                <span>
+                <span class="row-actions">
                   <button type="button" class="ghost-small" @click="goToProject(project)">查看</button>
+                  <button type="button" class="ghost-small" @click="openEditProject(project)">编辑</button>
+                  <button type="button" class="ghost-small danger" @click="handleDeleteProject(project)">归档</button>
                 </span>
               </div>
             </div>
@@ -410,6 +412,27 @@
           </div>
         </div>
 
+        <!-- Edit Project Modal -->
+        <div v-if="showEditProjectModal" class="modal-overlay" @click.self="showEditProjectModal = false">
+          <div class="modal-content">
+            <h3>编辑项目</h3>
+            <div class="form-group">
+              <label>项目名称 *</label>
+              <input type="text" v-model="editProjectForm.name" placeholder="输入项目名称" />
+            </div>
+            <div class="form-group">
+              <label>描述</label>
+              <textarea v-model="editProjectForm.description" placeholder="输入项目描述" rows="3"></textarea>
+            </div>
+            <div class="modal-actions">
+              <button type="button" class="action-btn white" @click="showEditProjectModal = false">取消</button>
+              <button type="button" class="action-btn brown" @click="handleUpdateProject" :disabled="!editProjectForm.name.trim()">
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+
         <!-- Create Project Modal -->
         <div v-if="showCreateProjectModal" class="modal-overlay" @click.self="showCreateProjectModal = false">
           <div class="modal-content">
@@ -439,7 +462,7 @@
 import { ref, computed, onMounted, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import Sidebar from "../../components/beta/Sidebar.vue";
-import { productApi } from "../../utils/api";
+import { productApi, manageApi } from "../../utils/api";
 
 const router = useRouter();
 const route = useRoute();
@@ -507,6 +530,11 @@ const aggSearch = ref("");
 const showCreateModal = ref(false);
 const showEditModal = ref(false);
 const showCreateProjectModal = ref(false);
+const showEditProjectModal = ref(false);
+
+// Edit project state
+const editingProject = ref(null);
+const editProjectForm = ref({ name: "", description: "" });
 
 const newProduct = ref({
   name: "",
@@ -693,6 +721,39 @@ const handleCreateProject = async () => {
   }
 };
 
+const openEditProject = (project) => {
+  editingProject.value = project;
+  editProjectForm.value = { name: project.name, description: project.description || "" };
+  showEditProjectModal.value = true;
+};
+
+const handleUpdateProject = async () => {
+  if (!editingProject.value) return;
+  try {
+    await manageApi.updateProject(editingProject.value.project_id, {
+      name: editProjectForm.value.name.trim(),
+      description: editProjectForm.value.description,
+    });
+    showEditProjectModal.value = false;
+    editingProject.value = null;
+    await loadProductDetails();
+  } catch (err) {
+    console.error("Failed to update project:", err);
+    alert("更新项目失败: " + err.message);
+  }
+};
+
+const handleDeleteProject = async (project) => {
+  if (!confirm(`确定要归档项目"${project.name}"吗？归档后项目将不再显示。`)) return;
+  try {
+    await manageApi.deleteProject(project.project_id);
+    await loadProductDetails();
+  } catch (err) {
+    console.error("Failed to archive project:", err);
+    alert("归档项目失败: " + err.message);
+  }
+};
+
 const goToProject = (project) => {
   // 兼容现有项目工作流：写入 lastProjectId，跳转到需求页
   localStorage.setItem("lastProjectId", project.project_id);
@@ -749,7 +810,14 @@ onMounted(() => {
   white-space: nowrap;
 }
 
+.toggle-btn:first-child {
+  border-top-left-radius: 9px;
+  border-bottom-left-radius: 9px;
+}
+
 .toggle-btn:last-child {
+  border-top-right-radius: 9px;
+  border-bottom-right-radius: 9px;
   border-right: none;
 }
 
@@ -1114,6 +1182,13 @@ onMounted(() => {
 
 .ghost-small.danger:hover {
   background: #fef2f2;
+}
+
+.row-actions {
+  display: flex;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 .cell-desc {
