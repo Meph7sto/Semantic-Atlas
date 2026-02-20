@@ -21,6 +21,7 @@ class AuthMixin:
         role: str = "member",
         is_active: bool = True,
         external_type: Optional[str] = None,
+        avatar_url: Optional[str] = None,
     ) -> Dict:
         """
         创建用户
@@ -33,6 +34,7 @@ class AuthMixin:
             role: 角色 (admin, member, viewer)
             is_active: 是否激活
             external_type: 外部身份 (CLIENT, CONTRACTOR)
+            avatar_url: 头像 URL
 
         Returns:
             创建的用户信息
@@ -41,11 +43,11 @@ class AuthMixin:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO auth_users (user_id, username, password_hash, display_name, role, is_active, external_type)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    RETURNING user_id, username, display_name, role, is_active, external_type, created_at
+                    INSERT INTO auth_users (user_id, username, password_hash, display_name, role, is_active, external_type, avatar_url)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING user_id, username, display_name, role, is_active, external_type, avatar_url, created_at
                     """,
-                    (user_id, username, password_hash, display_name, role, is_active, external_type),
+                    (user_id, username, password_hash, display_name, role, is_active, external_type, avatar_url),
                 )
                 row = cur.fetchone()
                 conn.commit()
@@ -57,7 +59,8 @@ class AuthMixin:
             "role": row[3],
             "is_active": row[4],
             "external_type": row[5],
-            "created_at": row[6].isoformat() if row[6] else None,
+            "avatar_url": row[6],
+            "created_at": row[7].isoformat() if row[7] else None,
         }
 
     def get_user_by_username(self, username: str) -> Optional[Dict]:
@@ -74,7 +77,7 @@ class AuthMixin:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT user_id, username, password_hash, display_name, role, is_active, external_type, created_at, updated_at
+                    SELECT user_id, username, password_hash, display_name, role, is_active, external_type, avatar_url, created_at, updated_at
                     FROM auth_users
                     WHERE username = %s AND is_active = TRUE
                     """,
@@ -93,8 +96,9 @@ class AuthMixin:
             "role": row[4],
             "is_active": row[5],
             "external_type": row[6],
-            "created_at": row[7].isoformat() if row[7] else None,
-            "updated_at": row[8].isoformat() if row[8] else None,
+            "avatar_url": row[7],
+            "created_at": row[8].isoformat() if row[8] else None,
+            "updated_at": row[9].isoformat() if row[9] else None,
         }
 
     def get_user_by_id(self, user_id: str) -> Optional[Dict]:
@@ -111,7 +115,7 @@ class AuthMixin:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT user_id, username, password_hash, display_name, role, is_active, external_type, created_at, updated_at
+                    SELECT user_id, username, password_hash, display_name, role, is_active, external_type, avatar_url, created_at, updated_at
                     FROM auth_users
                     WHERE user_id = %s AND is_active = TRUE
                     """,
@@ -130,8 +134,9 @@ class AuthMixin:
             "role": row[4],
             "is_active": row[5],
             "external_type": row[6],
-            "created_at": row[7].isoformat() if row[7] else None,
-            "updated_at": row[8].isoformat() if row[8] else None,
+            "avatar_url": row[7],
+            "created_at": row[8].isoformat() if row[8] else None,
+            "updated_at": row[9].isoformat() if row[9] else None,
         }
 
     def list_users(
@@ -170,7 +175,7 @@ class AuthMixin:
                 params.extend([limit, offset])
                 cur.execute(
                     f"""
-                    SELECT user_id, username, display_name, role, is_active, external_type, created_at
+                    SELECT user_id, username, display_name, role, is_active, external_type, avatar_url, created_at
                     FROM auth_users
                     WHERE {where_clause}
                     ORDER BY created_at DESC
@@ -188,7 +193,8 @@ class AuthMixin:
                 "role": row[3],
                 "is_active": row[4],
                 "external_type": row[5],
-                "created_at": row[6].isoformat() if row[6] else None,
+                "avatar_url": row[6],
+                "created_at": row[7].isoformat() if row[7] else None,
             }
             for row in rows
         ]
@@ -207,6 +213,7 @@ class AuthMixin:
         role: Optional[str] = None,
         is_active: Optional[bool] = None,
         external_type: Optional[str] = None,
+        avatar_url: Optional[str] = None,
     ) -> Optional[Dict]:
         """
         更新用户信息
@@ -217,6 +224,7 @@ class AuthMixin:
             role: 角色（可选）
             is_active: 是否激活（可选）
             external_type: 外部身份（可选）
+            avatar_url: 头像 URL（可选）
 
         Returns:
             更新后的用户信息，不存在返回 None
@@ -240,6 +248,10 @@ class AuthMixin:
             updates.append("external_type = %s")
             params.append(external_type)
 
+        if avatar_url is not None:
+            updates.append("avatar_url = %s")
+            params.append(avatar_url)
+
         if not updates:
             return self.get_user_by_id(user_id)
 
@@ -253,7 +265,7 @@ class AuthMixin:
                     UPDATE auth_users
                     SET {', '.join(updates)}
                     WHERE user_id = %s
-                    RETURNING user_id, username, display_name, role, is_active, external_type, created_at, updated_at
+                    RETURNING user_id, username, display_name, role, is_active, external_type, avatar_url, created_at, updated_at
                     """,
                     tuple(params),
                 )
@@ -270,8 +282,73 @@ class AuthMixin:
             "role": row[3],
             "is_active": row[4],
             "external_type": row[5],
-            "created_at": row[6].isoformat() if row[6] else None,
-            "updated_at": row[7].isoformat() if row[7] else None,
+            "avatar_url": row[6],
+            "created_at": row[7].isoformat() if row[7] else None,
+            "updated_at": row[8].isoformat() if row[8] else None,
+        }
+
+    def update_profile(
+        self,
+        user_id: str,
+        display_name: Optional[str] = None,
+        avatar_url: Optional[str] = None,
+    ) -> Optional[Dict]:
+        """
+        更新用户个人资料（用户自服务，仅允许修改 display_name 和 avatar_url）
+
+        Args:
+            user_id: 用户 ID
+            display_name: 显示名称（可选）
+            avatar_url: 头像 URL（可选，传空字符串表示清除头像）
+
+        Returns:
+            更新后的用户信息，不存在返回 None
+        """
+        updates = []
+        params = []
+
+        if display_name is not None:
+            updates.append("display_name = %s")
+            params.append(display_name)
+
+        if avatar_url is not None:
+            updates.append("avatar_url = %s")
+            # 空字符串视为 NULL（清除头像）
+            params.append(avatar_url if avatar_url.strip() else None)
+
+        if not updates:
+            return self.get_user_by_id(user_id)
+
+        updates.append("updated_at = NOW()")
+        params.append(user_id)
+
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    UPDATE auth_users
+                    SET {', '.join(updates)}
+                    WHERE user_id = %s
+                    RETURNING user_id, username, display_name, role, is_active, external_type, avatar_url, created_at, updated_at
+                    """,
+                    tuple(params),
+                )
+                row = cur.fetchone()
+                conn.commit()
+
+        if not row:
+            return None
+
+        return {
+            "user_id": row[0],
+            "username": row[1],
+            "display_name": row[2],
+            "role": row[3],
+            "is_active": row[4],
+            "external_type": row[5],
+            "avatar_url": row[6],
+            "created_at": row[7].isoformat() if row[7] else None,
+            "updated_at": row[8].isoformat() if row[8] else None,
         }
 
     def delete_user(self, user_id: str) -> bool:

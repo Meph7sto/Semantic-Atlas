@@ -7,7 +7,7 @@ import AiFloatingBall from '@/components/ai-chat/AiFloatingBall.vue'
 const route = useRoute()
 
 // Layout mode detection
-const isMainRoute = computed(() => route.path.startsWith('/main'))
+const isMainRoute = computed(() => route.path.startsWith('/beta'))
 const isGuideRoute = computed(() => route.path.startsWith('/guide'))
 const isAlphaRoute = computed(() => !isMainRoute.value && !isGuideRoute.value)
 

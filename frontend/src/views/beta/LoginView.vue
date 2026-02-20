@@ -171,7 +171,7 @@ const handleEnter = async () => {
     showMessage("登录成功", "success");
 
     // Navigate to dashboard
-    router.push({ name: 'main-dashboard' });
+    router.push({ name: 'beta-dashboard' });
 
     emit("enter", {
       role: result.role || selectedRole.value,
@@ -188,7 +188,7 @@ const handleEnter = async () => {
 
 const handleRegister = () => {
   // 跳转到注册页面
-  router.push({ name: 'main-register' });
+  router.push({ name: 'beta-register' });
   // 保留 emit 以兼容可能的父组件调用
   emit("register", selectedRole.value);
 };

@@ -24,9 +24,9 @@
 import { ref, computed, onMounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "@/stores/auth.js";
-import HeroSection from "../../components/main/HeroSection.vue";
-import AvailabilityMatrix from "../../components/main/AvailabilityMatrix.vue";
-import Sidebar from "../../components/main/Sidebar.vue";
+import HeroSection from "../../components/beta/HeroSection.vue";
+import AvailabilityMatrix from "../../components/beta/AvailabilityMatrix.vue";
+import Sidebar from "../../components/beta/Sidebar.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -75,23 +75,23 @@ async function loadProjectContext(projectId) {
 
 // 页面路由映射
 const routeNameToPageKey = {
-  "main-dashboard": "dashboard",
-  "main-project": "project-management",
-  "main-requirements": "requirements",
-  "main-requirements-session": "requirements-session",
-  "main-requirements-analysis": "requirements-analysis",
-  "main-requirements-collection": "requirements-collection",
-  "main-products": "products",
+  "beta-dashboard": "dashboard",
+  "beta-project": "project-management",
+  "beta-requirements": "requirements",
+  "beta-requirements-session": "requirements-session",
+  "beta-requirements-analysis": "requirements-analysis",
+  "beta-requirements-collection": "requirements-collection",
+  "beta-products": "products",
 };
 
 const pageKeyToRouteName = {
-  "dashboard": "main-dashboard",
-  "project-management": "main-project",
-  "requirements": "main-requirements",
-  "requirements-session": "main-requirements-session",
-  "requirements-analysis": "main-requirements-analysis",
-  "requirements-collection": "main-requirements-collection",
-  "products": "main-products",
+  "dashboard": "beta-dashboard",
+  "project-management": "beta-project",
+  "requirements": "beta-requirements",
+  "requirements-session": "beta-requirements-session",
+  "requirements-analysis": "beta-requirements-analysis",
+  "requirements-collection": "beta-requirements-collection",
+  "products": "beta-products",
 };
 
 const activePage = computed(() => routeNameToPageKey[route.name] || "dashboard");
@@ -107,7 +107,7 @@ const handleExit = async () => {
   } catch (e) {
     console.error('Failed to logout:', e);
   }
-  router.push({ name: "main-login" });
+  router.push({ name: "beta-login" });
 };
 
 const handleNavigate = (page) => {

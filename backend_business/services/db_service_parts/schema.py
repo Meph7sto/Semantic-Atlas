@@ -1042,6 +1042,13 @@ def init_db(conn):
             ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS external_type TEXT
             """
         )
+
+        # 1.1.1 添加 avatar_url 到 auth_users 表（用户头像 URL）
+        cur.execute(
+            """
+            ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS avatar_url TEXT
+            """
+        )
         cur.execute(
             """
             DO $$

@@ -19,15 +19,16 @@ import AgentCollaboration from '../views/alpha/AgentCollaboration.vue'
 import AgentChat from '../views/alpha/AgentChat.vue'
 
 // Main views (migrated from frontend_ref)
-import LoginView from '../views/main/LoginView.vue'
-import RegisterView from '../views/main/RegisterView.vue'
-import DashboardView from '../views/main/DashboardView.vue'
-import ProjectManageView from '../views/main/ProjectManageView.vue'
-import RequirementsView from '../views/main/RequirementsView.vue'
-import RequirementsSessionView from '../views/main/RequirementsSessionView.vue'
-import RequirementsAnalysisView from '../views/main/RequirementsAnalysisView.vue'
-import RequirementsCollectionView from '../views/main/RequirementsCollectionView.vue'
-import ProductManageView from '../views/main/ProductManageView.vue'
+import LoginView from '../views/beta/LoginView.vue'
+import RegisterView from '../views/beta/RegisterView.vue'
+import DashboardView from '../views/beta/DashboardView.vue'
+import ProjectManageView from '../views/beta/ProjectManageView.vue'
+import RequirementsView from '../views/beta/RequirementsView.vue'
+import RequirementsSessionView from '../views/beta/RequirementsSessionView.vue'
+import RequirementsAnalysisView from '../views/beta/RequirementsAnalysisView.vue'
+import RequirementsCollectionView from '../views/beta/RequirementsCollectionView.vue'
+import ProductManageView from '../views/beta/ProductManageView.vue'
+import AccountView from '../views/beta/AccountView.vue'
 
 // Guide view
 import GuideView from '../views/GuideView.vue'
@@ -47,62 +48,68 @@ const router = createRouter({
         },
         // Main routes (migrated from frontend_ref)
         {
-            path: '/main',
-            name: 'main',
+            path: '/beta',
+            name: 'beta',
             redirect: '/guide',
             children: [
                 {
                     path: 'login',
-                    name: 'main-login',
+                    name: 'beta-login',
                     component: LoginView,
                     meta: { requiresAuth: false }
                 },
                 {
                     path: 'register',
-                    name: 'main-register',
+                    name: 'beta-register',
                     component: RegisterView,
                     meta: { requiresAuth: false }
                 },
                 {
                     path: 'dashboard',
-                    name: 'main-dashboard',
+                    name: 'beta-dashboard',
                     component: DashboardView,
                     meta: { requiresAuth: true }
                 },
                 {
                     path: 'project',
-                    name: 'main-project',
+                    name: 'beta-project',
                     component: ProjectManageView,
                     meta: { requiresAuth: true }
                 },
                 {
                     path: 'requirements',
-                    name: 'main-requirements',
+                    name: 'beta-requirements',
                     component: RequirementsView,
                     meta: { requiresAuth: true }
                 },
                 {
                     path: 'requirements-session',
-                    name: 'main-requirements-session',
+                    name: 'beta-requirements-session',
                     component: RequirementsSessionView,
                     meta: { requiresAuth: true }
                 },
                 {
                     path: 'requirements-analysis',
-                    name: 'main-requirements-analysis',
+                    name: 'beta-requirements-analysis',
                     component: RequirementsAnalysisView,
                     meta: { requiresAuth: true }
                 },
                 {
                     path: 'requirements-collection',
-                    name: 'main-requirements-collection',
+                    name: 'beta-requirements-collection',
                     component: RequirementsCollectionView,
                     meta: { requiresAuth: true }
                 },
                 {
                     path: 'products',
-                    name: 'main-products',
+                    name: 'beta-products',
                     component: ProductManageView,
+                    meta: { requiresAuth: true }
+                },
+                {
+                    path: 'account',
+                    name: 'beta-account',
+                    component: AccountView,
                     meta: { requiresAuth: true }
                 }
             ]
@@ -224,7 +231,7 @@ router.beforeEach(async (to, from, next) => {
     const requiresAuth = to.meta?.requiresAuth !== false // 默认需要认证，除非显式设置为 false
 
     if (requiresAuth && !authStore.isAuthenticated) {
-        next({ name: 'main-login', query: { redirect: to.fullPath } })
+        next({ name: 'beta-login', query: { redirect: to.fullPath } })
         return
     }
 
@@ -232,7 +239,7 @@ router.beforeEach(async (to, from, next) => {
     if (to.meta?.requiredPermissions) {
         const projectId = to.params.projectId || to.query.projectId
         if (!projectId) {
-            next({ name: 'main-dashboard' }) // 没有 projectId，回退
+            next({ name: 'beta-dashboard' }) // 没有 projectId，回退
             return
         }
 
@@ -242,7 +249,7 @@ router.beforeEach(async (to, from, next) => {
                 await authStore.loadProjectContext(projectId)
             } catch (e) {
                 console.error('Failed to load project context:', e)
-                next({ name: 'main-dashboard' })
+                next({ name: 'beta-dashboard' })
                 return
             }
         }
@@ -253,7 +260,7 @@ router.beforeEach(async (to, from, next) => {
 
         if (!hasAccess) {
             console.warn(`Access denied: missing required permissions`, { required, projectId })
-            next({ name: 'main-dashboard' }) // 无权限，回退
+            next({ name: 'beta-dashboard' }) // 无权限，回退
             return
         }
     }

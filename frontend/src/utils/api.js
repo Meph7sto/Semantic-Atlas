@@ -24,8 +24,8 @@ api.interceptors.response.use(
             localStorage.removeItem('token')
             localStorage.removeItem('user')
             // 如果不是在登录页面，可以重定向到登录页
-            if (window.location.pathname !== '/main/login' && !window.location.pathname.startsWith('/guide')) {
-                window.location.href = '/main/login'
+            if (window.location.pathname !== '/beta/login' && !window.location.pathname.startsWith('/guide')) {
+                window.location.href = '/beta/login'
             }
         }
         return Promise.reject(err)
@@ -1225,6 +1225,39 @@ export const authApi = {
             throw new Error(resp.data?.error || '更新用户失败')
         }
         return resp.data.data
+    },
+
+    // 获取当前用户个人资料
+    async getProfile() {
+        const resp = await api.get('/auth/profile')
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '获取个人资料失败')
+        }
+        return resp.data.data
+    },
+
+    // 更新当前用户个人资料（display_name, avatar_url）
+    async updateProfile({ display_name, avatar_url } = {}) {
+        const body = {}
+        if (display_name !== undefined) body.display_name = display_name
+        if (avatar_url !== undefined) body.avatar_url = avatar_url
+        const resp = await api.patch('/auth/profile', body)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '更新个人资料失败')
+        }
+        return resp.data.data
+    },
+
+    // 修改当前用户密码
+    async changePassword(oldPassword, newPassword) {
+        const resp = await api.post('/auth/profile/change-password', {
+            old_password: oldPassword,
+            new_password: newPassword,
+        })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '修改密码失败')
+        }
+        return resp.data
     },
 }
 

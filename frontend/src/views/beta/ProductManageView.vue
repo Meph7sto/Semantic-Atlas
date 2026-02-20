@@ -438,7 +438,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
-import Sidebar from "../../components/main/Sidebar.vue";
+import Sidebar from "../../components/beta/Sidebar.vue";
 import { productApi } from "../../utils/api";
 
 const router = useRouter();
@@ -451,23 +451,23 @@ const timestamp = ref(new Date().toLocaleString());
 const notificationCount = ref(3);
 
 const routeNameToPageKey = {
-  "main-dashboard": "dashboard",
-  "main-project": "project-management",
-  "main-requirements": "requirements",
-  "main-requirements-session": "requirements-session",
-  "main-requirements-analysis": "requirements-analysis",
-  "main-requirements-collection": "requirements-collection",
-  "main-products": "products",
+  "beta-dashboard": "dashboard",
+  "beta-project": "project-management",
+  "beta-requirements": "requirements",
+  "beta-requirements-session": "requirements-session",
+  "beta-requirements-analysis": "requirements-analysis",
+  "beta-requirements-collection": "requirements-collection",
+  "beta-products": "products",
 };
 
 const pageKeyToRouteName = {
-  "dashboard": "main-dashboard",
-  "project-management": "main-project",
-  "requirements": "main-requirements",
-  "requirements-session": "main-requirements-session",
-  "requirements-analysis": "main-requirements-analysis",
-  "requirements-collection": "main-requirements-collection",
-  "products": "main-products",
+  "dashboard": "beta-dashboard",
+  "project-management": "beta-project",
+  "requirements": "beta-requirements",
+  "requirements-session": "beta-requirements-session",
+  "requirements-analysis": "beta-requirements-analysis",
+  "requirements-collection": "beta-requirements-collection",
+  "products": "beta-products",
 };
 
 const activePage = computed(() => routeNameToPageKey[route.name] || "products");
@@ -480,7 +480,7 @@ const handleNavigate = (page) => {
 };
 
 const handleExit = () => {
-  router.push({ name: "main-login" });
+  router.push({ name: "beta-login" });
 };
 
 // Products state
@@ -488,7 +488,7 @@ const loading = ref(false);
 const products = ref([]);
 const searchQuery = ref("");
 const selectedProduct = ref(null);
-const viewMode = ref(localStorage.getItem("main-products:viewMode") || "grid");
+const viewMode = ref(localStorage.getItem("beta-products:viewMode") || "grid");
 
 // Projects state
 const loadingProjects = ref(false);
@@ -697,7 +697,7 @@ const goToProject = (project) => {
   // 兼容现有项目工作流：写入 lastProjectId，跳转到需求页
   localStorage.setItem("lastProjectId", project.project_id);
   window.dispatchEvent(new CustomEvent('project-changed', { detail: { projectId: project.project_id } }));
-  router.push({ name: "main-requirements" });
+  router.push({ name: "beta-requirements" });
 };
 
 // Watch for edit modal open
@@ -714,7 +714,7 @@ watch(showEditModal, (val) => {
 });
 
 watch(viewMode, (val) => {
-  localStorage.setItem("main-products:viewMode", val);
+  localStorage.setItem("beta-products:viewMode", val);
 });
 
 onMounted(() => {

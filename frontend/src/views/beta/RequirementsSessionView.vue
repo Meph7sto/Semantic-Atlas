@@ -14,16 +14,17 @@
         <!-- 页面头部 -->
         <section class="page-header nav-style" data-animate style="--delay: 0.05s">
           <div class="nav-left">
-            <span class="nav-title">项目管理 · 需求</span>
+            <span class="nav-title">项目管理 · 会话需求</span>
           </div>
           <div class="nav-center" style="gap: 8px; background: rgba(47, 143, 137, 0.06); padding: 6px 16px; border-radius: 4px; border: 1px solid rgba(47, 143, 137, 0.15);">
+            <!-- 项目选择 -->
             <div class="session-indicator">
               <Briefcase class="w-3 h-3" />
               <span class="session-label">项目:</span>
               <select
                 v-model="selectedProjectId"
                 class="session-input"
-                style="width: min(220px, 20vw); padding: 3px 6px;"
+                style="width: min(200px, 18vw); padding: 3px 6px;"
               >
                 <option value="">未选择</option>
                 <option v-for="p in projects" :key="p.project_id" :value="p.project_id">
@@ -31,32 +32,52 @@
                 </option>
               </select>
             </div>
-            <button
-              type="button"
-              class="session-clear"
-              title="查看 session 原始需求"
-              @click="router.push({ name: 'main-requirements-session' })"
-            >
-              查看会话需求
-            </button>
+            <!-- Session 输入 -->
+            <div class="session-indicator">
+              <Database class="w-3 h-3" />
+              <span class="session-label">Session:</span>
+              <input
+                v-model="sessionIdDraft"
+                type="text"
+                class="session-input"
+                placeholder="输入 Session ID"
+                spellcheck="false"
+                autocomplete="off"
+                @keydown.enter.prevent="commitSessionId"
+                @blur="commitSessionId"
+              />
+              <button
+                v-if="sessionIdDraft"
+                type="button"
+                class="session-clear"
+                title="清空 Session"
+                @click="clearSessionId"
+              >
+                清空
+              </button>
+              <button
+                v-if="sessionMismatch"
+                type="button"
+                class="session-clear"
+                style="background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.3); color: #d97706;"
+                title="当前 Session 与项目绑定的不一致"
+                @click="useProjectSession"
+              >
+                切换为项目Session
+              </button>
+            </div>
           </div>
           <div class="page-actions">
             <button
               type="button"
-              class="action-btn secondary"
-              @click="exportRequirements"
-              :disabled="!selectedProjectId || isExporting"
+              class="action-btn white"
+              :disabled="!selectedProjectId || !sessionId || isImportingToManage"
+              @click="importSessionRequirementsToManage"
             >
-              <Download class="w-4 h-4" />
-              {{ isExporting ? '导出中...' : '导出需求' }}
+              <Database class="w-4 h-4" :class="{ 'animate-pulse': isImportingToManage }" />
+              {{ isImportingToManage ? '导入中...' : '导入到项目需求' }}
             </button>
-            <button
-              type="button"
-              class="action-btn primary"
-              @click="openAddRequirementModal"
-              :disabled="!selectedProjectId"
-              v-if="hasPermission('req:create')"
-            >
+            <button type="button" class="action-btn primary" @click="openAddRequirementModal" :disabled="!selectedProjectId">
               <Plus class="w-4 h-4" />
               新增需求
             </button>
@@ -331,18 +352,18 @@
           <!-- 空状态 -->
           <div v-else-if="filteredRequirements.length === 0 && !isLoading" class="empty-state">
             <FileText class="empty-icon" />
-            <p v-if="!selectedProjectId">未选择项目</p>
+            <p v-if="!sessionId">未选择 Session ID</p>
             <p v-else>暂无需求数据</p>
             <p class="empty-hint">
-              {{ !selectedProjectId ? '请先选择一个项目' : '当前项目下还没有导入或创建需求' }}
+              {{ !sessionId ? '请先前往「需求分析」界面选择或输入 Session ID' : '请先在「需求分析」界面进行一键分析' }}
             </p>
             <button 
-              v-if="!selectedProjectId"
+              v-if="!sessionId"
               type="button" 
               class="action-btn brown mt-4"
-              @click="router.push({ name: 'main-project' })"
+              @click="router.push({ name: 'beta-requirements-analysis' })"
             >
-              前往项目管理
+              前往需求分析
             </button>
           </div>
 
@@ -666,87 +687,41 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
-import { useAuthStore } from "@/stores/auth.js";
 import draggable from "vuedraggable";
-import Sidebar from "../../components/main/Sidebar.vue";
+import Sidebar from "../../components/beta/Sidebar.vue";
 import RequirementTree from "../../components/charts/RequirementTree.vue";
-import { manageApi } from "../../utils/api";
-import { Loader2, FileText, RefreshCw, Briefcase, Users, Layout, Layers, Circle, Clock, CheckCircle, GripVertical, Search, Filter, ChevronDown, ChevronUp, CheckCircle2, Plus, X, Pencil, Download } from "lucide-vue-next";
+import { requirementsL123Api, l4RequirementsApi, analysisApi, manageApi } from "../../utils/api";
+import { Loader2, FileText, RefreshCw, Briefcase, Users, Layout, Layers, Database, Circle, Clock, CheckCircle, GripVertical, Search, Filter, ChevronDown, ChevronUp, CheckCircle2, Plus, X, Pencil } from "lucide-vue-next";
 
 const router = useRouter();
 const route = useRoute();
-const authStore = useAuthStore();
 
 // 侧边栏状态
-const roleType = computed(() => {
-  const role = authStore.systemIdentity || authStore.systemRole
-  const roleMap = {
-    'SYS_ADMIN': 'unified_admin',
-    'SYS_USER': 'unified_member',
-    'SYS_CLIENT': 'unified_client',
-    'SYS_CONTRACTOR': 'unified_contractor',
-    'admin': 'unified_admin',
-    'member': 'unified_member',
-    'viewer': 'unified_viewer'
-  }
-  return roleMap[role] || 'unified_member'
-})
-
-const roleLabel = computed(() => authStore.user?.display_name || authStore.user?.username || roleType.value)
+const roleType = ref("unified_admin");
+const roleLabel = ref("管理员");
 const timestamp = ref(new Date().toLocaleString());
 const notificationCount = ref(3);
-
-// ========================
-// 权限检查辅助函数
-// ========================
-
-/**
- * 检查当前项目是否有指定权限
- */
-const hasPermission = (permission) => {
-  return authStore.hasPermission(selectedProjectId.value, permission)
-}
-
-/**
- * 检查当前项目是否有任一权限
- */
-const hasAnyPermission = (permissions) => {
-  return authStore.hasAnyPermission(selectedProjectId.value, permissions)
-}
-
-/**
- * 检查当前项目是否有指定角色
- */
-const hasRole = (role) => {
-  return authStore.hasRole(selectedProjectId.value, role)
-}
-
-/**
- * 获取系统级身份
- */
-const systemIdentity = computed(() => authStore.systemIdentity)
-
 const routeNameToPageKey = {
-  "main-dashboard": "dashboard",
-  "main-products": "products",
-  "main-project": "project-management",
-  "main-requirements": "requirements",
-  "main-requirements-session": "requirements-session",
-  "main-requirements-analysis": "requirements-analysis",
-  "main-requirements-collection": "requirements-collection",
+  "beta-dashboard": "dashboard",
+  "beta-products": "products",
+  "beta-project": "project-management",
+  "beta-requirements": "requirements",
+  "beta-requirements-session": "requirements-session",
+  "beta-requirements-analysis": "requirements-analysis",
+  "beta-requirements-collection": "requirements-collection",
 };
 
 const pageKeyToRouteName = {
-  "dashboard": "main-dashboard",
-  "products": "main-products",
-  "project-management": "main-project",
-  "requirements": "main-requirements",
-  "requirements-session": "main-requirements-session",
-  "requirements-analysis": "main-requirements-analysis",
-  "requirements-collection": "main-requirements-collection",
+  "dashboard": "beta-dashboard",
+  "products": "beta-products",
+  "project-management": "beta-project",
+  "requirements": "beta-requirements",
+  "requirements-session": "beta-requirements-session",
+  "requirements-analysis": "beta-requirements-analysis",
+  "requirements-collection": "beta-requirements-collection",
 };
 
-const activePage = computed(() => routeNameToPageKey[route.name] || "requirements");
+const activePage = computed(() => routeNameToPageKey[route.name] || "requirements-session");
 
 // 数据状态
 const isLoading = ref(false);
@@ -759,11 +734,11 @@ const manageReqIdMap = ref(new Map());
 const manageStatusMap = ref(new Map());
 const managePriorityMap = ref(new Map());
 const isSyncingStatus = ref(false);
+const isImportingToManage = ref(false);
 const projects = ref([]);
 const isLoadingProjects = ref(false);
 const projectSessionId = ref(''); // 项目绑定的 session
 const sessionMismatch = ref(false); // session 与项目不一致
-const isExporting = ref(false); // 导出状态
 
 // 新增需求相关状态
 const showAddRequirementModal = ref(false);
@@ -891,9 +866,25 @@ async function openEditRequirementModal(req) {
     return;
   }
 
-  const reqId = resolveManageReqId(req);
-  if (!reqId) {
-    alert('无法关联到项目需求，请刷新后重试');
+  let reqId = resolveManageReqId(req);
+  const hasManageEntry = manageReqIdMap.value.has(req.req_id || req.id);
+
+  // 如果 manage_requirements 中没有对应记录，先自动导入
+  if (!hasManageEntry && sessionId.value) {
+    try {
+      await manageApi.importFromSession(selectedProjectId.value, {
+        session_id: sessionId.value,
+        mapping_mode: 'tree'
+      });
+      await loadManageRequirementMap();
+      reqId = resolveManageReqId(req);
+    } catch (err) {
+      console.warn('自动导入失败:', err);
+    }
+  }
+
+  if (!reqId || !manageReqIdMap.value.has(req.req_id || req.id)) {
+    alert('无法关联到项目需求，请确认项目和 Session 已正确绑定');
     return;
   }
 
@@ -1140,6 +1131,56 @@ function commitSessionId() {
   sessionId.value = next;
 }
 
+async function importSessionRequirementsToManage() {
+  commitSessionId();
+  const sid = String(sessionId.value || "").trim();
+  if (!selectedProjectId.value) {
+    alert("请先选择要导入的项目");
+    return;
+  }
+  if (!sid) {
+    alert("请先输入 Session ID");
+    return;
+  }
+
+  const targetProject = projects.value.find((p) => p.project_id === selectedProjectId.value);
+  const projectLabel = targetProject?.name || selectedProjectId.value;
+  const confirmed = window.confirm(
+    `确认将 Session ${sid} 的需求导入到项目「${projectLabel}」吗？\n已存在的需求会自动跳过。`
+  );
+  if (!confirmed) return;
+
+  isImportingToManage.value = true;
+  try {
+    const result = await manageApi.importFromSession(selectedProjectId.value, {
+      session_id: sid,
+      mapping_mode: "tree",
+    });
+
+    await loadManageRequirementMap();
+
+    localStorage.setItem("lastProjectId", selectedProjectId.value);
+    window.dispatchEvent(
+      new CustomEvent("project-changed", { detail: { projectId: selectedProjectId.value } })
+    );
+
+    const inserted = Number(result?.inserted || 0);
+    const insertedL123 = Number(result?.inserted_l123 || 0);
+    const insertedL4 = Number(result?.inserted_l4 || 0);
+    alert(`导入完成：新增 ${inserted} 条（L1-L3 ${insertedL123} 条，L4 ${insertedL4} 条）`);
+
+    await router.push({
+      name: "beta-requirements",
+      query: { project_id: selectedProjectId.value },
+    });
+  } catch (err) {
+    console.error("导入会话需求失败:", err);
+    alert("导入失败: " + (err.message || "未知错误"));
+  } finally {
+    isImportingToManage.value = false;
+  }
+}
+
 function syncProjectFromStorage() {
   const pid = localStorage.getItem('lastProjectId') || '';
   if (pid && pid !== selectedProjectId.value) {
@@ -1191,11 +1232,6 @@ watch(selectedProjectId, async (val) => {
   if (val) {
     localStorage.setItem('lastProjectId', val);
     window.dispatchEvent(new CustomEvent('project-changed', { detail: { projectId: val } }));
-    try {
-      await authStore.loadProjectContext(val);
-    } catch (error) {
-      console.error('Failed to load project context:', error);
-    }
     await loadProjectSession();
     // 自动切换到项目 session
     if (projectSessionId.value && projectSessionId.value !== sessionId.value) {
@@ -1511,238 +1547,52 @@ async function refreshData() {
   await loadRequirements();
 }
 
-// 导出需求到CSV
-async function exportRequirements() {
-  if (!selectedProjectId.value) {
-    alert('请先选择项目');
-    return;
-  }
-
-  isExporting.value = true;
-  try {
-    // 获取所有需求（从管理API获取完整数据）
-    const data = await manageApi.listRequirements(selectedProjectId.value);
-    const requirements = data?.requirements || [];
-
-    if (requirements.length === 0) {
-      alert('当前项目没有可导出的需求');
-      return;
-    }
-
-    // 转换为CSV格式
-    const csvContent = requirementsToCsv(requirements);
-
-    // 获取项目名称作为文件名
-    const project = projects.value.find(p => p.project_id === selectedProjectId.value);
-    const projectName = project?.name || 'project';
-    const timestamp = new Date().toISOString().slice(0, 10);
-    const filename = `${projectName}_requirements_${timestamp}.csv`;
-
-    // 创建blob并下载
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    triggerDownload(blob, filename);
-
-  } catch (err) {
-    console.error('导出需求失败:', err);
-    alert('导出需求失败: ' + (err.message || '未知错误'));
-  } finally {
-    isExporting.value = false;
-  }
-}
-
-// 触发文件下载
-function triggerDownload(blob, filename) {
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  window.URL.revokeObjectURL(url);
-}
-
-// 将需求数据转换为CSV格式
-function requirementsToCsv(requirements) {
-  // 定义CSV表头
-  const headers = ['需求ID', '需求标题', '需求描述', '需求类型', '层级', '优先级', '状态', '父需求ID', '标签', '创建时间'];
-
-  // 映射需求类型到中文标签
-  const typeMap = {
-    'top_level': '顶层需求',
-    'low_level': '底层需求',
-    'task': '任务'
-  };
-
-  // 映射层级
-  const levelMap = {
-    'L1': 'L1 - 业务需求',
-    'L2': 'L2 - 利益相关者需求',
-    'L3': 'L3 - 系统需求',
-    'L4': 'L4 - 底层需求'
-  };
-
-  // 映射状态
-  const statusMap = {
-    'draft': '草稿',
-    'under_review': '审核中',
-    'confirmed': '已确认',
-    'in_progress': '进行中',
-    'completed': '已完成'
-  };
-
-  // 映射优先级
-  const priorityMap = {
-    'high': '高',
-    'medium': '中',
-    'low': '低'
-  };
-
-  // 层级排序权重 - 按 L1→L2→L3→L4 顺序排列
-  const levelWeight = {
-    'L1': 1,
-    'L2': 2,
-    'L3': 3,
-    'L4': 4,
-    'L5': 5,
-    '': 99  // 其他层级放最后
-  };
-
-  // 按 L1→L2→L3→L4 排序，同层级内按 order_index 排序
-  requirements.sort((a, b) => {
-    const levelA = resolveRequirementLevelForCsv(a) || '';
-    const levelB = resolveRequirementLevelForCsv(b) || '';
-    const weightA = levelWeight[levelA] ?? 99;
-    const weightB = levelWeight[levelB] ?? 99;
-
-    if (weightA !== weightB) {
-      return weightA - weightB;
-    }
-
-    // 同层级内按 order_index 排序
-    const orderA = a.order_index ?? 0;
-    const orderB = b.order_index ?? 0;
-    if (orderA !== orderB) {
-      return orderA - orderB;
-    }
-
-    // 最后按创建时间排序
-    return new Date(a.created_at || 0) - new Date(b.created_at || 0);
-  });
-
-  // 构建CSV行
-  const rows = requirements.map(req => {
-    const levelCode = resolveRequirementLevelForCsv(req);
-    return [
-    req.req_id || '',
-    escapeCsvField(req.title || req.text || req.statement || ''),
-    escapeCsvField(req.description || ''),
-    typeMap[req.requirement_type] || req.requirement_type || '',
-    levelMap[levelCode] || levelCode || '',
-    priorityMap[req.priority] || req.priority || '',
-    statusMap[req.status] || req.status || '',
-    req.parent_id || '',
-    escapeCsvField(Array.isArray(req.tags) ? req.tags.join('; ') : (req.tags || '')),
-    req.created_at || ''
-    ];
-  });
-
-  // 合并表头和行
-  const csvContent = [headers, ...rows]
-    .map(row => row.join(','))
-    .join('\n');
-
-  // 添加BOM以支持Excel UTF-8
-  return '\uFEFF' + csvContent;
-}
-
-function resolveRequirementLevelForCsv(req) {
-  const raw = ([req?.source_level, req?.level, req?.category]
-    .map(v => String(v || '').trim().toUpperCase())
-    .find(Boolean)) || '';
-
-  if (raw === 'L1' || raw === 'L2' || raw === 'L3' || raw === 'L4' || raw === 'L5') {
-    return raw;
-  }
-  if (raw.includes('L1')) return 'L1';
-  if (raw.includes('L2')) return 'L2';
-  if (raw.includes('L3')) return 'L3';
-  if (raw.includes('L4')) return 'L4';
-  if (raw.includes('L5')) return 'L5';
-
-  if (req?.requirement_type === 'low_level') return 'L4';
-  return '';
-}
-
-// 转义CSV字段
-function escapeCsvField(field) {
-  const text = String(field || '');
-  if (text.includes(',') || text.includes('"') || text.includes('\n')) {
-    return `"${text.replace(/"/g, '""')}"`;
-  }
-  return text;
-}
-
 // 数据加载
 async function loadRequirements() {
-  if (!selectedProjectId.value) {
+  const sid = sessionId.value?.trim();
+  if (!sid) {
     highLevelRequirements.value = [];
     lowLevelRequirements.value = [];
     requirementTree.value = [];
-    traceRelations.value = [];
     return;
   }
   
   isLoading.value = true;
   try {
-    const data = await manageApi.listRequirements(selectedProjectId.value);
-    const reqs = data?.requirements || [];
-
-    const toLevel = (req) => {
-      const sourceLevel = normalizeLevel(req.source_level || req.level || req.category);
-      if (sourceLevel === "L1" || sourceLevel === "L2" || sourceLevel === "L3") {
-        return sourceLevel;
-      }
-      if (req.requirement_type === "low_level" || sourceLevel === "L4") return "L4";
-      if (req.requirement_type === "task") return "L4";
-      return "L3";
-    };
-
-    highLevelRequirements.value = reqs
-      .filter((r) => r.requirement_type !== "low_level")
-      .map((r) => ({
-        ...r,
-        id: r.req_id,
-        text: r.title || r.description || "",
-        statement: r.description || r.title || "",
-        priority: normalizePriority(r.priority, null),
-        level: toLevel(r),
-        category: toLevel(r),
-      }));
-
-    lowLevelRequirements.value = reqs
-      .filter((r) => r.requirement_type === "low_level")
-      .map((r) => ({
-        ...r,
-        id: r.req_id,
-        text: r.title || r.description || "",
-        statement: r.description || r.title || "",
-        shall_statement: r.title || "",
-        source_top_id: r.parent_id || null,
-        priority: normalizePriority(r.priority, null),
-        level: "L4",
-      }));
-
-    traceRelations.value = [];
+    // 并行加载L1/L2/L3需求、L4需求和追溯关系
+    const [l123Data, l4Data, traceData] = await Promise.all([
+      requirementsL123Api.listBySession(sid, { page: 1, perPage: 500 }).catch(() => ({ requirements: [] })),
+      l4RequirementsApi.getBySession(sid, { perPage: 500 }).catch(() => ({ requirements: [] })),
+      analysisApi.getLatestTrace(sid).catch(() => null)
+    ]);
+    
+    // 处理L1/L2/L3需求
+    highLevelRequirements.value = (l123Data.requirements || []).map(req => ({
+      ...req,
+      priority: normalizePriority(req.priority, null),
+      level: normalizeLevel(req.level || req.category),
+    }));
+    
+    // 处理L4需求
+    lowLevelRequirements.value = (l4Data.requirements || []).map(r => ({
+      ...r,
+      priority: normalizePriority(r.priority, null),
+      level: 'L4',
+      statement: r.text || r.shall_statement || r.statement || '',
+    }));
+    
+    // 保存追溯关系
+    traceRelations.value = traceData?.relations || [];
     
     // 构建树形结构（包含追溯关系）
     requirementTree.value = buildTreeWithRelations(
       highLevelRequirements.value,
       lowLevelRequirements.value,
-      []
+      traceRelations.value
     );
 
     // 同步 manage_requirements 状态映射
+    await ensureProjectId();
     await loadManageRequirementMap();
     
   } catch (err) {
@@ -1854,13 +1704,8 @@ function handleNavigate(page) {
   }
 }
 
-async function handleExit() {
-  try {
-    await authStore.logout()
-  } catch (e) {
-    console.error('Failed to logout:', e);
-  }
-  router.push({ name: "main-login" });
+function handleExit() {
+  router.push({ name: "beta-login" });
 }
 
 onMounted(async () => {
@@ -2769,4 +2614,5 @@ onUnmounted(() => {
   border-color: rgba(28, 40, 52, 0.3);
 }
 </style>
+
 

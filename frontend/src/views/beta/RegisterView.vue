@@ -166,7 +166,7 @@ const handleRegister = async () => {
 
     // 延迟后跳转到登录页面
     setTimeout(() => {
-      router.push({ name: 'main-login' });
+      router.push({ name: 'beta-login' });
     }, 1500);
   } catch (error) {
     console.error("Register error:", error);
@@ -183,7 +183,7 @@ const handleRegister = async () => {
 };
 
 const handleBack = () => {
-  router.push({ name: 'main-login' });
+  router.push({ name: 'beta-login' });
 };
 </script>
 

@@ -401,6 +401,152 @@ def update_user(user_id: str):
     return jsonify({"success": True, "data": user})
 
 
+@auth_bp.route("/auth/profile", methods=["GET"])
+@require_auth
+def get_profile():
+    """
+    获取当前用户的个人资料
+
+    Response:
+        {
+            "success": True,
+            "data": {
+                "user_id": "user-xxx",
+                "username": "test",
+                "display_name": "测试用户",
+                "role": "admin",
+                "external_type": null,
+                "avatar_url": null,
+                "created_at": "2024-01-01T00:00:00"
+            }
+        }
+    """
+    if db_service is None:
+        return jsonify({"error": "数据库服务未初始化"}), 500
+
+    user_id = request.current_user["user_id"]
+    user = db_service.get_user_by_id(user_id)
+
+    if not user:
+        return jsonify({"error": "用户不存在"}), 404
+
+    user.pop("password_hash", None)
+    return jsonify({"success": True, "data": user})
+
+
+@auth_bp.route("/auth/profile", methods=["PATCH"])
+@require_auth
+def update_profile():
+    """
+    更新当前用户的个人资料（仅允许修改 display_name 和 avatar_url）
+
+    Request Body:
+        {
+            "display_name": "新名称",      # 可选
+            "avatar_url": "https://..."    # 可选，传空字符串清除头像
+        }
+
+    Response:
+        {
+            "success": True,
+            "data": { ...updated user... }
+        }
+    """
+    if db_service is None:
+        return jsonify({"error": "数据库服务未初始化"}), 500
+
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "请提供更新信息"}), 400
+
+    display_name = data.get("display_name")
+    avatar_url = data.get("avatar_url")
+
+    # 验证 display_name
+    if display_name is not None:
+        display_name = display_name.strip()
+        if not display_name:
+            return jsonify({"error": "显示名称不能为空"}), 400
+        if len(display_name) > 50:
+            return jsonify({"error": "显示名称不能超过 50 个字符"}), 400
+
+    # 验证 avatar_url（允许空字符串表示清除头像）
+    if avatar_url is not None and avatar_url.strip():
+        if not avatar_url.startswith(("http://", "https://")):
+            return jsonify({"error": "头像 URL 必须以 http:// 或 https:// 开头"}), 400
+        if len(avatar_url) > 500:
+            return jsonify({"error": "头像 URL 过长"}), 400
+
+    user_id = request.current_user["user_id"]
+    user = db_service.update_profile(
+        user_id=user_id,
+        display_name=display_name,
+        avatar_url=avatar_url,
+    )
+
+    if not user:
+        return jsonify({"error": "用户不存在"}), 404
+
+    user.pop("password_hash", None)
+    return jsonify({"success": True, "data": user})
+
+
+@auth_bp.route("/auth/profile/change-password", methods=["POST"])
+@require_auth
+def change_password():
+    """
+    修改当前用户的密码（需要验证旧密码）
+
+    Request Body:
+        {
+            "old_password": "旧密码",
+            "new_password": "新密码"
+        }
+
+    Response:
+        {
+            "success": True,
+            "message": "密码修改成功"
+        }
+    """
+    if db_service is None:
+        return jsonify({"error": "数据库服务未初始化"}), 500
+
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "请提供密码信息"}), 400
+
+    old_password = data.get("old_password", "")
+    new_password = data.get("new_password", "")
+
+    if not old_password:
+        return jsonify({"error": "请提供当前密码"}), 400
+    if not new_password:
+        return jsonify({"error": "请提供新密码"}), 400
+    if len(new_password) < 6:
+        return jsonify({"error": "新密码长度不能少于 6 位"}), 400
+    if old_password == new_password:
+        return jsonify({"error": "新密码不能与当前密码相同"}), 400
+
+    user_id = request.current_user["user_id"]
+    user = db_service.get_user_by_id(user_id)
+
+    if not user:
+        return jsonify({"error": "用户不存在"}), 404
+
+    auth_service = get_auth_service()
+    if not auth_service.verify_password(old_password, user["password_hash"]):
+        return jsonify({"error": "当前密码不正确"}), 400
+
+    new_hash = auth_service.hash_password(new_password)
+    success = db_service.change_password(user_id=user_id, new_password_hash=new_hash)
+
+    if not success:
+        return jsonify({"error": "密码修改失败，请稍后重试"}), 500
+
+    return jsonify({"success": True, "message": "密码修改成功"})
+
+
 @auth_bp.route("/auth/register", methods=["POST"])
 def register():
     """

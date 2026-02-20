@@ -22,7 +22,7 @@
 
           <!-- 入口卡片 -->
           <div class="entry-cards">
-            <div class="entry-card main-card" @click="navigateTo('/main/login')">
+            <div class="entry-card main-card" @click="navigateTo('/beta/login')">
               <div class="card-header">
                 <div class="card-icon main-icon">
                   <Home class="icon-svg" />

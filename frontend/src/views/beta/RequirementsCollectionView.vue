@@ -387,7 +387,7 @@
 <script setup>
 import { ref, computed, nextTick, reactive, onMounted, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
-import Sidebar from "../../components/main/Sidebar.vue";
+import Sidebar from "../../components/beta/Sidebar.vue";
 import { requirementsL123Api, l4RequirementsApi, manageApi } from "../../utils/api";
 import {
   Loader2,
@@ -413,23 +413,23 @@ const timestamp = ref(new Date().toLocaleString());
 const notificationCount = ref(3);
 
 const routeNameToPageKey = {
-  "main-dashboard": "dashboard",
-  "main-products": "products",
-  "main-project": "project-management",
-  "main-requirements": "requirements",
-  "main-requirements-session": "requirements-session",
-  "main-requirements-analysis": "requirements-analysis",
-  "main-requirements-collection": "requirements-collection",
+  "beta-dashboard": "dashboard",
+  "beta-products": "products",
+  "beta-project": "project-management",
+  "beta-requirements": "requirements",
+  "beta-requirements-session": "requirements-session",
+  "beta-requirements-analysis": "requirements-analysis",
+  "beta-requirements-collection": "requirements-collection",
 };
 
 const pageKeyToRouteName = {
-  "dashboard": "main-dashboard",
-  "products": "main-products",
-  "project-management": "main-project",
-  "requirements": "main-requirements",
-  "requirements-session": "main-requirements-session",
-  "requirements-analysis": "main-requirements-analysis",
-  "requirements-collection": "main-requirements-collection",
+  "dashboard": "beta-dashboard",
+  "products": "beta-products",
+  "project-management": "beta-project",
+  "requirements": "beta-requirements",
+  "requirements-session": "beta-requirements-session",
+  "requirements-analysis": "beta-requirements-analysis",
+  "requirements-collection": "beta-requirements-collection",
 };
 
 const activePage = computed(() => routeNameToPageKey[route.name] || "requirements-collection");
@@ -964,7 +964,7 @@ async function retryFromCurrentPhase() {
 
 // 跳转到需求页面
 function goToRequirements() {
-  router.push({ name: 'main-requirements' });
+  router.push({ name: 'beta-requirements' });
 }
 
 // 导航处理
@@ -976,7 +976,7 @@ function handleNavigate(page) {
 }
 
 function handleExit() {
-  router.push({ name: "main-login" });
+  router.push({ name: "beta-login" });
 }
 
 // 保存项目选择

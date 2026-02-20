@@ -93,22 +93,48 @@
       </template>
     </nav>
     <div class="rail-meta">
-      <div class="meta-block">
-      <div class="meta-title">当前身份</div>
-      <div class="meta-value">{{ isCollapsed ? displayLabel.charAt(0) : displayLabel || "未登录" }}</div>
-      <div class="meta-caption">
-          {{ roleCaption }}
-      </div>
-    </div>
-      <div class="rail-footer">
-        <div class="footer-label">下次审计</div>
-        <div class="footer-value">12 天</div>
-      </div>
-      <button type="button" class="ghost rail-guide" @click="router.push('/guide')" :title="isCollapsed ? '返回 Guide' : ''">
+      <button
+        type="button"
+        class="ghost rail-guide"
+        @click="router.push('/guide')"
+        :title="isCollapsed ? '返回 Guide' : ''"
+      >
         <Compass class="rail-action-icon" />
         <span v-if="!isCollapsed">返回 Guide</span>
       </button>
-      <button type="button" class="ghost rail-exit" @click="handleLogout" :title="isCollapsed ? '退出登录' : ''">
+
+      <!-- 账户入口（ChatGPT 风格） -->
+      <button
+        type="button"
+        class="account-btn"
+        :class="{ 'account-btn--collapsed': isCollapsed, active: props.activePage === 'account' }"
+        @click="router.push({ name: 'beta-account' })"
+        :title="isCollapsed ? (displayLabel || '个人账户') : ''"
+      >
+        <!-- 头像：优先使用图片，其次首字母 -->
+        <div class="account-avatar" :style="{ backgroundColor: accountAvatarColor }">
+          <img
+            v-if="currentUser?.avatar_url"
+            :src="currentUser.avatar_url"
+            :alt="displayLabel"
+            class="account-avatar-img"
+            @error="onAvatarImgError"
+          />
+          <span v-else class="account-avatar-letter">{{ avatarLetter }}</span>
+        </div>
+        <div v-if="!isCollapsed" class="account-info">
+          <div class="account-name">{{ displayLabel || '未登录' }}</div>
+          <div class="account-role">{{ roleCaption }}</div>
+        </div>
+        <Settings v-if="!isCollapsed" class="account-settings-icon" />
+      </button>
+
+      <button
+        type="button"
+        class="ghost rail-exit"
+        @click="handleLogout"
+        :title="isCollapsed ? '退出登录' : ''"
+      >
         <LogOut class="rail-action-icon" />
         <span v-if="!isCollapsed">退出登录</span>
       </button>
@@ -135,7 +161,8 @@ import {
   Compass,
   LogOut,
   ClipboardList,
-  CheckSquare
+  CheckSquare,
+  Settings,
 } from 'lucide-vue-next';
 
 const router = useRouter();
@@ -383,6 +410,33 @@ const isChildActive = (item) => {
   return item.children.some(child => child.key === props.activePage);
 };
 
+// 头像首字母
+const avatarLetter = computed(() => {
+  const name = currentUser.value?.display_name || currentUser.value?.username || '?'
+  return name.charAt(0).toUpperCase()
+})
+
+// 头像背景色（基于用户名哈希）
+const accountAvatarColor = computed(() => {
+  const colors = [
+    '#2f8f89', '#7c3aed', '#c4692f', '#c45b60',
+    '#5d6b76', '#a85424', '#1b2730', '#8b5cf6',
+  ]
+  const name = currentUser.value?.username || ''
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  return colors[Math.abs(hash) % colors.length]
+})
+
+// 头像加载失败时清除 URL
+const onAvatarImgError = () => {
+  if (currentUser.value) {
+    currentUser.value = { ...currentUser.value, avatar_url: null }
+  }
+}
+
 // 计算显示的用户名或显示名
 const displayLabel = computed(() => {
   if (currentUser.value?.display_name) {
@@ -418,7 +472,7 @@ const handleLogout = () => {
   } catch (e) {
     console.error('Failed to clear auth data:', e);
   }
-  router.push({ name: 'main-login' });
+  router.push({ name: 'beta-login' });
 };
 </script>
 
@@ -467,5 +521,91 @@ const handleLogout = () => {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
+}
+
+/* ---- 账户入口按钮（ChatGPT 风格） ---- */
+.account-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s, border-color 0.15s;
+  color: inherit;
+}
+
+.account-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.account-btn.active {
+  background: rgba(47, 143, 137, 0.15);
+  border-color: rgba(47, 143, 137, 0.25);
+}
+
+.account-btn--collapsed {
+  justify-content: center;
+  padding: 8px;
+}
+
+.account-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.account-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.account-avatar-letter {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1;
+}
+
+.account-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.account-name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--sidebar-text, #e8eaed);
+}
+
+.account-role {
+  font-size: 11px;
+  color: var(--sidebar-muted, #9eabb4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-settings-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  opacity: 0.5;
+  color: var(--sidebar-muted, #9eabb4);
 }
 </style>
