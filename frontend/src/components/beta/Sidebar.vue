@@ -163,6 +163,7 @@ import {
   ClipboardList,
   CheckSquare,
   Settings,
+  Users,
 } from 'lucide-vue-next';
 
 const router = useRouter();
@@ -223,6 +224,7 @@ const navItemsConfig = computed(() => {
   const adminNav = [
     { key: "dashboard", label: "概览", icon: LayoutDashboard },
     { key: "products", label: "产品管理", icon: Package },
+    { key: "user-management", label: "人员管理", icon: Users },
     {
       key: "project-management",
       label: "项目管理",
@@ -386,6 +388,7 @@ const getIconColor = (key) => {
   const colors = {
     dashboard: "#2f8f89",
     products: "#7c3aed",
+    "user-management": "#64748b",
     "project-management": "#c4692f",
     defects: "#c45b60",
     tracking: "#5d6b76",

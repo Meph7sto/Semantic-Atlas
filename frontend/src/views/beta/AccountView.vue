@@ -244,6 +244,7 @@ const pageKeyToRouteName = {
   'requirements-analysis': 'beta-requirements-analysis',
   'requirements-collection': 'beta-requirements-collection',
   'products': 'beta-products',
+  'user-management': 'beta-user-manage',
 }
 
 const handleNavigate = (page) => {

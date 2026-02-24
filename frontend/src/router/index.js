@@ -29,6 +29,7 @@ import RequirementsAnalysisView from '../views/beta/RequirementsAnalysisView.vue
 import RequirementsCollectionView from '../views/beta/RequirementsCollectionView.vue'
 import ProductManageView from '../views/beta/ProductManageView.vue'
 import AccountView from '../views/beta/AccountView.vue'
+import UserManageView from '../views/beta/UserManageView.vue'
 
 // Guide view
 import GuideView from '../views/GuideView.vue'
@@ -111,6 +112,15 @@ const router = createRouter({
                     name: 'beta-account',
                     component: AccountView,
                     meta: { requiresAuth: true }
+                },
+                {
+                    path: 'user-manage',
+                    name: 'beta-user-manage',
+                    component: UserManageView,
+                    meta: {
+                        requiresAuth: true,
+                        requiredSystemIdentities: ['SYS_ADMIN']
+                    }
                 }
             ]
         },
@@ -233,6 +243,21 @@ router.beforeEach(async (to, from, next) => {
     if (requiresAuth && !authStore.isAuthenticated) {
         next({ name: 'beta-login', query: { redirect: to.fullPath } })
         return
+    }
+
+    // 检查系统级身份访问控制（如仅超级管理员可访问）
+    if (Array.isArray(to.meta?.requiredSystemIdentities) && to.meta.requiredSystemIdentities.length > 0) {
+        const currentIdentity = authStore.systemIdentity
+        const allowed = to.meta.requiredSystemIdentities
+        if (!allowed.includes(currentIdentity)) {
+            console.warn('Access denied: insufficient system identity', {
+                route: to.name,
+                requiredSystemIdentities: allowed,
+                currentIdentity
+            })
+            next({ name: 'beta-dashboard' })
+            return
+        }
     }
 
     // 检查项目级权限（如果路由定义了 requiredPermissions）

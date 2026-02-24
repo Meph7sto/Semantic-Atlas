@@ -1,0 +1,229 @@
+• Proposed Plan
+
+
+  # backend_business 全量改造为 FastAPI 的实施计划（严格兼容、分阶段并行）
+
+  ## 摘要
+
+  将当前 backend_business 从 Flask Blueprint 体系迁移为 FastAPI Router 体系，保持现有对外 API 行为不变（URL、参数、返
+  回 JSON、状态码、SSE 事件名与格式），先并行运行再切流，最终替换 Flask 启动链路。
+  已确认基线：当前约 160 个路由声明、包含多类 SSE、文件上传下载、JWT 装饰器、推理代理与 PostgreSQL 存储调用。
+
+  ## 目标与成功标准
+
+  1. 前端 frontend/src/utils/api.js 无需改动即可连通新后端。
+  2. 所有 /api/* 与 /health 行为与当前 Flask 版本一致。
+  3. SSE、文件上传、CSV 转发、鉴权与权限行为一致。
+  4. 在切换窗口内可一键回滚到 Flask。
+  5. 自动化测试通过，新增“Flask vs FastAPI 合同对比测试”通过。
+
+  ## 范围
+
+  1. 在范围内：
+
+  - backend_business Web 层（路由、请求解析、响应构建、中间件、启动方式）
+  - 部署脚本与代理配置（deploy/start*.{sh,ps1}、deploy/stop_services*、deploy/nginx*.conf）
+  - 相关测试改造与补充
+  - 文档更新（README/运行说明）
+
+  2. 不在范围内：
+
+  - backend_inference 改造
+  - 业务 service 和 DB 逻辑重写为 async（本次保持同步调用）
+  - 前端接口协议调整
+
+  ## 实施策略（已定）
+
+  1. 迁移方式：分阶段并行（先并行，再切流）。
+  2. 兼容等级：严格兼容（接口与行为保持）。
+  3. 技术深度：先替换 Web 框架，不做全链路 async 化。
+
+  ## 目标架构与目录（最终态）
+
+  1. 新入口：
+
+  - backend_business/main.py：FastAPI app、lifespan、CORS、router 注册、/health
+
+  2. 新路由目录：
+
+  - backend_business/api/routers/analysis.py
+  - backend_business/api/routers/requirements.py
+  - backend_business/api/routers/manage.py
+  - backend_business/api/routers/product.py
+  - backend_business/api/routers/conflict.py
+  - backend_business/api/routers/classification.py
+  - backend_business/api/routers/deduplication.py
+  - backend_business/api/routers/file.py
+  - backend_business/api/routers/ai_chat.py
+  - backend_business/api/routers/agent_task.py
+  - backend_business/api/routers/agent_monitor.py
+  - backend_business/api/routers/mobile_chat.py
+  - backend_business/api/routers/push.py
+  - backend_business/api/routers/auth.py
+  - backend_business/api/routers/permission.py
+
+  3. 公共依赖与工具：
+
+  - backend_business/api/deps/auth.py（替代 @require_auth/@require_role）
+  - backend_business/api/http/errors.py（统一异常转 JSON）
+  - backend_business/api/http/sse.py（SSE 头与事件编码工具）
+
+  4. 兼容层：
+
+  - backend_business/app.py 保留短期兼容壳（仅转发到 FastAPI 启动或给旧导入路径使用），最终可删除。
+
+  ## 路由迁移规则（无决策空间）
+
+  1. 路径与前缀保持：
+
+  - 继续保留 /api 体系与各子前缀（/manage、/product、/dedup、/permission 等）。
+
+  2. 请求解析保持：
+
+  - 现有宽松解析逻辑（silent=True、可选字段）按原行为保留，不因 Pydantic 强校验改变错误语义。
+
+  3. 响应保持：
+
+  - 原字段名、错误文案、状态码原样保持。
+
+  4. SSE 保持：
+
+  - 使用 StreamingResponse，保持 event:/data: 格式和既有事件名；保留 Cache-Control: no-cache、X-Accel-Buffering: no。
+
+  5. 文件接口保持：
+
+  - /api/upload、/api/uploads/*、/api/upload_csv、/api/download_result 的表单字段和下载行为不变。
+
+  6. 鉴权保持：
+
+  - Authorization: Bearer <token>、request.current_user 语义迁移为 request.state.current_user，对下游调用保持同名数据
+    结构。
+
+  ## 分阶段执行计划
+
+  ## Phase 0：基线冻结与合同采集
+
+  1. 产出当前 Flask API 清单（路径/方法/状态码/关键字段/SSE 事件名）。
+  2. 为关键端点录制合同样本（成功、校验失败、权限失败、上游失败）。
+  3. 固化“不可变兼容项”清单（文案与状态码级别）。
+
+  ## Phase 1：FastAPI 骨架与基础设施
+
+  1. 新建 backend_business/main.py，配置 CORS、/health、router include。
+  2. 实现公共错误处理与 JSON 响应工具，确保中文输出不转义策略与现状一致。
+  3. 实现 auth dependency（token 校验、角色校验、用户上下文注入）。
+  4. 建立 SSE helper，统一 headers 与事件编码。
+
+  ## Phase 2：按模块迁移路由（15 个路由文件）
+
+  1. 迁移顺序（降低风险）：
+
+  - deduplication -> auth -> permission -> manage -> product
+  - analysis -> requirements -> conflict -> classification
+  - ai_chat -> agent_task -> agent_monitor -> push -> mobile_chat -> file
+
+  2. 每个模块迁移后即补充对应合同测试并通过再进入下一个模块。
+  3. 保持现有 service 调用方式，不改 service 内部签名与数据库层。
+
+  ## Phase 3：部署与运行链路并行化
+
+  1. 并行运行：
+
+  - Flask 保持 5001（现网）
+  - FastAPI 先跑 5002（影子环境）
+
+  2. 更新 deploy/start*.{sh,ps1}：
+
+  - 增加业务后端运行模式参数（flask|fastapi|dual）
+  - FastAPI 业务服务命令使用 uvicorn backend_business.main:app
+
+  3. 更新 deploy/nginx*.conf：
+
+  - 增加 business_backend_next upstream（5002）
+  - 增加受控路由或 header 开关用于灰度验证（不影响默认 /api）。
+
+  4. 更新 deploy/stop_services*，覆盖 5001/5002 进程停止逻辑。
+
+  ## Phase 4：测试、压测、切流与回滚
+
+  1. 测试通过后，将 /api upstream 从 5001 切到 5002。
+  2. 观察稳定后，将 FastAPI 业务端口回收为 5001，移除 Flask 启动。
+  3. 回滚预案：
+
+  - 保留 Flask 启动脚本与配置一版，切回仅需改 Nginx upstream + 重启。
+
+  ## 公开 API / 接口 / 类型变更
+
+  1. 对外 API：无破坏性变更（路径、请求、响应、错误、SSE 兼容）。
+  2. 新增运行接口（内部）：
+
+  - FastAPI 默认文档端点 /docs、/openapi.json：生产默认关闭（由环境变量控制）。
+
+  3. 新增内部接口类型：
+
+  - auth context 改为 request.state.current_user（仅内部实现变更）。
+
+  ## 测试计划与场景
+
+  1. 单元测试：
+
+  - auth deps：token 缺失/无效/过期/角色不足
+  - 参数解析兼容：bool/int/float 边界
+  - SSE 编码器：事件名与 JSON 序列化一致性
+
+  2. 路由合同测试（核心）：
+
+  - 每个模块至少覆盖：成功、参数错误、权限错误、依赖服务错误
+  - 对比 Flask 与 FastAPI 的 status + JSON keys + error text + headers
+
+  3. 集成测试：
+
+  - tests/test_requirements_deduplication.py 从 Flask test_client 迁移/扩展为 FastAPI TestClient
+  - 覆盖 /api/dedup/*、/api/auth/*、/api/manage/* 关键链路
+
+  4. SSE 场景测试：
+
+  - /api/analysis/ingest_transcript/stream
+  - /api/analysis/build_context/stream
+  - /api/requirements/extract_l123/stream
+  - /api/ai-chat/sessions/{id}/messages/stream
+  - /api/ai-chat/sessions/{id}/messages/agent/stream
+  - /api/push/stream、/api/mobile/stream
+
+  5. 文件与流式代理：
+
+  - /api/upload multipart
+  - /api/upload_csv 与 /api/classification/predict-csv passthrough
+
+  6. 非功能验证：
+
+  - 连接超时、长请求（30 分钟）、并发 SSE 稳定性、Nginx 反代超时参数有效性。
+
+  ## 验收标准
+
+  1. 前端主流程（登录、项目、需求抽取、分析、聊天、权限）全绿。
+  2. 合同测试通过率 100%，无破坏性差异。
+  3. 灰度期间错误率、5xx、超时率不高于 Flask 基线。
+  4. 切流后 24 小时无 P1/P2 问题。
+
+     控制：逐端点合同测试 + 浏览器端真实流测试。
+  2. 风险：鉴权上下文从 request 到 state 迁移遗漏。
+     控制：统一 dependency 注入，不允许路由内自行解析 token。
+  3. 风险：文件上传响应头变化。
+     控制：下载/预览/删除行为回归测试覆盖。
+  4. 风险：脚本切换导致运维混乱。
+     控制：start/stop 保持向后兼容参数并提供 dual 模式。
+
+  ## 实施里程碑（建议）
+
+  1. M1（1-2 天）：Phase 0-1 完成，FastAPI skeleton 可启动。
+  2. M2（3-5 天）：Phase 2 路由迁移完成，测试基本通过。
+  3. M3（1-2 天）：Phase 3 并行部署与灰度完成。
+  4. M4（1 天）：Phase 4 切流与收尾文档完成。
+
+  ## 假设与默认值（已锁定）
+
+  1. 保留端口体系：业务 5001、推理 8000、前端/网关 8008。
+  2. 本次不改 backend_business/services/* 为 async。
+  3. API 严格兼容优先于“风格优化”。
+  4. 允许短期双栈并行（Flask + FastAPI），以降低上线风险。

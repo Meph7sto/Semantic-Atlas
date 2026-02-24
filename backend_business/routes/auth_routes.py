@@ -557,7 +557,7 @@ def register():
             "username": "new-user",
             "password": "password123",
             "display_name": "新用户",
-            "role": "member",  # 可选，默认为 member
+            "role": "viewer",  # 可选，默认为 viewer
             "external_type": "CLIENT"  # 可选
         }
 
@@ -568,7 +568,7 @@ def register():
                 "user_id": "user-xxx",
                 "username": "new-user",
                 "display_name": "新用户",
-                "role": "member",
+                "role": "viewer",
                 "external_type": "CLIENT"
             }
         }
@@ -601,13 +601,13 @@ def register():
     if not re.match(r'^[a-zA-Z0-9_-]+$', username):
         return jsonify({"error": "用户名只能包含字母、数字、下划线和中划线"}), 400
 
-    # 验证角色
+    # 验证角色（前端传入的角色会被忽略，统一强制为 viewer）
     if role not in ("admin", "member", "viewer"):
         return jsonify({"error": "无效的角色"}), 400
 
-    # 注册用户默认角色为 member，不允许自注册为 admin
-    if role == "admin":
-        return jsonify({"error": "不允许自注册为管理员"}), 400
+    # 不允许自注册为 admin 或 member，注册后默认为 viewer（只读）
+    if role in ("admin", "member"):
+        return jsonify({"error": "注册后默认为只读访客（viewer），如需更高权限请联系管理员"}), 400
 
     # 验证 external_type
     if external_type and external_type not in ("CLIENT", "CONTRACTOR"):
@@ -625,13 +625,13 @@ def register():
     # 生成用户 ID
     user_id = auth_service.generate_user_id()
 
-    # 创建用户（默认角色为 member）
+    # 创建用户（默认角色为 viewer，只读权限）
     user = db_service.create_user(
         user_id=user_id,
         username=username,
         password_hash=password_hash,
         display_name=display_name,
-        role="member",  # 强制使用 member 角色
+        role="viewer",  # 注册默认为 viewer（只读），后续由管理员修改
         is_active=True,
         external_type=external_type,
     )

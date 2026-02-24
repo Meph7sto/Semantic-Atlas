@@ -750,6 +750,7 @@ const routeNameToPageKey = {
   "beta-requirements-session": "requirements-session",
   "beta-requirements-analysis": "requirements-analysis",
   "beta-requirements-collection": "requirements-collection",
+  "beta-user-manage": "user-management",
 };
 
 const pageKeyToRouteName = {
@@ -760,6 +761,7 @@ const pageKeyToRouteName = {
   "requirements-session": "beta-requirements-session",
   "requirements-analysis": "beta-requirements-analysis",
   "requirements-collection": "beta-requirements-collection",
+  "user-management": "beta-user-manage",
 };
 
 const activePage = computed(() => routeNameToPageKey[route.name] || "requirements");
