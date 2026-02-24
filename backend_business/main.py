@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 # 确保项目根目录在 sys.path 中
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -17,6 +18,10 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from backend_business.config import settings
+from backend_business.api.http.errors import (
+    ErrorResponse,
+    error_response_handler,
+)
 
 
 @asynccontextmanager
@@ -64,11 +69,16 @@ else:
     )
 
 
-# 注册路由（占位符，Phase 2 将逐步迁移）
-# from backend_business.api.routers import auth, analysis, requirements
-# app.include_router(auth.router)
-# app.include_router(analysis.router)
-# app.include_router(requirements.router)
+# 注册路由（Phase 2 逐步迁移）
+# - dedup / permission 暂走 /api/v2，便于与 Flask 并行灰度
+# - auth 直接走 /api/auth，与前端和 Nginx 分流规则保持一致
+from backend_business.api.routers import deduplication, auth, permission
+app.include_router(deduplication.router, prefix="/api/v2")
+app.include_router(auth.router)
+app.include_router(permission.router, prefix="/api/v2")
+
+# 注册业务异常处理器（保留 FastAPI 原生 HTTPException / validation 语义）
+app.add_exception_handler(ErrorResponse, error_response_handler)
 
 
 @app.get("/health")

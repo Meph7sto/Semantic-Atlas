@@ -159,7 +159,8 @@ const handleRegister = async () => {
     await authApi.register(
       username.value.trim(),
       password.value,
-      displayName.value.trim()
+      displayName.value.trim(),
+      "viewer"
     );
 
     showMessage("注册成功，正在跳转到登录页面...", "success");
@@ -170,7 +171,11 @@ const handleRegister = async () => {
     }, 1500);
   } catch (error) {
     console.error("Register error:", error);
-    const errorMsg = error.response?.data?.error || error.message || "注册失败，请稍后重试";
+    const errorMsg =
+      error.response?.data?.detail ||
+      error.response?.data?.error ||
+      error.message ||
+      "注册失败，请稍后重试";
     showMessage(errorMsg, "error");
 
     // 如果是用户名已存在的错误，显示在字段下方

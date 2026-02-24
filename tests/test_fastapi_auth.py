@@ -1,14 +1,23 @@
 """
-FastAPI 认证依赖测试
-测试 JWT Token 验证和 RBAC 权限控制
+FastAPI 认证与错误语义测试。
 """
 
-import pytest
+import os
+import sys
+
 from fastapi.testclient import TestClient
+
+# Ensure lightweight test mode.
+os.environ["SKIP_DB_INIT"] = "1"
+
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+
 from backend_business.main import app
 from backend_business.services.auth_service import get_auth_service
 
-client = TestClient(app)
+client = TestClient(app, raise_server_exceptions=False)
 
 
 def test_health_check():
@@ -23,16 +32,21 @@ def test_health_check():
 
 def test_missing_auth_header():
     """测试缺少认证 header 时的错误响应"""
-    # 需要添加一个测试路由来测试这个
-    # 暂时跳过，因为还没有实际的路由使用 auth 依赖
-    pass
+    response = client.get("/api/auth/verify")
+    assert response.status_code == 401
+    data = response.json()
+    assert data["detail"] == "未提供认证 Token"
 
 
 def test_invalid_token():
     """测试无效 Token 时的错误响应"""
-    # 需要添加一个测试路由来测试这个
-    # 暂时跳过，因为还没有实际的路由使用 auth 依赖
-    pass
+    response = client.get(
+        "/api/auth/verify",
+        headers={"Authorization": "Bearer invalid_token"},
+    )
+    assert response.status_code == 401
+    data = response.json()
+    assert data["detail"] == "Token 无效或已过期"
 
 
 def test_auth_service_verify_token():
@@ -77,7 +91,7 @@ def test_error_response():
     from backend_business.api.http.errors import error_response, ErrorResponse
 
     response_dict = error_response("参数错误", 400)
-    assert response_dict == {"success": False, "error": "参数错误"}
+    assert response_dict == {"detail": "参数错误"}
 
     # 测试 ErrorResponse 异常
     exc = ErrorResponse("测试错误", 403)
@@ -90,4 +104,4 @@ def test_create_success_response():
     from backend_business.api.http.errors import create_success_response
 
     response_dict = create_success_response({"user_id": "123"})
-    assert response_dict == {"success": True, "data": {"user_id": "123"}}
+    assert response_dict == {"user_id": "123"}

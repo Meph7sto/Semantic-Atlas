@@ -1167,7 +1167,7 @@ export const authApi = {
     },
 
     // 注册
-    async register(username, password, displayName, role = 'member') {
+    async register(username, password, displayName, role = 'viewer') {
         const resp = await api.post('/auth/register', {
             username,
             password,

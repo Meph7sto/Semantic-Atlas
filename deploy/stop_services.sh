@@ -13,8 +13,8 @@ if [ -f "${PID_FILE}" ]; then
   rm -f "${PID_FILE}"
 fi
 
-echo "[stop] 结束占用端口的进程: 8000 (FastAPI), 5001 (Flask), 8008 (Nginx)"
-for port in 8000 5001 8008; do
+echo "[stop] 结束占用端口的进程: 8000 (FastAPI), 5001 (Flask), 5002 (FastAPI Business), 8008 (Nginx)"
+for port in 8000 5001 5002 8008; do
   PIDS=$(lsof -ti :"${port}" || true)
   if [ -n "${PIDS}" ]; then
     echo " - port ${port}: ${PIDS}"

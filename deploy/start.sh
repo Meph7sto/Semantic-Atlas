@@ -8,6 +8,7 @@ cd "$BASE_DIR"
 MODE=""
 PROVIDER=""
 ENTRY=""
+BUSINESS_BACKEND=""
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -35,6 +36,10 @@ while [[ $# -gt 0 ]]; do
       fi
       ENTRY="$2"
       shift 2
+      ;;
+    --enable-fastapi-business)
+      ENABLE_FASTAPI_BUSINESS=1
+      shift
       ;;
     *)
       if [[ -z "$MODE" ]]; then
@@ -143,6 +148,16 @@ if [[ -z "$ENTRY" ]]; then
 fi
 
 export FRONTEND_ENTRY="$ENTRY"
+
+# 是否启动 FastAPI 业务后端
+if [[ "$ENABLE_FASTAPI_BUSINESS" != "1" ]]; then
+  echo "是否启动 FastAPI 业务后端 (/api/v2/)? 1=no(默认) 2=yes(与Flask并行)"
+  read -r -p "输入编号 (默认 1/no): " choice
+  if [[ "$choice" == "2" || "$choice" == "yes" ]]; then
+    ENABLE_FASTAPI_BUSINESS=1
+    echo "[start] FastAPI business backend will be enabled."
+  fi
+fi
 
 # 尝试加载 .env 文件 (用于持久化 API Key)
 ENV_FILE="${BASE_DIR}/.env"
@@ -835,13 +850,27 @@ if [[ "$do_inference" -eq 1 ]]; then
     > "${LOGS_DIR}/inference.log" 2>&1 &
 fi
 
-# 5) 启动 Flask 业务服务
+# 5) 启动业务服务 (Flask 默认，FastAPI 可选并行)
 if [[ "$do_business" -eq 1 ]]; then
+  # Flask (主业务后端)
   echo "[start] Starting Flask business service (5001)..."
   nohup "$PYTHON_EXE" "${BASE_DIR}/backend_business/app.py" \
     > "${LOGS_DIR}/business.log" 2>&1 &
+
+  # FastAPI 业务后端 (可选，使用 /api/v2/ 前缀)
+  if [[ "$ENABLE_FASTAPI_BUSINESS" == "1" ]]; then
+    echo "[start] Starting FastAPI business service (5002) with /api/v2/ prefix..."
+    echo "[start] Working directory: $BASE_DIR"
+    nohup "$PYTHON_EXE" -m uvicorn backend_business.main:app --host 0.0.0.0 --port 5002 \
+      > "${LOGS_DIR}/business_fastapi.log" 2>&1 &
+  fi
+fi
+
+backend_info="Flask 5001"
+if [[ "$ENABLE_FASTAPI_BUSINESS" == "1" ]]; then
+  backend_info="Flask 5001 + FastAPI 5002 (/api/v2/)"
 fi
 
 echo "[start] Done. Mode=$MODE; Model provider=$PROVIDER; Entry=$ENTRY"
-echo "[start] Nginx 8008 (if enabled), FastAPI 8000 (if enabled), Flask 5001 (if enabled)."
+echo "[start] Nginx 8008 (if enabled), FastAPI 8000 (if enabled), Business: $backend_info."
 echo "[start] Logs located in $LOGS_DIR"

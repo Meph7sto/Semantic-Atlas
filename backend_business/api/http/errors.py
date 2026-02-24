@@ -1,38 +1,23 @@
 """
 FastAPI 错误处理工具
-提供与 Flask 兼容的错误响应格式
+提供 FastAPI 原生语义的错误响应格式
 """
 
 from typing import Any, Dict
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 
 def error_response(message: str, status_code: int) -> Dict[str, Any]:
-    """
-    返回错误响应字典（Flask 兼容格式）
-
-    Args:
-        message: 错误消息
-        status_code: HTTP 状态码
-
-    Returns:
-        错误响应字典：{"success": False, "error": message}
-
-    Usage:
-        raise HTTPException(
-            status_code=400,
-            detail=error_response("参数错误", 400)
-        )
-    """
-    return {"success": False, "error": message}
+    """返回与 FastAPI 原生语义一致的错误响应字典。"""
+    return {"detail": message}
 
 
 class ErrorResponse(Exception):
     """
-    自定义错误异常
-    用于抛出 Flask 格式的错误响应
+    业务错误异常。
 
     Args:
         message: 错误消息
@@ -45,68 +30,48 @@ class ErrorResponse(Exception):
         super().__init__(message)
 
 
-async def error_response_handler(request, exc):
+async def validation_error_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """保留显式校验异常处理器，语义与 FastAPI 默认 422 保持一致。"""
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
+
+async def error_response_handler(request: Request, exc: Exception) -> JSONResponse:
     """
-    全局异常处理器
-    将异常转换为 Flask 兼容的 JSON 响应
-
-    Args:
-        request: FastAPI Request 对象
-        exc: 异常对象
-
-    Returns:
-        JSONResponse with Flask-compatible format
+    统一异常处理：
+    - ErrorResponse -> detail 字段
+    - HTTPException -> 保留 status_code + detail
+    - 其他异常 -> 500 Internal Server Error
     """
     if isinstance(exc, ErrorResponse):
         return JSONResponse(
             status_code=exc.status_code,
-            content={"success": False, "error": exc.message},
+            content={"detail": exc.message},
         )
 
     if isinstance(exc, HTTPException):
-        # FastAPI HTTPException 转换为 Flask 格式
         detail = exc.detail
-        if isinstance(detail, dict):
-            # 如果 detail 已经是字典（包含 success 和 error），直接返回
-            return JSONResponse(status_code=exc.status_code, content=detail)
-        # 否则包装成 Flask 格式
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={"success": False, "error": str(detail)},
-        )
+        if isinstance(detail, dict) and "detail" in detail:
+            content = detail
+        else:
+            content = {"detail": detail}
+        return JSONResponse(status_code=exc.status_code, content=content)
 
-    # 其他未捕获的异常
     return JSONResponse(
         status_code=500,
-        content={"success": False, "error": "服务器内部错误"},
+        content={"detail": "Internal Server Error"},
     )
 
 
 def create_error_response(message: str, status_code: int) -> JSONResponse:
-    """
-    直接创建 Flask 格式的错误响应
-
-    Args:
-        message: 错误消息
-        status_code: HTTP 状态码
-
-    Returns:
-        JSONResponse 对象
-    """
+    """直接创建 FastAPI 风格错误响应。"""
     return JSONResponse(
         status_code=status_code,
-        content={"success": False, "error": message},
+        content={"detail": message},
     )
 
 
-def create_success_response(data: Any) -> Dict[str, Any]:
-    """
-    创建 Flask 格式的成功响应
-
-    Args:
-        data: 响应数据
-
-    Returns:
-        成功响应字典：{"success": True, "data": data}
-    """
-    return {"success": True, "data": data}
+def create_success_response(data: Any) -> Any:
+    """返回原始业务数据，不再包装 success/data 信封。"""
+    return data
