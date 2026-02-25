@@ -453,6 +453,30 @@ def init_db(conn):
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_manage_product_members_user ON manage_product_members(user_id)"
         )
+        # 添加产品名称唯一约束
+        cur.execute(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'manage_products'::regclass
+                      AND conname = 'uk_manage_products_name'
+                ) THEN
+                    -- 先处理可能存在的重复名称（保留最新的）
+                    DELETE FROM manage_products t1
+                    WHERE t1.ctid < (
+                        SELECT MAX(t2.ctid)
+                        FROM manage_products t2
+                        WHERE t1.name = t2.name
+                    );
+
+                    ALTER TABLE manage_products
+                    ADD CONSTRAINT uk_manage_products_name UNIQUE (name);
+                END IF;
+            END $$;
+            """
+        )
 
         cur.execute(
             """
@@ -478,6 +502,30 @@ def init_db(conn):
         # 项目-Session 绑定：记录当前关联的采集 session_id
         cur.execute(
             "ALTER TABLE manage_projects ADD COLUMN IF NOT EXISTS current_session_id TEXT"
+        )
+        # 添加项目名称唯一约束
+        cur.execute(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'manage_projects'::regclass
+                      AND conname = 'uk_manage_projects_name'
+                ) THEN
+                    -- 先处理可能存在的重复名称
+                    DELETE FROM manage_projects t1
+                    WHERE t1.ctid < (
+                        SELECT MAX(t2.ctid)
+                        FROM manage_projects t2
+                        WHERE t1.name = t2.name
+                    );
+
+                    ALTER TABLE manage_projects
+                    ADD CONSTRAINT uk_manage_projects_name UNIQUE (name);
+                END IF;
+            END $$;
+            """
         )
 
         cur.execute(

@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import psycopg2
+from psycopg2 import IntegrityError
 from psycopg2.extras import RealDictCursor
 
 
@@ -42,38 +43,43 @@ class ProductService:
         tags_payload = json.dumps(tags or [])
         with self._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(
-                    """
-                    INSERT INTO manage_products(
-                        product_id, name, description, roadmap, version, tags,
-                        created_by, created_at, updated_at
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, NOW(), NOW())
-                    RETURNING product_id, name, description, status, roadmap, version, tags,
-                              created_by, created_at::text AS created_at, updated_at::text AS updated_at
-                    """,
-                    (
-                        product_id,
-                        name,
-                        description,
-                        roadmap,
-                        version,
-                        tags_payload,
-                        created_by,
-                    ),
-                )
-                product = dict(cur.fetchone())
-                if created_by:
-                    # 约定：创建者默认成为 owner（用于产品级权限）
+                try:
                     cur.execute(
                         """
-                        INSERT INTO manage_product_members(product_id, user_id, role, created_at, updated_at)
-                        VALUES (%s, %s, 'owner', NOW(), NOW())
-                        ON CONFLICT (product_id, user_id) DO UPDATE SET role = 'owner', updated_at = NOW()
+                        INSERT INTO manage_products(
+                            product_id, name, description, roadmap, version, tags,
+                            created_by, created_at, updated_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, NOW(), NOW())
+                        RETURNING product_id, name, description, status, roadmap, version, tags,
+                                  created_by, created_at::text AS created_at, updated_at::text AS updated_at
                         """,
-                        (product_id, created_by),
+                        (
+                            product_id,
+                            name,
+                            description,
+                            roadmap,
+                            version,
+                            tags_payload,
+                            created_by,
+                        ),
                     )
-                return product
+                    product = dict(cur.fetchone())
+                    if created_by:
+                        # 约定：创建者默认成为 owner（用于产品级权限）
+                        cur.execute(
+                            """
+                            INSERT INTO manage_product_members(product_id, user_id, role, created_at, updated_at)
+                            VALUES (%s, %s, 'owner', NOW(), NOW())
+                            ON CONFLICT (product_id, user_id) DO UPDATE SET role = 'owner', updated_at = NOW()
+                            """,
+                            (product_id, created_by),
+                        )
+                    return product
+                except IntegrityError as e:
+                    if "uk_manage_products_name" in str(e) or "unique" in str(e).lower():
+                        raise ValueError(f"产品名称 '{name}' 已存在")
+                    raise
 
     def get_member_role(self, product_id: str, user_id: str) -> Optional[str]:
         if not user_id:
@@ -286,29 +292,34 @@ class ProductService:
                 if not cur.fetchone():
                     raise ValueError("产品不存在或已归档")
 
-                cur.execute(
-                    """
-                    INSERT INTO manage_projects(
-                        project_id, name, description, product_id, created_by, created_at, updated_at
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO manage_projects(
+                            project_id, name, description, product_id, created_by, created_at, updated_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
+                        RETURNING project_id, name, description, status, product_id,
+                                  created_by, created_at::text AS created_at, updated_at::text AS updated_at
+                        """,
+                        (project_id, name, description, product_id, created_by),
                     )
-                    VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
-                    RETURNING project_id, name, description, status, product_id,
-                              created_by, created_at::text AS created_at, updated_at::text AS updated_at
-                    """,
-                    (project_id, name, description, product_id, created_by),
-                )
-                project = dict(cur.fetchone())
+                    project = dict(cur.fetchone())
 
-                # 为新项目创建默认 main 分支引用
-                cur.execute(
-                    """
-                    INSERT INTO manage_branch_refs (ref_id, project_id, ref_name, ref_type, milestone_id, created_by, created_at, updated_at)
-                    VALUES (%s, %s, %s, 'branch', NULL, %s, NOW(), NOW())
-                    ON CONFLICT (project_id, ref_name) DO NOTHING
-                    """,
-                    (str(uuid.uuid4()), project_id, "main", created_by),
-                )
-                return project
+                    # 为新项目创建默认 main 分支引用
+                    cur.execute(
+                        """
+                        INSERT INTO manage_branch_refs (ref_id, project_id, ref_name, ref_type, milestone_id, created_by, created_at, updated_at)
+                        VALUES (%s, %s, %s, 'branch', NULL, %s, NOW(), NOW())
+                        ON CONFLICT (project_id, ref_name) DO NOTHING
+                        """,
+                        (str(uuid.uuid4()), project_id, "main", created_by),
+                    )
+                    return project
+                except IntegrityError as e:
+                    if "uk_manage_projects_name" in str(e) or "unique" in str(e).lower():
+                        raise ValueError(f"项目名称 '{name}' 已存在")
+                    raise
 
     # ----------------------
     # Product Overview (聚合查看)

@@ -45,14 +45,17 @@ def create_product():
     global_role = _get_global_role()
     if (global_role or "").lower() != "admin":
         return _json_error("Permission denied", 403)
-    product = service.create_product(
-        name=name,
-        description=data.get("description", ""),
-        roadmap=data.get("roadmap", ""),
-        version=data.get("version", ""),
-        tags=data.get("tags"),
-        created_by=actor,
-    )
+    try:
+        product = service.create_product(
+            name=name,
+            description=data.get("description", ""),
+            roadmap=data.get("roadmap", ""),
+            version=data.get("version", ""),
+            tags=data.get("tags"),
+            created_by=actor,
+        )
+    except ValueError as e:
+        return _json_error(str(e))
     service.add_audit_log(
         product_id=product["product_id"],
         actor=actor,

@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg2
+from psycopg2 import IntegrityError
 from psycopg2.extras import RealDictCursor
 
 
@@ -19,6 +20,16 @@ def _utc_now_iso() -> str:
 
 
 _ALLOWED_PRIORITIES = {"low", "medium", "high"}
+_ALLOWED_REQUIREMENT_STATUSES = (
+    "draft",
+    "under_review",
+    "confirmed",
+    "in_progress",
+    "completed",
+    "archived",
+)
+_ALLOWED_REQUIREMENT_STATUS_SET = set(_ALLOWED_REQUIREMENT_STATUSES)
+_REQUIREMENT_STATUS_ALIASES = {"backlog": "draft"}
 
 
 def normalize_priority(priority: Any, allow_none: bool = True) -> Optional[str]:
@@ -34,6 +45,32 @@ def normalize_priority(priority: Any, allow_none: bool = True) -> Optional[str]:
     if normalized in _ALLOWED_PRIORITIES:
         return normalized
     raise ValueError("priority 必须是 low、medium、high")
+
+
+def normalize_requirement_status(
+    status: Any, allow_none: bool = True
+) -> Optional[str]:
+    """Normalize requirement status and accept backlog as draft."""
+    if status is None:
+        if allow_none:
+            return None
+        raise ValueError(
+            f"status 必须是: {', '.join(_ALLOWED_REQUIREMENT_STATUSES)}"
+        )
+
+    text = str(status).strip()
+    if not text:
+        if allow_none:
+            return None
+        raise ValueError(
+            f"status 必须是: {', '.join(_ALLOWED_REQUIREMENT_STATUSES)}"
+        )
+
+    normalized = _REQUIREMENT_STATUS_ALIASES.get(text.lower(), text.lower())
+    if normalized in _ALLOWED_REQUIREMENT_STATUS_SET:
+        return normalized
+
+    raise ValueError(f"status 必须是: {', '.join(_ALLOWED_REQUIREMENT_STATUSES)}")
 
 
 class RequirementsManageService:
@@ -52,24 +89,29 @@ class RequirementsManageService:
         project_id = str(uuid.uuid4())
         with self._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(
-                    """
-                    INSERT INTO manage_projects(project_id, name, description, created_by, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, NOW(), NOW())
-                    RETURNING project_id, name, description, status, product_id, current_session_id, created_by, created_at::text AS created_at
-                    """,
-                    (project_id, name, description, created_by),
-                )
-                project = dict(cur.fetchone())
-                cur.execute(
-                    """
-                    INSERT INTO manage_branch_refs (ref_id, project_id, ref_name, ref_type, milestone_id, created_by, created_at, updated_at)
-                    VALUES (%s, %s, %s, 'branch', NULL, %s, NOW(), NOW())
-                    ON CONFLICT (project_id, ref_name) DO NOTHING
-                    """,
-                    (str(uuid.uuid4()), project_id, "main", created_by),
-                )
-                return project
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO manage_projects(project_id, name, description, created_by, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, NOW(), NOW())
+                        RETURNING project_id, name, description, status, product_id, current_session_id, created_by, created_at::text AS created_at
+                        """,
+                        (project_id, name, description, created_by),
+                    )
+                    project = dict(cur.fetchone())
+                    cur.execute(
+                        """
+                        INSERT INTO manage_branch_refs (ref_id, project_id, ref_name, ref_type, milestone_id, created_by, created_at, updated_at)
+                        VALUES (%s, %s, %s, 'branch', NULL, %s, NOW(), NOW())
+                        ON CONFLICT (project_id, ref_name) DO NOTHING
+                        """,
+                        (str(uuid.uuid4()), project_id, "main", created_by),
+                    )
+                    return project
+                except IntegrityError as e:
+                    if "uk_manage_projects_name" in str(e) or "unique" in str(e).lower():
+                        raise ValueError(f"项目名称 '{name}' 已存在")
+                    raise
 
     def list_projects(self) -> List[Dict[str, Any]]:
         with self._connect() as conn:
@@ -191,6 +233,7 @@ class RequirementsManageService:
         custom_fields: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         req_id = str(uuid.uuid4())
+        status = normalize_requirement_status(status, allow_none=False)
         priority = normalize_priority(priority, allow_none=True)
         tags_payload = json.dumps(tags or [])
         custom_payload = json.dumps(custom_fields or {})
@@ -312,7 +355,13 @@ class RequirementsManageService:
         if not updates:
             raise ValueError("没有可更新字段")
         if "priority" in updates:
-            updates["priority"] = normalize_priority(updates.get("priority"), allow_none=True)
+            updates["priority"] = normalize_priority(
+                updates.get("priority"), allow_none=True
+            )
+        if "status" in updates:
+            updates["status"] = normalize_requirement_status(
+                updates.get("status"), allow_none=False
+            )
 
         set_clauses = []
         values = []
@@ -356,16 +405,7 @@ class RequirementsManageService:
     ) -> Dict[str, Any]:
         if not req_ids:
             raise ValueError("缺少需求ID列表")
-        allowed_status = {
-            "draft",
-            "under_review",
-            "confirmed",
-            "in_progress",
-            "completed",
-            "archived",
-        }
-        if status not in allowed_status:
-            raise ValueError("非法状态")
+        status = normalize_requirement_status(status, allow_none=False)
 
         with self._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:

@@ -31,9 +31,12 @@ def create_project():
         return _json_error("Missing project name")
     description = data.get("description", "")
     actor = _get_actor()
-    project = service.create_project(
-        name=name, description=description, created_by=actor
-    )
+    try:
+        project = service.create_project(
+            name=name, description=description, created_by=actor
+        )
+    except ValueError as e:
+        return _json_error(str(e))
     service.add_audit_log(
         project_id=project["project_id"],
         actor=actor,
