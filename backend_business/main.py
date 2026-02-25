@@ -70,12 +70,13 @@ else:
 
 
 # 注册路由（Phase 2 逐步迁移）
-# - dedup / permission 暂走 /api/v2，便于与 Flask 并行灰度
+# - dedup 暂走 /api/v2，便于与 Flask 并行灰度
 # - auth 直接走 /api/auth，与前端和 Nginx 分流规则保持一致
+# - permission 走 /api/permission，与前端既有调用路径保持一致
 from backend_business.api.routers import deduplication, auth, permission
 app.include_router(deduplication.router, prefix="/api/v2")
 app.include_router(auth.router)
-app.include_router(permission.router, prefix="/api/v2")
+app.include_router(permission.router)
 
 # 注册业务异常处理器（保留 FastAPI 原生 HTTPException / validation 语义）
 app.add_exception_handler(ErrorResponse, error_response_handler)

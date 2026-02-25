@@ -5,7 +5,7 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from backend_business.services.db_service import db_service
 from backend_business.services.auth_service import get_auth_service
@@ -18,6 +18,8 @@ from backend_business.api.routers.schemas.auth_schemas import (
     UpdateProfileRequest,
     CreateUserRequest,
     UpdateUserRequest,
+    ApproveRegistrationRequest,
+    RejectRegistrationRequest,
 )
 
 router = APIRouter(prefix="/api", tags=["auth"])
@@ -61,14 +63,24 @@ def login(req: LoginRequest):
     if not username or not password:
         raise ErrorResponse("用户名和密码不能为空", 400)
 
-    # 验证用户名和密码
-    user = db_service.get_user_by_username(username)
+    # 使用 get_user_by_username_for_auth 获取用户（不过滤 is_active，用于检查审批状态）
+    user = db_service.get_user_by_username_for_auth(username)
     if not user:
         raise ErrorResponse("用户名或密码错误", 401)
 
     auth_service = get_auth_service()
     if not auth_service.verify_password(password, user["password_hash"]):
         raise ErrorResponse("用户名或密码错误", 401)
+
+    # 检查注册状态
+    registration_status = user.get("registration_status", "approved")
+
+    if registration_status == "pending":
+        raise ErrorResponse("注册审核中，请等待管理员审批", 403)
+
+    if registration_status == "rejected":
+        rejection_reason = user.get("rejection_reason", "未提供原因")
+        raise ErrorResponse(f"注册申请已被拒绝：{rejection_reason}", 403)
 
     # 检查用户是否激活
     if not user.get("is_active", True):
@@ -128,15 +140,13 @@ def logout():
 @router.post("/auth/register")
 def register(req: RegisterRequest):
     """
-    用户注册接口（开放注册，无需认证）
+    用户注册接口（开放注册，无需认证，注册后待管理员审批）
 
     Request Body:
         {
             "username": "new-user",
             "password": "password123",
-            "display_name": "新用户",
-            "role": "viewer",  # 可选，默认为 viewer
-            "external_type": "CLIENT"  # 可选
+            "display_name": "新用户"
         }
 
     Response:
@@ -146,8 +156,8 @@ def register(req: RegisterRequest):
                 "user_id": "user-xxx",
                 "username": "new-user",
                 "display_name": "新用户",
-                "role": "viewer",
-                "external_type": "CLIENT"
+                "registration_status": "pending",
+                "message": "注册成功，请等待管理员审核"
             }
         }
     """
@@ -157,22 +167,8 @@ def register(req: RegisterRequest):
     username = req.username
     password = req.password
     display_name = req.display_name
-    role = req.role
-    external_type = req.external_type
 
-    # 验证角色（前端传入的角色会被忽略，统一强制为 viewer）
-    if role not in ("admin", "member", "viewer"):
-        raise ErrorResponse("无效的角色", 400)
-
-    # 不允许自注册为 admin 或 member，注册后默认为 viewer（只读）
-    if role in ("admin", "member"):
-        raise ErrorResponse("注册后默认为只读访客（viewer），如需更高权限请联系管理员", 400)
-
-    # 验证 external_type
-    if external_type and external_type not in ("CLIENT", "CONTRACTOR"):
-        raise ErrorResponse("无效的外部身份类型", 400)
-
-    # 检查用户名是否已存在
+    # 检查用户名是否已存在（只检查 pending 或 approved 状态，允许被拒绝的用户重新注册）
     existing_user = db_service.get_user_by_username(username)
     if existing_user:
         raise ErrorResponse("用户名已存在", 400)
@@ -184,18 +180,25 @@ def register(req: RegisterRequest):
     # 生成用户 ID
     user_id = auth_service.generate_user_id()
 
-    # 创建用户（默认角色为 viewer，只读权限）
+    # 创建用户（待审批状态，未激活）
     user = db_service.create_user(
         user_id=user_id,
         username=username,
         password_hash=password_hash,
         display_name=display_name,
-        role="viewer",  # 注册默认为 viewer（只读），后续由管理员修改
-        is_active=True,
-        external_type=external_type,
+        role=None,  # 不分配角色，待审批时由管理员指定
+        is_active=False,  # 未激活，待审批后才能登录
+        external_type=None,  # 外部类型待审批时由管理员指定
+        registration_status="pending",  # 待审批状态
     )
 
-    return {"success": True, "data": user}
+    return {
+        "success": True,
+        "data": {
+            **user,
+            "message": "注册成功，请等待管理员审核",
+        }
+    }
 
 
 # ========================
@@ -513,3 +516,186 @@ def update_user(
         raise ErrorResponse("用户不存在", 404)
 
     return {"success": True, "data": user}
+
+
+# ========================
+# 注册管理接口（管理员专用）
+# ========================
+
+@router.get("/auth/registrations")
+def list_registrations(
+    status: str = Query("pending", description="状态筛选: pending, approved, rejected"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    current_user: dict = Depends(require_admin),
+):
+    """
+    列出注册请求（仅管理员）
+
+    Query Params:
+        status: 状态筛选（默认 pending）
+        limit: 返回数量限制（1-1000，默认 100）
+        offset: 分页偏移（默认 0）
+
+    Response:
+        {
+            "registrations": [...],
+            "total": 10,
+            "limit": 100,
+            "offset": 0
+        }
+    """
+    if db_service is None:
+        raise ErrorResponse("数据库服务未初始化", 500)
+
+    # 验证状态值
+    valid_statuses = ("pending", "approved", "rejected")
+    if status not in valid_statuses:
+        raise ErrorResponse(f"无效的状态，必须是: {', '.join(valid_statuses)}", 400)
+
+    result = db_service.get_pending_registrations(status=status, limit=limit, offset=offset)
+
+    return result
+
+
+@router.get("/auth/registrations/{user_id}")
+def get_registration(
+    user_id: str,
+    current_user: dict = Depends(require_admin),
+):
+    """
+    获取注册详情（仅管理员）
+
+    Response:
+        {
+            "user_id": "user-xxx",
+            "username": "new-user",
+            "display_name": "新用户",
+            "registration_status": "pending",
+            ...
+        }
+    """
+    if db_service is None:
+        raise ErrorResponse("数据库服务未初始化", 500)
+
+    user = db_service.get_registration_details(user_id)
+    if not user:
+        raise ErrorResponse("用户不存在", 404)
+
+    return user
+
+
+@router.post("/auth/registrations/{user_id}/approve")
+def approve_registration_endpoint(
+    user_id: str,
+    req: ApproveRegistrationRequest,
+    current_user: dict = Depends(require_admin),
+):
+    """
+    批准注册（仅管理员）
+
+    Request Body:
+        {
+            "role": "member",
+            "external_type": "CLIENT"
+        }
+
+    Response:
+        {
+            "success": true,
+            "data": {
+                "user_id": "user-xxx",
+                "username": "new-user",
+                "role": "member",
+                "registration_status": "approved",
+                "approved_by": "admin-user-id"
+            }
+        }
+    """
+    if db_service is None:
+        raise ErrorResponse("数据库服务未初始化", 500)
+
+    admin_user_id = current_user["user_id"]
+
+    # 批准注册
+    user = db_service.approve_registration(
+        user_id=user_id,
+        approved_by_user_id=admin_user_id,
+        role=req.role,
+        external_type=req.external_type,
+    )
+
+    if not user:
+        raise ErrorResponse("用户不存在或已被处理", 404)
+
+    return {
+        "success": True,
+        "data": user,
+    }
+
+
+@router.post("/auth/registrations/{user_id}/reject")
+def reject_registration_endpoint(
+    user_id: str,
+    req: RejectRegistrationRequest,
+    current_user: dict = Depends(require_admin),
+):
+    """
+    拒绝注册（仅管理员）
+
+    Request Body:
+        {
+            "reason": "用户信息不完整"
+        }
+
+    Response:
+        {
+            "success": true,
+            "data": {
+                "user_id": "user-xxx",
+                "username": "new-user",
+                "registration_status": "rejected",
+                "rejection_reason": "用户信息不完整",
+                "rejected_by": "admin-user-id"
+            }
+        }
+    """
+    if db_service is None:
+        raise ErrorResponse("数据库服务未初始化", 500)
+
+    admin_user_id = current_user["user_id"]
+
+    # 拒绝注册
+    user = db_service.reject_registration(
+        user_id=user_id,
+        rejected_by_user_id=admin_user_id,
+        rejection_reason=req.reason,
+    )
+
+    if not user:
+        raise ErrorResponse("用户不存在或已被处理", 404)
+
+    return {
+        "success": True,
+        "data": user,
+    }
+
+
+@router.get("/auth/registrations/pending/count")
+def get_pending_count(
+    current_user: dict = Depends(require_admin),
+):
+    """
+    获取待审批数量（仅管理员）
+
+    Response:
+        {
+            "count": 5
+        }
+    """
+    if db_service is None:
+        raise ErrorResponse("数据库服务未初始化", 500)
+
+    result = db_service.get_pending_registrations(status="pending", limit=1, offset=0)
+
+    return {"count": result["total"]}

@@ -70,7 +70,7 @@
             {{ message }}
           </div>
           <div v-if="!message" class="login-hint">
-            注册成功后将自动跳转到登录页面
+            提交注册申请后需管理员审批，审批通过后才能登录
           </div>
         </form>
       </div>
@@ -163,7 +163,7 @@ const handleRegister = async () => {
       "viewer"
     );
 
-    showMessage("注册成功，正在跳转到登录页面...", "success");
+    showMessage("注册申请已提交，请等待管理员审批，正在返回登录页面...", "success");
 
     // 延迟后跳转到登录页面
     setTimeout(() => {

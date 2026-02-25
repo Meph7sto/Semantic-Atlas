@@ -1049,6 +1049,84 @@ def init_db(conn):
             ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS avatar_url TEXT
             """
         )
+
+        # ========================
+        # Registration Approval Workflow: 注册审批流程字段
+        # ========================
+
+        # 1.2 添加 registration_status 字段（注册状态）
+        cur.execute(
+            """
+            ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS registration_status TEXT
+            """
+        )
+        cur.execute(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'auth_users'::regclass
+                      AND conname = 'chk_auth_users_registration_status'
+                ) THEN
+                    ALTER TABLE auth_users
+                    ADD CONSTRAINT chk_auth_users_registration_status
+                    CHECK (registration_status IN ('pending', 'approved', 'rejected'));
+                END IF;
+            END $$;
+            """
+        )
+
+        # 1.3 添加 rejection_reason 字段（拒绝原因）
+        cur.execute(
+            """
+            ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS rejection_reason TEXT
+            """
+        )
+
+        # 1.4 添加 rejected_at 字段（拒绝时间）
+        cur.execute(
+            """
+            ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ
+            """
+        )
+
+        # 1.5 添加 approved_at 字段（批准时间）
+        cur.execute(
+            """
+            ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ
+            """
+        )
+
+        # 1.6 添加 approved_by 字段（批准人）
+        cur.execute(
+            """
+            ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS approved_by TEXT
+            """
+        )
+
+        # 1.7 添加 rejected_by 字段（拒绝人）
+        cur.execute(
+            """
+            ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS rejected_by TEXT
+            """
+        )
+
+        # 1.8 添加索引（按注册状态查询）
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_auth_users_registration_status ON auth_users(registration_status)"
+        )
+
+        # 1.9 迁移现有用户为已批准状态
+        cur.execute(
+            """
+            UPDATE auth_users
+            SET registration_status = 'approved',
+                approved_at = created_at,
+                approved_by = user_id
+            WHERE registration_status IS NULL AND is_active = TRUE
+            """
+        )
         cur.execute(
             """
             DO $$

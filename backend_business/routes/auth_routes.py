@@ -123,14 +123,24 @@ def login():
     if not username or not password:
         return jsonify({"error": "用户名和密码不能为空"}), 400
 
-    # 验证用户名和密码
-    user = db_service.get_user_by_username(username)
+    # 使用 get_user_by_username_for_auth 获取用户（不过滤 is_active，用于检查审批状态）
+    user = db_service.get_user_by_username_for_auth(username)
     if not user:
         return jsonify({"error": "用户名或密码错误"}), 401
 
     auth_service = get_auth_service()
     if not auth_service.verify_password(password, user["password_hash"]):
         return jsonify({"error": "用户名或密码错误"}), 401
+
+    # 检查注册状态
+    registration_status = user.get("registration_status", "approved")
+
+    if registration_status == "pending":
+        return jsonify({"error": "注册审核中，请等待管理员审批"}), 403
+
+    if registration_status == "rejected":
+        rejection_reason = user.get("rejection_reason", "未提供原因")
+        return jsonify({"error": f"注册申请已被拒绝：{rejection_reason}"}), 403
 
     # 检查用户是否激活
     if not user.get("is_active", True):
@@ -550,15 +560,13 @@ def change_password():
 @auth_bp.route("/auth/register", methods=["POST"])
 def register():
     """
-    用户注册接口（开放注册，无需认证）
+    用户注册接口（开放注册，无需认证，注册后待管理员审批）
 
     Request Body:
         {
             "username": "new-user",
             "password": "password123",
-            "display_name": "新用户",
-            "role": "viewer",  # 可选，默认为 viewer
-            "external_type": "CLIENT"  # 可选
+            "display_name": "新用户"
         }
 
     Response:
@@ -568,8 +576,8 @@ def register():
                 "user_id": "user-xxx",
                 "username": "new-user",
                 "display_name": "新用户",
-                "role": "viewer",
-                "external_type": "CLIENT"
+                "registration_status": "pending",
+                "message": "注册成功，请等待管理员审核"
             }
         }
     """
@@ -583,8 +591,6 @@ def register():
     username = data.get("username", "").strip()
     password = data.get("password", "")
     display_name = data.get("display_name", "").strip()
-    role = data.get("role", "member")
-    external_type = data.get("external_type")
 
     # 验证必填字段
     if not username:
@@ -601,19 +607,7 @@ def register():
     if not re.match(r'^[a-zA-Z0-9_-]+$', username):
         return jsonify({"error": "用户名只能包含字母、数字、下划线和中划线"}), 400
 
-    # 验证角色（前端传入的角色会被忽略，统一强制为 viewer）
-    if role not in ("admin", "member", "viewer"):
-        return jsonify({"error": "无效的角色"}), 400
-
-    # 不允许自注册为 admin 或 member，注册后默认为 viewer（只读）
-    if role in ("admin", "member"):
-        return jsonify({"error": "注册后默认为只读访客（viewer），如需更高权限请联系管理员"}), 400
-
-    # 验证 external_type
-    if external_type and external_type not in ("CLIENT", "CONTRACTOR"):
-        return jsonify({"error": "无效的外部身份类型"}), 400
-
-    # 检查用户名是否已存在
+    # 检查用户名是否已存在（只检查 pending 或 approved 状态，允许被拒绝的用户重新注册）
     existing_user = db_service.get_user_by_username(username)
     if existing_user:
         return jsonify({"error": "用户名已存在"}), 400
@@ -625,16 +619,225 @@ def register():
     # 生成用户 ID
     user_id = auth_service.generate_user_id()
 
-    # 创建用户（默认角色为 viewer，只读权限）
+    # 创建用户（待审批状态，未激活）
     user = db_service.create_user(
         user_id=user_id,
         username=username,
         password_hash=password_hash,
         display_name=display_name,
-        role="viewer",  # 注册默认为 viewer（只读），后续由管理员修改
-        is_active=True,
-        external_type=external_type,
+        role=None,  # 不分配角色，待审批时由管理员指定
+        is_active=False,  # 未激活，待审批后才能登录
+        external_type=None,  # 外部类型待审批时由管理员指定
+        registration_status="pending",  # 待审批状态
     )
 
     # 不返回密码哈希
+    return jsonify(
+        {
+            "success": True,
+            "data": {
+                **user,
+                "message": "注册成功，请等待管理员审核",
+            }
+        }
+    )
+
+
+# ========================
+# 注册管理接口（管理员专用）
+# ========================
+
+@auth_bp.route("/auth/registrations", methods=["GET"])
+@require_auth
+@require_role("admin")
+def list_registrations():
+    """
+    列出注册请求（仅管理员）
+
+    Query Params:
+        status: 状态筛选（pending, approved, rejected）
+        limit: 返回数量限制（默认 100）
+        offset: 分页偏移（默认 0）
+
+    Response:
+        {
+            "registrations": [...],
+            "total": 10,
+            "limit": 100,
+            "offset": 0
+        }
+    """
+    if db_service is None:
+        return jsonify({"error": "数据库服务未初始化"}), 500
+
+    status = request.args.get("status", "pending")
+    limit = int(request.args.get("limit", 100))
+    offset = int(request.args.get("offset", 0))
+
+    # 验证状态值
+    valid_statuses = ("pending", "approved", "rejected")
+    if status not in valid_statuses:
+        return jsonify({"error": f"无效的状态，必须是: {', '.join(valid_statuses)}"}), 400
+
+    result = db_service.get_pending_registrations(status=status, limit=limit, offset=offset)
+
+    return jsonify({"success": True, "data": result})
+
+
+@auth_bp.route("/auth/registrations/<user_id>", methods=["GET"])
+@require_auth
+@require_role("admin")
+def get_registration(user_id: str):
+    """
+    获取注册详情（仅管理员）
+
+    Response:
+        {
+            "user_id": "user-xxx",
+            "username": "new-user",
+            "display_name": "新用户",
+            "registration_status": "pending",
+            ...
+        }
+    """
+    if db_service is None:
+        return jsonify({"error": "数据库服务未初始化"}), 500
+
+    user = db_service.get_registration_details(user_id)
+    if not user:
+        return jsonify({"error": "用户不存在"}), 404
+
     return jsonify({"success": True, "data": user})
+
+
+@auth_bp.route("/auth/registrations/<user_id>/approve", methods=["POST"])
+@require_auth
+@require_role("admin")
+def approve_registration(user_id: str):
+    """
+    批准注册（仅管理员）
+
+    Request Body:
+        {
+            "role": "member",
+            "external_type": "CLIENT"
+        }
+
+    Response:
+        {
+            "success": true,
+            "data": {
+                "user_id": "user-xxx",
+                "username": "new-user",
+                "role": "member",
+                "registration_status": "approved",
+                "approved_by": "admin-user-id"
+            }
+        }
+    """
+    if db_service is None:
+        return jsonify({"error": "数据库服务未初始化"}), 500
+
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "请提供审批信息"}), 400
+
+    role = data.get("role", "member")
+    external_type = data.get("external_type")
+
+    # 验证角色
+    if role not in ("admin", "member", "viewer"):
+        return jsonify({"error": "无效的角色"}), 400
+
+    # 验证 external_type
+    if external_type and external_type not in ("CLIENT", "CONTRACTOR"):
+        return jsonify({"error": "无效的外部身份类型"}), 400
+
+    admin_user_id = request.current_user["user_id"]
+
+    # 批准注册
+    user = db_service.approve_registration(
+        user_id=user_id,
+        approved_by_user_id=admin_user_id,
+        role=role,
+        external_type=external_type,
+    )
+
+    if not user:
+        return jsonify({"error": "用户不存在或已被处理"}), 404
+
+    return jsonify({"success": True, "data": user})
+
+
+@auth_bp.route("/auth/registrations/<user_id>/reject", methods=["POST"])
+@require_auth
+@require_role("admin")
+def reject_registration(user_id: str):
+    """
+    拒绝注册（仅管理员）
+
+    Request Body:
+        {
+            "reason": "用户信息不完整"
+        }
+
+    Response:
+        {
+            "success": true,
+            "data": {
+                "user_id": "user-xxx",
+                "username": "new-user",
+                "registration_status": "rejected",
+                "rejection_reason": "用户信息不完整",
+                "rejected_by": "admin-user-id"
+            }
+        }
+    """
+    if db_service is None:
+        return jsonify({"error": "数据库服务未初始化"}), 500
+
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "请提供拒绝原因"}), 400
+
+    reason = data.get("reason", "").strip()
+
+    # 验证拒绝原因
+    if not reason:
+        return jsonify({"error": "拒绝原因不能为空"}), 400
+    if len(reason) > 500:
+        return jsonify({"error": "拒绝原因不能超过 500 个字符"}), 400
+
+    admin_user_id = request.current_user["user_id"]
+
+    # 拒绝注册
+    user = db_service.reject_registration(
+        user_id=user_id,
+        rejected_by_user_id=admin_user_id,
+        rejection_reason=reason,
+    )
+
+    if not user:
+        return jsonify({"error": "用户不存在或已被处理"}), 404
+
+    return jsonify({"success": True, "data": user})
+
+
+@auth_bp.route("/auth/registrations/pending/count", methods=["GET"])
+@require_auth
+@require_role("admin")
+def get_pending_count():
+    """
+    获取待审批数量（仅管理员）
+
+    Response:
+        {
+            "count": 5
+        }
+    """
+    if db_service is None:
+        return jsonify({"error": "数据库服务未初始化"}), 500
+
+    result = db_service.get_pending_registrations(status="pending", limit=1, offset=0)
+
+    return jsonify({"success": True, "data": {"count": result["total"]}})

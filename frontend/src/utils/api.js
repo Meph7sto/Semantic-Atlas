@@ -1233,6 +1233,60 @@ export const authApi = {
         return resp.data.data
     },
 
+    // 列出注册申请（仅管理员）
+    async listRegistrations({ status = 'pending', limit = 100, offset = 0 } = {}) {
+        const resp = await api.get('/auth/registrations', {
+            params: { status, limit, offset },
+        })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '获取注册申请列表失败')
+        }
+        return resp.data?.data ?? resp.data
+    },
+
+    // 获取注册申请详情（仅管理员）
+    async getRegistration(userId) {
+        const resp = await api.get(`/auth/registrations/${encodeURIComponent(userId)}`)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '获取注册申请详情失败')
+        }
+        return resp.data?.data ?? resp.data
+    },
+
+    // 批准注册申请（仅管理员）
+    async approveRegistration(userId, { role, external_type = undefined } = {}) {
+        const payload = { role }
+        if (external_type !== undefined && external_type !== '') {
+            payload.external_type = external_type
+        }
+        const resp = await api.post(`/auth/registrations/${encodeURIComponent(userId)}/approve`, payload)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '批准注册申请失败')
+        }
+        return resp.data?.data ?? resp.data
+    },
+
+    // 拒绝注册申请（仅管理员）
+    async rejectRegistration(userId, reason) {
+        const resp = await api.post(`/auth/registrations/${encodeURIComponent(userId)}/reject`, { reason })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '拒绝注册申请失败')
+        }
+        return resp.data?.data ?? resp.data
+    },
+
+    // 获取待审批注册申请数量（仅管理员）
+    async getPendingRegistrationCount() {
+        const resp = await api.get('/auth/registrations/pending/count')
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '获取待审批注册数量失败')
+        }
+        if (typeof resp.data?.count === 'number') {
+            return resp.data.count
+        }
+        return resp.data?.data?.count ?? 0
+    },
+
     // 获取当前用户个人资料
     async getProfile() {
         const resp = await api.get('/auth/profile')

@@ -152,3 +152,71 @@ class UpdateUserRequest(BaseModel):
     display_name: Optional[str] = None
     role: Optional[str] = None
     is_active: Optional[bool] = None
+
+
+# ========================
+# Registration Management Schemas
+# ========================
+
+class ApproveRegistrationRequest(BaseModel):
+    """批准注册请求"""
+    role: str  # admin, member, viewer
+    external_type: Optional[str] = None  # CLIENT or CONTRACTOR
+
+    @field_validator('role')
+    @classmethod
+    def validate_role(cls, v):
+        if v not in ("admin", "member", "viewer"):
+            raise ValueError("无效的角色，必须是 admin、member 或 viewer")
+        return v
+
+    @field_validator('external_type')
+    @classmethod
+    def validate_external_type(cls, v):
+        if v is not None and v not in ("CLIENT", "CONTRACTOR"):
+            raise ValueError("无效的外部身份类型")
+        return v
+
+
+class RejectRegistrationRequest(BaseModel):
+    """拒绝注册请求"""
+    reason: str
+
+    @field_validator('reason')
+    @classmethod
+    def validate_reason(cls, v):
+        v = v.strip()
+        if not v:
+            raise ValueError("拒绝原因不能为空")
+        if len(v) > 500:
+            raise ValueError("拒绝原因不能超过 500 个字符")
+        return v
+
+
+class RegistrationListItem(BaseModel):
+    """注册列表项响应"""
+    user_id: str
+    username: str
+    display_name: str
+    external_type: Optional[str]
+    avatar_url: Optional[str]
+    created_at: str
+    registration_status: str
+
+
+class RegistrationDetailResponse(BaseModel):
+    """注册详情响应"""
+    user_id: str
+    username: str
+    display_name: str
+    role: Optional[str]
+    is_active: bool
+    external_type: Optional[str]
+    avatar_url: Optional[str]
+    created_at: str
+    registration_status: str
+    rejection_reason: Optional[str]
+    rejected_at: Optional[str]
+    approved_at: Optional[str]
+    approved_by: Optional[str]
+    rejected_by: Optional[str]
