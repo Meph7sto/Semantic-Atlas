@@ -1,7 +1,15 @@
 import os
 import sys
+import logging
 from flask import Flask
 from flask_cors import CORS
+
+class EndpointFilter(logging.Filter):
+    def filter(self, record):
+        msg = record.getMessage()
+        return '/api/ai-chat/unread-count' not in msg and '/api/agent-tasks/pending-count' not in msg
+
+logging.getLogger("werkzeug").addFilter(EndpointFilter())
 
 # Ensure project root is on sys.path so `python backend_business/app.py` works reliably
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -16,8 +24,15 @@ from backend_business.routes.file_route import file_bp
 from backend_business.routes.requirements_route import requirements_bp
 from backend_business.routes.classification_routes import classification_bp
 from backend_business.routes.manage_routes import manage_bp
+from backend_business.routes.product_routes import product_bp
 from backend_business.routes.push_routes import push_bp
 from backend_business.routes.mobile_chat_routes import mobile_chat_bp
+from backend_business.routes.deduplication_route import dedup_bp
+from backend_business.routes.ai_chat_routes import ai_chat_bp
+from backend_business.routes.agent_task_routes import agent_task_bp
+from backend_business.routes.agent_monitor_routes import agent_monitor_bp
+from backend_business.routes.auth_routes import auth_bp
+from backend_business.routes.permission_routes import permission_bp
 
 
 def create_app() -> Flask:
@@ -43,8 +58,15 @@ def create_app() -> Flask:
     app.register_blueprint(requirements_bp, url_prefix="/api")
     app.register_blueprint(classification_bp, url_prefix="/api/classification")
     app.register_blueprint(manage_bp, url_prefix="/api/manage")
+    app.register_blueprint(product_bp, url_prefix="/api/product")
     app.register_blueprint(push_bp, url_prefix="/api/push")
     app.register_blueprint(mobile_chat_bp, url_prefix="/api/mobile")
+    app.register_blueprint(dedup_bp, url_prefix="/api/dedup")
+    app.register_blueprint(ai_chat_bp, url_prefix="/api/ai-chat")
+    app.register_blueprint(agent_task_bp, url_prefix="/api/agent-tasks")
+    app.register_blueprint(agent_monitor_bp, url_prefix="/api/agent-monitor")
+    app.register_blueprint(auth_bp, url_prefix="/api")
+    app.register_blueprint(permission_bp, url_prefix="/api/permission")
 
     # 兼容主框架：提供 /health（非 /api/health）
     @app.get("/health")

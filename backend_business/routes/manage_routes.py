@@ -31,9 +31,12 @@ def create_project():
         return _json_error("Missing project name")
     description = data.get("description", "")
     actor = _get_actor()
-    project = service.create_project(
-        name=name, description=description, created_by=actor
-    )
+    try:
+        project = service.create_project(
+            name=name, description=description, created_by=actor
+        )
+    except ValueError as e:
+        return _json_error(str(e))
     service.add_audit_log(
         project_id=project["project_id"],
         actor=actor,
@@ -56,6 +59,75 @@ def get_project(project_id: str):
     if not project:
         return _json_error("Project not found", 404)
     return jsonify(project)
+
+
+@manage_bp.patch("/projects/<project_id>")
+def update_project(project_id: str):
+    data = request.get_json(silent=True) or {}
+    actor = _get_actor()
+
+    # Handle current_session_id update
+    if "current_session_id" in data:
+        session_id = data["current_session_id"]
+        try:
+            project = service.set_project_session(
+                project_id=project_id, session_id=session_id, updated_by=actor
+            )
+        except Exception as e:
+            return _json_error(str(e))
+        service.add_audit_log(
+            project_id=project_id,
+            actor=actor,
+            action="update",
+            target_type="project",
+            target_id=project_id,
+            detail={"current_session_id": session_id},
+        )
+        return jsonify(project)
+
+    # Handle general field updates (name, description)
+    name = data.get("name")
+    description = data.get("description")
+    if name is None and description is None:
+        return _json_error("No updatable fields provided")
+    try:
+        project = service.update_project_info(
+            project_id=project_id,
+            name=name.strip() if name else None,
+            description=description,
+            updated_by=actor,
+        )
+    except Exception as e:
+        return _json_error(str(e))
+    service.add_audit_log(
+        project_id=project_id,
+        actor=actor,
+        action="update",
+        target_type="project",
+        target_id=project_id,
+        detail={"name": name, "description": description},
+    )
+    return jsonify(project)
+
+
+@manage_bp.delete("/projects/<project_id>")
+def delete_project(project_id: str):
+    actor = _get_actor()
+    try:
+        affected = service.archive_project(project_id, updated_by=actor)
+    except Exception as e:
+        return _json_error(str(e))
+    if affected == 0:
+        return _json_error("Project not found or already archived", 404)
+    service.add_audit_log(
+        project_id=project_id,
+        actor=actor,
+        action="archive",
+        target_type="project",
+        target_id=project_id,
+        detail={"status": "archived"},
+    )
+    return jsonify({"success": True, "archived": affected})
 
 
 @manage_bp.post("/projects/<project_id>/requirements")
@@ -124,7 +196,7 @@ def import_requirements(project_id: str):
     if not session_id:
         return _json_error("Missing session_id")
     actor = _get_actor()
-    result = service.import_from_l123(
+    result = service.import_from_session(
         session_id=session_id,
         project_id=project_id,
         created_by=actor,

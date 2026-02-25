@@ -237,3 +237,5 @@ git_status_output.txt
 # References
 frontend_ref/
 .claude
+AGENTS.md
+CLAUDE.md

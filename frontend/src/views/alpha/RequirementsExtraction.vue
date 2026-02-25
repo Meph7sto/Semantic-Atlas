@@ -26,12 +26,24 @@ const form = ref({
   maxSpansPerBundle: 12,
   tokenLimit: 1500, // null/0 表示不限制
   topM2Hop: 5,
-  keywords: '要,需要,必须,应该,决定,改成,提升,优化,实现'
+  keywords: '要,需要,必须,应该,决定,改成,提升,优化,实现',
+  enableParallel: false, // 是否启用并行处理
+  maxConcurrent: 5, // 最大并发数
+  historyAware: false, // 是否启用历史感知（串行记忆）
+  resetBeforeExtract: true, // 抽取前是否清理该 session 的历史结果
+
+  // Post extraction deduplication
+  postDedup: false,
+  dedupWithLLM: false,
+  dedupAutoMerge: false,
+  dedupThreshold: 0.85
 })
 
 const isExtracting = ref(false)
 const extractionError = ref('')
 const extractionResult = ref(null)
+
+const deduplicationResult = computed(() => extractionResult.value?.deduplication || null)
 
 const reqLevelFilter = ref('') // '' | L1 | L2 | L3
 const reqPage = ref(1)
@@ -185,6 +197,13 @@ async function startExtraction() {
 
   isExtracting.value = true
   try {
+    if (form.value.dedupAutoMerge && !form.value.postDedup) {
+      throw new Error('已选择“自动合并”，请先开启“抽取后去重”')
+    }
+    if (form.value.dedupAutoMerge && !form.value.dedupWithLLM) {
+      form.value.dedupWithLLM = true
+    }
+
     const payload = {
       session_id: sid,
       context_run_id: contextRunId.value.trim() || null,
@@ -197,7 +216,16 @@ async function startExtraction() {
       max_spans_per_bundle: Number(form.value.maxSpansPerBundle) || 12,
       token_limit: Number(form.value.tokenLimit) || 0,
       top_m_2hop: Number(form.value.topM2Hop) || 5,
-      keywords: normalizeKeywords(form.value.keywords)
+      keywords: normalizeKeywords(form.value.keywords),
+      enable_parallel_windows: !!form.value.enableParallel,
+      max_concurrent_windows: Number(form.value.maxConcurrent) || 5,
+      history_aware: !!form.value.historyAware,
+      reset_before_extract: !!form.value.resetBeforeExtract,
+
+      post_dedup: !!form.value.postDedup,
+      dedup_with_llm: !!form.value.dedupWithLLM || !!form.value.dedupAutoMerge,
+      dedup_auto_merge: !!form.value.dedupAutoMerge,
+      dedup_threshold: Number(form.value.dedupThreshold) || 0.85
     }
 
     extractionResult.value = await requirementsL123Api.extract(payload)
@@ -411,6 +439,93 @@ onMounted(async () => {
                   class="mt-2 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-black focus:ring-black"
                 />
               </div>
+
+              <div class="md:col-span-2">
+                <label class="flex items-center justify-between text-sm font-medium text-zinc-700">
+                  <span class="flex items-center gap-2">
+                    锚点并行处理（Phase 3）
+                    <span class="text-xs text-zinc-500 font-normal">并行抽取多个锚点</span>
+                  </span>
+                  <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" v-model="form.enableParallel" class="sr-only peer">
+                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-zinc-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-zinc-900"></div>
+                  </label>
+                </label>
+                <div v-if="form.enableParallel" class="mt-3 pl-4 border-l-2 border-zinc-200">
+                  <label class="block text-sm font-medium text-zinc-700">最大并发锚点数（Phase 3）</label>
+                  <input
+                    v-model.number="form.maxConcurrent"
+                    type="number"
+                    min="1"
+                    max="20"
+                    class="mt-2 w-32 rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-black focus:ring-black"
+                  />
+                  <p class="mt-1 text-xs text-zinc-500">同时处理的锚点数量（1-20）</p>
+                </div>
+                <div v-else class="mt-3 pl-4 border-l-2 border-zinc-200">
+                  <label class="flex items-center gap-2">
+                    <input v-model="form.historyAware" type="checkbox" class="w-4 h-4 rounded border-zinc-300" />
+                    <span class="text-sm text-zinc-700 font-medium">串行记忆（History Aware）</span>
+                  </label>
+                  <p class="mt-1 text-xs text-zinc-500">
+                    仅在关闭并行处理时生效。开启后大模型可以看到前面锚点已生成的需求，避免重复。
+                  </p>
+                </div>
+              </div>
+
+              <div class="md:col-span-2">
+                <label class="flex items-center gap-2">
+                  <input v-model="form.resetBeforeExtract" type="checkbox" class="w-4 h-4 rounded border-zinc-300" />
+                  <span class="text-sm text-zinc-700 font-medium">重跑前清理该 session 的 L1/L2/L3 结果</span>
+                </label>
+                <p class="mt-1 text-xs text-zinc-500">
+                  建议开启。每次点击“开始抽取并写库”前先删除该 session 的历史需求，避免多次重跑累积重复条目。
+                </p>
+              </div>
+
+              <div class="md:col-span-2">
+                <label class="flex items-center justify-between text-sm font-medium text-zinc-700">
+                  <span class="flex items-center gap-2">
+                    抽取后去重（Phase 3 后处理）
+                    <span class="text-xs text-zinc-500 font-normal">并行模式推荐</span>
+                  </span>
+                  <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" v-model="form.postDedup" class="sr-only peer">
+                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-zinc-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-zinc-900"></div>
+                  </label>
+                </label>
+
+                <div v-if="form.postDedup" class="mt-3 pl-4 border-l-2 border-zinc-200 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label class="block text-sm font-medium text-zinc-700">相似度阈值</label>
+                    <input
+                      v-model.number="form.dedupThreshold"
+                      type="number"
+                      min="0.5"
+                      max="0.99"
+                      step="0.01"
+                      class="mt-2 w-32 rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-black focus:ring-black"
+                    />
+                    <p class="mt-1 text-xs text-zinc-500">默认 0.85，越高越严格</p>
+                  </div>
+
+                  <div class="flex items-start gap-2">
+                    <input v-model="form.dedupWithLLM" type="checkbox" class="mt-1 w-4 h-4 rounded border-zinc-300" />
+                    <div>
+                      <div class="text-sm font-medium text-zinc-700">LLM 给出去重建议</div>
+                      <p class="text-xs text-zinc-500">输出每组是否合并/合并文本/主需求ID（不自动改库）</p>
+                    </div>
+                  </div>
+
+                  <div class="flex items-start gap-2 md:col-span-2">
+                    <input v-model="form.dedupAutoMerge" type="checkbox" class="mt-1 w-4 h-4 rounded border-zinc-300" />
+                    <div>
+                      <div class="text-sm font-medium text-zinc-700">自动合并（会写库）</div>
+                      <p class="text-xs text-zinc-500">需要开启 LLM 建议；将按 LLM 决策合并并删除重复项</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -457,6 +572,7 @@ onMounted(async () => {
             <div class="mt-2 grid grid-cols-2 gap-3 text-xs text-zinc-700">
               <div>anchors: {{ extractionResult.total_anchors }}</div>
               <div>bundles_processed: {{ extractionResult.bundles_processed }}</div>
+              <div>cleared: {{ extractionResult.cleared_before_extract ?? 0 }}</div>
               <div>inserted: {{ extractionResult.total_inserted }}</div>
               <div>duplicates: {{ extractionResult.total_duplicates }}</div>
             </div>
@@ -465,6 +581,90 @@ onMounted(async () => {
               <div class="mt-1 max-h-28 overflow-y-auto text-[11px] text-red-700 whitespace-pre-wrap">
                 {{ JSON.stringify(extractionResult.errors, null, 2) }}
               </div>
+            </div>
+          </div>
+
+          <div
+            v-if="deduplicationResult"
+            class="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm"
+          >
+            <div class="font-medium text-zinc-900">抽取后去重结果</div>
+            <div class="mt-2 grid grid-cols-2 gap-3 text-xs text-zinc-700">
+              <div>groups: {{ deduplicationResult.total_duplicates ?? 0 }}</div>
+              <div>scanned: {{ deduplicationResult.total_requirements_scanned ?? 0 }}</div>
+              <div class="col-span-2" v-if="deduplicationResult.total_merged !== null && deduplicationResult.total_merged !== undefined">
+                merged: {{ deduplicationResult.total_merged }}
+              </div>
+            </div>
+
+            <div v-if="deduplicationResult.duplicate_groups?.length" class="mt-3 space-y-3">
+              <div
+                v-for="group in deduplicationResult.duplicate_groups"
+                :key="group.group_id"
+                class="rounded-lg border border-zinc-200 bg-white px-3 py-3"
+              >
+                <div class="flex items-start justify-between gap-3">
+                  <div class="text-xs font-semibold text-zinc-900">
+                    {{ group.level }} · {{ group.group_id }}
+                  </div>
+                  <div class="text-[11px] text-zinc-600">similarity: {{ group.similarity }}</div>
+                </div>
+
+                <div v-if="group.representative_text" class="mt-2 text-[11px] text-zinc-600">
+                  <span class="text-zinc-500">repr:</span>
+                  <span class="ml-1 whitespace-pre-wrap break-words">{{ group.representative_text }}</span>
+                </div>
+
+                <div class="mt-2">
+                  <div class="text-[11px] font-medium text-zinc-700">requirements ({{ group.requirements?.length || 0 }})</div>
+                  <div class="mt-1 max-h-40 overflow-y-auto space-y-2">
+                    <div
+                      v-for="req in group.requirements || []"
+                      :key="req.req_id"
+                      class="rounded-md border border-zinc-100 bg-zinc-50 px-2 py-2"
+                    >
+                      <div class="text-[11px] text-zinc-600">id: {{ req.req_id }}</div>
+                      <div class="mt-1 text-xs text-zinc-800 whitespace-pre-wrap break-words">{{ req.text }}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="group.llm_decision" class="mt-3 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-2">
+                  <div class="text-[11px] font-medium text-zinc-700">llm_decision</div>
+                  <div class="mt-1 grid grid-cols-2 gap-2 text-[11px] text-zinc-700">
+                    <div>should_merge: {{ group.llm_decision.should_merge }}</div>
+                    <div>primary: {{ group.llm_decision.primary_req_id || '-' }}</div>
+                    <div class="col-span-2">merged_level: {{ group.llm_decision.merged_level || '-' }}</div>
+                  </div>
+                  <div v-if="group.llm_decision.reason" class="mt-2 text-[11px] text-zinc-700 whitespace-pre-wrap">
+                    <span class="text-zinc-500">reason:</span>
+                    <span class="ml-1">{{ group.llm_decision.reason }}</span>
+                  </div>
+                  <div v-if="group.llm_decision.merged_text" class="mt-2 text-[11px] text-zinc-700 whitespace-pre-wrap break-words">
+                    <span class="text-zinc-500">merged_text:</span>
+                    <div class="mt-1 rounded-md border border-zinc-200 bg-white px-2 py-2">{{ group.llm_decision.merged_text }}</div>
+                  </div>
+                  <div v-if="group.llm_decision.error" class="mt-2 text-[11px] text-red-700 whitespace-pre-wrap">
+                    error: {{ group.llm_decision.error }}
+                  </div>
+                </div>
+
+                <div v-if="group.merge_result" class="mt-3 rounded-md border border-zinc-200 bg-white px-2 py-2">
+                  <div class="text-[11px] font-medium text-zinc-700">merge_result</div>
+                  <div class="mt-1 grid grid-cols-2 gap-2 text-[11px] text-zinc-700">
+                    <div>success: {{ group.merge_result.success }}</div>
+                    <div>deleted_count: {{ group.merge_result.deleted_count ?? 0 }}</div>
+                    <div class="col-span-2">primary: {{ group.merge_result.primary_req_id || '-' }}</div>
+                  </div>
+                  <div v-if="group.merge_result.error" class="mt-2 text-[11px] text-red-700 whitespace-pre-wrap">
+                    error: {{ group.merge_result.error }}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div v-else class="mt-2 text-xs text-zinc-600">
+              {{ deduplicationResult.message || '未检测到重复组' }}
             </div>
           </div>
         </section>
