@@ -735,30 +735,28 @@ module.exports = {
 }
 EOF
 
-  (cd "${BASE_DIR}/frontend" && npm install && chmod +x node_modules/.bin/* 2>/dev/null || true && npm run build)
+  (cd "${BASE_DIR}/frontend" && npm install && npm run build)
 
   # 2) 生成 Nginx 配置
   MIME_PATH="${BASE_DIR}/deploy/mime.types"
   NGINX_TEMPLATE="${BASE_DIR}/deploy/nginx_linux.conf"
   NGINX_GENERATED_PATH="${BASE_DIR}/deploy/nginx.generated.conf"
 
-  export FRONTEND_ROOT
-  export MIME_TYPES_PATH="$MIME_PATH"
-  export BASE_DIR
-
   if command -v envsubst >/dev/null 2>&1; then
-    envsubst '$FRONTEND_ROOT $MIME_TYPES_PATH' < "$NGINX_TEMPLATE" > "$NGINX_GENERATED_PATH"
+    envsubst '${FRONTEND_ROOT}' < "$NGINX_TEMPLATE" > "$NGINX_GENERATED_PATH"
   else
     # fallback: only replace known placeholders to avoid touching nginx variables like $uri
-    python - <<'PY'
+    python - <<PY
 import os
 
-src = os.path.join(os.environ["BASE_DIR"], "deploy", "nginx_linux.conf")
-dst = os.path.join(os.environ["BASE_DIR"], "deploy", "nginx.generated.conf")
+BASE_DIR = "${BASE_DIR}"
+FRONTEND_ROOT = "${FRONTEND_ROOT}"
+
+src = os.path.join(BASE_DIR, "deploy", "nginx_linux.conf")
+dst = os.path.join(BASE_DIR, "deploy", "nginx.generated.conf")
 with open(src, "r", encoding="utf-8") as f:
     data = f.read()
-data = data.replace("${FRONTEND_ROOT}", os.environ.get("FRONTEND_ROOT", ""))
-data = data.replace("${MIME_TYPES_PATH}", os.environ.get("MIME_TYPES_PATH", ""))
+data = data.replace("\${FRONTEND_ROOT}", FRONTEND_ROOT)
 with open(dst, "w", encoding="utf-8") as f:
     f.write(data)
 PY
