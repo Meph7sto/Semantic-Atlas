@@ -257,6 +257,54 @@ def logout():
     return jsonify({"success": True, "message": "登出成功"})
 
 
+@auth_bp.route("/auth/user-directory", methods=["GET"])
+@require_auth
+def list_user_directory():
+    """
+    列出可用于用户选择的目录（所有用户，含未激活）
+
+    Query Params:
+        role: 可选角色筛选
+        limit: 返回数量（默认 500，最大 1000）
+        offset: 偏移量（默认 0）
+    """
+    if db_service is None:
+        return jsonify({"error": "数据库服务未初始化"}), 500
+
+    role = request.args.get("role")
+    limit = max(1, min(request.args.get("limit", 500, type=int) or 500, 1000))
+    offset = max(request.args.get("offset", 0, type=int) or 0, 0)
+
+    result = db_service.list_users(
+        role=role,
+        limit=limit,
+        offset=offset,
+        include_inactive=True,
+    )
+    users = [
+        {
+            "user_id": user.get("user_id"),
+            "username": user.get("username"),
+            "display_name": user.get("display_name"),
+            "role": user.get("role"),
+        }
+        for user in (result.get("users") or [])
+        if user.get("user_id")
+    ]
+
+    return jsonify(
+        {
+            "success": True,
+            "data": {
+                "users": users,
+                "total": result.get("total", len(users)),
+                "limit": limit,
+                "offset": offset,
+            },
+        }
+    )
+
+
 @auth_bp.route("/auth/users", methods=["GET"])
 @require_auth
 @require_role("admin")
@@ -604,7 +652,8 @@ def register():
 
     # 验证用户名格式（只允许字母、数字、下划线、中划线）
     import re
-    if not re.match(r'^[a-zA-Z0-9_-]+$', username):
+
+    if not re.match(r"^[a-zA-Z0-9_-]+$", username):
         return jsonify({"error": "用户名只能包含字母、数字、下划线和中划线"}), 400
 
     # 检查用户名是否已存在（只检查 pending 或 approved 状态，允许被拒绝的用户重新注册）
@@ -638,7 +687,7 @@ def register():
             "data": {
                 **user,
                 "message": "注册成功，请等待管理员审核",
-            }
+            },
         }
     )
 
@@ -646,6 +695,7 @@ def register():
 # ========================
 # 注册管理接口（管理员专用）
 # ========================
+
 
 @auth_bp.route("/auth/registrations", methods=["GET"])
 @require_auth
@@ -677,9 +727,13 @@ def list_registrations():
     # 验证状态值
     valid_statuses = ("pending", "approved", "rejected")
     if status not in valid_statuses:
-        return jsonify({"error": f"无效的状态，必须是: {', '.join(valid_statuses)}"}), 400
+        return jsonify(
+            {"error": f"无效的状态，必须是: {', '.join(valid_statuses)}"}
+        ), 400
 
-    result = db_service.get_pending_registrations(status=status, limit=limit, offset=offset)
+    result = db_service.get_pending_registrations(
+        status=status, limit=limit, offset=offset
+    )
 
     return jsonify({"success": True, "data": result})
 

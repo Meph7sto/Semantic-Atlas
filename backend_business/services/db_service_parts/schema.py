@@ -864,6 +864,7 @@ def init_db(conn):
             """
             CREATE TABLE IF NOT EXISTS mobile_chat_messages (
                 message_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL DEFAULT 'anonymous',
                 session_id TEXT NOT NULL,
                 sender TEXT NOT NULL CHECK (sender IN ('web', 'mobile')),
                 content TEXT NOT NULL,
@@ -873,7 +874,22 @@ def init_db(conn):
             """
         )
         cur.execute(
+            "ALTER TABLE mobile_chat_messages ADD COLUMN IF NOT EXISTS user_id TEXT"
+        )
+        cur.execute(
+            "UPDATE mobile_chat_messages SET user_id = 'anonymous' WHERE user_id IS NULL OR user_id = ''"
+        )
+        cur.execute(
+            "ALTER TABLE mobile_chat_messages ALTER COLUMN user_id SET DEFAULT 'anonymous'"
+        )
+        cur.execute(
+            "ALTER TABLE mobile_chat_messages ALTER COLUMN user_id SET NOT NULL"
+        )
+        cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_mobile_chat_session ON mobile_chat_messages(session_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_mobile_chat_user_session_created ON mobile_chat_messages(user_id, session_id, created_at)"
         )
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_mobile_chat_created_at ON mobile_chat_messages(created_at)"

@@ -90,9 +90,12 @@ $env:FRONTEND_ENTRY = $Entry
 
 # 是否启动 FastAPI 业务后端
 if (-not $EnableFastAPIBusiness) {
-  Write-Host "是否启动 FastAPI 业务后端 (/api/v2/)? 1=no(默认) 2=yes(与Flask并行)" -ForegroundColor Cyan
-  $choice = Read-Host "输入编号 (默认 1/no)"
-  if ($choice -eq "2" -or $choice -eq "yes") {
+  Write-Host "是否启动 FastAPI 业务后端 (/api/v2/)? 1=yes(默认, 与Flask并行) 2=no" -ForegroundColor Cyan
+  $choice = Read-Host "输入编号 (默认 1/yes)"
+  if ($choice -eq "2" -or $choice -eq "no") {
+    $EnableFastAPIBusiness = $false
+  }
+  else {
     $EnableFastAPIBusiness = $true
     Write-Host "[start] FastAPI business backend will be enabled." -ForegroundColor Yellow
   }

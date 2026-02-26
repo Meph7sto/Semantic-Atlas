@@ -51,7 +51,17 @@ class AuthMixin:
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING user_id, username, display_name, role, is_active, external_type, avatar_url, created_at, registration_status
                     """,
-                    (user_id, username, password_hash, display_name, normalized_role, is_active, external_type, avatar_url, registration_status),
+                    (
+                        user_id,
+                        username,
+                        password_hash,
+                        display_name,
+                        normalized_role,
+                        is_active,
+                        external_type,
+                        avatar_url,
+                        registration_status,
+                    ),
                 )
                 row = cur.fetchone()
                 conn.commit()
@@ -147,7 +157,11 @@ class AuthMixin:
         }
 
     def list_users(
-        self, role: Optional[str] = None, limit: int = 100, offset: int = 0
+        self,
+        role: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+        include_inactive: bool = False,
     ) -> Dict:
         """
         列出用户
@@ -156,6 +170,7 @@ class AuthMixin:
             role: 角色筛选
             limit: 返回数量限制
             offset: 偏移量
+            include_inactive: 是否包含未激活用户
 
         Returns:
             用户列表和总数
@@ -163,13 +178,15 @@ class AuthMixin:
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 # 构建查询条件
-                conditions = ["is_active = TRUE"]
+                conditions = []
                 params = []
+                if not include_inactive:
+                    conditions.append("is_active = TRUE")
                 if role:
                     conditions.append("role = %s")
                     params.append(role)
 
-                where_clause = " AND ".join(conditions)
+                where_clause = " AND ".join(conditions) if conditions else "TRUE"
 
                 # 查询总数
                 cur.execute(
@@ -270,7 +287,7 @@ class AuthMixin:
                 cur.execute(
                     f"""
                     UPDATE auth_users
-                    SET {', '.join(updates)}
+                    SET {", ".join(updates)}
                     WHERE user_id = %s
                     RETURNING user_id, username, display_name, role, is_active, external_type, avatar_url, created_at, updated_at
                     """,
@@ -334,7 +351,7 @@ class AuthMixin:
                 cur.execute(
                     f"""
                     UPDATE auth_users
-                    SET {', '.join(updates)}
+                    SET {", ".join(updates)}
                     WHERE user_id = %s
                     RETURNING user_id, username, display_name, role, is_active, external_type, avatar_url, created_at, updated_at
                     """,
@@ -555,7 +572,7 @@ class AuthMixin:
                 cur.execute(
                     f"""
                     UPDATE auth_users
-                    SET {', '.join(updates)}, updated_at = NOW()
+                    SET {", ".join(updates)}, updated_at = NOW()
                     WHERE user_id = %s AND registration_status = 'pending'
                     RETURNING user_id, username, display_name, role, is_active,
                              external_type, avatar_url, created_at, registration_status,

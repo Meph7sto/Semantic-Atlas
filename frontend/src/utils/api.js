@@ -859,16 +859,19 @@ export const fileApi = {
 
 // 移动端对话桥接 API
 export const mobileChatApi = {
-    async listSessions({ limit = 200 } = {}) {
-        const resp = await api.get('/mobile/sessions', { params: { limit } })
+    async listSessions({ userId = null, limit = 200 } = {}) {
+        const params = { limit }
+        if (userId) params.user_id = userId
+        const resp = await api.get('/mobile/sessions', { params })
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '获取会话列表失败')
         }
         return resp.data.sessions
     },
 
-    async listMessages({ sessionId, limit = 100, since = null } = {}) {
+    async listMessages({ userId = null, sessionId, limit = 100, since = null } = {}) {
         const params = { session_id: sessionId, limit }
+        if (userId) params.user_id = userId
         if (since) params.since = since
         const resp = await api.get('/mobile/messages', { params })
         if (resp.data?.success === false) {
@@ -877,12 +880,13 @@ export const mobileChatApi = {
         return resp.data.messages
     },
 
-    async sendMessage({ sessionId, sender, content, metadata = null }) {
+    async sendMessage({ userId = null, sessionId, sender, content, metadata = null }) {
         const payload = {
             session_id: sessionId,
             sender,
             content,
         }
+        if (userId) payload.user_id = userId
         if (metadata) payload.metadata = metadata
         const resp = await api.post('/mobile/messages', payload)
         if (resp.data?.success === false) {
@@ -891,8 +895,12 @@ export const mobileChatApi = {
         return resp.data.data
     },
 
-    createSSEConnection(sessionId) {
-        return new EventSource(`/api/mobile/stream?session_id=${encodeURIComponent(sessionId)}`)
+    createSSEConnection(sessionId, userId = null) {
+        const params = new URLSearchParams({
+            session_id: sessionId,
+        })
+        if (userId) params.set('user_id', userId)
+        return new EventSource(`/api/mobile/stream?${params.toString()}`)
     },
 }
 
@@ -1202,6 +1210,17 @@ export const authApi = {
     async logout() {
         const resp = await api.post('/auth/logout')
         return resp.data
+    },
+
+    // 列出用户目录（任意已登录用户可访问）
+    async listUserDirectory({ role, limit = 500, offset = 0 } = {}) {
+        const params = { limit, offset }
+        if (role) params.role = role
+        const resp = await api.get('/auth/user-directory', { params })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '获取用户目录失败')
+        }
+        return resp.data.data
     },
 
     // 列出用户（仅管理员）

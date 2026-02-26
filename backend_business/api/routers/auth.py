@@ -29,6 +29,7 @@ router = APIRouter(prefix="/api", tags=["auth"])
 # 公开端点（无需认证）
 # ========================
 
+
 @router.post("/auth/login")
 def login(req: LoginRequest):
     """
@@ -197,13 +198,14 @@ def register(req: RegisterRequest):
         "data": {
             **user,
             "message": "注册成功，请等待管理员审核",
-        }
+        },
     }
 
 
 # ========================
 # 需要认证的端点
 # ========================
+
 
 @router.get("/auth/verify")
 def verify_token(current_user: dict = Depends(get_current_user)):
@@ -289,7 +291,9 @@ def get_profile(current_user: dict = Depends(get_current_user)):
 
 
 @router.patch("/auth/profile")
-def update_profile(req: UpdateProfileRequest, current_user: dict = Depends(get_current_user)):
+def update_profile(
+    req: UpdateProfileRequest, current_user: dict = Depends(get_current_user)
+):
     """
     更新当前用户的个人资料（仅允许修改 display_name 和 avatar_url）
 
@@ -323,7 +327,9 @@ def update_profile(req: UpdateProfileRequest, current_user: dict = Depends(get_c
 
 
 @router.post("/auth/profile/change-password")
-def change_password(req: ChangePasswordRequest, current_user: dict = Depends(get_current_user)):
+def change_password(
+    req: ChangePasswordRequest, current_user: dict = Depends(get_current_user)
+):
     """
     修改当前用户的密码（需要验证旧密码）
 
@@ -367,9 +373,56 @@ def change_password(req: ChangePasswordRequest, current_user: dict = Depends(get
     return {"success": True, "message": "密码修改成功"}
 
 
+@router.get("/auth/user-directory")
+def list_user_directory(
+    role: Optional[str] = None,
+    limit: int = Query(default=500, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    列出可用于用户选择的目录（所有用户，含未激活）
+
+    Query Params:
+        role: 可选角色筛选
+        limit: 返回数量（默认 500，最大 1000）
+        offset: 偏移量（默认 0）
+    """
+    if db_service is None:
+        raise ErrorResponse("数据库服务未初始化", 500)
+
+    result = db_service.list_users(
+        role=role,
+        limit=limit,
+        offset=offset,
+        include_inactive=True,
+    )
+    users = [
+        {
+            "user_id": user.get("user_id"),
+            "username": user.get("username"),
+            "display_name": user.get("display_name"),
+            "role": user.get("role"),
+        }
+        for user in (result.get("users") or [])
+        if user.get("user_id")
+    ]
+
+    return {
+        "success": True,
+        "data": {
+            "users": users,
+            "total": result.get("total", len(users)),
+            "limit": limit,
+            "offset": offset,
+        },
+    }
+
+
 # ========================
 # 管理员端点
 # ========================
+
 
 @router.get("/auth/users")
 def list_users(
@@ -522,6 +575,7 @@ def update_user(
 # 注册管理接口（管理员专用）
 # ========================
 
+
 @router.get("/auth/registrations")
 def list_registrations(
     status: str = Query("pending", description="状态筛选: pending, approved, rejected"),
@@ -553,7 +607,9 @@ def list_registrations(
     if status not in valid_statuses:
         raise ErrorResponse(f"无效的状态，必须是: {', '.join(valid_statuses)}", 400)
 
-    result = db_service.get_pending_registrations(status=status, limit=limit, offset=offset)
+    result = db_service.get_pending_registrations(
+        status=status, limit=limit, offset=offset
+    )
 
     return result
 

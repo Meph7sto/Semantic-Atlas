@@ -8,14 +8,32 @@ from backend_business.services.mobile_chat_service import mobile_chat_service
 mobile_chat_bp = Blueprint("mobile_chat", __name__)
 
 
+def _resolve_user_id(payload=None) -> str:
+    payload = payload if isinstance(payload, dict) else {}
+    payload_user_id = (payload.get("user_id") or "").strip()
+    if payload_user_id:
+        return payload_user_id
+
+    query_user_id = (request.args.get("user_id") or "").strip()
+    if query_user_id:
+        return query_user_id
+
+    actor = (request.headers.get("X-Actor") or "").strip()
+    if actor:
+        return actor
+
+    return "anonymous"
+
+
 @mobile_chat_bp.route("/sessions", methods=["GET"])
 def list_sessions():
     if not mobile_chat_service:
         return jsonify({"success": False, "error": "移动端聊天服务未初始化"}), 500
 
+    user_id = _resolve_user_id()
     limit = request.args.get("limit", 200, type=int)
     try:
-        sessions = mobile_chat_service.list_sessions(limit=limit)
+        sessions = mobile_chat_service.list_sessions(user_id=user_id, limit=limit)
         return jsonify({"success": True, "sessions": sessions})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
@@ -29,12 +47,14 @@ def list_messages():
     session_id = (request.args.get("session_id") or "").strip()
     limit = request.args.get("limit", 100, type=int)
     since = request.args.get("since")
+    user_id = _resolve_user_id()
 
     if not session_id:
         return jsonify({"success": False, "error": "缺少 session_id"}), 400
 
     try:
         messages = mobile_chat_service.list_messages(
+            user_id=user_id,
             session_id=session_id,
             limit=limit,
             since=since,
@@ -53,6 +73,7 @@ def create_message():
     session_id = (payload.get("session_id") or "").strip()
     sender = (payload.get("sender") or "").strip()
     content = (payload.get("content") or "").strip()
+    user_id = _resolve_user_id(payload)
 
     if not session_id:
         return jsonify({"success": False, "error": "缺少 session_id"}), 400
@@ -63,6 +84,7 @@ def create_message():
 
     try:
         message = mobile_chat_service.create_message(
+            user_id=user_id,
             session_id=session_id,
             sender=sender,
             content=content,
@@ -83,12 +105,14 @@ def get_pending_messages():
     session_id = (request.args.get("session_id") or "").strip()
     since = request.args.get("since")
     limit = request.args.get("limit", 100, type=int)
+    user_id = _resolve_user_id()
 
     if not session_id:
         return jsonify({"success": False, "error": "缺少 session_id"}), 400
 
     try:
         messages = mobile_chat_service.list_messages(
+            user_id=user_id,
             session_id=session_id,
             limit=limit,
             since=since,
@@ -104,13 +128,14 @@ def sse_stream():
         return jsonify({"success": False, "error": "移动端聊天服务未初始化"}), 500
 
     session_id = (request.args.get("session_id") or "").strip()
+    user_id = _resolve_user_id()
     if not session_id:
         return jsonify({"success": False, "error": "缺少 session_id"}), 400
 
-    q = mobile_chat_service.subscribe(session_id)
+    q = mobile_chat_service.subscribe(user_id=user_id, session_id=session_id)
 
     def generate():
-        yield from mobile_chat_service.event_stream(q, session_id)
+        yield from mobile_chat_service.event_stream(q, user_id, session_id)
 
     return Response(
         generate(),

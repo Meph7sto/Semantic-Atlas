@@ -218,6 +218,7 @@ POSTGRES_DB=semantic_atlas
 | `file_bp` | `/api` | CSV 上传/下载 |
 
 另有 `GET /health` 健康检查（非 `/api` 前缀）。
+`/api/mobile/*` 相关接口支持可选 `user_id` 参数；未传时回退 `X-Actor`，再回退 `anonymous`。
 
 ### 推理后端（FastAPI）
 
@@ -261,6 +262,7 @@ POSTGRES_DB=semantic_atlas
 
 | 表 | 说明 |
 |----|------|
+| `mobile_chat_messages` | 移动端桥接消息（按 `user_id + session_id` 隔离） |
 | `agent_channels` | 通信通道（direct / group / broadcast） |
 | `agent_channel_members` | 通道成员 |
 | `agent_messages` | Agent 消息记录 |

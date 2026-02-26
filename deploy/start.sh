@@ -9,6 +9,7 @@ MODE=""
 PROVIDER=""
 ENTRY=""
 BUSINESS_BACKEND=""
+ENABLE_FASTAPI_BUSINESS=""
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -151,9 +152,11 @@ export FRONTEND_ENTRY="$ENTRY"
 
 # 是否启动 FastAPI 业务后端
 if [[ "$ENABLE_FASTAPI_BUSINESS" != "1" ]]; then
-  echo "是否启动 FastAPI 业务后端 (/api/v2/)? 1=no(默认) 2=yes(与Flask并行)"
-  read -r -p "输入编号 (默认 1/no): " choice
-  if [[ "$choice" == "2" || "$choice" == "yes" ]]; then
+  echo "是否启动 FastAPI 业务后端 (/api/v2/)? 1=yes(默认, 与Flask并行) 2=no"
+  read -r -p "输入编号 (默认 1/yes): " choice
+  if [[ "$choice" == "2" || "$choice" == "no" ]]; then
+    ENABLE_FASTAPI_BUSINESS=0
+  else
     ENABLE_FASTAPI_BUSINESS=1
     echo "[start] FastAPI business backend will be enabled."
   fi
@@ -648,6 +651,8 @@ fi
 
 # 前端产物目录，可通过环境变量 FRONTEND_ROOT 覆盖
 FRONTEND_ROOT="${FRONTEND_ROOT:-${BASE_DIR}/frontend/dist}"
+# envsubst 只读取导出的环境变量，不导出会导致 ${FRONTEND_ROOT} 被替换为空
+export FRONTEND_ROOT
 
 # 0) 先执行停止脚本清理环境
 stop_script="${BASE_DIR}/deploy/stop_services.sh"
@@ -662,9 +667,9 @@ if [[ "$do_frontend" -eq 1 ]]; then
 fi
 
 if [[ "$do_frontend" -eq 1 ]]; then
-  # 检查并安装 Node.js/npm
-  if ! command -v npm >/dev/null 2>&1; then
-    echo "[start] npm not found. Installing Node.js..."
+  # 检查并安装 Node.js
+  if ! command -v node >/dev/null 2>&1; then
+    echo "[start] Node.js not found. Installing..."
     if command -v apt-get >/dev/null 2>&1; then
       # Debian/Ubuntu
       curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
@@ -681,11 +686,25 @@ if [[ "$do_frontend" -eq 1 ]]; then
       echo "[start] Cannot auto-install Node.js. Please install manually."
       exit 1
     fi
-    echo "[start] Node.js installed: $(node --version), npm: $(npm --version)"
+    echo "[start] Node.js installed: $(node --version)"
+  fi
+
+  # 选择前端包管理器：
+  # - 若存在 package-lock.json，优先 npm ci（可复现，避免依赖漂移）
+  # - 否则回退到 pnpm
+  FRONTEND_PM="pnpm"
+  if [[ -f "${BASE_DIR}/frontend/package-lock.json" ]]; then
+    FRONTEND_PM="npm"
+  fi
+
+  if [[ "$FRONTEND_PM" == "pnpm" ]] && ! command -v pnpm >/dev/null 2>&1; then
+    echo "[start] pnpm not found. Installing via npm..."
+    npm install -g pnpm
+    echo "[start] pnpm installed: $(pnpm --version)"
   fi
 
   # 1) 前端构建
-  echo "[start] Building frontend (npm install & npm run build)..."
+  echo "[start] Building frontend (${FRONTEND_PM} install + build)..."
   if [[ -d "$FRONTEND_ROOT" ]]; then
     rm -rf "$FRONTEND_ROOT"
   fi
@@ -735,7 +754,195 @@ module.exports = {
 }
 EOF
 
-  (cd "${BASE_DIR}/frontend" && npm install && npm run build)
+  # 仅在显式开启时清理依赖目录，默认保留以减少安装波动与耗时
+  if [[ "${CLEAN_FRONTEND_DEPS:-0}" == "1" ]]; then
+    if [[ -d "${BASE_DIR}/frontend/node_modules" ]]; then
+      echo "[start] CLEAN_FRONTEND_DEPS=1 -> cleaning node_modules..."
+      rm -rf "${BASE_DIR}/frontend/node_modules"
+    fi
+  fi
+
+  # 根据 Linux 可用内存动态设置 Node 堆上限，避免固定 4096 在低内存机器上触发 OOM
+  mem_total_mb="$(awk '/MemTotal:/ { printf "%d", $2/1024 }' /proc/meminfo 2>/dev/null || echo 2048)"
+  mem_limit_mb=""
+
+  # cgroup v2
+  if [[ -r /sys/fs/cgroup/memory.max ]]; then
+    cgroup_limit="$(cat /sys/fs/cgroup/memory.max 2>/dev/null || true)"
+    if [[ -n "$cgroup_limit" && "$cgroup_limit" != "max" ]]; then
+      mem_limit_mb="$((cgroup_limit / 1024 / 1024))"
+    fi
+  fi
+  # cgroup v1
+  if [[ -z "$mem_limit_mb" && -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]]; then
+    cgroup_limit="$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || true)"
+    if [[ -n "$cgroup_limit" && "$cgroup_limit" -lt 9223372036854771712 ]]; then
+      mem_limit_mb="$((cgroup_limit / 1024 / 1024))"
+    fi
+  fi
+
+  available_mem_mb="$mem_total_mb"
+  if [[ -n "$mem_limit_mb" && "$mem_limit_mb" -gt 0 && "$mem_limit_mb" -lt "$available_mem_mb" ]]; then
+    available_mem_mb="$mem_limit_mb"
+  fi
+
+  # 某些环境会通过 ulimit -v 限制单进程虚拟内存；若存在，则进一步收紧
+  vmem_limit_kb="$(ulimit -v 2>/dev/null || true)"
+  vmem_limit_mb=""
+  if [[ "$vmem_limit_kb" =~ ^[0-9]+$ && "$vmem_limit_kb" -gt 0 ]]; then
+    vmem_limit_mb="$((vmem_limit_kb / 1024))"
+    if [[ "$vmem_limit_mb" -lt "$available_mem_mb" ]]; then
+      available_mem_mb="$vmem_limit_mb"
+    fi
+  fi
+
+  node_heap_mb="$((available_mem_mb * 65 / 100))"
+  if [[ "$node_heap_mb" -lt 768 ]]; then
+    node_heap_mb=768
+  fi
+  if [[ "$node_heap_mb" -gt 2048 ]]; then
+    node_heap_mb=2048
+  fi
+
+  node_runtime_opts=""
+  node_no_snapshot_supported=0
+  node_no_snapshot_env_supported=0
+  use_cli_no_snapshot_mode=0
+
+  # ARM64 部分环境会在快照反序列化阶段崩溃，优先关闭 node snapshot
+  if [[ "${DISABLE_NODE_SNAPSHOT:-1}" == "1" ]]; then
+    if node --no-node-snapshot -e "process.exit(0)" >/dev/null 2>&1; then
+      node_no_snapshot_supported=1
+    fi
+    if NODE_OPTIONS="--no-node-snapshot" node -e "process.exit(0)" >/dev/null 2>&1; then
+      node_no_snapshot_env_supported=1
+      node_runtime_opts="--no-node-snapshot"
+    fi
+    # 某些 Node 版本/发行包不允许通过 NODE_OPTIONS 注入该参数，改为命令行直传
+    if [[ "$node_no_snapshot_supported" -eq 1 && "$node_no_snapshot_env_supported" -eq 0 ]]; then
+      use_cli_no_snapshot_mode=1
+    fi
+  fi
+  build_node_opts="--max-old-space-size=${node_heap_mb}"
+  conservative_node_opts="--max-old-space-size=1024"
+  if [[ -n "$node_runtime_opts" ]]; then
+    build_node_opts="${node_runtime_opts} ${build_node_opts}"
+    conservative_node_opts="${node_runtime_opts} ${conservative_node_opts}"
+  fi
+
+  run_with_node_options() {
+    local opts="$1"
+    shift
+    if [[ -n "$opts" ]]; then
+      NODE_OPTIONS="$opts" "$@"
+    else
+      "$@"
+    fi
+  }
+
+  echo "[start] Node runtime: path=$(command -v node), version=$(node --version), arch=$(uname -m), page_size=$(getconf PAGESIZE 2>/dev/null || echo unknown), cli_no_snapshot_mode=${use_cli_no_snapshot_mode}"
+  echo "[start] Memory detected: host=${mem_total_mb}MB, cgroup=${mem_limit_mb:-none}MB, ulimit_v=${vmem_limit_mb:-none}MB, node_heap=${node_heap_mb}MB, node_opts=${node_runtime_opts:-none}"
+
+  if [[ "$FRONTEND_PM" == "npm" ]]; then
+    (
+      cd "${BASE_DIR}/frontend"
+      npm_cli_path="$(command -v npm)"
+      vite_cli_path="${BASE_DIR}/frontend/node_modules/vite/bin/vite.js"
+
+      run_npm_ci() {
+        if [[ "$use_cli_no_snapshot_mode" -eq 1 ]]; then
+          node --no-node-snapshot "$npm_cli_path" ci --no-audit --no-fund
+        else
+          run_with_node_options "$node_runtime_opts" npm ci --no-audit --no-fund
+        fi
+      }
+
+      run_npm_build_with_opts() {
+        local opts="$1"
+        if [[ "$use_cli_no_snapshot_mode" -eq 1 && -f "$vite_cli_path" ]]; then
+          # 直接执行 vite，确保 no-snapshot 作为 Node CLI 参数生效
+          if [[ -n "$opts" ]]; then
+            node --no-node-snapshot $opts "$vite_cli_path" build
+          else
+            node --no-node-snapshot "$vite_cli_path" build
+          fi
+        else
+          run_with_node_options "$opts" npm run build
+        fi
+      }
+
+      if ! run_npm_ci; then
+        echo "[start] npm ci failed, retrying once after cleaning node_modules..."
+        rm -rf node_modules
+        run_npm_ci
+      fi
+
+      build_ok=0
+      if run_with_node_options "$build_node_opts" node -e "process.exit(0)" >/dev/null 2>&1; then
+        if run_npm_build_with_opts "$build_node_opts"; then
+          build_ok=1
+        fi
+      else
+        echo "[start] Node runtime check failed with NODE_OPTIONS='${build_node_opts}'; will build without NODE_OPTIONS."
+      fi
+
+      if [[ "$build_ok" -eq 0 ]]; then
+        echo "[start] Retrying frontend build without NODE_OPTIONS..."
+        if run_npm_build_with_opts ""; then
+          build_ok=1
+        fi
+      fi
+
+      if [[ "$build_ok" -eq 0 ]]; then
+        echo "[start] Retrying frontend build with conservative heap=1024MB..."
+        if run_npm_build_with_opts "$conservative_node_opts"; then
+          build_ok=1
+        fi
+      fi
+
+      if [[ "$build_ok" -ne 1 ]]; then
+        echo "[start] Frontend build failed after retries."
+        exit 1
+      fi
+    )
+  else
+    (
+      cd "${BASE_DIR}/frontend"
+      if [[ -f "${BASE_DIR}/frontend/pnpm-lock.yaml" ]]; then
+        run_with_node_options "$node_runtime_opts" pnpm install --frozen-lockfile
+      else
+        run_with_node_options "$node_runtime_opts" pnpm install
+      fi
+
+      build_ok=0
+      if run_with_node_options "$build_node_opts" node -e "process.exit(0)" >/dev/null 2>&1; then
+        if run_with_node_options "$build_node_opts" pnpm run build; then
+          build_ok=1
+        fi
+      else
+        echo "[start] Node runtime check failed with NODE_OPTIONS='${build_node_opts}'; will build without NODE_OPTIONS."
+      fi
+
+      if [[ "$build_ok" -eq 0 ]]; then
+        echo "[start] Retrying frontend build without NODE_OPTIONS..."
+        if pnpm run build; then
+          build_ok=1
+        fi
+      fi
+
+      if [[ "$build_ok" -eq 0 ]]; then
+        echo "[start] Retrying frontend build with conservative heap=1024MB..."
+        if run_with_node_options "$conservative_node_opts" pnpm run build; then
+          build_ok=1
+        fi
+      fi
+
+      if [[ "$build_ok" -ne 1 ]]; then
+        echo "[start] Frontend build failed after retries."
+        exit 1
+      fi
+    )
+  fi
 
   # 2) 生成 Nginx 配置
   MIME_PATH="${BASE_DIR}/deploy/mime.types"
@@ -743,7 +950,7 @@ EOF
   NGINX_GENERATED_PATH="${BASE_DIR}/deploy/nginx.generated.conf"
 
   if command -v envsubst >/dev/null 2>&1; then
-    envsubst '${FRONTEND_ROOT}' < "$NGINX_TEMPLATE" > "$NGINX_GENERATED_PATH"
+    envsubst '$FRONTEND_ROOT' < "$NGINX_TEMPLATE" | tr -d '\r' > "$NGINX_GENERATED_PATH"
   else
     # fallback: only replace known placeholders to avoid touching nginx variables like $uri
     python - <<PY
@@ -756,10 +963,15 @@ src = os.path.join(BASE_DIR, "deploy", "nginx_linux.conf")
 dst = os.path.join(BASE_DIR, "deploy", "nginx.generated.conf")
 with open(src, "r", encoding="utf-8") as f:
     data = f.read()
+data = data.replace("\r\n", "\n").replace("\r", "\n")
 data = data.replace("\${FRONTEND_ROOT}", FRONTEND_ROOT)
-with open(dst, "w", encoding="utf-8") as f:
+with open(dst, "w", encoding="utf-8", newline="\n") as f:
     f.write(data)
 PY
+  fi
+  if grep -qE '^[[:space:]]*root[[:space:]]*;' "$NGINX_GENERATED_PATH"; then
+    echo "[start] Invalid nginx root generated (empty FRONTEND_ROOT)."
+    exit 1
   fi
   echo "[start] Nginx config generated at $NGINX_GENERATED_PATH"
 fi
