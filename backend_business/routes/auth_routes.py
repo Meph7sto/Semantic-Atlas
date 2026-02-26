@@ -86,7 +86,7 @@ def require_role(*allowed_roles):
 
 
 @auth_bp.route("/auth/login", methods=["POST"])
-def login():  # 已迁移
+def login():  # 已迁移到 backend_business/api/routers/auth.py
     """
     用户登录接口
 
@@ -187,7 +187,7 @@ def login():  # 已迁移
 
 @auth_bp.route("/auth/verify", methods=["GET"])
 @require_auth
-def verify_token():  # 已迁移
+def verify_token():  # 已迁移到 backend_business/api/routers/auth.py
     """
     验证 Token 有效性
 
@@ -211,7 +211,7 @@ def verify_token():  # 已迁移
 
 @auth_bp.route("/auth/me", methods=["GET"])
 @require_auth
-def get_current_user():  # 已迁移
+def get_current_user():  # 已迁移到 backend_business/api/routers/auth.py
     """
     获取当前用户信息
 
@@ -244,7 +244,7 @@ def get_current_user():  # 已迁移
 
 
 @auth_bp.route("/auth/logout", methods=["POST"])
-def logout():  # 已迁移
+def logout():  # 已迁移到 backend_business/api/routers/auth.py
     """
     用户登出接口（客户端自行删除 Token 即可，服务器端为无状态）
 
@@ -259,7 +259,7 @@ def logout():  # 已迁移
 
 @auth_bp.route("/auth/user-directory", methods=["GET"])
 @require_auth
-def list_user_directory():  # 已迁移
+def list_user_directory():  # 已迁移到 backend_business/api/routers/auth.py
     """
     列出可用于用户选择的目录（所有用户，含未激活）
 
@@ -308,7 +308,7 @@ def list_user_directory():  # 已迁移
 @auth_bp.route("/auth/users", methods=["GET"])
 @require_auth
 @require_role("admin")
-def list_users():  # 已迁移
+def list_users():  # 已迁移到 backend_business/api/routers/auth.py
     """
     列出所有用户（仅管理员）
 
@@ -341,7 +341,7 @@ def list_users():  # 已迁移
 @auth_bp.route("/auth/users", methods=["POST"])
 @require_auth
 @require_role("admin")
-def create_user():  # 已迁移
+def create_user():  # 已迁移到 backend_business/api/routers/auth.py
     """
     创建用户（仅管理员）
 
@@ -421,7 +421,7 @@ def create_user():  # 已迁移
 @auth_bp.route("/auth/users/<user_id>", methods=["PATCH"])
 @require_auth
 @require_role("admin")
-def update_user(user_id: str):  # 已迁移
+def update_user(user_id: str):  # 已迁移到 backend_business/api/routers/auth.py
     """
     更新用户信息（仅管理员）
 
@@ -461,7 +461,7 @@ def update_user(user_id: str):  # 已迁移
 
 @auth_bp.route("/auth/profile", methods=["GET"])
 @require_auth
-def get_profile():  # 已迁移
+def get_profile():  # 已迁移到 backend_business/api/routers/auth.py
     """
     获取当前用户的个人资料
 
@@ -494,7 +494,7 @@ def get_profile():  # 已迁移
 
 @auth_bp.route("/auth/profile", methods=["PATCH"])
 @require_auth
-def update_profile():  # 已迁移
+def update_profile():  # 已迁移到 backend_business/api/routers/auth.py
     """
     更新当前用户的个人资料（仅允许修改 display_name 和 avatar_url）
 
@@ -551,7 +551,7 @@ def update_profile():  # 已迁移
 
 @auth_bp.route("/auth/profile/change-password", methods=["POST"])
 @require_auth
-def change_password():  # 已迁移
+def change_password():  # 已迁移到 backend_business/api/routers/auth.py
     """
     修改当前用户的密码（需要验证旧密码）
 
@@ -606,7 +606,7 @@ def change_password():  # 已迁移
 
 
 @auth_bp.route("/auth/register", methods=["POST"])
-def register():  # 已迁移
+def register():  # 已迁移到 backend_business/api/routers/auth.py
     """
     用户注册接口（开放注册，无需认证，注册后待管理员审批）
 
@@ -700,7 +700,7 @@ def register():  # 已迁移
 @auth_bp.route("/auth/registrations", methods=["GET"])
 @require_auth
 @require_role("admin")
-def list_registrations():  # 已迁移
+def list_registrations():  # 已迁移到 backend_business/api/routers/auth.py
     """
     列出注册请求（仅管理员）
 
@@ -741,7 +741,7 @@ def list_registrations():  # 已迁移
 @auth_bp.route("/auth/registrations/<user_id>", methods=["GET"])
 @require_auth
 @require_role("admin")
-def get_registration(user_id: str):  # 已迁移
+def get_registration(user_id: str):  # 已迁移到 backend_business/api/routers/auth.py
     """
     获取注册详情（仅管理员）
 
@@ -767,7 +767,7 @@ def get_registration(user_id: str):  # 已迁移
 @auth_bp.route("/auth/registrations/<user_id>/approve", methods=["POST"])
 @require_auth
 @require_role("admin")
-def approve_registration(user_id: str):  # 已迁移
+def approve_registration(user_id: str):  # 已迁移到 backend_business/api/routers/auth.py
     """
     批准注册（仅管理员）
 
@@ -826,7 +826,7 @@ def approve_registration(user_id: str):  # 已迁移
 @auth_bp.route("/auth/registrations/<user_id>/reject", methods=["POST"])
 @require_auth
 @require_role("admin")
-def reject_registration(user_id: str):  # 已迁移
+def reject_registration(user_id: str):  # 已迁移到 backend_business/api/routers/auth.py
     """
     拒绝注册（仅管理员）
 
@@ -880,7 +880,7 @@ def reject_registration(user_id: str):  # 已迁移
 @auth_bp.route("/auth/registrations/pending/count", methods=["GET"])
 @require_auth
 @require_role("admin")
-def get_pending_count():  # 已迁移
+def get_pending_count():  # 已迁移到 backend_business/api/routers/auth.py
     """
     获取待审批数量（仅管理员）
 
