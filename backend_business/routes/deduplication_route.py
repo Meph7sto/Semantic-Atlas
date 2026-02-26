@@ -62,7 +62,7 @@ def _parse_optional_float(value):
 
 
 @dedup_bp.post("/detect")
-def detect_duplicates():
+def detect_duplicates():  # 已迁移
     """
     Detect duplicate requirements in a session.
 
@@ -117,7 +117,7 @@ def detect_duplicates():
 
 
 @dedup_bp.post("/merge")
-def execute_merge():
+def execute_merge():  # 已迁移
     """
     Execute a merge operation (after user confirmation).
 
@@ -177,7 +177,7 @@ def execute_merge():
 
 
 @dedup_bp.post("/delete")
-def delete_requirements():
+def delete_requirements():  # 已迁移
     """
     Batch delete requirements.
 
@@ -217,7 +217,7 @@ def delete_requirements():
 
 
 @dedup_bp.post("/update")
-def update_requirement():
+def update_requirement():  # 已迁移
     """
     Update a single requirement's text and/or level.
 
@@ -267,7 +267,7 @@ def update_requirement():
 
 
 @dedup_bp.post("/pairs")
-def get_similar_pairs():
+def get_similar_pairs():  # 已迁移
     """
     Get all similar requirement pairs (without grouping).
 
@@ -308,7 +308,7 @@ def get_similar_pairs():
 
 
 @dedup_bp.post("/regenerate")
-def regenerate_llm_decision():
+def regenerate_llm_decision():  # 已迁移
     """
     Regenerate LLM merge decision for specific requirements.
 

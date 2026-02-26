@@ -75,12 +75,23 @@ else:
 # - permission 走 /api/permission，与前端既有调用路径保持一致
 # - manage 走 /api/manage，项目管理模块
 # - product 走 /api/product，产品管理模块
-from backend_business.api.routers import deduplication, auth, permission, manage, product
+# - conflict 走 /api/conflict，冲突检测模块
+from backend_business.api.routers import (
+    analysis,
+    auth,
+    conflict,
+    deduplication,
+    manage,
+    permission,
+    product,
+)
 app.include_router(deduplication.router, prefix="/api/v2")
 app.include_router(auth.router)
 app.include_router(permission.router)
 app.include_router(manage.router)
 app.include_router(product.router)
+app.include_router(analysis.router)
+app.include_router(conflict.router)
 
 # 注册业务异常处理器（保留 FastAPI 原生 HTTPException / validation 语义）
 app.add_exception_handler(ErrorResponse, error_response_handler)

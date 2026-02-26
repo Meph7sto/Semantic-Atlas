@@ -43,7 +43,7 @@ def _sse_event(payload: dict) -> str:
 
 
 @analysis_bp.route("/analysis/ingest_transcript", methods=["POST"])
-def ingest_transcript():
+def ingest_transcript():  # 已迁移
     payload = request.get_json(silent=True) or {}
     transcript_text = (payload.get("transcript_text") or "").strip()
     if not transcript_text:
@@ -75,7 +75,7 @@ def ingest_transcript():
 
 
 @analysis_bp.route("/analysis/ingest_transcript/stream", methods=["POST"])
-def ingest_transcript_stream():
+def ingest_transcript_stream():  # 已迁移
     payload = request.get_json(silent=True) or {}
     transcript_text = (payload.get("transcript_text") or "").strip()
     if not transcript_text:
@@ -143,7 +143,7 @@ def ingest_transcript_stream():
 
 
 @analysis_bp.route("/analysis/sample_transcript", methods=["GET"])
-def get_sample_transcript():
+def get_sample_transcript():  # 已迁移
     current_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
     sample_path = os.path.join(project_root, "tests", "sample_transcript.txt")
@@ -389,7 +389,7 @@ def trigger_analysis():
 # ========================
 
 @analysis_bp.route("/analysis/build_context", methods=["POST"])
-def build_context():
+def build_context():  # 已迁移
     """
     Phase 2: 构建上下文（非流式）
     POST /api/analysis/build_context
@@ -428,7 +428,7 @@ def build_context():
 
 
 @analysis_bp.route("/analysis/build_context/stream", methods=["POST"])
-def build_context_stream():
+def build_context_stream():  # 已迁移
     """
     Phase 2: 构建上下文（SSE流式）
     POST /api/analysis/build_context/stream
@@ -466,7 +466,7 @@ def build_context_stream():
 
 
 @analysis_bp.route("/analysis/context_runs", methods=["GET"])
-def list_context_runs():
+def list_context_runs():  # 已迁移
     """
     获取context_runs列表
     GET /api/analysis/context_runs?session_id=xxx
@@ -502,7 +502,7 @@ def list_context_runs():
 
 
 @analysis_bp.route("/analysis/bundles/<context_run_id>", methods=["GET"])
-def get_bundles(context_run_id: str):
+def get_bundles(context_run_id: str):  # 已迁移
     """
     获取指定context_run下的bundles和bundle_items
     GET /api/analysis/bundles/<context_run_id>
@@ -568,7 +568,7 @@ def get_bundles(context_run_id: str):
 
 
 @analysis_bp.route("/analysis/span_links/<context_run_id>", methods=["GET"])
-def get_span_links(context_run_id: str):
+def get_span_links(context_run_id: str):  # 已迁移
     """
     获取指定context_run下的边列表
     GET /api/analysis/span_links/<context_run_id>
@@ -593,7 +593,7 @@ def get_span_links(context_run_id: str):
 
 
 @analysis_bp.route("/analysis/spans/<session_id>", methods=["GET"])
-def get_spans_by_session(session_id: str):
+def get_spans_by_session(session_id: str):  # 已迁移
     """
     获取指定session下的spans（按时间顺序），带短引用序号
     GET /api/analysis/spans/<session_id>

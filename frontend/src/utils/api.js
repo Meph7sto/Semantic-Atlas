@@ -149,9 +149,9 @@ export const conflictApi = {
         return resp.data
     },
 
-    // 流式检测，直接连接推理服务
+    // 冲突检测（统一走业务后端 FastAPI，不再前端直连 inference）
     async streamCheck(requirementA, requirementB, useThinking = false) {
-        const response = await fetch('/inference/conflict/stream_check', {
+        const response = await fetch('/api/conflict/stream_check', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -164,10 +164,22 @@ export const conflictApi = {
         })
 
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            let detail = ''
+            try {
+                const text = await response.text()
+                if (text) {
+                    detail = text
+                }
+            } catch (_) {
+                // ignore
+            }
+            if (detail) {
+                throw new Error(detail)
+            }
+            throw new Error(`HTTP error! status: ${response.status}`)
         }
 
-        return response.body;
+        return response.body
     },
 }
 

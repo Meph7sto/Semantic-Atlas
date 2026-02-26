@@ -14,6 +14,7 @@ permission_bp = Blueprint("permission", __name__)
 # 辅助函数
 # ========================
 
+
 def error_response(message: str, status: int = 400) -> tuple:
     """返回错误响应"""
     return jsonify({"success": False, "error": message}), status
@@ -33,9 +34,10 @@ def check_project_access(project_id: str, user_id: str) -> bool:
 # 项目成员管理
 # ========================
 
+
 @permission_bp.route("/projects/<project_id>/members", methods=["POST"])
 @require_auth
-def add_project_member(project_id: str):
+def add_project_member(project_id: str):  # 已迁移
     """
     添加项目成员
 
@@ -86,14 +88,16 @@ def add_project_member(project_id: str):
 
     # 返回包含角色的成员信息
     result = db_service.list_project_members(project_id, include_roles=True)
-    member_info = next((m for m in result["members"] if m["user_id"] == target_user_id), member)
+    member_info = next(
+        (m for m in result["members"] if m["user_id"] == target_user_id), member
+    )
 
     return success_response(member_info)
 
 
 @permission_bp.route("/projects/<project_id>/members", methods=["GET"])
 @require_auth
-def list_project_members(project_id: str):
+def list_project_members(project_id: str):  # 已迁移
     """
     列出项目成员
 
@@ -127,7 +131,7 @@ def list_project_members(project_id: str):
 
 @permission_bp.route("/projects/<project_id>/members/<user_id>", methods=["DELETE"])
 @require_auth
-def remove_project_member(project_id: str, user_id: str):
+def remove_project_member(project_id: str, user_id: str):  # 已迁移
     """
     移除项目成员
 
@@ -160,7 +164,7 @@ def remove_project_member(project_id: str, user_id: str):
 
 @permission_bp.route("/projects/<project_id>/members/<user_id>/roles", methods=["PUT"])
 @require_auth
-def set_user_roles(project_id: str, user_id: str):
+def set_user_roles(project_id: str, user_id: str):  # 已迁移
     """
     设置用户角色（全量替换）
 
@@ -208,9 +212,10 @@ def set_user_roles(project_id: str, user_id: str):
 # 评审指派管理
 # ========================
 
+
 @permission_bp.route("/requirements/<requirement_id>/reviews", methods=["POST"])
 @require_auth
-def create_review_assignment(requirement_id: str):
+def create_review_assignment(requirement_id: str):  # 已迁移
     """
     创建评审指派
 
@@ -267,7 +272,7 @@ def create_review_assignment(requirement_id: str):
 
 @permission_bp.route("/requirements/<requirement_id>/reviews", methods=["GET"])
 @require_auth
-def list_requirement_reviews(requirement_id: str):
+def list_requirement_reviews(requirement_id: str):  # 已迁移
     """
     列出需求的所有评审
 
@@ -292,7 +297,7 @@ def list_requirement_reviews(requirement_id: str):
 
 @permission_bp.route("/reviews/<assignment_id>/approve", methods=["POST"])
 @require_auth
-def approve_review(assignment_id: int):
+def approve_review(assignment_id: int):  # 已迁移
     """
     通过评审
 
@@ -324,7 +329,7 @@ def approve_review(assignment_id: int):
 
 @permission_bp.route("/reviews/<assignment_id>/reject", methods=["POST"])
 @require_auth
-def reject_review(assignment_id: int):
+def reject_review(assignment_id: int):  # 已迁移
     """
     驳回评审
 
@@ -356,7 +361,7 @@ def reject_review(assignment_id: int):
 
 @permission_bp.route("/reviews/<assignment_id>/withdraw", methods=["POST"])
 @require_auth
-def withdraw_review(assignment_id: int):
+def withdraw_review(assignment_id: int):  # 已迁移
     """
     撤回评审
 
@@ -381,7 +386,7 @@ def withdraw_review(assignment_id: int):
 
 @permission_bp.route("/user/pending-reviews", methods=["GET"])
 @require_auth
-def get_user_pending_reviews():
+def get_user_pending_reviews():  # 已迁移
     """
     获取当前用户的待处理评审列表
 
@@ -409,9 +414,10 @@ def get_user_pending_reviews():
 # 基线管理
 # ========================
 
+
 @permission_bp.route("/projects/<project_id>/baselines", methods=["POST"])
 @require_auth
-def create_baseline(project_id: str):
+def create_baseline(project_id: str):  # 已迁移
     """
     创建基线
 
@@ -461,7 +467,7 @@ def create_baseline(project_id: str):
 
 @permission_bp.route("/projects/<project_id>/baselines", methods=["GET"])
 @require_auth
-def list_project_baselines(project_id: str):
+def list_project_baselines(project_id: str):  # 已迁移
     """
     列出项目的所有基线
 
@@ -485,14 +491,16 @@ def list_project_baselines(project_id: str):
 
     include_locked = request.args.get("include_locked", "true").lower() == "true"
 
-    baselines = db_service.list_project_baselines(project_id, include_locked=include_locked)
+    baselines = db_service.list_project_baselines(
+        project_id, include_locked=include_locked
+    )
 
     return success_response(baselines)
 
 
 @permission_bp.route("/baselines/<baseline_id>/lock", methods=["POST"])
 @require_auth
-def lock_baseline(baseline_id: int):
+def lock_baseline(baseline_id: int):  # 已迁移
     """
     锁定基线
 
@@ -529,7 +537,7 @@ def lock_baseline(baseline_id: int):
 
 @permission_bp.route("/baselines/<baseline_id>/unlock", methods=["POST"])
 @require_auth
-def unlock_baseline(baseline_id: int):
+def unlock_baseline(baseline_id: int):  # 已迁移
     """
     解锁基线
 
@@ -568,9 +576,10 @@ def unlock_baseline(baseline_id: int):
 # 变更请求管理
 # ========================
 
+
 @permission_bp.route("/requirements/<requirement_id>/change-requests", methods=["POST"])
 @require_auth
-def create_change_request(requirement_id: str):
+def create_change_request(requirement_id: str):  # 已迁移
     """
     创建变更请求
 
@@ -635,7 +644,7 @@ def create_change_request(requirement_id: str):
 
 @permission_bp.route("/requirements/<requirement_id>/change-requests", methods=["GET"])
 @require_auth
-def list_requirement_change_requests(requirement_id: str):
+def list_requirement_change_requests(requirement_id: str):  # 已迁移
     """
     列出需求的所有变更请求
 
@@ -662,7 +671,7 @@ def list_requirement_change_requests(requirement_id: str):
 
 @permission_bp.route("/change-requests/<request_id>/approve", methods=["POST"])
 @require_auth
-def approve_change_request(request_id: int):
+def approve_change_request(request_id: int):  # 已迁移
     """
     批准变更请求
 
@@ -708,7 +717,7 @@ def approve_change_request(request_id: int):
 
 @permission_bp.route("/change-requests/<request_id>/reject", methods=["POST"])
 @require_auth
-def reject_change_request(request_id: int):
+def reject_change_request(request_id: int):  # 已迁移
     """
     驳回变更请求
 
@@ -754,7 +763,7 @@ def reject_change_request(request_id: int):
 
 @permission_bp.route("/change-requests/pending", methods=["GET"])
 @require_auth
-def get_pending_change_requests():
+def get_pending_change_requests():  # 已迁移
     """
     获取待审批的变更请求列表
 
@@ -801,9 +810,10 @@ def get_pending_change_requests():
 # 权限上下文
 # ========================
 
+
 @permission_bp.route("/projects/<project_id>/context", methods=["GET"])
 @require_auth
-def get_user_context(project_id: str):
+def get_user_context(project_id: str):  # 已迁移
     """
     获取用户在项目中的权限上下文
 

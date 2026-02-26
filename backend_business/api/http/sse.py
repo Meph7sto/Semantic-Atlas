@@ -4,9 +4,12 @@ FastAPI SSE (Server-Sent Events) 工具
 """
 
 import json
+from collections.abc import AsyncGenerator as AsyncGeneratorABC
+from collections.abc import Generator as GeneratorABC
 from typing import AsyncGenerator, Generator, Union
 
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import iterate_in_threadpool
 
 
 # SSE 响应头
@@ -57,9 +60,9 @@ def sse_response(
         return sse_response(event_generator())
     """
     async def async_sse_generator():
-        # 处理同步生成器
-        if isinstance(generator, Generator):
-            for item in generator:
+        # 处理同步生成器（在线程池中迭代，避免阻塞/嵌套事件循环）
+        if isinstance(generator, GeneratorABC):
+            async for item in iterate_in_threadpool(generator):
                 # 如果 item 是 (event, data) 元组，使用指定事件名
                 if isinstance(item, tuple) and len(item) == 2:
                     event, data = item
@@ -70,8 +73,17 @@ def sse_response(
                 else:
                     yield format_sse_event(event_type, {"data": item})
         # 处理异步生成器
-        else:
+        elif isinstance(generator, AsyncGeneratorABC):
             async for item in generator:
+                if isinstance(item, tuple) and len(item) == 2:
+                    event, data = item
+                    yield format_sse_event(event, data)
+                elif isinstance(item, dict):
+                    yield format_sse_event(event_type, item)
+                else:
+                    yield format_sse_event(event_type, {"data": item})
+        else:
+            for item in generator:
                 if isinstance(item, tuple) and len(item) == 2:
                     event, data = item
                     yield format_sse_event(event, data)
@@ -99,11 +111,14 @@ def sse_response_raw(generator: Union[Generator, AsyncGenerator]) -> StreamingRe
         StreamingResponse 对象
     """
     async def async_sse_generator():
-        if isinstance(generator, Generator):
-            for chunk in generator:
+        if isinstance(generator, GeneratorABC):
+            async for chunk in iterate_in_threadpool(generator):
+                yield chunk
+        elif isinstance(generator, AsyncGeneratorABC):
+            async for chunk in generator:
                 yield chunk
         else:
-            async for chunk in generator:
+            for chunk in generator:
                 yield chunk
 
     return StreamingResponse(

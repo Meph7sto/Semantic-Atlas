@@ -3,7 +3,7 @@
 import asyncio
 import aiohttp
 import requests
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Generator, List, Optional
 
 from backend_business.config import settings
 
@@ -241,17 +241,51 @@ class AIProxy:
             else None,
         }
 
-    def conflict_check(self, requirement_a: str, requirement_b: str) -> Dict[str, Any]:
+    def conflict_check(
+        self,
+        requirement_a: str,
+        requirement_b: str,
+        use_thinking_mode: bool = False,
+    ) -> Dict[str, Any]:
         """
         可选：业务层也可代理冲突检测（不改变原冲突代码）。
         """
         resp = requests.post(
             f"{self.base_url}/conflict/check",
-            json={"requirement_a": requirement_a, "requirement_b": requirement_b},
+            json={
+                "requirement_a": requirement_a,
+                "requirement_b": requirement_b,
+                "use_thinking_mode": use_thinking_mode,
+            },
             timeout=300,  # 5分钟
         )
         resp.raise_for_status()
         return resp.json()
+
+    def conflict_stream_check(
+        self,
+        requirement_a: str,
+        requirement_b: str,
+        use_thinking_mode: bool = False,
+    ) -> Generator[bytes, None, None]:
+        """
+        冲突检测流式代理。
+        透传推理后端 NDJSON 数据，供业务后端再转发给前端。
+        """
+        with requests.post(
+            f"{self.base_url}/conflict/stream_check",
+            json={
+                "requirement_a": requirement_a,
+                "requirement_b": requirement_b,
+                "use_thinking_mode": use_thinking_mode,
+            },
+            stream=True,
+            timeout=300,
+        ) as resp:
+            resp.raise_for_status()
+            for chunk in resp.iter_content(chunk_size=1024):
+                if chunk:
+                    yield chunk
 
     def extract_requirements(
         self,
