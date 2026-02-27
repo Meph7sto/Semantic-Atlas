@@ -48,7 +48,7 @@ Semantic-Atlas 是面向需求工程的语义分析平台，覆盖会议转写�
 
 ## 快速开始（本地开发）
 
-> 建议使用 Python 3.12（`psycopg2-binary` 依赖版本要求）。
+> 建议使用 Python 3.12（`psycopg2-binary` 依赖版本要求）项目采用conda进行环境管理，运行前请自行创建conda activate semantic-Atlas。
 
 1) 安装 Python 依赖
 
