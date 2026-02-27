@@ -8,7 +8,7 @@ conflict_bp = Blueprint("conflict", __name__)
 
 
 @conflict_bp.route("/check", methods=["POST"])
-def check_conflict():  # 已迁移
+def check_conflict():  # 已迁移到 backend_business/api/routers/conflict.py
     """
     检查冲突接口
     通过 ai_proxy 服务代理请求到推理后端 (Inference Backend)
@@ -51,7 +51,7 @@ def check_conflict():  # 已迁移
 
 
 @conflict_bp.route("/check/batch", methods=["POST"])
-def check_conflict_batch():  # 已迁移
+def check_conflict_batch():  # 已迁移到 backend_business/api/routers/conflict.py
     """
     批量检查冲突接口
     """
@@ -108,7 +108,7 @@ def check_conflict_batch():  # 已迁移
 
 
 @conflict_bp.route("/latest", methods=["GET"])
-def get_latest_conflict_batch():  # 已迁移
+def get_latest_conflict_batch():  # 已迁移到 backend_business/api/routers/conflict.py
     session_id = request.args.get("session_id")
     if not session_id:
         return jsonify({"success": False, "error": "缺少 session_id"}), 400

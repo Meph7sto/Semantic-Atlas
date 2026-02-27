@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import httpx
 
 # 确保项目根目录在 sys.path 中
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -33,10 +34,14 @@ async def lifespan(app: FastAPI):
     print("[lifespan] FastAPI business backend starting...")
     print(f"[lifespan] Inference URL: {settings.INFERENCE_BASE_URL}")
     print(f"[lifespan] Database: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}")
+    app.state.classification_http_client = httpx.AsyncClient()
 
     yield
 
     # 关闭时的逻辑
+    client = getattr(app.state, "classification_http_client", None)
+    if isinstance(client, httpx.AsyncClient):
+        await client.aclose()
     print("[lifespan] FastAPI business backend shutting down...")
 
 
@@ -79,6 +84,7 @@ else:
 from backend_business.api.routers import (
     analysis,
     auth,
+    classification,
     conflict,
     deduplication,
     manage,
@@ -92,6 +98,7 @@ app.include_router(manage.router)
 app.include_router(product.router)
 app.include_router(analysis.router)
 app.include_router(conflict.router)
+app.include_router(classification.router)
 
 # 注册业务异常处理器（保留 FastAPI 原生 HTTPException / validation 语义）
 app.add_exception_handler(ErrorResponse, error_response_handler)

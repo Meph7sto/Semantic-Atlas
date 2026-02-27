@@ -114,48 +114,48 @@
 
   ## 分阶段执行计划
 
-  ## Phase 0：基线冻结与合同采集
+  ## Phase 0：基线冻结与合同采集 [已完成]
 
   1. 产出当前 Flask API 清单（路径/方法/状态码/关键字段/SSE 事件名）。
   2. 为关键端点录制 FastAPI 目标合同样本（成功、校验失败、权限失败、上游失败）。
   3. 固化“需统一为 FastAPI 语义”的差异清单（含调用方改造项）。
 
-  ## Phase 1：FastAPI 骨架与基础设施
+  ## Phase 1：FastAPI 骨架与基础设施 [已完成]
 
   1. 新建 backend_business/main.py，配置 CORS、/health、router include。
   2. 实现公共错误处理与 JSON 响应工具，确保中文输出不转义策略与现状一致。
   3. 实现 auth dependency（token 校验、角色校验、用户上下文注入）。
   4. 建立 SSE helper，统一 headers 与事件编码。
 
-  ## Phase 2：按模块迁移路由（15 个路由文件）
+  ## Phase 2：按模块迁移路由（15 个路由文件） [进度: 7/15 已迁移]
 
   1. 迁移顺序（降低风险）：
 
-  - deduplication -> auth -> permission -> manage -> product
-  - analysis -> requirements -> conflict -> classification
-  - ai_chat -> agent_task -> agent_monitor -> push -> mobile_chat -> file
+  - deduplication -> auth -> permission -> manage -> product [已完成]
+  - analysis -> requirements -> conflict -> classification [进行中: analysis, conflict 已完成]
+  - ai_chat -> agent_task -> agent_monitor -> push -> mobile_chat -> file [待开始]
 
-  2. 每个模块迁移后即补充对应合同测试并通过再进入下一个模块。
+  2. 每个模块迁移后即补充对应合同测试并通过再进入下一个模块。[已完成 analysis/auth/conflict/dedup/manage/permission/product 合同测试]
   3. 保持现有 service 调用方式，不改 service 内部签名与数据库层。
 
-  ## Phase 3：部署与运行链路并行化
+  ## Phase 3：部署与运行链路并行化 [已完成]
 
   1. 并行运行：
 
   - Flask 保持 5001（现网）
   - FastAPI 先跑 5002（影子环境）
 
-  2. 更新 deploy/start*.{sh,ps1}：
+  2. 更新 deploy/start*.{sh,ps1}：[已完成]
 
   - 增加业务后端运行模式参数（flask|fastapi|dual）
   - FastAPI 业务服务命令使用 uvicorn backend_business.main:app
 
-  3. 更新 deploy/nginx*.conf：
+  3. 更新 deploy/nginx*.conf：[已完成]
 
   - 增加 business_backend_next upstream（5002）
   - 增加受控路由或 header 开关用于灰度验证（不影响默认 /api）。
 
-  4. 更新 deploy/stop_services*，覆盖 5001/5002 进程停止逻辑。
+  4. 更新 deploy/stop_services*，覆盖 5001/5002 进程停止逻辑。[已完成]
 
   ## Phase 4：测试、压测、切流与回滚
 
@@ -229,10 +229,10 @@
 
   ## 实施里程碑（建议）
 
-  1. M1（1-2 天）：Phase 0-1 完成，FastAPI skeleton 可启动。
-  2. M2（3-5 天）：Phase 2 路由迁移完成，测试基本通过。
-  3. M3（1-2 天）：Phase 3 并行部署与灰度完成。
-  4. M4（1 天）：Phase 4 切流与收尾文档完成。
+  1. M1（1-2 天）：Phase 0-1 完成，FastAPI skeleton 可启动。[已完成]
+  2. M2（3-5 天）：Phase 2 路由迁移完成，测试基本通过。[进行中: 7/15 已迁移]
+  3. M3（1-2 天）：Phase 3 并行部署与灰度完成。[已完成部署链路并行化]
+  4. M4（1 天）：Phase 4 切流与收尾文档完成。[待开始]
 
   ## 假设与默认值（已锁定）
 
