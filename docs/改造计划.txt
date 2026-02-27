@@ -127,13 +127,14 @@
   3. 实现 auth dependency（token 校验、角色校验、用户上下文注入）。
   4. 建立 SSE helper，统一 headers 与事件编码。
 
-  ## Phase 2：按模块迁移路由（15 个路由文件） [进度: 7/15 已迁移]
+  ## Phase 2：按模块迁移路由（15 个路由文件） [进度: 8/15 已迁移]
 
   1. 迁移顺序（降低风险）：
 
   - deduplication -> auth -> permission -> manage -> product [已完成]
   - analysis -> requirements -> conflict -> classification [进行中: analysis, conflict 已完成]
-  - ai_chat -> agent_task -> agent_monitor -> push -> mobile_chat -> file [待开始]
+  - ai_chat -> agent_task -> agent_monitor -> push -> file [待开始]
+  - mobile_chat [已完成]
 
   2. 每个模块迁移后即补充对应合同测试并通过再进入下一个模块。[已完成 analysis/auth/conflict/dedup/manage/permission/product 合同测试]
   3. 保持现有 service 调用方式，不改 service 内部签名与数据库层。
@@ -230,7 +231,7 @@
   ## 实施里程碑（建议）
 
   1. M1（1-2 天）：Phase 0-1 完成，FastAPI skeleton 可启动。[已完成]
-  2. M2（3-5 天）：Phase 2 路由迁移完成，测试基本通过。[进行中: 7/15 已迁移]
+  2. M2（3-5 天）：Phase 2 路由迁移完成，测试基本通过。[进行中: 8/15 已迁移]
   3. M3（1-2 天）：Phase 3 并行部署与灰度完成。[已完成部署链路并行化]
   4. M4（1 天）：Phase 4 切流与收尾文档完成。[待开始]
 

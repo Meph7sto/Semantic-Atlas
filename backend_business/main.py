@@ -88,6 +88,7 @@ from backend_business.api.routers import (
     conflict,
     deduplication,
     manage,
+    mobile_chat,
     permission,
     product,
     requirements,
@@ -101,6 +102,7 @@ app.include_router(analysis.router)
 app.include_router(conflict.router)
 app.include_router(classification.router)
 app.include_router(requirements.router)
+app.include_router(mobile_chat.router)
 
 # 注册业务异常处理器（保留 FastAPI 原生 HTTPException / validation 语义）
 app.add_exception_handler(ErrorResponse, error_response_handler)
