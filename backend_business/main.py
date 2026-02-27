@@ -90,6 +90,7 @@ from backend_business.api.routers import (
     manage,
     permission,
     product,
+    requirements,
 )
 app.include_router(deduplication.router, prefix="/api/v2")
 app.include_router(auth.router)
@@ -99,6 +100,7 @@ app.include_router(product.router)
 app.include_router(analysis.router)
 app.include_router(conflict.router)
 app.include_router(classification.router)
+app.include_router(requirements.router)
 
 # 注册业务异常处理器（保留 FastAPI 原生 HTTPException / validation 语义）
 app.add_exception_handler(ErrorResponse, error_response_handler)
