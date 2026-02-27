@@ -190,7 +190,7 @@ const loadUserOptions = async () => {
             users = await collectUsers(({ limit, offset }) => authApi.listUsers({ limit, offset }), 200)
         }
 
-        if (authStore.user?.role === 'admin') {
+        if (['super_admin', 'admin'].includes(authStore.user?.role)) {
             try {
                 const [pendingUsers, approvedUsers, rejectedUsers] = await Promise.all([
                     collectRegistrations('pending'),

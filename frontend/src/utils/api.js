@@ -1264,6 +1264,33 @@ export const authApi = {
         return resp.data.data
     },
 
+    // 获取范围授权可选项（产品/项目）
+    async getScopeOptions() {
+        const resp = await api.get('/auth/scope-options')
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '获取范围选项失败')
+        }
+        return resp.data.data
+    },
+
+    // 获取用户范围授权
+    async getUserScopes(userId) {
+        const resp = await api.get(`/auth/users/${encodeURIComponent(userId)}/scopes`)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '获取用户范围失败')
+        }
+        return resp.data.data
+    },
+
+    // 更新用户范围授权（全量替换）
+    async updateUserScopes(userId, payload) {
+        const resp = await api.put(`/auth/users/${encodeURIComponent(userId)}/scopes`, payload)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '更新用户范围失败')
+        }
+        return resp.data.data
+    },
+
     // 列出注册申请（仅管理员）
     async listRegistrations({ status = 'pending', limit = 100, offset = 0 } = {}) {
         const resp = await api.get('/auth/registrations', {

@@ -18,7 +18,8 @@ def get_db_service():
 def check_project_access(project_id: str, user_id: str) -> bool:
     """检查用户是否有访问项目的权限。"""
     service = get_db_service()
-    return service.is_project_member(project_id, user_id)
+    user = service.get_user_by_id(user_id)
+    return service.can_access_project(project_id, user_id, user)
 
 
 from . import baselines, change_requests, context, members, reviews

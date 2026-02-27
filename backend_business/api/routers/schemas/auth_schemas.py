@@ -6,7 +6,7 @@ Auth API Pydantic 请求模型
 import re
 from typing import Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class LoginRequest(BaseModel):
@@ -220,3 +220,37 @@ class RegistrationDetailResponse(BaseModel):
     approved_at: Optional[str]
     approved_by: Optional[str]
     rejected_by: Optional[str]
+
+
+class ProductScopeItem(BaseModel):
+    """用户产品范围项"""
+    product_id: str
+    can_edit: bool = False
+
+    @field_validator('product_id')
+    @classmethod
+    def validate_product_id(cls, v):
+        value = v.strip()
+        if not value:
+            raise ValueError("product_id 不能为空")
+        return value
+
+
+class ProjectScopeItem(BaseModel):
+    """用户项目范围项"""
+    project_id: str
+    can_edit: bool = False
+
+    @field_validator('project_id')
+    @classmethod
+    def validate_project_id(cls, v):
+        value = v.strip()
+        if not value:
+            raise ValueError("project_id 不能为空")
+        return value
+
+
+class UpdateUserScopesRequest(BaseModel):
+    """更新用户可见范围请求（全量替换）"""
+    product_scopes: list[ProductScopeItem] = Field(default_factory=list)
+    project_scopes: list[ProjectScopeItem] = Field(default_factory=list)

@@ -26,6 +26,8 @@ def get_user_context(
 
     if not user:
         raise ErrorResponse("用户不存在", 404)
+    if not db_service.can_access_project(project_id, user_id, user):
+        raise ErrorResponse("无访问项目权限", 403)
 
     context = db_service.get_user_context(project_id, user_id, user)
     return context

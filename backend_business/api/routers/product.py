@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from backend_business.config import settings
 from backend_business.services.product_service import ProductService
+from backend_business.services.db_service import db_service
 from backend_business.api.http.errors import ErrorResponse
 from backend_business.api.routers.schemas.product_schemas import (
     CreateProductRequest,
@@ -43,32 +44,38 @@ def _get_actor(request: Request, current_user: Optional[dict] = None) -> str:
     return "system"
 
 
-def _get_global_role(request: Request, current_user: Optional[dict] = None) -> str:
-    """获取全局角色"""
-    if current_user:
-        return current_user.get("role", "")
-
-    role = request.headers.get("X-Role", "")
-    if role:
-        return role
-
-    role = request.query_params.get("role", "")
-    if role:
-        return role
-
-    return ""
+def _require_product_access(
+    product_id: str,
+    current_user: dict,
+):
+    """检查产品可见权限，无权限时抛出 ErrorResponse"""
+    if db_service is None:
+        return
+    user_id = current_user["user_id"]
+    user = db_service.get_user_by_id(user_id)
+    if not user:
+        raise ErrorResponse("用户不存在", 404)
+    if not db_service.can_access_product(product_id, user_id, user):
+        raise ErrorResponse("Permission denied", 403)
 
 
 def _require_product_write(
     product_id: str,
-    actor: str,
-    request: Request,
-    current_user: Optional[dict] = None,
+    current_user: dict,
 ):
     """检查产品写权限，无权限时抛出 ErrorResponse"""
-    global_role = _get_global_role(request, current_user)
-    member_role = _service.get_member_role(product_id, actor)
-    if not _service.can_write_product(global_role, member_role):
+    if db_service is None:
+        user_id = current_user["user_id"]
+        global_role = current_user.get("role", "")
+        member_role = _service.get_member_role(product_id, user_id)
+        if not _service.can_write_product(global_role, member_role):
+            raise ErrorResponse("Permission denied", 403)
+        return
+    user_id = current_user["user_id"]
+    user = db_service.get_user_by_id(user_id)
+    if not user:
+        raise ErrorResponse("用户不存在", 404)
+    if not db_service.can_edit_product(product_id, user_id, user):
         raise ErrorResponse("Permission denied", 403)
 
 
@@ -103,9 +110,9 @@ def create_product(
     }
     """
     actor = _get_actor(request, current_user)
-    global_role = _get_global_role(request, current_user)
+    global_role = (current_user or {}).get("role", "")
 
-    if (global_role or "").lower() != "admin":
+    if global_role not in ("super_admin", "admin"):
         raise ErrorResponse("Permission denied", 403)
 
     try:
@@ -119,6 +126,14 @@ def create_product(
         )
     except ValueError as e:
         raise ErrorResponse(str(e), 400)
+    if db_service is not None and global_role != "super_admin":
+        db_service.upsert_user_product_scope(
+            user_id=actor,
+            product_id=product["product_id"],
+            can_edit=True,
+            granted_by=actor,
+        )
+
     _service.add_audit_log(
         product_id=product["product_id"],
         actor=actor,
@@ -133,6 +148,7 @@ def create_product(
 @router.get("/products")
 def list_products(
     include_archived: bool = Query(False, description="是否包含已归档的产品"),
+    current_user: Optional[dict] = Depends(get_current_user),
 ):
     """
     列出产品
@@ -145,11 +161,27 @@ def list_products(
         "products": [...]
     }
     """
-    return {"products": _service.list_products(include_archived=include_archived)}
+    if db_service is None:
+        return {"products": _service.list_products(include_archived=include_archived)}
+    user_id = current_user["user_id"]
+    user = db_service.get_user_by_id(user_id)
+    if not user:
+        raise ErrorResponse("用户不存在", 404)
+
+    products = _service.list_products(include_archived=include_archived)
+    if user.get("role") == "super_admin":
+        return {"products": products}
+
+    allowed_product_ids = set(db_service.get_accessible_product_ids(user_id, user=user))
+    filtered = [p for p in products if p.get("product_id") in allowed_product_ids]
+    return {"products": filtered}
 
 
 @router.get("/products/{product_id}")
-def get_product(product_id: str):
+def get_product(
+    product_id: str,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
     """
     获取产品详情
 
@@ -160,6 +192,7 @@ def get_product(product_id: str):
         ...
     }
     """
+    _require_product_access(product_id, current_user)
     product = _service.get_product(product_id)
     if not product:
         raise ErrorResponse("Product not found", 404)
@@ -195,7 +228,7 @@ def update_product(
     actor = _get_actor(request, current_user)
 
     # 权限检查
-    _require_product_write(product_id, actor, request, current_user)
+    _require_product_write(product_id, current_user)
 
     # 转换为字典，过滤 None 值
     update_data = req.model_dump(exclude_unset=True)
@@ -237,7 +270,7 @@ def delete_product(
     actor = _get_actor(request, current_user)
 
     # 权限检查
-    _require_product_write(product_id, actor, request, current_user)
+    _require_product_write(product_id, current_user)
 
     try:
         affected = _service.delete_product(product_id)
@@ -290,7 +323,7 @@ def add_member(
     actor = _get_actor(request, current_user)
 
     # 权限检查
-    _require_product_write(product_id, actor, request, current_user)
+    _require_product_write(product_id, current_user)
 
     try:
         member = _service.add_member(product_id, req.user_id, req.role)
@@ -327,7 +360,7 @@ def remove_member(
     actor = _get_actor(request, current_user)
 
     # 权限检查
-    _require_product_write(product_id, actor, request, current_user)
+    _require_product_write(product_id, current_user)
 
     try:
         affected = _service.remove_member(product_id, user_id)
@@ -349,7 +382,10 @@ def remove_member(
 
 
 @router.get("/products/{product_id}/members")
-def list_members(product_id: str):
+def list_members(
+    product_id: str,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
     """
     列出成员
 
@@ -358,6 +394,7 @@ def list_members(product_id: str):
         "members": [...]
     }
     """
+    _require_product_access(product_id, current_user)
     return {"members": _service.list_members(product_id)}
 
 
@@ -366,7 +403,10 @@ def list_members(product_id: str):
 # ========================
 
 @router.get("/products/{product_id}/projects")
-def list_projects_by_product(product_id: str):
+def list_projects_by_product(
+    product_id: str,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
     """
     列出产品下的项目
 
@@ -375,6 +415,7 @@ def list_projects_by_product(product_id: str):
         "projects": [...]
     }
     """
+    _require_product_access(product_id, current_user)
     return {"projects": _service.list_projects_by_product(product_id)}
 
 
@@ -404,7 +445,7 @@ def create_project_under_product(
     actor = _get_actor(request, current_user)
 
     # 权限检查
-    _require_product_write(product_id, actor, request, current_user)
+    _require_product_write(product_id, current_user)
 
     try:
         project = _service.create_project_under_product(
@@ -415,6 +456,13 @@ def create_project_under_product(
         )
     except ValueError as e:
         raise ErrorResponse(str(e))
+    if db_service is not None and (current_user or {}).get("role") != "super_admin":
+        db_service.upsert_user_project_scope(
+            user_id=actor,
+            project_id=project["project_id"],
+            can_edit=True,
+            granted_by=actor,
+        )
 
     _service.add_audit_log(
         product_id=product_id,
@@ -455,9 +503,19 @@ def bind_project_to_product(
     actor = _get_actor(request, current_user)
     product_id = req.product_id
 
+    if db_service is not None:
+        operator_id = current_user["user_id"]
+        operator_user = db_service.get_user_by_id(operator_id)
+        if not operator_user:
+            raise ErrorResponse("用户不存在", 404)
+
+        # 操作项目绑定需要项目编辑权限
+        if not db_service.can_edit_project(project_id, operator_id, operator_user):
+            raise ErrorResponse("Permission denied", 403)
+
     # 绑定到某产品时，校验对该产品有写权限
     if product_id:
-        _require_product_write(product_id, actor, request, current_user)
+        _require_product_write(product_id, current_user)
 
     try:
         project = _service.bind_project_to_product(project_id, product_id)
@@ -480,7 +538,10 @@ def bind_project_to_product(
 # ========================
 
 @router.get("/products/{product_id}/overview")
-def get_product_overview(product_id: str):
+def get_product_overview(
+    product_id: str,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
     """
     获取产品概览统计
 
@@ -494,6 +555,7 @@ def get_product_overview(product_id: str):
         }
     }
     """
+    _require_product_access(product_id, current_user)
     try:
         overview = _service.get_product_overview(product_id)
     except ValueError as e:
@@ -505,6 +567,7 @@ def get_product_overview(product_id: str):
 def list_requirements_by_product(
     product_id: str,
     include_deleted: bool = Query(False, description="是否包含已删除的需求"),
+    current_user: Optional[dict] = Depends(get_current_user),
 ):
     """
     获取产品下的需求列表
@@ -517,6 +580,7 @@ def list_requirements_by_product(
         "requirements": [...]
     }
     """
+    _require_product_access(product_id, current_user)
     return {
         "requirements": _service.list_requirements_by_product(
             product_id, include_deleted=include_deleted
@@ -525,7 +589,10 @@ def list_requirements_by_product(
 
 
 @router.get("/products/{product_id}/milestones")
-def list_milestones_by_product(product_id: str):
+def list_milestones_by_product(
+    product_id: str,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
     """
     获取产品下的里程碑列表
 
@@ -534,11 +601,15 @@ def list_milestones_by_product(product_id: str):
         "milestones": [...]
     }
     """
+    _require_product_access(product_id, current_user)
     return {"milestones": _service.list_milestones_by_product(product_id)}
 
 
 @router.get("/products/{product_id}/baselines")
-def list_baselines_by_product(product_id: str):
+def list_baselines_by_product(
+    product_id: str,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
     """
     获取产品下的基线列表
 
@@ -547,4 +618,5 @@ def list_baselines_by_product(product_id: str):
         "baselines": [...]
     }
     """
+    _require_product_access(product_id, current_user)
     return {"baselines": _service.list_baselines_by_product(product_id)}
