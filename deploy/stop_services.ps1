@@ -88,6 +88,16 @@ try {
 catch {
 }
 
+Start-Sleep -Milliseconds 500
+$nginxLeft = Get-CimInstance Win32_Process -Filter "Name='nginx.exe'" -ErrorAction SilentlyContinue |
+Where-Object { $_.CommandLine -and $_.CommandLine -match [regex]::Escape($NginxConf) }
+if ($nginxLeft) {
+  Write-Warning "Nginx 停止失败，可能有残留进程。"
+}
+else {
+  Write-Host "Nginx 停止成功。"
+}
+
 Write-Host "[stop] 结束占用端口的进程: 8000 (FastAPI), 5001 (Flask), 5002 (FastAPI Business), 8008 (Nginx)"
 $ports = @(8000, 5001, 5002, 8008)
 foreach ($port in $ports) {

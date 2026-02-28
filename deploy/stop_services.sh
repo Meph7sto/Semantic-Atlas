@@ -52,6 +52,15 @@ if command -v pgrep >/dev/null 2>&1; then
   done
 fi
 
+if command -v pgrep >/dev/null 2>&1; then
+  sleep 0.5
+  if pgrep -x "nginx" >/dev/null 2>&1; then
+    echo "[warning] Nginx 停止失败，仍有残留进程存在。"
+  else
+    echo "[success] Nginx 停止成功。"
+  fi
+fi
+
 echo "[stop] 结束占用端口的进程: 8000 (FastAPI), 5001 (Flask), 5002 (FastAPI Business), 8008 (Nginx)"
 for port in 8000 5001 5002 8008; do
   if command -v lsof >/dev/null 2>&1; then
