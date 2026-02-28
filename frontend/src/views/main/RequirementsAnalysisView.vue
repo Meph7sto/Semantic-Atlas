@@ -304,7 +304,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, nextTick } from "vue";
-import { useRouter } from "vue-router";
+import { useRouter, useRoute } from "vue-router";
 import Sidebar from "../../components/main/Sidebar.vue";
 import {
   traceabilityApi,
@@ -328,13 +328,30 @@ import {
 } from "lucide-vue-next";
 
 const router = useRouter();
+const route = useRoute();
 
 // 侧边栏状态
 const roleType = ref("unified_admin");
 const roleLabel = ref("管理员");
 const timestamp = ref(new Date().toLocaleString());
 const notificationCount = ref(3);
-const activePage = ref("requirements-analysis");
+const routeNameToPageKey = {
+  "main-dashboard": "dashboard",
+  "main-project": "project-management",
+  "main-requirements": "requirements",
+  "main-requirements-analysis": "requirements-analysis",
+  "main-requirements-collection": "requirements-collection",
+};
+
+const pageKeyToRouteName = {
+  "dashboard": "main-dashboard",
+  "project-management": "main-project",
+  "requirements": "main-requirements",
+  "requirements-analysis": "main-requirements-analysis",
+  "requirements-collection": "main-requirements-collection",
+};
+
+const activePage = computed(() => routeNameToPageKey[route.name] || "requirements-analysis");
 
 // Session 和 Context Run
 const sessionId = ref(localStorage.getItem('lastSessionId') || '');
@@ -913,16 +930,9 @@ function updateChart() {
 
 // 导航
 function handleNavigate(page) {
-  activePage.value = page;
-  const routes = {
-    "dashboard": "main-dashboard",
-    "project-management": "main-project",
-    "requirements": "main-requirements",
-    "requirements-analysis": "main-requirements-analysis",
-    "requirements-acquisition": "main-requirements-acquisition",
-  };
-  if (routes[page]) {
-    router.push({ name: routes[page] });
+  const target = pageKeyToRouteName[page];
+  if (target && target !== route.name) {
+    router.push({ name: target });
   }
 }
 

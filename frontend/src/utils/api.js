@@ -605,6 +605,34 @@ export const pushApi = {
     },
 }
 
+// 文件上传 API（移动端文件接收）
+export const fileApi = {
+    async list() {
+        const resp = await api.get('/uploads')
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.message || 'Failed to list files')
+        }
+        return resp.data
+    },
+
+    download(filename) {
+        // 直接打开下载链接
+        window.open(`/api/uploads/${encodeURIComponent(filename)}?download=true`, '_blank')
+    },
+
+    async delete(filename) {
+        const resp = await api.delete(`/uploads/${encodeURIComponent(filename)}`)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.message || 'Failed to delete file')
+        }
+        return resp.data
+    },
+
+    getPreviewUrl(filename) {
+        return `/api/uploads/${encodeURIComponent(filename)}`
+    },
+}
+
 // 移动端对话桥接 API
 export const mobileChatApi = {
     async listSessions({ limit = 200 } = {}) {

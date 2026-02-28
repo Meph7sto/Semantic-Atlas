@@ -12,6 +12,7 @@ import L4Testing from '../views/alpha/L4Testing.vue'
 import RequirementsManage from '../views/alpha/RequirementsManage.vue'
 import MessagePush from '../views/alpha/MessagePush.vue'
 import MobileBridge from '../views/alpha/MobileBridge.vue'
+import FileReceive from '../views/alpha/FileReceive.vue'
 
 // Main views (migrated from frontend_ref)
 import LoginView from '../views/main/LoginView.vue'
@@ -19,6 +20,10 @@ import DashboardView from '../views/main/DashboardView.vue'
 import ProjectManageView from '../views/main/ProjectManageView.vue'
 import RequirementsView from '../views/main/RequirementsView.vue'
 import RequirementsAnalysisView from '../views/main/RequirementsAnalysisView.vue'
+import RequirementsCollectionView from '../views/main/RequirementsCollectionView.vue'
+
+// Guide view
+import GuideView from '../views/GuideView.vue'
 import RequirementsAcquisitionView from '../views/main/RequirementsAcquisitionView.vue'
 
 const router = createRouter({
@@ -27,7 +32,12 @@ const router = createRouter({
         {
             path: '/',
             name: 'home',
-            redirect: '/main/login'
+            redirect: '/guide'
+        },
+        {
+            path: '/guide',
+            name: 'guide',
+            component: GuideView
         },
         // Main routes (migrated from frontend_ref)
         {
@@ -60,9 +70,9 @@ const router = createRouter({
                     component: RequirementsAnalysisView
                 },
                 {
-                    path: 'requirements-acquisition',
-                    name: 'main-requirements-acquisition',
-                    component: RequirementsAcquisitionView
+                    path: 'requirements-collection',
+                    name: 'main-requirements-collection',
+                    component: RequirementsCollectionView
                 }
             ]
         },
@@ -134,6 +144,11 @@ const router = createRouter({
                     path: 'mobile-bridge',
                     name: 'mobile-bridge',
                     component: MobileBridge
+                },
+                {
+                    path: 'file-receive',
+                    name: 'file-receive',
+                    component: FileReceive
                 }
             ]
         }
