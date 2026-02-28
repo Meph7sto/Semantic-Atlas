@@ -272,7 +272,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import Sidebar from '@/components/beta/Sidebar.vue'
 import { authApi } from '@/utils/api.js'
@@ -315,6 +315,10 @@ const scopeLoading = ref(false)
 const scopeSaving = ref(false)
 const scopeProducts = ref([])
 const scopeProjects = ref([])
+// Track programmatic updates to prevent infinite loops
+const isUpdatingFromParent = ref(false)
+const isUpdatingFromChild = ref(false)
+
 const userForm = reactive({
   user_id: '',
   username: '',
@@ -531,6 +535,74 @@ const closeScopeModal = () => {
   scopeProducts.value = []
   scopeProjects.value = []
 }
+
+// Watch for product visibility changes - cascade uncheck to child projects
+watch(
+  () => scopeProducts.value.map((p) => ({ id: p.product_id, visible: p.visible })),
+  (newProducts, oldProducts) => {
+    // Skip if this change came from a child update
+    if (isUpdatingFromChild.value) return
+
+    // Find products that changed from checked to unchecked
+    const changes = newProducts.filter((newP, index) => {
+      const oldP = oldProducts[index]
+      return oldP && oldP.visible === true && newP.visible === false
+    })
+
+    // If any product was unchecked, uncheck all its projects
+    if (changes.length > 0) {
+      isUpdatingFromParent.value = true
+
+      changes.forEach((changedProduct) => {
+        scopeProjects.value.forEach((project) => {
+          if (project.product_id === changedProduct.id) {
+            project.visible = false
+            project.can_edit = false
+          }
+        })
+      })
+
+      // Reset flag on next tick to allow future updates
+      nextTick(() => {
+        isUpdatingFromParent.value = false
+      })
+    }
+  },
+  { deep: true },
+)
+
+// Watch for project visibility changes - cascade check to parent product
+watch(
+  () => scopeProjects.value.map((p) => ({ id: p.project_id, productId: p.product_id, visible: p.visible })),
+  (newProjects, oldProjects) => {
+    // Skip if this change came from a parent update
+    if (isUpdatingFromParent.value) return
+
+    // Find projects that changed from unchecked to checked
+    const changes = newProjects.filter((newP, index) => {
+      const oldP = oldProjects[index]
+      return oldP && oldP.visible === false && newP.visible === true
+    })
+
+    // If any project was checked, check its parent product
+    if (changes.length > 0) {
+      isUpdatingFromChild.value = true
+
+      changes.forEach((changedProject) => {
+        const parentProduct = scopeProducts.value.find((p) => p.product_id === changedProject.productId)
+        if (parentProduct) {
+          parentProduct.visible = true
+        }
+      })
+
+      // Reset flag on next tick to allow future updates
+      nextTick(() => {
+        isUpdatingFromChild.value = false
+      })
+    }
+  },
+  { deep: true },
+)
 
 const saveUserScopes = async () => {
   if (!selectedScopeUser.value) return

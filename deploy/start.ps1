@@ -553,7 +553,8 @@ if ($doNginx -and $doFrontend) {
 
     $NginxArgs = @(
       "-c", $NginxGeneratedPath,
-      "-p", (Join-Path $BASE_DIR "deploy")
+      "-p", (Join-Path $BASE_DIR "deploy"),
+      "-g", "pid logs/nginx.pid;"
     )
     Write-Host "[start] Starting/reloading Nginx..."
     Start-Process -FilePath $NginxExe -ArgumentList $NginxArgs -NoNewWindow

@@ -36,11 +36,18 @@ if [ -f "${PID_FILE}" ]; then
   rm -f "${PID_FILE}"
 fi
 
-# 通过进程名和命令行参数匹配 Nginx
+# 通过进程名匹配 Nginx，直接杀掉 master 进程避免 worker 被不断重启
 if command -v pgrep >/dev/null 2>&1; then
+  # 优先停止 master 进程
+  for pid in $(pgrep -f "nginx: master process" 2>/dev/null || true); do
+    if [[ -n "$pid" ]] && [[ "$pid" -gt 0 ]]; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done
+  # 停止剩余的 nginx 进程（如 worker）
   for pid in $(pgrep -f "nginx" 2>/dev/null || true); do
     if [[ -n "$pid" ]] && [[ "$pid" -gt 0 ]]; then
-      stop_process_tree "$pid" "nginx"
+      kill "$pid" 2>/dev/null || true
     fi
   done
 fi

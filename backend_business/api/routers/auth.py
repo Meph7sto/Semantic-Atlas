@@ -642,7 +642,13 @@ def update_user(
     if not user:
         raise ErrorResponse("用户不存在", 404)
 
-    db_service.grant_full_scopes_for_user(user_id, granted_by=operator["user_id"])
+    # 仅当用户没有现有 scope 配置时才授予全权限
+    # 避免覆盖由 super_admin 精心配置的可见范围
+    if target_user.get("role") not in ("super_admin",):
+        scopes = db_service.get_user_scopes(user_id)
+        has_existing_scopes = bool(scopes.get("product_scopes") or scopes.get("project_scopes"))
+        if not has_existing_scopes:
+            db_service.grant_full_scopes_for_user(user_id, granted_by=operator["user_id"])
 
     return {"success": True, "data": user}
 

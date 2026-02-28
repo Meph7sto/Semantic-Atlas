@@ -43,7 +43,8 @@ else {
 if ($NginxExe) {
   try {
     & $NginxExe -c $NginxConf -p $DeployDir -g "pid logs/nginx.pid;" -s stop
-  } catch {
+  }
+  catch {
     Write-Warning "停止 Nginx 时出错: $_"
   }
 }
@@ -54,16 +55,34 @@ if (Test-Path $NginxPidPath) {
       $nginxProcId = [int]$nginxProcIdText
       Stop-ProcessTree -ProcessId $nginxProcId -Label "nginx"
     }
-  } catch {
+  }
+  catch {
     Write-Warning "根据 pid 文件停止 Nginx 失败: $_"
   }
   Remove-Item $NginxPidPath -Force -ErrorAction SilentlyContinue
 }
 try {
   $nginxMatches = Get-CimInstance Win32_Process -Filter "Name='nginx.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -and $_.CommandLine -match [regex]::Escape($NginxConf) }
-  foreach ($proc in $nginxMatches) {
-    Stop-ProcessTree -ProcessId $proc.ProcessId -Label "nginx"
+  Where-Object { $_.CommandLine -and $_.CommandLine -match [regex]::Escape($NginxConf) }
+  
+  # 对 Nginx，由于停止 worker 进程会导致 master 立即重启 worker，
+  # 我们需要先关闭 master 进程（它的 ParentProcessId 不在当前的 Nginx 进程 ID 列表中）。
+  $allPids = $nginxMatches | Select-Object -ExpandProperty ProcessId
+  if ($allPids) {
+    if ($allPids -isnot [array]) { $allPids = @($allPids) }
+    $masters = $nginxMatches | Where-Object { $_.ParentProcessId -notin $allPids }
+    $workers = $nginxMatches | Where-Object { $_.ParentProcessId -in $allPids }
+  }
+  else {
+    $masters = @()
+    $workers = @()
+  }
+
+  foreach ($proc in $masters) {
+    Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+  }
+  foreach ($proc in $workers) {
+    Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
   }
 }
 catch {
@@ -84,14 +103,14 @@ foreach ($port in $ports) {
 
 try {
   $pythonMatches = Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
-    Where-Object {
-      $_.CommandLine -and (
-        $_.CommandLine -match "backend_inference" -or
-        $_.CommandLine -match "backend_business[/\\]app.py" -or
-        $_.CommandLine -match "backend_business[/\\]main.py" -or
-        $_.CommandLine -match "uvicorn.*backend_business.main"
-      )
-    }
+  Where-Object {
+    $_.CommandLine -and (
+      $_.CommandLine -match "backend_inference" -or
+      $_.CommandLine -match "backend_business[/\\]app.py" -or
+      $_.CommandLine -match "backend_business[/\\]main.py" -or
+      $_.CommandLine -match "uvicorn.*backend_business.main"
+    )
+  }
   foreach ($proc in $pythonMatches) {
     Write-Host (" - python PID {0} -> stopping" -f $proc.ProcessId)
     Stop-ProcessTree -ProcessId $proc.ProcessId -Label "python"
