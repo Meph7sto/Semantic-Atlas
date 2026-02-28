@@ -109,4 +109,26 @@ if command -v pgrep >/dev/null 2>&1; then
   done
 fi
 
+# 停止 FRP 客户端
+echo "[stop] 检查 FRP 客户端..."
+FRP_PID_FILE="${BASE_DIR}/deploy/logs/frpc.pid"
+if [[ -f "$FRP_PID_FILE" ]]; then
+  FRP_PID=$(cat "$FRP_PID_FILE")
+  if [[ -n "$FRP_PID" ]]; then
+    echo " - frpc PID ${FRP_PID} -> stopping"
+    stop_process_tree "$FRP_PID" "frpc"
+    rm -f "$FRP_PID_FILE"
+  fi
+fi
+
+# 通过进程名匹配 frpc
+if command -v pgrep >/dev/null 2>&1; then
+  for pid in $(pgrep -f "frpc" 2>/dev/null || true); do
+    if [[ -n "$pid" ]]; then
+      echo " - frpc PID ${pid} -> stopping"
+      stop_process_tree "$pid" "frpc"
+    fi
+  done
+fi
+
 echo "[stop] 完成。"

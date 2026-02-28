@@ -119,4 +119,33 @@ try {
 catch {
 }
 
+# 停止 FRP 客户端
+Write-Host "[stop] 检查 FRP 客户端..."
+$FrpPidPath = Join-Path $DeployDir "logs/frpc.pid"
+if (Test-Path $FrpPidPath) {
+  try {
+    $frpPidText = (Get-Content $FrpPidPath -Raw).Trim()
+    if ($frpPidText) {
+      $frpPid = [int]$frpPidText
+      Write-Host " - frpc PID $frpPid -> stopping"
+      Stop-ProcessTree -ProcessId $frpPid -Label "frpc"
+    }
+  }
+  catch {
+    Write-Warning "根据 pid 文件停止 frpc 失败: $_"
+  }
+  Remove-Item $FrpPidPath -Force -ErrorAction SilentlyContinue
+}
+
+# 通过进程名匹配 frpc
+try {
+  $frpMatches = Get-CimInstance Win32_Process -Filter "Name='frpc.exe'" -ErrorAction SilentlyContinue
+  foreach ($proc in $frpMatches) {
+    Write-Host (" - frpc PID {0} -> stopping" -f $proc.ProcessId)
+    Stop-ProcessTree -ProcessId $proc.ProcessId -Label "frpc"
+  }
+}
+catch {
+}
+
 Write-Host "[stop] 完成。"

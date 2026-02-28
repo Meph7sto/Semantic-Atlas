@@ -10,6 +10,9 @@ PROVIDER=""
 ENTRY=""
 BUSINESS_BACKEND=""
 ENABLE_FASTAPI_BUSINESS=""
+FRP_MODE=""
+FRP_SERVER_ADDR=""
+FRP_TOKEN=""
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -42,6 +45,10 @@ while [[ $# -gt 0 ]]; do
       ENABLE_FASTAPI_BUSINESS=1
       shift
       ;;
+    --frp|-f)
+      FRP_MODE=1
+      shift
+      ;;
     *)
       if [[ -z "$MODE" ]]; then
         MODE="$1"
@@ -57,6 +64,45 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# 网络模式选择（本地运行 vs frp 内网穿透）
+if [[ -z "$FRP_MODE" ]]; then
+  echo "请选择网络模式: 1=本地运行(默认) 2=开启frp内网穿透"
+  read -r -p "输入编号 (默认 1): " net_choice
+  if [[ "$net_choice" == "2" ]]; then
+    FRP_MODE=1
+  fi
+fi
+
+# 如果启用了 frp 模式，收集配置信息
+if [[ "$FRP_MODE" == "1" ]]; then
+  echo "[start] FRP 模式已启用"
+  if [[ -z "$FRP_SERVER_ADDR" ]]; then
+    read -r -p "请输入 frp 服务器 IP 地址（留空则跳过）: " FRP_SERVER_ADDR
+    if [[ -n "$FRP_SERVER_ADDR" ]]; then
+      export FRP_SERVER_ADDR
+      if ! grep -q "FRP_SERVER_ADDR=" "$ENV_FILE" 2>/dev/null; then
+        echo "FRP_SERVER_ADDR=\"$FRP_SERVER_ADDR\"" >> "$ENV_FILE"
+        echo "[start] FRP Server Address saved to .env"
+      fi
+    fi
+  fi
+  if [[ -z "$FRP_TOKEN" ]]; then
+    read -r -p "请输入 frp 服务器密码 (token)（留空则跳过）: " FRP_TOKEN
+    if [[ -n "$FRP_TOKEN" ]]; then
+      export FRP_TOKEN
+      if ! grep -q "FRP_TOKEN=" "$ENV_FILE" 2>/dev/null; then
+        echo "FRP_TOKEN=\"$FRP_TOKEN\"" >> "$ENV_FILE"
+        echo "[start] FRP Token saved to .env"
+      fi
+    fi
+  fi
+  if [[ -z "$FRP_SERVER_ADDR" || -z "$FRP_TOKEN" ]]; then
+    echo "[start] 错误：FRP 模式需要提供服务器 IP 和密码"
+    exit 1
+  fi
+  export FRP_MODE FRP_SERVER_ADDR FRP_TOKEN
+fi
 
 # 启动模式选择
 if [[ -z "$MODE" ]]; then
@@ -1084,3 +1130,94 @@ fi
 echo "[start] Done. Mode=$MODE; Model provider=$PROVIDER; Entry=$ENTRY"
 echo "[start] Nginx 8008 (if enabled), FastAPI 8000 (if enabled), Business: $backend_info."
 echo "[start] Logs located in $LOGS_DIR"
+
+# 6) 启动 FRP 客户端（如果启用）
+if [[ "$FRP_MODE" == "1" ]]; then
+  FRP_DIR="${BASE_DIR}/deploy/frp"
+  FRP_CONFIG="${FRP_DIR}/frpc.toml"
+  FRP_PID_FILE="${LOGS_DIR}/frpc.pid"
+  
+  echo "[start] Setting up FRP client..."
+  
+  # 检测系统架构
+  os_name="linux"
+  arch_name="$(uname -m)"
+  case "$arch_name" in
+    x86_64|amd64) arch_name="amd64" ;;
+    aarch64|arm64) arch_name="arm64" ;;
+    armv7l|armhf) arch_name="arm" ;;
+    i386|i686) arch_name="386" ;;
+    *) echo "[start] Warning: Unknown architecture $arch_name, falling back to amd64"; arch_name="amd64" ;;
+  esac
+  
+  # 获取最新版本号
+  FRP_VERSION=""
+  if command -v curl >/dev/null 2>&1; then
+    FRP_VERSION=$(curl -sI "https://github.com/fatedier/frp/releases/latest" 2>/dev/null | grep -i "location:" | sed 's/.*tag\///' | tr -d '\r\n')
+  fi
+  if [[ -z "$FRP_VERSION" ]]; then
+    FRP_VERSION="0.61.1"
+    echo "[start] Could not fetch latest version, using default: $FRP_VERSION"
+  else
+    echo "[start] Latest FRP version: $FRP_VERSION"
+  fi
+  
+  FRP_TAR_NAME="frp_${FRP_VERSION#v}_${os_name}_${arch_name}.tar.gz"
+  FRP_DIR_NAME="frp_${FRP_VERSION#v}_${os_name}_${arch_name}"
+  FRP_DOWNLOAD_URL="https://github.com/fatedier/frp/releases/download/${FRP_VERSION}/${FRP_TAR_NAME}"
+  FRP_EXE="${FRP_DIR}/${FRP_DIR_NAME}/frpc"
+  
+  mkdir -p "$FRP_DIR"
+  
+  # 检查是否需要下载
+  if [[ ! -f "$FRP_EXE" ]]; then
+    echo "[start] Downloading FRP client from $FRP_DOWNLOAD_URL..."
+    FRP_TAR_PATH="${FRP_DIR}/${FRP_TAR_NAME}"
+    if command -v curl >/dev/null 2>&1; then
+      curl -L -o "$FRP_TAR_PATH" "$FRP_DOWNLOAD_URL"
+    elif command -v wget >/dev/null 2>&1; then
+      wget -O "$FRP_TAR_PATH" "$FRP_DOWNLOAD_URL"
+    else
+      echo "[start] Error: Neither curl nor wget is available"
+      exit 1
+    fi
+    
+    if [[ -f "$FRP_TAR_PATH" ]]; then
+      tar -xzf "$FRP_TAR_PATH" -C "$FRP_DIR"
+      rm -f "$FRP_TAR_PATH"
+      echo "[start] FRP client downloaded and extracted"
+    else
+      echo "[start] Error: Failed to download FRP client"
+      exit 1
+    fi
+  else
+    echo "[start] FRP client already exists at $FRP_EXE"
+  fi
+  
+  # 生成 frpc.toml 配置文件
+  cat > "$FRP_CONFIG" <<EOF
+serverAddr = "${FRP_SERVER_ADDR}"
+serverPort = 7000
+
+auth.method = "token"
+auth.token = "${FRP_TOKEN}"
+
+[[proxies]]
+name = "nginx"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 8008
+remotePort = 16666
+EOF
+  
+  echo "[start] FRP config generated at $FRP_CONFIG"
+  
+  # 启动 frpc
+  echo "[start] Starting FRP client..."
+  chmod +x "$FRP_EXE"
+  nohup "$FRP_EXE" -c "$FRP_CONFIG" > "${LOGS_DIR}/frpc.log" 2>&1 &
+  FRP_PID=$!
+  echo "$FRP_PID" > "$FRP_PID_FILE"
+  echo "[start] FRP client started (PID: $FRP_PID)"
+  echo "[start] Remote access: ${FRP_SERVER_ADDR}:16666 -> local:8008"
+fi
