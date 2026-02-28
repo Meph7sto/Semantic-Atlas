@@ -1040,7 +1040,7 @@ fi
 
 # 3.6) PostgreSQL smoke test (default when business enabled)
 if [[ "$do_business" -eq 1 ]]; then
-  TEST_SCRIPT="${BASE_DIR}/backend_business/scripts/test_postgres.py"
+  TEST_SCRIPT="${BASE_DIR}/tests/fixtures/test_postgres.py"
   if [[ -f "$TEST_SCRIPT" ]]; then
     echo "[start] Running PostgreSQL smoke test..."
     if ! "$PYTHON_EXE" "$TEST_SCRIPT"; then

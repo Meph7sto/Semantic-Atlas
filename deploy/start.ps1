@@ -592,7 +592,7 @@ if ($doInference -or $doBusiness) {
 
 # 3.6) PostgreSQL smoke test (default when business enabled)
 if ($doBusiness) {
-  $TestScript = Join-Path $BASE_DIR "backend_business/scripts/test_postgres.py"
+  $TestScript = Join-Path $BASE_DIR "tests/fixtures/test_postgres.py"
   if (Test-Path $TestScript) {
     Write-Host "[start] Running PostgreSQL smoke test..." -ForegroundColor Cyan
     & $PythonExe $TestScript
