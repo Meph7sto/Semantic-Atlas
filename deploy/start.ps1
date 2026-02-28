@@ -641,11 +641,10 @@ if ($doNginx -and $doFrontend) {
     $TempDir = Join-Path $BASE_DIR "deploy/temp"
     if (-not (Test-Path $TempDir)) { New-Item -ItemType Directory -Force -Path $TempDir | Out-Null }
 
-    $NginxArgs = @(
-      "-c", $NginxGeneratedPath,
-      "-p", (Join-Path $BASE_DIR "deploy"),
-      "-g", "pid logs/nginx.pid;"
-    )
+    $NginxPrefix = Join-Path $BASE_DIR "deploy"
+    # Start-Process 在 Windows 上会拆分带空格的参数；这里使用单字符串并显式加引号，
+    # 避免 -g 的值 "pid logs/nginx.pid;" 被拆成多个参数导致 nginx 启动失败。
+    $NginxArgs = "-c `"$NginxGeneratedPath`" -p `"$NginxPrefix`" -g `"pid logs/nginx.pid;`""
     Write-Host "[start] Starting/reloading Nginx..."
     Start-Process -FilePath $NginxExe -ArgumentList $NginxArgs -NoNewWindow
   }
