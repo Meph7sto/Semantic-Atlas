@@ -310,7 +310,8 @@ const avatarColor = computed(() => {
 const roleLabel = computed(() => {
   const role = profile.role
   const ext = profile.external_type
-  if (role === 'admin') return '超级管理员'
+  if (role === 'super_admin') return '高级管理员'
+  if (role === 'admin') return '管理员'
   if (ext === 'CLIENT') return '甲方客户'
   if (ext === 'CONTRACTOR') return '外包成员'
   if (role === 'viewer') return '访客（只读）'

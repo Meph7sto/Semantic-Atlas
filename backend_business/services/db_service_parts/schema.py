@@ -864,6 +864,7 @@ def init_db(conn):
             """
             CREATE TABLE IF NOT EXISTS mobile_chat_messages (
                 message_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL DEFAULT 'anonymous',
                 session_id TEXT NOT NULL,
                 sender TEXT NOT NULL CHECK (sender IN ('web', 'mobile')),
                 content TEXT NOT NULL,
@@ -873,7 +874,22 @@ def init_db(conn):
             """
         )
         cur.execute(
+            "ALTER TABLE mobile_chat_messages ADD COLUMN IF NOT EXISTS user_id TEXT"
+        )
+        cur.execute(
+            "UPDATE mobile_chat_messages SET user_id = 'anonymous' WHERE user_id IS NULL OR user_id = ''"
+        )
+        cur.execute(
+            "ALTER TABLE mobile_chat_messages ALTER COLUMN user_id SET DEFAULT 'anonymous'"
+        )
+        cur.execute(
+            "ALTER TABLE mobile_chat_messages ALTER COLUMN user_id SET NOT NULL"
+        )
+        cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_mobile_chat_session ON mobile_chat_messages(session_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_mobile_chat_user_session_created ON mobile_chat_messages(user_id, session_id, created_at)"
         )
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_mobile_chat_created_at ON mobile_chat_messages(created_at)"
@@ -1045,11 +1061,43 @@ def init_db(conn):
                 username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
                 display_name TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member', 'viewer')),
+                role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('super_admin', 'admin', 'member', 'viewer')),
                 is_active BOOLEAN NOT NULL DEFAULT TRUE,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
+            """
+        )
+        cur.execute(
+            """
+            DO $$
+            DECLARE
+                old_constraint_name TEXT;
+            BEGIN
+                SELECT conname
+                  INTO old_constraint_name
+                  FROM pg_constraint
+                 WHERE conrelid = 'auth_users'::regclass
+                   AND contype = 'c'
+                   AND pg_get_constraintdef(oid) LIKE '%role%'
+                   AND pg_get_constraintdef(oid) LIKE '%admin%'
+                   AND conname <> 'chk_auth_users_role'
+                 LIMIT 1;
+
+                IF old_constraint_name IS NOT NULL THEN
+                    EXECUTE format('ALTER TABLE auth_users DROP CONSTRAINT %I', old_constraint_name);
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'auth_users'::regclass
+                      AND conname = 'chk_auth_users_role'
+                ) THEN
+                    ALTER TABLE auth_users
+                    ADD CONSTRAINT chk_auth_users_role
+                    CHECK (role IN ('super_admin', 'admin', 'member', 'viewer'));
+                END IF;
+            END $$;
             """
         )
         cur.execute(
@@ -1063,20 +1111,69 @@ def init_db(conn):
         cur.execute(
             """
             INSERT INTO auth_users (user_id, username, password_hash, display_name, role, is_active)
-            VALUES ('test-user-001', 'test', '$2b$12$6m.Xy3YEOvHNSXvq79T/meEpiTFFOOYVaR2aEp8pbFlfqsr/XkLki', '测试用户 (全权限)', 'admin', TRUE)
+            VALUES ('test-user-001', 'test', '$2b$12$6m.Xy3YEOvHNSXvq79T/meEpiTFFOOYVaR2aEp8pbFlfqsr/XkLki', '测试用户 (全权限)', 'super_admin', TRUE)
             ON CONFLICT (user_id) DO NOTHING
             """
         )
-        # 强制更新测试用户为 admin 角色，拥有所有权限
+        # 强制更新测试用户为 super_admin 角色，拥有所有权限
         cur.execute(
             """
             UPDATE auth_users
             SET username = 'test',
                 password_hash = '$2b$12$6m.Xy3YEOvHNSXvq79T/meEpiTFFOOYVaR2aEp8pbFlfqsr/XkLki',
-                role = 'admin',
+                role = 'super_admin',
                 display_name = '测试用户 (全权限)',
                 updated_at = NOW()
             WHERE user_id = 'test-user-001'
+            """
+        )
+        # 硬编码超级管理员：admin / admin
+        cur.execute(
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM auth_users WHERE username = 'admin'
+                ) THEN
+                    UPDATE auth_users
+                    SET password_hash = '$2b$12$JaZlrZRNkzxUa3yWzGsL.OqgApgiD60JvaeChZVz2M5blTMH40Aly',
+                        role = 'super_admin',
+                        display_name = '系统超级管理员',
+                        is_active = TRUE,
+                        updated_at = NOW()
+                    WHERE username = 'admin';
+                ELSIF EXISTS (
+                    SELECT 1 FROM auth_users WHERE user_id = 'super-admin-001'
+                ) THEN
+                    UPDATE auth_users
+                    SET username = 'admin',
+                        password_hash = '$2b$12$JaZlrZRNkzxUa3yWzGsL.OqgApgiD60JvaeChZVz2M5blTMH40Aly',
+                        role = 'super_admin',
+                        display_name = '系统超级管理员',
+                        is_active = TRUE,
+                        updated_at = NOW()
+                    WHERE user_id = 'super-admin-001';
+                ELSE
+                    INSERT INTO auth_users (user_id, username, password_hash, display_name, role, is_active)
+                    VALUES (
+                        'super-admin-001',
+                        'admin',
+                        '$2b$12$JaZlrZRNkzxUa3yWzGsL.OqgApgiD60JvaeChZVz2M5blTMH40Aly',
+                        '系统超级管理员',
+                        'super_admin',
+                        TRUE
+                    );
+                END IF;
+            END $$;
+            """
+        )
+        # 将历史 admin 自动迁移为 super_admin（保持历史行为）
+        cur.execute(
+            """
+            UPDATE auth_users
+            SET role = 'super_admin',
+                updated_at = NOW()
+            WHERE role = 'admin'
             """
         )
 
@@ -1370,6 +1467,72 @@ def init_db(conn):
         )
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_change_requests_status ON change_requests(status)"
+        )
+
+        # 1.9 用户可见范围：产品级授权
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_product_scopes (
+                id BIGSERIAL PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES auth_users(user_id) ON DELETE CASCADE,
+                product_id TEXT NOT NULL REFERENCES manage_products(product_id) ON DELETE CASCADE,
+                can_edit BOOLEAN NOT NULL DEFAULT FALSE,
+                granted_by TEXT NOT NULL REFERENCES auth_users(user_id),
+                granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE(user_id, product_id)
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_product_scopes_user ON user_product_scopes(user_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_product_scopes_product ON user_product_scopes(product_id)"
+        )
+
+        # 1.10 用户可见范围：项目级授权
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_project_scopes (
+                id BIGSERIAL PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES auth_users(user_id) ON DELETE CASCADE,
+                project_id TEXT NOT NULL REFERENCES manage_projects(project_id) ON DELETE CASCADE,
+                can_edit BOOLEAN NOT NULL DEFAULT FALSE,
+                granted_by TEXT NOT NULL REFERENCES auth_users(user_id),
+                granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE(user_id, project_id)
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_project_scopes_user ON user_project_scopes(user_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_project_scopes_project ON user_project_scopes(project_id)"
+        )
+
+        # 1.11 历史用户默认全量可见且可编辑（非 super_admin）
+        cur.execute(
+            """
+            INSERT INTO user_product_scopes (user_id, product_id, can_edit, granted_by, granted_at, updated_at)
+            SELECT u.user_id, p.product_id, TRUE, u.user_id, NOW(), NOW()
+            FROM auth_users u
+            CROSS JOIN manage_products p
+            WHERE u.role <> 'super_admin'
+            ON CONFLICT (user_id, product_id) DO NOTHING
+            """
+        )
+        cur.execute(
+            """
+            INSERT INTO user_project_scopes (user_id, project_id, can_edit, granted_by, granted_at, updated_at)
+            SELECT u.user_id, p.project_id, TRUE, u.user_id, NOW(), NOW()
+            FROM auth_users u
+            CROSS JOIN manage_projects p
+            WHERE u.role <> 'super_admin'
+            ON CONFLICT (user_id, project_id) DO NOTHING
+            """
         )
 
         # 1.8 添加基线外键约束（在 baselines 表创建后）

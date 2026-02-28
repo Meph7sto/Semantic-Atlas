@@ -94,8 +94,8 @@ def require_roles(*allowed_roles: str):
 
 # 便捷的角色依赖函数
 async def require_admin(user: dict = Depends(get_current_user)) -> dict:
-    """要求管理员角色的便捷依赖"""
-    if user.get("role") != "admin":
+    """要求管理员角色（super_admin 或 admin）的便捷依赖"""
+    if user.get("role") not in ("super_admin", "admin"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="权限不足",

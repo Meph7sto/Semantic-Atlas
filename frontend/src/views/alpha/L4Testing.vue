@@ -27,6 +27,8 @@ const selectedReqIds = ref(new Set())
 
 const isGenerating = ref(false)
 const generationError = ref('')
+const generationNotice = ref('')
+const validationWarning = ref('')
 const generationResults = ref([])
 const kbVersion = ref('')
 const useReasoningModel = ref(false)
@@ -96,6 +98,48 @@ function clearSelection() {
   selectedReqIds.value.clear()
 }
 
+function normalizeList(value) {
+  return Array.isArray(value) ? value : []
+}
+
+function toValidationL4(req) {
+  const parsedConfidence = typeof req.confidence === 'number' ? req.confidence : Number(req.confidence)
+  return {
+    source_top_id: req.source_top_id || 'unknown',
+    source_top_text: req.source_top_text || '',
+    l4_id: req.req_id || req.l4_id || '',
+    component: req.component || 'TBD',
+    shall_statement: req.text || req.shall_statement || '',
+    acceptance_criteria: normalizeList(req.acceptance_criteria),
+    test_method: req.test_method || 'TBD',
+    interfaces: normalizeList(req.interfaces),
+    data_contracts: normalizeList(req.data_contracts),
+    error_handling: normalizeList(req.error_handling),
+    nfr: normalizeList(req.nfr),
+    open_questions: normalizeList(req.open_questions),
+    evidence_ids: normalizeList(req.evidence_ids),
+    confidence: Number.isFinite(parsedConfidence) ? parsedConfidence : 0.6,
+    issues: [],
+  }
+}
+
+function buildValidatorStatusMap(validateResp, requirements) {
+  const issuesById = validateResp?.per_item_issues || {}
+  const statusMap = new Map()
+
+  requirements.forEach((req) => {
+    const l4Id = req.req_id || req.l4_id
+    const issues = normalizeList(issuesById[l4Id])
+    const hasError = issues.some((issue) => issue?.severity === 'error')
+    statusMap.set(l4Id, {
+      passed: !hasError,
+      issues,
+    })
+  })
+
+  return statusMap
+}
+
 async function startGeneration() {
   if (!canGenerate.value) return
   if (!sessionId.value.trim()) {
@@ -104,6 +148,8 @@ async function startGeneration() {
   }
 
   generationError.value = ''
+  generationNotice.value = ''
+  validationWarning.value = ''
   isGenerating.value = true
   generationResults.value = []
 
@@ -118,9 +164,27 @@ async function startGeneration() {
     )
 
     const requirements = resp.requirements || []
+    const generationMeta = Array.isArray(resp.generation_results) ? resp.generation_results : []
+    let validatorStatusMap = new Map()
+
+    if (requirements.length > 0) {
+      const validatePayload = requirements.map(toValidationL4)
+      try {
+        const validateResp = await l4Api.validate(validatePayload, {
+          expectedTopIds: selectedReqsForApi.value.map((item) => item.id),
+          confidenceThreshold: config.value.confidence_threshold,
+        })
+        validatorStatusMap = buildValidatorStatusMap(validateResp, requirements)
+      } catch (err) {
+        console.error('L4 validation failed', err)
+        validationWarning.value = err?.message || '校验结果获取失败，状态显示为 Unknown'
+      }
+    }
+
     const grouped = {}
     requirements.forEach((req) => {
       const topId = req.source_top_id || 'unknown'
+      const parsedConfidence = typeof req.confidence === 'number' ? req.confidence : Number(req.confidence)
       if (!grouped[topId]) {
         grouped[topId] = {
           source_top_id: topId,
@@ -142,10 +206,35 @@ async function startGeneration() {
         nfr: req.nfr || [],
         open_questions: req.open_questions || [],
         evidence_ids: req.evidence_ids || [],
-        confidence: req.confidence ?? 0.6,
-        validator_status: { passed: false, issues: [] },
+        confidence: Number.isFinite(parsedConfidence) ? parsedConfidence : 0.6,
+        validator_status: validatorStatusMap.get(req.req_id) || { passed: null, issues: [] },
       })
     })
+
+    generationMeta.forEach((item) => {
+      const topId = item?.source_top_id || 'unknown'
+      if (!grouped[topId]) {
+        grouped[topId] = {
+          source_top_id: topId,
+          l4_requirements: [],
+          open_questions: [],
+        }
+      }
+      const mergedQuestions = [
+        ...normalizeList(grouped[topId].open_questions),
+        ...normalizeList(item?.open_questions),
+      ]
+      grouped[topId].open_questions = Array.from(new Set(mergedQuestions.filter(Boolean)))
+    })
+
+    if (Object.keys(grouped).length === 0) {
+      const duplicates = Number(resp.duplicates_skipped || 0)
+      if (duplicates > 0) {
+        generationNotice.value = `本次生成未新增可展示结果：${duplicates} 条被去重跳过。`
+      } else {
+        generationNotice.value = '本次生成未返回可展示的 L4 需求。'
+      }
+    }
 
     generationResults.value = Object.values(grouped)
     kbVersion.value = resp.kb_version || kbVersion.value
@@ -346,6 +435,20 @@ watch(reqLevelFilter, () => {
               <p class="text-xs text-red-700 mt-1">{{ generationError }}</p>
             </div>
           </div>
+          <div v-if="generationNotice" class="p-4 bg-sky-50 border border-sky-200 rounded-lg flex items-start gap-3">
+            <Info class="w-5 h-5 text-sky-600 shrink-0 mt-0.5" />
+            <div>
+              <p class="text-sm font-semibold text-sky-900">Generation notice</p>
+              <p class="text-xs text-sky-700 mt-1">{{ generationNotice }}</p>
+            </div>
+          </div>
+          <div v-if="validationWarning" class="p-4 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-3">
+            <AlertTriangle class="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p class="text-sm font-semibold text-amber-900">Validation warning</p>
+              <p class="text-xs text-amber-700 mt-1">{{ validationWarning }}</p>
+            </div>
+          </div>
 
           <div v-if="isGenerating" class="flex flex-col items-center justify-center py-20 text-zinc-400">
             <Loader2 class="w-12 h-12 animate-spin mb-4" />
@@ -392,7 +495,7 @@ watch(reqLevelFilter, () => {
               <div v-for="l4 in result.l4_requirements" :key="l4.l4_id" class="bg-white border border-zinc-200 rounded-xl shadow-sm hover:shadow-md transition-shadow overflow-hidden">
                 <div class="flex">
                    <!-- Status Bar -->
-                    <div class="w-1.5 flex-shrink-0" :class="l4.validator_status.passed ? 'bg-emerald-500' : 'bg-rose-500'"></div>
+                    <div class="w-1.5 flex-shrink-0" :class="l4.validator_status.passed === true ? 'bg-emerald-500' : (l4.validator_status.passed === false ? 'bg-rose-500' : 'bg-zinc-300')"></div>
                     
                     <div class="p-5 flex-1 space-y-4">
                        <!-- Header -->
@@ -402,10 +505,10 @@ watch(reqLevelFilter, () => {
                             <span class="text-xs font-medium text-zinc-500 px-2 py-0.5 bg-zinc-50 rounded border border-zinc-100">{{ l4.component }}</span>
                           </div>
                           <div class="flex items-center gap-2">
-                            <div class="flex items-center gap-1.5 px-2 py-1 rounded-full border" :class="l4.validator_status.passed ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-rose-50 border-rose-100 text-rose-700'">
-                              <CheckCircle v-if="l4.validator_status.passed" class="w-3.5 h-3.5" />
+                            <div class="flex items-center gap-1.5 px-2 py-1 rounded-full border" :class="l4.validator_status.passed === true ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : (l4.validator_status.passed === false ? 'bg-rose-50 border-rose-100 text-rose-700' : 'bg-zinc-50 border-zinc-200 text-zinc-600')">
+                              <CheckCircle v-if="l4.validator_status.passed === true" class="w-3.5 h-3.5" />
                               <AlertTriangle v-else class="w-3.5 h-3.5" />
-                              <span class="text-[10px] font-bold uppercase tracking-tight">{{ l4.validator_status.passed ? 'Pass' : 'Rejected' }}</span>
+                              <span class="text-[10px] font-bold uppercase tracking-tight">{{ l4.validator_status.passed === true ? 'Pass' : (l4.validator_status.passed === false ? 'Rejected' : 'Unknown') }}</span>
                             </div>
                             <div class="flex items-center gap-1.5 px-2 py-1 rounded-full bg-zinc-100 border border-zinc-200 text-zinc-600">
                                <span class="text-[10px] font-bold">Conf: {{ (l4.confidence * 100).toFixed(0) }}%</span>

@@ -155,13 +155,16 @@ def test_create_project_missing_name_returns_422(fastapi_client):
 
 def test_list_requirements_invalid_tree_query_returns_422(fastapi_client):
     client, _ = fastapi_client
-    response = client.get("/api/manage/projects/p1/requirements?tree=abc")
+    response = client.get("/api/manage/projects/p1/requirements?tree=abc", headers=_auth_headers())
     _assert_validation_error(response, "tree", scope="query")
 
 
 def test_list_requirements_tree_mode_calls_tree_service(fastapi_client):
     client, stub = fastapi_client
-    response = client.get("/api/manage/projects/p1/requirements?tree=true&include_deleted=true")
+    response = client.get(
+        "/api/manage/projects/p1/requirements?tree=true&include_deleted=true",
+        headers=_auth_headers(),
+    )
 
     assert response.status_code == 200
     assert response.json() == {"tree": [], "orphans": []}

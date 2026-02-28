@@ -99,7 +99,7 @@ class ProductService:
 
     @staticmethod
     def can_write_product(global_role: str, member_role: Optional[str]) -> bool:
-        if (global_role or "").lower() == "admin":
+        if (global_role or "").lower() in ("super_admin", "admin"):
             return True
         return (member_role or "") in ("owner", "admin")
 

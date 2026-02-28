@@ -149,9 +149,9 @@ export const conflictApi = {
         return resp.data
     },
 
-    // 流式检测，直接连接推理服务
+    // 冲突检测（统一走业务后端 FastAPI，不再前端直连 inference）
     async streamCheck(requirementA, requirementB, useThinking = false) {
-        const response = await fetch('/inference/conflict/stream_check', {
+        const response = await fetch('/api/conflict/stream_check', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -164,10 +164,22 @@ export const conflictApi = {
         })
 
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            let detail = ''
+            try {
+                const text = await response.text()
+                if (text) {
+                    detail = text
+                }
+            } catch (_) {
+                // ignore
+            }
+            if (detail) {
+                throw new Error(detail)
+            }
+            throw new Error(`HTTP error! status: ${response.status}`)
         }
 
-        return response.body;
+        return response.body
     },
 }
 
@@ -859,16 +871,19 @@ export const fileApi = {
 
 // 移动端对话桥接 API
 export const mobileChatApi = {
-    async listSessions({ limit = 200 } = {}) {
-        const resp = await api.get('/mobile/sessions', { params: { limit } })
+    async listSessions({ userId = null, limit = 200 } = {}) {
+        const params = { limit }
+        if (userId) params.user_id = userId
+        const resp = await api.get('/mobile/sessions', { params })
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '获取会话列表失败')
         }
         return resp.data.sessions
     },
 
-    async listMessages({ sessionId, limit = 100, since = null } = {}) {
+    async listMessages({ userId = null, sessionId, limit = 100, since = null } = {}) {
         const params = { session_id: sessionId, limit }
+        if (userId) params.user_id = userId
         if (since) params.since = since
         const resp = await api.get('/mobile/messages', { params })
         if (resp.data?.success === false) {
@@ -877,12 +892,13 @@ export const mobileChatApi = {
         return resp.data.messages
     },
 
-    async sendMessage({ sessionId, sender, content, metadata = null }) {
+    async sendMessage({ userId = null, sessionId, sender, content, metadata = null }) {
         const payload = {
             session_id: sessionId,
             sender,
             content,
         }
+        if (userId) payload.user_id = userId
         if (metadata) payload.metadata = metadata
         const resp = await api.post('/mobile/messages', payload)
         if (resp.data?.success === false) {
@@ -891,8 +907,12 @@ export const mobileChatApi = {
         return resp.data.data
     },
 
-    createSSEConnection(sessionId) {
-        return new EventSource(`/api/mobile/stream?session_id=${encodeURIComponent(sessionId)}`)
+    createSSEConnection(sessionId, userId = null) {
+        const params = new URLSearchParams({
+            session_id: sessionId,
+        })
+        if (userId) params.set('user_id', userId)
+        return new EventSource(`/api/mobile/stream?${params.toString()}`)
     },
 }
 
@@ -1204,6 +1224,17 @@ export const authApi = {
         return resp.data
     },
 
+    // 列出用户目录（任意已登录用户可访问）
+    async listUserDirectory({ role, limit = 500, offset = 0 } = {}) {
+        const params = { limit, offset }
+        if (role) params.role = role
+        const resp = await api.get('/auth/user-directory', { params })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '获取用户目录失败')
+        }
+        return resp.data.data
+    },
+
     // 列出用户（仅管理员）
     async listUsers({ role, limit = 100, offset = 0 } = {}) {
         const params = { limit, offset }
@@ -1229,6 +1260,33 @@ export const authApi = {
         const resp = await api.patch(`/auth/users/${userId}`, data)
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '更新用户失败')
+        }
+        return resp.data.data
+    },
+
+    // 获取范围授权可选项（产品/项目）
+    async getScopeOptions() {
+        const resp = await api.get('/auth/scope-options')
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '获取范围选项失败')
+        }
+        return resp.data.data
+    },
+
+    // 获取用户范围授权
+    async getUserScopes(userId) {
+        const resp = await api.get(`/auth/users/${encodeURIComponent(userId)}/scopes`)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '获取用户范围失败')
+        }
+        return resp.data.data
+    },
+
+    // 更新用户范围授权（全量替换）
+    async updateUserScopes(userId, payload) {
+        const resp = await api.put(`/auth/users/${encodeURIComponent(userId)}/scopes`, payload)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '更新用户范围失败')
         }
         return resp.data.data
     },

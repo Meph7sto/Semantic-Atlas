@@ -73,7 +73,7 @@
               {{ message }}
             </div>
             <div class="login-hint">
-              提示：测试账号 test / 密码 test
+              提示：超级管理员 admin / admin；测试账号 test / test
             </div>
           </form>
         </div>
@@ -99,9 +99,14 @@ const props = defineProps({
 
 const roles = [
   {
+    value: "super_admin",
+    title: "高级管理员 (SUPER_ADMIN)",
+    tag: "全平台最高权限",
+  },
+  {
     value: "admin",
-    title: "超级管理员 (SYS_ADMIN)",
-    tag: "全平台管理",
+    title: "管理员 (ADMIN)",
+    tag: "平台管理",
   },
   {
     value: "client",
@@ -125,7 +130,9 @@ const roles = [
   },
 ];
 
-const selectedRole = ref(props.defaultRole || roles[1].value); // 默认选择 member
+const selectedRole = ref(
+  props.defaultRole || roles.find((role) => role.value === "member")?.value || roles[0].value
+);
 const account = ref("");
 const password = ref("");
 const loading = ref(false);

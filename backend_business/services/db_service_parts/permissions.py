@@ -146,6 +146,10 @@ ROLE_PERMISSIONS = {
 class PermissionsMixin:
     """权限检查相关的数据库操作 Mixin"""
 
+    @staticmethod
+    def _is_super_admin(user: Optional[Dict]) -> bool:
+        return bool(user and user.get("role") == "super_admin")
+
     def get_system_identity(self, user: Dict) -> str:
         """
         获取用户的系统级身份
@@ -159,7 +163,7 @@ class PermissionsMixin:
         # 根据系统级角色判断
         role = user.get("role", "")
 
-        if role == "admin":
+        if role == "super_admin":
             return SYS_ADMIN
 
         external_type = user.get("external_type")
@@ -333,6 +337,8 @@ class PermissionsMixin:
             "project_id": project_id,
             "roles": roles,
             "permissions": sorted(list(permissions)),
+            "can_access_project": self.can_access_project(project_id, user_id, user),
+            "can_edit_project": self.can_edit_project(project_id, user_id, user),
         }
 
     def build_query_filter(
@@ -454,6 +460,7 @@ class PermissionsMixin:
         self,
         project_id: str,
         user_id: str,
+        user: Optional[Dict] = None,
     ) -> bool:
         """
         检查用户是否可以访问项目
@@ -461,12 +468,190 @@ class PermissionsMixin:
         Args:
             project_id: 项目 ID
             user_id: 用户 ID
+            user: 用户信息字典（可选）
 
         Returns:
             是否可以访问
         """
-        # 检查用户是否为项目成员
-        return self.is_project_member(project_id, user_id)
+        if user is None:
+            user = self.get_user_by_id(user_id)
+        if not user:
+            return False
+
+        if self._is_super_admin(user):
+            return True
+
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT p.product_id
+                    FROM manage_projects p
+                    WHERE p.project_id = %s
+                    """,
+                    (project_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return False
+                product_id = row[0]
+
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM user_project_scopes
+                    WHERE user_id = %s AND project_id = %s
+                    """,
+                    (user_id, project_id),
+                )
+                if cur.fetchone():
+                    return True
+
+                if not product_id:
+                    return False
+
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM user_product_scopes
+                    WHERE user_id = %s AND product_id = %s
+                    """,
+                    (user_id, product_id),
+                )
+                return cur.fetchone() is not None
+
+    def can_access_product(
+        self,
+        product_id: str,
+        user_id: str,
+        user: Optional[Dict] = None,
+    ) -> bool:
+        if user is None:
+            user = self.get_user_by_id(user_id)
+        if not user:
+            return False
+        if self._is_super_admin(user):
+            return True
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM user_product_scopes
+                    WHERE user_id = %s AND product_id = %s
+                    """,
+                    (user_id, product_id),
+                )
+                return cur.fetchone() is not None
+
+    def can_edit_product(
+        self,
+        product_id: str,
+        user_id: str,
+        user: Optional[Dict] = None,
+    ) -> bool:
+        if user is None:
+            user = self.get_user_by_id(user_id)
+        if not user:
+            return False
+        if self._is_super_admin(user):
+            return True
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT can_edit
+                    FROM user_product_scopes
+                    WHERE user_id = %s AND product_id = %s
+                    """,
+                    (user_id, product_id),
+                )
+                row = cur.fetchone()
+                return bool(row and row[0])
+
+    def can_edit_project(
+        self,
+        project_id: str,
+        user_id: str,
+        user: Optional[Dict] = None,
+    ) -> bool:
+        if user is None:
+            user = self.get_user_by_id(user_id)
+        if not user:
+            return False
+        if self._is_super_admin(user):
+            return True
+
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT can_edit
+                    FROM user_project_scopes
+                    WHERE user_id = %s AND project_id = %s
+                    """,
+                    (user_id, project_id),
+                )
+                explicit_row = cur.fetchone()
+                if explicit_row is not None:
+                    return bool(explicit_row[0])
+
+                cur.execute(
+                    """
+                    SELECT product_id
+                    FROM manage_projects
+                    WHERE project_id = %s
+                    """,
+                    (project_id,),
+                )
+                project_row = cur.fetchone()
+                if not project_row or not project_row[0]:
+                    return False
+                product_id = project_row[0]
+
+                cur.execute(
+                    """
+                    SELECT can_edit
+                    FROM user_product_scopes
+                    WHERE user_id = %s AND product_id = %s
+                    """,
+                    (user_id, product_id),
+                )
+                product_row = cur.fetchone()
+                return bool(product_row and product_row[0])
+
+    def get_accessible_product_ids(
+        self,
+        user_id: str,
+        user: Optional[Dict] = None,
+    ) -> List[str]:
+        if user is None:
+            user = self.get_user_by_id(user_id)
+        if not user:
+            return []
+
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                if self._is_super_admin(user):
+                    cur.execute(
+                        """
+                        SELECT product_id
+                        FROM manage_products
+                        ORDER BY created_at DESC
+                        """
+                    )
+                    return [row[0] for row in cur.fetchall()]
+
+                cur.execute(
+                    """
+                    SELECT product_id
+                    FROM user_product_scopes
+                    WHERE user_id = %s
+                    ORDER BY granted_at DESC
+                    """,
+                    (user_id,),
+                )
+                return [row[0] for row in cur.fetchall()]
 
     def get_accessible_projects(
         self,
@@ -483,19 +668,366 @@ class PermissionsMixin:
         Returns:
             项目 ID 列表
         """
+        if user is None:
+            user = self.get_user_by_id(user_id)
+        if not user:
+            return []
+
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                if self._is_super_admin(user):
+                    cur.execute(
+                        """
+                        SELECT project_id
+                        FROM manage_projects
+                        ORDER BY created_at DESC
+                        """
+                    )
+                    return [row[0] for row in cur.fetchall()]
+
+                cur.execute(
+                    """
+                    SELECT project_id
+                    FROM user_project_scopes
+                    WHERE user_id = %s
+                    """,
+                    (user_id,),
+                )
+                explicit_project_ids = {row[0] for row in cur.fetchall()}
+
+                product_ids = self.get_accessible_product_ids(user_id, user=user)
+                derived_project_ids: Set[str] = set()
+                if product_ids:
+                    cur.execute(
+                        """
+                        SELECT project_id
+                        FROM manage_projects
+                        WHERE product_id = ANY(%s)
+                        """,
+                        (product_ids,),
+                    )
+                    derived_project_ids = {row[0] for row in cur.fetchall()}
+
+                project_ids = explicit_project_ids | derived_project_ids
+                return sorted(project_ids)
+
+    def list_scope_options(self) -> Dict:
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT DISTINCT project_id FROM project_members
-                    WHERE user_id = %s
-                    ORDER BY joined_at DESC
+                    SELECT product_id, name, status
+                    FROM manage_products
+                    WHERE status = 'active'
+                    ORDER BY created_at DESC
+                    """
+                )
+                products = [
+                    {
+                        "product_id": row[0],
+                        "name": row[1],
+                        "status": row[2],
+                    }
+                    for row in cur.fetchall()
+                ]
+
+                cur.execute(
+                    """
+                    SELECT project_id, name, status, product_id
+                    FROM manage_projects
+                    WHERE status = 'active'
+                    ORDER BY created_at DESC
+                    """
+                )
+                projects = [
+                    {
+                        "project_id": row[0],
+                        "name": row[1],
+                        "status": row[2],
+                        "product_id": row[3],
+                    }
+                    for row in cur.fetchall()
+                ]
+
+        return {
+            "products": products,
+            "projects": projects,
+        }
+
+    def get_user_scopes(self, user_id: str) -> Dict:
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT s.product_id, p.name, s.can_edit, s.granted_by, s.granted_at
+                    FROM user_product_scopes s
+                    JOIN manage_products p ON p.product_id = s.product_id
+                    WHERE s.user_id = %s
+                    ORDER BY p.name ASC
                     """,
                     (user_id,),
                 )
-                rows = cur.fetchall()
+                product_scopes = [
+                    {
+                        "product_id": row[0],
+                        "product_name": row[1],
+                        "can_edit": bool(row[2]),
+                        "granted_by": row[3],
+                        "granted_at": row[4].isoformat() if row[4] else None,
+                    }
+                    for row in cur.fetchall()
+                ]
 
-        return [row[0] for row in rows]
+                cur.execute(
+                    """
+                    SELECT s.project_id, p.name, p.product_id, s.can_edit, s.granted_by, s.granted_at
+                    FROM user_project_scopes s
+                    JOIN manage_projects p ON p.project_id = s.project_id
+                    WHERE s.user_id = %s
+                    ORDER BY p.name ASC
+                    """,
+                    (user_id,),
+                )
+                project_scopes = [
+                    {
+                        "project_id": row[0],
+                        "project_name": row[1],
+                        "product_id": row[2],
+                        "can_edit": bool(row[3]),
+                        "granted_by": row[4],
+                        "granted_at": row[5].isoformat() if row[5] else None,
+                    }
+                    for row in cur.fetchall()
+                ]
+
+        return {
+            "product_scopes": product_scopes,
+            "project_scopes": project_scopes,
+        }
+
+    def replace_user_scopes(
+        self,
+        user_id: str,
+        product_scopes: List[Dict],
+        project_scopes: List[Dict],
+        granted_by: str,
+    ) -> Dict:
+        product_map: Dict[str, bool] = {}
+        for item in product_scopes:
+            product_id = str(item.get("product_id", "")).strip()
+            if not product_id:
+                continue
+            product_map[product_id] = bool(item.get("can_edit", False))
+
+        project_map: Dict[str, bool] = {}
+        for item in project_scopes:
+            project_id = str(item.get("project_id", "")).strip()
+            if not project_id:
+                continue
+            project_map[project_id] = bool(item.get("can_edit", False))
+
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT user_id, role
+                    FROM auth_users
+                    WHERE user_id = %s
+                    """,
+                    (user_id,),
+                )
+                user_row = cur.fetchone()
+                if not user_row:
+                    raise ValueError("目标用户不存在")
+                if user_row[1] == "super_admin":
+                    raise ValueError("不能配置 super_admin 的可见范围")
+
+                if product_map:
+                    cur.execute(
+                        """
+                        SELECT product_id
+                        FROM manage_products
+                        WHERE product_id = ANY(%s)
+                        """,
+                        (list(product_map.keys()),),
+                    )
+                    existing_product_ids = {row[0] for row in cur.fetchall()}
+                    invalid_product_ids = set(product_map.keys()) - existing_product_ids
+                    if invalid_product_ids:
+                        raise ValueError(
+                            f"存在无效产品ID: {', '.join(sorted(invalid_product_ids))}"
+                        )
+
+                if project_map:
+                    cur.execute(
+                        """
+                        SELECT project_id
+                        FROM manage_projects
+                        WHERE project_id = ANY(%s)
+                        """,
+                        (list(project_map.keys()),),
+                    )
+                    existing_project_ids = {row[0] for row in cur.fetchall()}
+                    invalid_project_ids = set(project_map.keys()) - existing_project_ids
+                    if invalid_project_ids:
+                        raise ValueError(
+                            f"存在无效项目ID: {', '.join(sorted(invalid_project_ids))}"
+                        )
+
+                cur.execute(
+                    "DELETE FROM user_product_scopes WHERE user_id = %s",
+                    (user_id,),
+                )
+                cur.execute(
+                    "DELETE FROM user_project_scopes WHERE user_id = %s",
+                    (user_id,),
+                )
+
+                for product_id, can_edit in product_map.items():
+                    cur.execute(
+                        """
+                        INSERT INTO user_product_scopes (user_id, product_id, can_edit, granted_by, granted_at, updated_at)
+                        VALUES (%s, %s, %s, %s, NOW(), NOW())
+                        """,
+                        (user_id, product_id, can_edit, granted_by),
+                    )
+
+                for project_id, can_edit in project_map.items():
+                    cur.execute(
+                        """
+                        INSERT INTO user_project_scopes (user_id, project_id, can_edit, granted_by, granted_at, updated_at)
+                        VALUES (%s, %s, %s, %s, NOW(), NOW())
+                        """,
+                        (user_id, project_id, can_edit, granted_by),
+                    )
+
+                conn.commit()
+
+        return self.get_user_scopes(user_id)
+
+    def grant_full_scopes_for_user(self, user_id: str, granted_by: Optional[str] = None) -> None:
+        user = self.get_user_by_id(user_id)
+        if not user:
+            return
+        if user.get("role") == "super_admin":
+            return
+
+        operator = granted_by or user_id
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO user_product_scopes (user_id, product_id, can_edit, granted_by, granted_at, updated_at)
+                    SELECT %s, p.product_id, TRUE, %s, NOW(), NOW()
+                    FROM manage_products p
+                    ON CONFLICT (user_id, product_id) DO NOTHING
+                    """,
+                    (user_id, operator),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO user_project_scopes (user_id, project_id, can_edit, granted_by, granted_at, updated_at)
+                    SELECT %s, p.project_id, TRUE, %s, NOW(), NOW()
+                    FROM manage_projects p
+                    ON CONFLICT (user_id, project_id) DO NOTHING
+                    """,
+                    (user_id, operator),
+                )
+                conn.commit()
+
+    def upsert_user_product_scope(
+        self,
+        user_id: str,
+        product_id: str,
+        can_edit: bool,
+        granted_by: str,
+    ) -> None:
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO user_product_scopes (user_id, product_id, can_edit, granted_by, granted_at, updated_at)
+                    VALUES (%s, %s, %s, %s, NOW(), NOW())
+                    ON CONFLICT (user_id, product_id)
+                    DO UPDATE SET
+                        can_edit = EXCLUDED.can_edit,
+                        granted_by = EXCLUDED.granted_by,
+                        updated_at = NOW()
+                    """,
+                    (user_id, product_id, can_edit, granted_by),
+                )
+                conn.commit()
+
+    def upsert_user_project_scope(
+        self,
+        user_id: str,
+        project_id: str,
+        can_edit: bool,
+        granted_by: str,
+    ) -> None:
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO user_project_scopes (user_id, project_id, can_edit, granted_by, granted_at, updated_at)
+                    VALUES (%s, %s, %s, %s, NOW(), NOW())
+                    ON CONFLICT (user_id, project_id)
+                    DO UPDATE SET
+                        can_edit = EXCLUDED.can_edit,
+                        granted_by = EXCLUDED.granted_by,
+                        updated_at = NOW()
+                    """,
+                    (user_id, project_id, can_edit, granted_by),
+                )
+                conn.commit()
+
+    def grant_project_scope_to_all_non_super_users(
+        self,
+        project_id: str,
+        granted_by: str,
+        can_edit: bool = True,
+    ) -> None:
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO user_project_scopes (user_id, project_id, can_edit, granted_by, granted_at, updated_at)
+                    SELECT u.user_id, %s, %s, %s, NOW(), NOW()
+                    FROM auth_users u
+                    WHERE u.role <> 'super_admin'
+                    ON CONFLICT (user_id, project_id)
+                    DO UPDATE SET
+                        can_edit = EXCLUDED.can_edit,
+                        granted_by = EXCLUDED.granted_by,
+                        updated_at = NOW()
+                    """,
+                    (project_id, can_edit, granted_by),
+                )
+                conn.commit()
+
+    def grant_product_scope_to_all_non_super_users(
+        self,
+        product_id: str,
+        granted_by: str,
+        can_edit: bool = True,
+    ) -> None:
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO user_product_scopes (user_id, product_id, can_edit, granted_by, granted_at, updated_at)
+                    SELECT u.user_id, %s, %s, %s, NOW(), NOW()
+                    FROM auth_users u
+                    WHERE u.role <> 'super_admin'
+                    ON CONFLICT (user_id, product_id)
+                    DO UPDATE SET
+                        can_edit = EXCLUDED.can_edit,
+                        granted_by = EXCLUDED.granted_by,
+                        updated_at = NOW()
+                    """,
+                    (product_id, can_edit, granted_by),
+                )
+                conn.commit()
 
     def filter_requirements_by_permission(
         self,

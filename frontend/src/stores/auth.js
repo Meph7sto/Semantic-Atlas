@@ -29,7 +29,7 @@ export const useAuthStore = defineStore('auth', () => {
     const role = user.value?.role
     const externalType = user.value?.external_type
 
-    if (role === 'admin') {
+    if (role === 'super_admin' || role === 'admin') {
       return 'SYS_ADMIN'
     }
     if (externalType === 'CLIENT') {
@@ -48,8 +48,11 @@ export const useAuthStore = defineStore('auth', () => {
     const role = user.value?.role
     const externalType = user.value?.external_type
 
-    if (role === 'admin') {
+    if (role === 'super_admin') {
       return '超级管理员'
+    }
+    if (role === 'admin') {
+      return '管理员'
     }
     if (externalType === 'CLIENT') {
       return '甲方客户'

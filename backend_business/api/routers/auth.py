@@ -20,14 +20,73 @@ from backend_business.api.routers.schemas.auth_schemas import (
     UpdateUserRequest,
     ApproveRegistrationRequest,
     RejectRegistrationRequest,
+    UpdateUserScopesRequest,
 )
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
 
+_ROLE_SUPER_ADMIN = "super_admin"
+_ROLE_ADMIN = "admin"
+_MANAGEABLE_ROLES_FOR_SUPER_ADMIN = {"admin", "member", "viewer"}
+_MANAGEABLE_ROLES_FOR_ADMIN = {"member", "viewer"}
+
+
+def _get_operator_user(current_user: dict) -> dict:
+    if db_service is None:
+        raise ErrorResponse("数据库服务未初始化", 500)
+    operator = db_service.get_user_by_id(current_user["user_id"])
+    if not operator:
+        raise ErrorResponse("当前用户不存在", 404)
+    return operator
+
+
+def _assert_can_create_user(operator_role: str, target_role: str) -> None:
+    if target_role == _ROLE_SUPER_ADMIN:
+        raise ErrorResponse("不允许通过接口创建 super_admin", 403)
+    if operator_role == _ROLE_SUPER_ADMIN:
+        if target_role not in _MANAGEABLE_ROLES_FOR_SUPER_ADMIN:
+            raise ErrorResponse("无效的目标角色", 400)
+        return
+    if operator_role == _ROLE_ADMIN:
+        if target_role not in _MANAGEABLE_ROLES_FOR_ADMIN:
+            raise ErrorResponse("普通管理员仅可创建 member/viewer 用户", 403)
+        return
+    raise ErrorResponse("权限不足", 403)
+
+
+def _assert_can_manage_target(
+    operator_role: str,
+    target_role: Optional[str],
+    desired_role: Optional[str] = None,
+) -> None:
+    current_target_role = target_role or "viewer"
+    final_role = desired_role or current_target_role
+
+    if current_target_role == _ROLE_SUPER_ADMIN:
+        raise ErrorResponse("不能管理 super_admin 用户", 403)
+    if final_role == _ROLE_SUPER_ADMIN:
+        raise ErrorResponse("不允许将用户设置为 super_admin", 403)
+
+    if operator_role == _ROLE_SUPER_ADMIN:
+        if final_role not in _MANAGEABLE_ROLES_FOR_SUPER_ADMIN:
+            raise ErrorResponse("无效的目标角色", 400)
+        return
+
+    if operator_role == _ROLE_ADMIN:
+        if current_target_role not in _MANAGEABLE_ROLES_FOR_ADMIN:
+            raise ErrorResponse("普通管理员仅可管理 member/viewer 用户", 403)
+        if final_role not in _MANAGEABLE_ROLES_FOR_ADMIN:
+            raise ErrorResponse("普通管理员仅可设置 member/viewer 角色", 403)
+        return
+
+    raise ErrorResponse("权限不足", 403)
+
+
 # ========================
 # 公开端点（无需认证）
 # ========================
+
 
 @router.post("/auth/login")
 def login(req: LoginRequest):
@@ -92,7 +151,7 @@ def login(req: LoginRequest):
 
     # 特殊处理：test 用户可以模拟任何角色和外部身份
     if username == "test":
-        if selected_role in ("admin", "member", "viewer"):
+        if selected_role in ("super_admin", "admin", "member", "viewer"):
             user_role = selected_role
         # 如果前端选择了外部身份
         if selected_role == "client":
@@ -197,13 +256,14 @@ def register(req: RegisterRequest):
         "data": {
             **user,
             "message": "注册成功，请等待管理员审核",
-        }
+        },
     }
 
 
 # ========================
 # 需要认证的端点
 # ========================
+
 
 @router.get("/auth/verify")
 def verify_token(current_user: dict = Depends(get_current_user)):
@@ -289,7 +349,9 @@ def get_profile(current_user: dict = Depends(get_current_user)):
 
 
 @router.patch("/auth/profile")
-def update_profile(req: UpdateProfileRequest, current_user: dict = Depends(get_current_user)):
+def update_profile(
+    req: UpdateProfileRequest, current_user: dict = Depends(get_current_user)
+):
     """
     更新当前用户的个人资料（仅允许修改 display_name 和 avatar_url）
 
@@ -323,7 +385,9 @@ def update_profile(req: UpdateProfileRequest, current_user: dict = Depends(get_c
 
 
 @router.post("/auth/profile/change-password")
-def change_password(req: ChangePasswordRequest, current_user: dict = Depends(get_current_user)):
+def change_password(
+    req: ChangePasswordRequest, current_user: dict = Depends(get_current_user)
+):
     """
     修改当前用户的密码（需要验证旧密码）
 
@@ -367,9 +431,56 @@ def change_password(req: ChangePasswordRequest, current_user: dict = Depends(get
     return {"success": True, "message": "密码修改成功"}
 
 
+@router.get("/auth/user-directory")
+def list_user_directory(
+    role: Optional[str] = None,
+    limit: int = Query(default=500, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    列出可用于用户选择的目录（所有用户，含未激活）
+
+    Query Params:
+        role: 可选角色筛选
+        limit: 返回数量（默认 500，最大 1000）
+        offset: 偏移量（默认 0）
+    """
+    if db_service is None:
+        raise ErrorResponse("数据库服务未初始化", 500)
+
+    result = db_service.list_users(
+        role=role,
+        limit=limit,
+        offset=offset,
+        include_inactive=True,
+    )
+    users = [
+        {
+            "user_id": user.get("user_id"),
+            "username": user.get("username"),
+            "display_name": user.get("display_name"),
+            "role": user.get("role"),
+        }
+        for user in (result.get("users") or [])
+        if user.get("user_id")
+    ]
+
+    return {
+        "success": True,
+        "data": {
+            "users": users,
+            "total": result.get("total", len(users)),
+            "limit": limit,
+            "offset": offset,
+        },
+    }
+
+
 # ========================
 # 管理员端点
 # ========================
+
 
 @router.get("/auth/users")
 def list_users(
@@ -435,6 +546,9 @@ def create_user(
     if db_service is None:
         raise ErrorResponse("数据库服务未初始化", 500)
 
+    operator = _get_operator_user(current_user)
+    operator_role = operator.get("role")
+
     username = req.username.strip()
     password = req.password
     display_name = req.display_name.strip()
@@ -449,6 +563,7 @@ def create_user(
 
     if role not in ("admin", "member", "viewer"):
         raise ErrorResponse("无效的角色", 400)
+    _assert_can_create_user(operator_role, role)
 
     # 验证 external_type
     if external_type and external_type not in ("CLIENT", "CONTRACTOR"):
@@ -475,6 +590,7 @@ def create_user(
         role=role,
         external_type=external_type,
     )
+    db_service.grant_full_scopes_for_user(user_id, granted_by=operator["user_id"])
 
     return {"success": True, "data": user}
 
@@ -498,12 +614,23 @@ def update_user(
     if db_service is None:
         raise ErrorResponse("数据库服务未初始化", 500)
 
+    operator = _get_operator_user(current_user)
+    operator_role = operator.get("role")
+    target_user = db_service.get_registration_details(user_id)
+    if not target_user:
+        raise ErrorResponse("用户不存在", 404)
+
     display_name = req.display_name
     role = req.role
     is_active = req.is_active
 
     if role and role not in ("admin", "member", "viewer"):
         raise ErrorResponse("无效的角色", 400)
+    _assert_can_manage_target(
+        operator_role=operator_role,
+        target_role=target_user.get("role"),
+        desired_role=role or target_user.get("role"),
+    )
 
     user = db_service.update_user(
         user_id=user_id,
@@ -515,12 +642,89 @@ def update_user(
     if not user:
         raise ErrorResponse("用户不存在", 404)
 
+    # 仅当用户没有现有 scope 配置时才授予全权限
+    # 避免覆盖由 super_admin 精心配置的可见范围
+    if target_user.get("role") not in ("super_admin",):
+        scopes = db_service.get_user_scopes(user_id)
+        has_existing_scopes = bool(scopes.get("product_scopes") or scopes.get("project_scopes"))
+        if not has_existing_scopes:
+            db_service.grant_full_scopes_for_user(user_id, granted_by=operator["user_id"])
+
     return {"success": True, "data": user}
+
+
+@router.get("/auth/scope-options")
+def get_scope_options(current_user: dict = Depends(require_admin)):
+    """获取范围配置选项（产品/项目列表）"""
+    if db_service is None:
+        raise ErrorResponse("数据库服务未初始化", 500)
+
+    _ = _get_operator_user(current_user)
+    options = db_service.list_scope_options()
+    return {"success": True, "data": options}
+
+
+@router.get("/auth/users/{user_id}/scopes")
+def get_user_scopes(
+    user_id: str,
+    current_user: dict = Depends(require_admin),
+):
+    """获取用户可见范围配置"""
+    if db_service is None:
+        raise ErrorResponse("数据库服务未初始化", 500)
+
+    operator = _get_operator_user(current_user)
+    target = db_service.get_registration_details(user_id)
+    if not target:
+        raise ErrorResponse("用户不存在", 404)
+
+    _assert_can_manage_target(
+        operator_role=operator.get("role"),
+        target_role=target.get("role"),
+        desired_role=target.get("role"),
+    )
+    scopes = db_service.get_user_scopes(user_id)
+    return {"success": True, "data": scopes}
+
+
+@router.put("/auth/users/{user_id}/scopes")
+def update_user_scopes(
+    user_id: str,
+    req: UpdateUserScopesRequest,
+    current_user: dict = Depends(require_admin),
+):
+    """更新用户可见范围（全量替换）"""
+    if db_service is None:
+        raise ErrorResponse("数据库服务未初始化", 500)
+
+    operator = _get_operator_user(current_user)
+    target = db_service.get_registration_details(user_id)
+    if not target:
+        raise ErrorResponse("用户不存在", 404)
+
+    _assert_can_manage_target(
+        operator_role=operator.get("role"),
+        target_role=target.get("role"),
+        desired_role=target.get("role"),
+    )
+
+    try:
+        result = db_service.replace_user_scopes(
+            user_id=user_id,
+            product_scopes=[item.model_dump() for item in req.product_scopes],
+            project_scopes=[item.model_dump() for item in req.project_scopes],
+            granted_by=operator["user_id"],
+        )
+    except ValueError as e:
+        raise ErrorResponse(str(e), 400)
+
+    return {"success": True, "data": result}
 
 
 # ========================
 # 注册管理接口（管理员专用）
 # ========================
+
 
 @router.get("/auth/registrations")
 def list_registrations(
@@ -553,7 +757,9 @@ def list_registrations(
     if status not in valid_statuses:
         raise ErrorResponse(f"无效的状态，必须是: {', '.join(valid_statuses)}", 400)
 
-    result = db_service.get_pending_registrations(status=status, limit=limit, offset=offset)
+    result = db_service.get_pending_registrations(
+        status=status, limit=limit, offset=offset
+    )
 
     return result
 
@@ -615,7 +821,17 @@ def approve_registration_endpoint(
     if db_service is None:
         raise ErrorResponse("数据库服务未初始化", 500)
 
-    admin_user_id = current_user["user_id"]
+    operator = _get_operator_user(current_user)
+    target_user = db_service.get_registration_details(user_id)
+    if not target_user:
+        raise ErrorResponse("用户不存在或已被处理", 404)
+    _assert_can_manage_target(
+        operator_role=operator.get("role"),
+        target_role=target_user.get("role"),
+        desired_role=req.role,
+    )
+
+    admin_user_id = operator["user_id"]
 
     # 批准注册
     user = db_service.approve_registration(
@@ -627,6 +843,8 @@ def approve_registration_endpoint(
 
     if not user:
         raise ErrorResponse("用户不存在或已被处理", 404)
+
+    db_service.grant_full_scopes_for_user(user_id, granted_by=admin_user_id)
 
     return {
         "success": True,
@@ -663,7 +881,17 @@ def reject_registration_endpoint(
     if db_service is None:
         raise ErrorResponse("数据库服务未初始化", 500)
 
-    admin_user_id = current_user["user_id"]
+    operator = _get_operator_user(current_user)
+    target_user = db_service.get_registration_details(user_id)
+    if not target_user:
+        raise ErrorResponse("用户不存在或已被处理", 404)
+    _assert_can_manage_target(
+        operator_role=operator.get("role"),
+        target_role=target_user.get("role"),
+        desired_role=target_user.get("role"),
+    )
+
+    admin_user_id = operator["user_id"]
 
     # 拒绝注册
     user = db_service.reject_registration(

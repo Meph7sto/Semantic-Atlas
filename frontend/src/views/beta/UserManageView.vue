@@ -27,6 +27,7 @@
             <div class="filter-bar">
               <select v-model="filterRole" class="filter-input" @change="loadUsers">
                 <option value="">全部角色</option>
+                <option value="super_admin">高级管理员</option>
                 <option value="admin">管理员</option>
                 <option value="member">项目成员</option>
                 <option value="viewer">访客</option>
@@ -62,9 +63,10 @@
                     <td>{{ user.is_active ? '正常' : '已禁用' }}</td>
                     <td>{{ formatDate(user.created_at) }}</td>
                     <td class="ops">
-                      <button class="link-btn" @click="editUser(user)">编辑</button>
-                      <button class="link-btn" @click="toggleUserStatus(user)">{{ user.is_active ? '禁用' : '启用' }}</button>
-                      <button class="link-btn" @click="resetPassword(user)">重置密码</button>
+                      <button class="link-btn" :disabled="!canManageUser(user)" @click="openScopeModal(user)">范围权限</button>
+                      <button class="link-btn" :disabled="!canManageUser(user)" @click="editUser(user)">编辑</button>
+                      <button class="link-btn" :disabled="!canManageUser(user)" @click="toggleUserStatus(user)">{{ user.is_active ? '禁用' : '启用' }}</button>
+                      <button class="link-btn" :disabled="!canManageUser(user)" @click="resetPassword(user)">重置密码</button>
                     </td>
                   </tr>
                 </tbody>
@@ -136,9 +138,7 @@
           <div class="form-group">
             <label>系统角色 *</label>
             <select v-model="userForm.role" class="filter-input">
-              <option value="admin">管理员</option>
-              <option value="member">项目成员</option>
-              <option value="viewer">访客（只读）</option>
+              <option v-for="r in manageableRoleOptions" :key="r.value" :value="r.value">{{ r.label }}</option>
             </select>
           </div>
           <div class="form-group">
@@ -171,9 +171,7 @@
           <div class="form-group">
             <label>系统角色 *</label>
             <select v-model="approvalForm.role" class="filter-input">
-              <option value="admin">管理员</option>
-              <option value="member">项目成员</option>
-              <option value="viewer">访客（只读）</option>
+              <option v-for="r in manageableRoleOptions" :key="r.value" :value="r.value">{{ r.label }}</option>
             </select>
           </div>
           <div class="form-group">
@@ -211,11 +209,70 @@
         </div>
       </div>
     </div>
+
+    <div v-if="showScopeModal && selectedScopeUser" class="modal-overlay" @click.self="closeScopeModal">
+      <div class="modal-card scope-modal">
+        <div class="modal-header">
+          <h2>范围权限配置 · {{ selectedScopeUser.display_name || selectedScopeUser.username }}</h2>
+          <button class="link-btn" @click="closeScopeModal">关闭</button>
+        </div>
+        <div class="modal-body">
+          <div v-if="scopeLoading" class="state">加载中...</div>
+          <template v-else>
+            <p class="page-subtitle">产品授权会自动推导该产品下项目可见。项目授权用于补充或覆盖可编辑权限。</p>
+            <div class="scope-section">
+              <h3>产品范围</h3>
+              <table class="table scope-table">
+                <thead>
+                  <tr>
+                    <th>产品</th>
+                    <th>可见</th>
+                    <th>可编辑</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in scopeProducts" :key="item.product_id">
+                    <td>{{ item.name }}</td>
+                    <td><input v-model="item.visible" type="checkbox" /></td>
+                    <td><input v-model="item.can_edit" type="checkbox" :disabled="!item.visible" /></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="scope-section">
+              <h3>项目范围</h3>
+              <table class="table scope-table">
+                <thead>
+                  <tr>
+                    <th>项目</th>
+                    <th>所属产品</th>
+                    <th>可见</th>
+                    <th>可编辑</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in scopeProjects" :key="item.project_id">
+                    <td>{{ item.name }}</td>
+                    <td>{{ item.product_name || '—' }}</td>
+                    <td><input v-model="item.visible" type="checkbox" /></td>
+                    <td><input v-model="item.can_edit" type="checkbox" :disabled="!item.visible" /></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </template>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" :disabled="scopeSaving" @click="closeScopeModal">取消</button>
+          <button class="btn btn-primary" :disabled="scopeSaving || scopeLoading" @click="saveUserScopes">{{ scopeSaving ? '保存中...' : '保存配置' }}</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import Sidebar from '@/components/beta/Sidebar.vue'
 import { authApi } from '@/utils/api.js'
@@ -252,6 +309,16 @@ const filterExternal = ref('')
 const filterKeyword = ref('')
 const showCreateModal = ref(false)
 const editingUser = ref(null)
+const showScopeModal = ref(false)
+const selectedScopeUser = ref(null)
+const scopeLoading = ref(false)
+const scopeSaving = ref(false)
+const scopeProducts = ref([])
+const scopeProjects = ref([])
+// Track programmatic updates to prevent infinite loops
+const isUpdatingFromParent = ref(false)
+const isUpdatingFromChild = ref(false)
+
 const userForm = reactive({
   user_id: '',
   username: '',
@@ -273,6 +340,21 @@ const selectedRegistration = ref(null)
 const approvalForm = reactive({ role: 'member', external_type: '' })
 const rejectForm = reactive({ reason: '' })
 
+const manageableRoleOptions = computed(() => {
+  const currentRole = authStore.user?.role
+  if (currentRole === 'super_admin') {
+    return [
+      { value: 'admin', label: '管理员' },
+      { value: 'member', label: '项目成员' },
+      { value: 'viewer', label: '访客（只读）' },
+    ]
+  }
+  return [
+    { value: 'member', label: '项目成员' },
+    { value: 'viewer', label: '访客（只读）' },
+  ]
+})
+
 let searchTimer = null
 const debouncedSearch = () => {
   clearTimeout(searchTimer)
@@ -285,10 +367,21 @@ const switchTab = (tab) => {
   else loadRegistrations()
 }
 
-const getRoleLabel = (role) => ({ admin: '管理员', member: '项目成员', viewer: '访客' }[role] || role)
+const getRoleLabel = (role) => ({ super_admin: '高级管理员', admin: '管理员', member: '项目成员', viewer: '访客' }[role] || role)
 const getExternalLabel = (externalType) => ({ CLIENT: '甲方客户', CONTRACTOR: '外包成员' }[externalType] || '内部人员')
 const registrationStatusLabel = (status) => ({ pending: '待审批', approved: '已通过', rejected: '已拒绝' }[status] || status)
 const formatDate = (iso) => (iso ? new Date(iso).toLocaleDateString('zh-CN') : '—')
+
+const canManageUser = (targetUser) => {
+  const operatorRole = authStore.user?.role
+  const targetRole = targetUser?.role
+
+  if (!operatorRole || !targetRole) return false
+  if (targetRole === 'super_admin') return false
+  if (operatorRole === 'super_admin') return ['admin', 'member', 'viewer'].includes(targetRole)
+  if (operatorRole === 'admin') return ['member', 'viewer'].includes(targetRole)
+  return false
+}
 
 const loadUsers = async () => {
   loading.value = true
@@ -388,6 +481,147 @@ const saveUser = async () => {
     alert(err.message || '保存失败')
   } finally {
     saving.value = false
+  }
+}
+
+const openScopeModal = async (user) => {
+  if (!canManageUser(user)) return alert('无权限配置该用户范围')
+  selectedScopeUser.value = user
+  showScopeModal.value = true
+  scopeLoading.value = true
+  try {
+    const [options, scopes] = await Promise.all([
+      authApi.getScopeOptions(),
+      authApi.getUserScopes(user.user_id),
+    ])
+
+    const productMap = new Map((scopes.product_scopes || []).map((item) => [item.product_id, item]))
+    const projectMap = new Map((scopes.project_scopes || []).map((item) => [item.project_id, item]))
+    const productNameMap = new Map((options.products || []).map((item) => [item.product_id, item.name]))
+
+    scopeProducts.value = (options.products || []).map((item) => {
+      const scoped = productMap.get(item.product_id)
+      return {
+        product_id: item.product_id,
+        name: item.name,
+        visible: !!scoped,
+        can_edit: scoped ? !!scoped.can_edit : false,
+      }
+    })
+
+    scopeProjects.value = (options.projects || []).map((item) => {
+      const scoped = projectMap.get(item.project_id)
+      return {
+        project_id: item.project_id,
+        name: item.name,
+        product_id: item.product_id || '',
+        product_name: item.product_id ? productNameMap.get(item.product_id) || '' : '',
+        visible: !!scoped,
+        can_edit: scoped ? !!scoped.can_edit : false,
+      }
+    })
+  } catch (err) {
+    alert(err.message || '加载范围配置失败')
+    showScopeModal.value = false
+  } finally {
+    scopeLoading.value = false
+  }
+}
+
+const closeScopeModal = () => {
+  if (scopeSaving.value) return
+  showScopeModal.value = false
+  selectedScopeUser.value = null
+  scopeProducts.value = []
+  scopeProjects.value = []
+}
+
+// Watch for product visibility changes - cascade uncheck to child projects
+watch(
+  () => scopeProducts.value.map((p) => ({ id: p.product_id, visible: p.visible })),
+  (newProducts, oldProducts) => {
+    // Skip if this change came from a child update
+    if (isUpdatingFromChild.value) return
+
+    // Find products that changed from checked to unchecked
+    const changes = newProducts.filter((newP, index) => {
+      const oldP = oldProducts[index]
+      return oldP && oldP.visible === true && newP.visible === false
+    })
+
+    // If any product was unchecked, uncheck all its projects
+    if (changes.length > 0) {
+      isUpdatingFromParent.value = true
+
+      changes.forEach((changedProduct) => {
+        scopeProjects.value.forEach((project) => {
+          if (project.product_id === changedProduct.id) {
+            project.visible = false
+            project.can_edit = false
+          }
+        })
+      })
+
+      // Reset flag on next tick to allow future updates
+      nextTick(() => {
+        isUpdatingFromParent.value = false
+      })
+    }
+  },
+  { deep: true },
+)
+
+// Watch for project visibility changes - cascade check to parent product
+watch(
+  () => scopeProjects.value.map((p) => ({ id: p.project_id, productId: p.product_id, visible: p.visible })),
+  (newProjects, oldProjects) => {
+    // Skip if this change came from a parent update
+    if (isUpdatingFromParent.value) return
+
+    // Find projects that changed from unchecked to checked
+    const changes = newProjects.filter((newP, index) => {
+      const oldP = oldProjects[index]
+      return oldP && oldP.visible === false && newP.visible === true
+    })
+
+    // If any project was checked, check its parent product
+    if (changes.length > 0) {
+      isUpdatingFromChild.value = true
+
+      changes.forEach((changedProject) => {
+        const parentProduct = scopeProducts.value.find((p) => p.product_id === changedProject.productId)
+        if (parentProduct) {
+          parentProduct.visible = true
+        }
+      })
+
+      // Reset flag on next tick to allow future updates
+      nextTick(() => {
+        isUpdatingFromChild.value = false
+      })
+    }
+  },
+  { deep: true },
+)
+
+const saveUserScopes = async () => {
+  if (!selectedScopeUser.value) return
+  scopeSaving.value = true
+  try {
+    const payload = {
+      product_scopes: scopeProducts.value
+        .filter((item) => item.visible)
+        .map((item) => ({ product_id: item.product_id, can_edit: !!item.can_edit })),
+      project_scopes: scopeProjects.value
+        .filter((item) => item.visible)
+        .map((item) => ({ project_id: item.project_id, can_edit: !!item.can_edit })),
+    }
+    await authApi.updateUserScopes(selectedScopeUser.value.user_id, payload)
+    closeScopeModal()
+  } catch (err) {
+    alert(err.message || '保存范围配置失败')
+  } finally {
+    scopeSaving.value = false
   }
 }
 
@@ -499,6 +733,7 @@ onMounted(async () => {
 .table th{background:#f8f9fa;border-top:none;font-size:12px;color:#4b5563}
 .ops{display:flex;gap:10px;align-items:center}
 .link-btn{border:none;background:transparent;color:#2563eb;cursor:pointer;padding:0}
+.link-btn:disabled{color:#9ca3af;cursor:not-allowed}
 .link-btn.ok{color:#047857}
 .link-btn.danger{color:#dc2626}
 .btn{border:none;border-radius:6px;padding:8px 12px;cursor:pointer}
@@ -507,9 +742,13 @@ onMounted(async () => {
 .btn-danger{background:#dc2626;color:#fff}
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000}
 .modal-card{width:420px;max-width:90vw;background:#fff;border-radius:10px;overflow:hidden}
+.scope-modal{width:min(980px,96vw)}
 .modal-header,.modal-footer{padding:14px 16px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center}
 .modal-footer{border-bottom:none;border-top:1px solid #e5e7eb;justify-content:flex-end;gap:8px}
 .modal-body{padding:14px 16px}
 .form-group{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+.scope-section{margin-top:14px}
+.scope-section h3{margin:0 0 8px;font-size:14px}
+.scope-table input[type='checkbox']{transform:scale(1.05)}
 @media (max-width: 768px){.user-manage-page{padding:16px}.modal-card{width:100%;max-width:none;height:100%;border-radius:0}}
 </style>

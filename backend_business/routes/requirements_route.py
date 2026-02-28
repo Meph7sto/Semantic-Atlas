@@ -498,6 +498,7 @@ def generate_l4_requirements():
                         "from_cache": True,
                         "requirements": cached.get("requirements", []),
                         "total": cached.get("total", 0),
+                        "generation_results": [],
                     }
                 )
 
@@ -560,6 +561,7 @@ def generate_l4_requirements():
                 "total": saved.get("total", 0),
                 "inserted_count": save_result.get("inserted", 0),
                 "duplicates_skipped": save_result.get("duplicates", 0),
+                "generation_results": resp_data.get("results", []),
                 "kb_version": resp_data.get("kb_version", ""),
                 "model_id": resp_data.get("model_id", ""),
                 "missing_top_ids": missing_ids if "missing_ids" in locals() else [],

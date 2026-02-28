@@ -8,6 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
 
 from backend_business.config import settings
+from backend_business.services.db_service import db_service
 from backend_business.services.requirements_manage_service import (
     RequirementsManageService,
 )
@@ -68,6 +69,46 @@ def _get_actor(request: Request, current_user: Optional[dict] = None) -> str:
     return "system"
 
 
+def _require_project_access(project_id: str, current_user: dict) -> dict:
+    if db_service is None:
+        return {
+            "user_id": current_user.get("user_id"),
+            "role": current_user.get("role"),
+        }
+    user_id = current_user["user_id"]
+    user = db_service.get_user_by_id(user_id)
+    if not user:
+        raise ErrorResponse("用户不存在", 404)
+    if not db_service.can_access_project(project_id, user_id, user):
+        raise ErrorResponse("Permission denied", 403)
+    return user
+
+
+def _require_project_edit(project_id: str, current_user: dict) -> dict:
+    user = _require_project_access(project_id, current_user)
+    user_id = current_user["user_id"]
+    if not db_service.can_edit_project(project_id, user_id, user):
+        raise ErrorResponse("Permission denied", 403)
+    return user
+
+
+def _get_project_id_by_branch(branch_id: str) -> Optional[str]:
+    if db_service is None:
+        return "__unknown_project__"
+    with db_service.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT project_id
+                FROM manage_branch_refs
+                WHERE ref_id = %s
+                """,
+                (branch_id,),
+            )
+            row = cur.fetchone()
+    return row[0] if row else None
+
+
 # ========================
 # Projects
 # ========================
@@ -96,6 +137,8 @@ def create_project(
     }
     """
     actor = _get_actor(request, current_user)
+    if (current_user or {}).get("role") not in ("super_admin", "admin"):
+        raise ErrorResponse("Permission denied", 403)
     try:
         project = _service.create_project(
             name=req.name,
@@ -104,6 +147,14 @@ def create_project(
         )
     except ValueError as e:
         raise ErrorResponse(str(e), 400)
+    if db_service is not None and (current_user or {}).get("role") != "super_admin":
+        db_service.upsert_user_project_scope(
+            user_id=actor,
+            project_id=project["project_id"],
+            can_edit=True,
+            granted_by=actor,
+        )
+
     _service.add_audit_log(
         project_id=project["project_id"],
         actor=actor,
@@ -116,7 +167,7 @@ def create_project(
 
 
 @router.get("/projects")
-def list_projects():
+def list_projects(current_user: Optional[dict] = Depends(get_current_user)):
     """
     列出所有项目
 
@@ -125,11 +176,25 @@ def list_projects():
         "projects": [...]
     }
     """
-    return {"projects": _service.list_projects()}
+    if db_service is None:
+        return {"projects": _service.list_projects()}
+    user_id = current_user["user_id"]
+    user = db_service.get_user_by_id(user_id)
+    if not user:
+        raise ErrorResponse("用户不存在", 404)
+
+    projects = _service.list_projects()
+    if user.get("role") == "super_admin":
+        return {"projects": projects}
+    accessible = set(db_service.get_accessible_projects(user_id, user=user))
+    return {"projects": [p for p in projects if p.get("project_id") in accessible]}
 
 
 @router.get("/projects/{project_id}")
-def get_project(project_id: str):
+def get_project(
+    project_id: str,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
     """
     获取项目详情
 
@@ -140,6 +205,7 @@ def get_project(project_id: str):
         ...
     }
     """
+    _require_project_access(project_id, current_user)
     project = _service.get_project(project_id)
     if not project:
         raise ErrorResponse("Project not found", 404)
@@ -168,6 +234,7 @@ def update_project(
     }
     """
     actor = _get_actor(request, current_user)
+    _require_project_edit(project_id, current_user)
 
     # Handle current_session_id update
     if "current_session_id" in req.model_fields_set:
@@ -230,6 +297,7 @@ def delete_project(
     }
     """
     actor = _get_actor(request, current_user)
+    _require_project_edit(project_id, current_user)
     try:
         affected = _service.archive_project(project_id, updated_by=actor)
     except Exception as e:
@@ -288,6 +356,7 @@ def create_requirement(
     }
     """
     actor = _get_actor(request, current_user)
+    _require_project_edit(project_id, current_user)
     try:
         req_result = _service.create_requirement(
             project_id=project_id,
@@ -325,6 +394,7 @@ def list_requirements(
     project_id: str,
     include_deleted: bool = Query(False),
     tree: bool = Query(False),
+    current_user: Optional[dict] = Depends(get_current_user),
 ):
     """
     列出项目需求
@@ -344,6 +414,7 @@ def list_requirements(
         "orphans": [...]
     }
     """
+    _require_project_access(project_id, current_user)
     if tree:
         tree_result, orphans = _service.get_requirement_tree(
             project_id, include_deleted=include_deleted
@@ -384,6 +455,7 @@ def import_requirements(
     }
     """
     actor = _get_actor(request, current_user)
+    _require_project_edit(project_id, current_user)
     result = _service.import_from_session(
         session_id=req.session_id,
         project_id=project_id,
@@ -431,6 +503,10 @@ def update_requirement(
     }
     """
     actor = _get_actor(request, current_user)
+    req_before = _service.get_requirement(req_id)
+    if not req_before:
+        raise ErrorResponse("需求不存在", 404)
+    _require_project_edit(req_before["project_id"], current_user)
 
     # 转换为字典，过滤 None 值
     update_data = req.model_dump(exclude_unset=True)
@@ -473,6 +549,11 @@ def bulk_update_requirement_status(
     }
     """
     actor = _get_actor(request, current_user)
+    for req_id in req.req_ids:
+        req_item = _service.get_requirement(req_id)
+        if not req_item:
+            raise ErrorResponse(f"需求不存在: {req_id}", 404)
+        _require_project_edit(req_item["project_id"], current_user)
     try:
         result = _service.bulk_update_requirement_status(
             req.req_ids, req.status, updated_by=actor
@@ -505,6 +586,10 @@ def move_requirement(
     }
     """
     actor = _get_actor(request, current_user)
+    req_before = _service.get_requirement(req_id)
+    if not req_before:
+        raise ErrorResponse("需求不存在", 404)
+    _require_project_edit(req_before["project_id"], current_user)
     try:
         _service.move_requirement(
             req_id, req.parent_id, req.order_index, updated_by=actor
@@ -546,6 +631,10 @@ def delete_requirement(
     }
     """
     actor = _get_actor(request, current_user)
+    req_before = _service.get_requirement(req_id)
+    if not req_before:
+        raise ErrorResponse("需求不存在", 404)
+    _require_project_edit(req_before["project_id"], current_user)
     try:
         affected = _service.delete_requirement(req_id, cascade=cascade, updated_by=actor)
     except ValueError as e:
@@ -595,6 +684,7 @@ def create_test_case(
     }
     """
     actor = _get_actor(request, current_user)
+    _require_project_edit(project_id, current_user)
     tc = _service.create_test_case(
         project_id=project_id,
         title=req.title,
@@ -615,7 +705,10 @@ def create_test_case(
 
 
 @router.get("/projects/{project_id}/test-cases")
-def list_test_cases(project_id: str):
+def list_test_cases(
+    project_id: str,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
     """
     列出项目测试用例
 
@@ -624,6 +717,7 @@ def list_test_cases(project_id: str):
         "test_cases": [...]
     }
     """
+    _require_project_access(project_id, current_user)
     return {"test_cases": _service.list_test_cases(project_id)}
 
 
@@ -649,6 +743,10 @@ def bind_test_case(
     }
     """
     actor = _get_actor(request, current_user)
+    req_before = _service.get_requirement(req_id)
+    if not req_before:
+        raise ErrorResponse("需求不存在", 404)
+    _require_project_edit(req_before["project_id"], current_user)
     try:
         _service.bind_test_case(req_id, req.test_case_id, req.link_type)
     except ValueError as e:
@@ -704,6 +802,7 @@ def create_milestone(
     }
     """
     actor = _get_actor(request, current_user)
+    _require_project_edit(project_id, current_user)
     try:
         milestone = _service.create_milestone(
             project_id=project_id,
@@ -734,7 +833,10 @@ def create_milestone(
 
 
 @router.get("/projects/{project_id}/milestones")
-def list_milestones(project_id: str):
+def list_milestones(
+    project_id: str,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
     """
     列出项目里程碑
 
@@ -743,11 +845,15 @@ def list_milestones(project_id: str):
         "milestones": [...]
     }
     """
+    _require_project_access(project_id, current_user)
     return {"milestones": _service.list_milestones(project_id)}
 
 
 @router.get("/milestones/{milestone_id}")
-def get_milestone(milestone_id: str):
+def get_milestone(
+    milestone_id: str,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
     """
     获取里程碑详情
 
@@ -764,6 +870,7 @@ def get_milestone(milestone_id: str):
     milestone = _service.get_milestone(milestone_id, include_nodes=True)
     if not milestone:
         raise ErrorResponse("Milestone not found", 404)
+    _require_project_access(milestone["project_id"], current_user)
     return milestone
 
 
@@ -782,6 +889,10 @@ def set_baseline(
     }
     """
     actor = _get_actor(request, current_user)
+    milestone = _service.get_milestone(milestone_id, include_nodes=False)
+    if not milestone:
+        raise ErrorResponse("Milestone not found", 404)
+    _require_project_edit(milestone["project_id"], current_user)
     try:
         _service.set_baseline(milestone_id)
         milestone = _service.get_milestone(milestone_id, include_nodes=False)
@@ -800,7 +911,10 @@ def set_baseline(
 
 
 @router.post("/milestones/compare")
-def compare_milestones(req: CompareMilestonesRequest):
+def compare_milestones(
+    req: CompareMilestonesRequest,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
     """
     比较两个里程碑
 
@@ -825,6 +939,12 @@ def compare_milestones(req: CompareMilestonesRequest):
         "to_tree": [...]
     }
     """
+    from_milestone = _service.get_milestone(req.from_milestone_id, include_nodes=False)
+    to_milestone = _service.get_milestone(req.to_milestone_id, include_nodes=False)
+    if not from_milestone or not to_milestone:
+        raise ErrorResponse("里程碑不存在", 404)
+    _require_project_access(from_milestone["project_id"], current_user)
+    _require_project_access(to_milestone["project_id"], current_user)
     try:
         diff = _service.compare_milestones(req.from_milestone_id, req.to_milestone_id)
         return diff
@@ -860,6 +980,7 @@ def add_milestone_edge(
     }
     """
     actor = _get_actor(request, current_user)
+    _require_project_edit(project_id, current_user)
     try:
         edge = _service.add_milestone_edge(
             project_id=project_id,
@@ -884,7 +1005,10 @@ def add_milestone_edge(
 
 
 @router.get("/projects/{project_id}/milestone-graph")
-def list_milestone_graph(project_id: str):
+def list_milestone_graph(
+    project_id: str,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
     """
     获取项目里程碑图
 
@@ -894,6 +1018,7 @@ def list_milestone_graph(project_id: str):
         "edges": [...]
     }
     """
+    _require_project_access(project_id, current_user)
     return _service.list_milestone_graph(project_id)
 
 
@@ -926,6 +1051,7 @@ def create_branch(
     }
     """
     actor = _get_actor(request, current_user)
+    _require_project_edit(project_id, current_user)
     branch = _service.create_branch(project_id, req.base_milestone_id, req.name, actor)
     _service.add_audit_log(
         project_id=project_id,
@@ -939,7 +1065,10 @@ def create_branch(
 
 
 @router.get("/projects/{project_id}/branches")
-def list_branches(project_id: str):
+def list_branches(
+    project_id: str,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
     """
     列出项目分支
 
@@ -948,6 +1077,7 @@ def list_branches(project_id: str):
         "branches": [...]
     }
     """
+    _require_project_access(project_id, current_user)
     return {"branches": _service.list_branches(project_id)}
 
 
@@ -978,6 +1108,10 @@ def add_change_set(
     }
     """
     actor = _get_actor(request, current_user)
+    project_id = _get_project_id_by_branch(branch_id)
+    if not project_id:
+        raise ErrorResponse("分支不存在", 404)
+    _require_project_edit(project_id, current_user)
     change = _service.add_change_set(
         branch_id=branch_id,
         change_type=req.change_type,
@@ -990,7 +1124,10 @@ def add_change_set(
 
 
 @router.get("/branches/{branch_id}/changes")
-def list_change_sets(branch_id: str):
+def list_change_sets(
+    branch_id: str,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
     """
     列出分支变更集
 
@@ -999,6 +1136,10 @@ def list_change_sets(branch_id: str):
         "changes": [...]
     }
     """
+    project_id = _get_project_id_by_branch(branch_id)
+    if not project_id:
+        raise ErrorResponse("分支不存在", 404)
+    _require_project_access(project_id, current_user)
     return {"changes": _service.list_change_sets(branch_id)}
 
 
@@ -1022,6 +1163,10 @@ def create_impact_report(
     }
     """
     actor = _get_actor(request, current_user)
+    project_id = _get_project_id_by_branch(branch_id)
+    if not project_id:
+        raise ErrorResponse("分支不存在", 404)
+    _require_project_edit(project_id, current_user)
     report = _service.create_impact_report(branch_id, actor)
     return report
 
@@ -1050,6 +1195,10 @@ def create_merge_request(
     }
     """
     actor = _get_actor(request, current_user)
+    project_id = _get_project_id_by_branch(branch_id)
+    if not project_id:
+        raise ErrorResponse("分支不存在", 404)
+    _require_project_edit(project_id, current_user)
     merge = _service.create_merge_request(branch_id, req.target_milestone_id, actor)
     return merge
 
@@ -1081,6 +1230,7 @@ def merge_branches(
     }
     """
     actor = _get_actor(request, current_user)
+    _require_project_edit(project_id, current_user)
     try:
         result = _service.merge_branches(
             project_id=project_id,
@@ -1111,6 +1261,7 @@ def merge_branches(
 def list_audits(
     project_id: str,
     limit: int = Query(100, ge=1, le=1000),
+    current_user: Optional[dict] = Depends(get_current_user),
 ):
     """
     列出项目审计日志
@@ -1123,4 +1274,5 @@ def list_audits(
         "logs": [...]
     }
     """
+    _require_project_access(project_id, current_user)
     return {"logs": _service.list_audit_logs(project_id, limit=limit)}

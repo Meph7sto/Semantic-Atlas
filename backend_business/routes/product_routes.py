@@ -36,7 +36,7 @@ def _require_product_write(product_id: str):
 # Products CRUD
 # ----------------------
 @product_bp.post("/products")
-def create_product():
+def create_product():  # 已迁移到 backend_business/api/routers/product.py
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
     if not name:
@@ -68,7 +68,7 @@ def create_product():
 
 
 @product_bp.get("/products")
-def list_products():
+def list_products():  # 已迁移到 backend_business/api/routers/product.py
     include_archived = request.args.get("include_archived") in ("1", "true", "True")
     return jsonify(
         {"products": service.list_products(include_archived=include_archived)}
@@ -76,7 +76,7 @@ def list_products():
 
 
 @product_bp.get("/products/<product_id>")
-def get_product(product_id: str):
+def get_product(product_id: str):  # 已迁移到 backend_business/api/routers/product.py
     product = service.get_product(product_id)
     if not product:
         return _json_error("Product not found", 404)
@@ -84,7 +84,7 @@ def get_product(product_id: str):
 
 
 @product_bp.patch("/products/<product_id>")
-def update_product(product_id: str):
+def update_product(product_id: str):  # 已迁移到 backend_business/api/routers/product.py
     denied = _require_product_write(product_id)
     if denied:
         return denied
@@ -106,7 +106,7 @@ def update_product(product_id: str):
 
 
 @product_bp.delete("/products/<product_id>")
-def delete_product(product_id: str):
+def delete_product(product_id: str):  # 已迁移到 backend_business/api/routers/product.py
     denied = _require_product_write(product_id)
     if denied:
         return denied
@@ -132,7 +132,7 @@ def delete_product(product_id: str):
 # Product Members
 # ----------------------
 @product_bp.post("/products/<product_id>/members")
-def add_member(product_id: str):
+def add_member(product_id: str):  # 已迁移到 backend_business/api/routers/product.py
     denied = _require_product_write(product_id)
     if denied:
         return denied

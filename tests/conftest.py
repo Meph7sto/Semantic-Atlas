@@ -79,7 +79,18 @@ _HAS_TRANSFORMERS = _transformers_import_ok()
 
 
 def pytest_ignore_collect(collection_path, config):  # type: ignore[no-untyped-def]
-    """Skip inference-heavy tests when transformers isn't usable."""
+    """Skip inference-heavy tests when transformers isn't usable.
+
+    Tests are organized by functional domain in subdirectories:
+    - analysis/: Analysis pipeline tests
+    - requirements/: Requirements processing tests
+    - inference/: Inference backend tests (many require transformers)
+    - auth/: Authentication & authorization tests
+    - agents/: Agent-related tests
+    - management/: Project/product management tests
+    - mobile/: Mobile-specific tests
+    - fixtures/: Test data files and utility scripts
+    """
 
     if _HAS_TRANSFORMERS:
         return False
@@ -92,17 +103,19 @@ def pytest_ignore_collect(collection_path, config):  # type: ignore[no-untyped-d
     if basename is None and hasattr(collection_path, "name"):
         basename = getattr(collection_path, "name")
 
-    # These tests pull in backend_inference local HF engine.
+    # These tests pull in backend_inference local HF engine (now in tests/inference/).
     if str(basename) in {
         "test_tool_calls.py",
         "test_async_engine.py",
         "test_api_provider.py",
         "test_conflict.py",
         "test_traceability.py",
+        "test_deepseek_thinking_tools.py",  # Also requires transformers
     }:
         return True
 
     # Also skip the ad-hoc postgres script test when psycopg2 isn't available.
+    # This is now in tests/fixtures/test_postgres.py
     if str(basename) == "test_postgres.py":
         return True
 
