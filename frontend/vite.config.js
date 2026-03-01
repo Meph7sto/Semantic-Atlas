@@ -13,6 +13,10 @@ export default defineConfig({
     server: {
         port: 8008,
         proxy: {
+            '/api/v2/': {
+                target: 'http://localhost:5002',
+                changeOrigin: true
+            },
             '/api/analysis': {
                 target: 'http://localhost:5002',
                 changeOrigin: true
@@ -39,6 +43,10 @@ export default defineConfig({
     preview: {
         port: 8008,
         proxy: {
+            '/api/v2/': {
+                target: 'http://localhost:5002',
+                changeOrigin: true
+            },
             '/api/analysis': {
                 target: 'http://localhost:5002',
                 changeOrigin: true

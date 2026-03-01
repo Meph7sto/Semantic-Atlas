@@ -17,6 +17,7 @@ import MobileBridge from '../views/alpha/MobileBridge.vue'
 import FileReceive from '../views/alpha/FileReceive.vue'
 import AgentCollaboration from '../views/alpha/AgentCollaboration.vue'
 import AgentChat from '../views/alpha/AgentChat.vue'
+import ExecutionTopologyTemplate from '../views/alpha/ExecutionTopologyTemplate.vue'
 
 // Main views (migrated from frontend_ref)
 import LoginView from '../views/beta/LoginView.vue'
@@ -218,6 +219,12 @@ const router = createRouter({
                     path: 'agent-chat',
                     name: 'agent-chat',
                     component: AgentChat,
+                    meta: { keepAlive: true }
+                },
+                {
+                    path: 'execution-topology',
+                    name: 'execution-topology',
+                    component: ExecutionTopologyTemplate,
                     meta: { keepAlive: true }
                 }
             ]

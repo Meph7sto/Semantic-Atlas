@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 [CmdletBinding()]
 param(
   [ValidateSet("all", "backend", "inference", "business", "frontend")]
@@ -452,7 +452,8 @@ if ($doBusiness) {
       }
     }
     if ($needsOverride) {
-      $selectedPort = Select-PostgresPort -DefaultPort ([int]$env:POSTGRES_PORT) -DockerExe ($dockerCmd ? $dockerCmd.Source : $null) -ContainerName "semantic-atlas-postgres"
+      $dockerExePath = if ($dockerCmd) { $dockerCmd.Source } else { $null }
+      $selectedPort = Select-PostgresPort -DefaultPort ([int]$env:POSTGRES_PORT) -DockerExe $dockerExePath -ContainerName "semantic-atlas-postgres"
       if ($selectedPort -ne [int]$env:POSTGRES_PORT) {
         Write-Warning "[start] Port $($env:POSTGRES_PORT) is in use. Switching PostgreSQL host port to $selectedPort."
         $env:POSTGRES_PORT = "$selectedPort"
