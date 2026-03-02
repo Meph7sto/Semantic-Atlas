@@ -1,6 +1,6 @@
 """
 项目管理路由 - FastAPI 版本
-对应 Flask blueprint: manage_bp (url_prefix="/api/manage")
+统一 v2 前缀：/api/v2/manage/*
 """
 
 from typing import Optional
@@ -38,7 +38,7 @@ from backend_business.api.routers.schemas.manage_schemas import (
     MergeBranchesRequest,
 )
 
-router = APIRouter(prefix="/api/manage", tags=["manage"])
+router = APIRouter(prefix="/api/v2/manage", tags=["manage"])
 
 # 初始化管理服务
 _service = RequirementsManageService(dsn=settings.POSTGRES_DSN)

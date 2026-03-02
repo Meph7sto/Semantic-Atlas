@@ -4,7 +4,7 @@ import { api } from './request'
 export const authApi = {
     // 登录
     async login(username, password, role = 'member') {
-        const resp = await api.post('/auth/login', {
+        const resp = await api.post('/v2/auth/login', {
             username,
             password,
             role,
@@ -17,7 +17,7 @@ export const authApi = {
 
     // 注册
     async register(username, password, displayName, role = 'viewer') {
-        const resp = await api.post('/auth/register', {
+        const resp = await api.post('/v2/auth/register', {
             username,
             password,
             display_name: displayName,
@@ -31,7 +31,7 @@ export const authApi = {
 
     // 验证 Token
     async verify() {
-        const resp = await api.get('/auth/verify')
+        const resp = await api.get('/v2/auth/verify')
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || 'Token 无效')
         }
@@ -40,7 +40,7 @@ export const authApi = {
 
     // 获取当前用户信息
     async getCurrentUser() {
-        const resp = await api.get('/auth/me')
+        const resp = await api.get('/v2/auth/me')
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '获取用户信息失败')
         }
@@ -49,7 +49,7 @@ export const authApi = {
 
     // 登出
     async logout() {
-        const resp = await api.post('/auth/logout')
+        const resp = await api.post('/v2/auth/logout')
         return resp.data
     },
 
@@ -57,7 +57,7 @@ export const authApi = {
     async listUserDirectory({ role, limit = 500, offset = 0 } = {}) {
         const params = { limit, offset }
         if (role) params.role = role
-        const resp = await api.get('/auth/user-directory', { params })
+        const resp = await api.get('/v2/auth/user-directory', { params })
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '获取用户目录失败')
         }
@@ -68,7 +68,7 @@ export const authApi = {
     async listUsers({ role, limit = 100, offset = 0 } = {}) {
         const params = { limit, offset }
         if (role) params.role = role
-        const resp = await api.get('/auth/users', { params })
+        const resp = await api.get('/v2/auth/users', { params })
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '获取用户列表失败')
         }
@@ -77,7 +77,7 @@ export const authApi = {
 
     // 创建用户（仅管理员）
     async createUser(data) {
-        const resp = await api.post('/auth/users', data)
+        const resp = await api.post('/v2/auth/users', data)
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '创建用户失败')
         }
@@ -86,7 +86,7 @@ export const authApi = {
 
     // 更新用户（仅管理员）
     async updateUser(userId, data) {
-        const resp = await api.patch(`/auth/users/${userId}`, data)
+        const resp = await api.patch(`/v2/auth/users/${userId}`, data)
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '更新用户失败')
         }
@@ -95,7 +95,7 @@ export const authApi = {
 
     // 获取范围授权可选项（产品/项目）
     async getScopeOptions() {
-        const resp = await api.get('/auth/scope-options')
+        const resp = await api.get('/v2/auth/scope-options')
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '获取范围选项失败')
         }
@@ -104,7 +104,7 @@ export const authApi = {
 
     // 获取用户范围授权
     async getUserScopes(userId) {
-        const resp = await api.get(`/auth/users/${encodeURIComponent(userId)}/scopes`)
+        const resp = await api.get(`/v2/auth/users/${encodeURIComponent(userId)}/scopes`)
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '获取用户范围失败')
         }
@@ -113,7 +113,7 @@ export const authApi = {
 
     // 更新用户范围授权（全量替换）
     async updateUserScopes(userId, payload) {
-        const resp = await api.put(`/auth/users/${encodeURIComponent(userId)}/scopes`, payload)
+        const resp = await api.put(`/v2/auth/users/${encodeURIComponent(userId)}/scopes`, payload)
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '更新用户范围失败')
         }
@@ -122,7 +122,7 @@ export const authApi = {
 
     // 列出注册申请（仅管理员）
     async listRegistrations({ status = 'pending', limit = 100, offset = 0 } = {}) {
-        const resp = await api.get('/auth/registrations', {
+        const resp = await api.get('/v2/auth/registrations', {
             params: { status, limit, offset },
         })
         if (resp.data?.success === false) {
@@ -133,7 +133,7 @@ export const authApi = {
 
     // 获取注册申请详情（仅管理员）
     async getRegistration(userId) {
-        const resp = await api.get(`/auth/registrations/${encodeURIComponent(userId)}`)
+        const resp = await api.get(`/v2/auth/registrations/${encodeURIComponent(userId)}`)
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '获取注册申请详情失败')
         }
@@ -146,7 +146,7 @@ export const authApi = {
         if (external_type !== undefined && external_type !== '') {
             payload.external_type = external_type
         }
-        const resp = await api.post(`/auth/registrations/${encodeURIComponent(userId)}/approve`, payload)
+        const resp = await api.post(`/v2/auth/registrations/${encodeURIComponent(userId)}/approve`, payload)
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '批准注册申请失败')
         }
@@ -155,7 +155,7 @@ export const authApi = {
 
     // 拒绝注册申请（仅管理员）
     async rejectRegistration(userId, reason) {
-        const resp = await api.post(`/auth/registrations/${encodeURIComponent(userId)}/reject`, { reason })
+        const resp = await api.post(`/v2/auth/registrations/${encodeURIComponent(userId)}/reject`, { reason })
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '拒绝注册申请失败')
         }
@@ -164,7 +164,7 @@ export const authApi = {
 
     // 获取待审批注册申请数量（仅管理员）
     async getPendingRegistrationCount() {
-        const resp = await api.get('/auth/registrations/pending/count')
+        const resp = await api.get('/v2/auth/registrations/pending/count')
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '获取待审批注册数量失败')
         }
@@ -176,7 +176,7 @@ export const authApi = {
 
     // 获取当前用户个人资料
     async getProfile() {
-        const resp = await api.get('/auth/profile')
+        const resp = await api.get('/v2/auth/profile')
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '获取个人资料失败')
         }
@@ -188,7 +188,7 @@ export const authApi = {
         const body = {}
         if (display_name !== undefined) body.display_name = display_name
         if (avatar_url !== undefined) body.avatar_url = avatar_url
-        const resp = await api.patch('/auth/profile', body)
+        const resp = await api.patch('/v2/auth/profile', body)
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '更新个人资料失败')
         }
@@ -197,7 +197,7 @@ export const authApi = {
 
     // 修改当前用户密码
     async changePassword(oldPassword, newPassword) {
-        const resp = await api.post('/auth/profile/change-password', {
+        const resp = await api.post('/v2/auth/profile/change-password', {
             old_password: oldPassword,
             new_password: newPassword,
         })
@@ -207,3 +207,4 @@ export const authApi = {
         return resp.data
     },
 }
+

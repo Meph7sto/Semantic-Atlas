@@ -3,25 +3,25 @@ import { api } from './request'
 // 需求管理监控 API
 export const manageApi = {
     async createProject(payload) {
-        const resp = await api.post('/manage/projects', payload)
+        const resp = await api.post('/v2/manage/projects', payload)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async listProjects() {
-        const resp = await api.get('/manage/projects')
+        const resp = await api.get('/v2/manage/projects')
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async getProject(projectId) {
-        const resp = await api.get(`/manage/projects/${encodeURIComponent(projectId)}`)
+        const resp = await api.get(`/v2/manage/projects/${encodeURIComponent(projectId)}`)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async updateProject(projectId, payload) {
-        const resp = await api.patch(`/manage/projects/${encodeURIComponent(projectId)}`, payload)
+        const resp = await api.patch(`/v2/manage/projects/${encodeURIComponent(projectId)}`, payload)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
@@ -31,13 +31,13 @@ export const manageApi = {
     },
 
     async deleteProject(projectId) {
-        const resp = await api.delete(`/manage/projects/${encodeURIComponent(projectId)}`)
+        const resp = await api.delete(`/v2/manage/projects/${encodeURIComponent(projectId)}`)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async listRequirements(projectId, { tree = false } = {}) {
-        const resp = await api.get(`/manage/projects/${encodeURIComponent(projectId)}/requirements`, {
+        const resp = await api.get(`/v2/manage/projects/${encodeURIComponent(projectId)}/requirements`, {
             params: tree ? { tree: true } : undefined,
         })
         if (resp.data?.error) throw new Error(resp.data.error)
@@ -45,31 +45,31 @@ export const manageApi = {
     },
 
     async createRequirement(projectId, payload) {
-        const resp = await api.post(`/manage/projects/${encodeURIComponent(projectId)}/requirements`, payload)
+        const resp = await api.post(`/v2/manage/projects/${encodeURIComponent(projectId)}/requirements`, payload)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async updateRequirement(reqId, payload) {
-        const resp = await api.patch(`/manage/requirements/${encodeURIComponent(reqId)}`, payload)
+        const resp = await api.patch(`/v2/manage/requirements/${encodeURIComponent(reqId)}`, payload)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async bulkUpdateRequirementStatus(payload) {
-        const resp = await api.post('/manage/requirements/bulk-status', payload)
+        const resp = await api.post('/v2/manage/requirements/bulk-status', payload)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async moveRequirement(reqId, payload) {
-        const resp = await api.post(`/manage/requirements/${encodeURIComponent(reqId)}/move`, payload)
+        const resp = await api.post(`/v2/manage/requirements/${encodeURIComponent(reqId)}/move`, payload)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async deleteRequirement(reqId, { cascade = false } = {}) {
-        const resp = await api.delete(`/manage/requirements/${encodeURIComponent(reqId)}`, {
+        const resp = await api.delete(`/v2/manage/requirements/${encodeURIComponent(reqId)}`, {
             params: cascade ? { cascade: true } : undefined,
         })
         if (resp.data?.error) throw new Error(resp.data.error)
@@ -77,7 +77,7 @@ export const manageApi = {
     },
 
     async importFromSession(projectId, payload) {
-        const resp = await api.post(`/manage/projects/${encodeURIComponent(projectId)}/requirements/import`, payload)
+        const resp = await api.post(`/v2/manage/projects/${encodeURIComponent(projectId)}/requirements/import`, payload)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
@@ -88,88 +88,89 @@ export const manageApi = {
     },
 
     async createMilestone(projectId, payload) {
-        const resp = await api.post(`/manage/projects/${encodeURIComponent(projectId)}/milestones`, payload)
+        const resp = await api.post(`/v2/manage/projects/${encodeURIComponent(projectId)}/milestones`, payload)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async listMilestones(projectId) {
-        const resp = await api.get(`/manage/projects/${encodeURIComponent(projectId)}/milestones`)
+        const resp = await api.get(`/v2/manage/projects/${encodeURIComponent(projectId)}/milestones`)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async getMilestone(milestoneId) {
-        const resp = await api.get(`/manage/milestones/${encodeURIComponent(milestoneId)}`)
+        const resp = await api.get(`/v2/manage/milestones/${encodeURIComponent(milestoneId)}`)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async setBaseline(milestoneId) {
-        const resp = await api.post(`/manage/milestones/${encodeURIComponent(milestoneId)}/baseline`)
+        const resp = await api.post(`/v2/manage/milestones/${encodeURIComponent(milestoneId)}/baseline`)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async compareMilestones(payload) {
-        const resp = await api.post('/manage/milestones/compare', payload)
+        const resp = await api.post('/v2/manage/milestones/compare', payload)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async listMilestoneGraph(projectId) {
-        const resp = await api.get(`/manage/projects/${encodeURIComponent(projectId)}/milestone-graph`)
+        const resp = await api.get(`/v2/manage/projects/${encodeURIComponent(projectId)}/milestone-graph`)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async createBranch(projectId, payload) {
-        const resp = await api.post(`/manage/projects/${encodeURIComponent(projectId)}/branches`, payload)
+        const resp = await api.post(`/v2/manage/projects/${encodeURIComponent(projectId)}/branches`, payload)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async mergeBranches(projectId, payload) {
-        const resp = await api.post(`/manage/projects/${encodeURIComponent(projectId)}/branches/merge`, payload)
+        const resp = await api.post(`/v2/manage/projects/${encodeURIComponent(projectId)}/branches/merge`, payload)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async listBranches(projectId) {
-        const resp = await api.get(`/manage/projects/${encodeURIComponent(projectId)}/branches`)
+        const resp = await api.get(`/v2/manage/projects/${encodeURIComponent(projectId)}/branches`)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async addChangeSet(branchId, payload) {
-        const resp = await api.post(`/manage/branches/${encodeURIComponent(branchId)}/changes`, payload)
+        const resp = await api.post(`/v2/manage/branches/${encodeURIComponent(branchId)}/changes`, payload)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async listChangeSets(branchId) {
-        const resp = await api.get(`/manage/branches/${encodeURIComponent(branchId)}/changes`)
+        const resp = await api.get(`/v2/manage/branches/${encodeURIComponent(branchId)}/changes`)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async createImpactReport(branchId) {
-        const resp = await api.post(`/manage/branches/${encodeURIComponent(branchId)}/impact`)
+        const resp = await api.post(`/v2/manage/branches/${encodeURIComponent(branchId)}/impact`)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async createMergeRequest(branchId, payload) {
-        const resp = await api.post(`/manage/branches/${encodeURIComponent(branchId)}/merge`, payload)
+        const resp = await api.post(`/v2/manage/branches/${encodeURIComponent(branchId)}/merge`, payload)
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 
     async listAudits(projectId, limit = 100) {
-        const resp = await api.get(`/manage/projects/${encodeURIComponent(projectId)}/audits`, {
+        const resp = await api.get(`/v2/manage/projects/${encodeURIComponent(projectId)}/audits`, {
             params: { limit },
         })
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
 }
+

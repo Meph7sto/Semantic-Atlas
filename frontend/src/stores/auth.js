@@ -155,7 +155,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     try {
-      const resp = await fetch(`/api/permission/projects/${encodeURIComponent(projectId)}/context`, {
+      const resp = await fetch(`/api/v2/permission/projects/${encodeURIComponent(projectId)}/context`, {
         headers: {
           'Authorization': `Bearer ${token.value}`
         }
@@ -336,4 +336,5 @@ export const useAuthStore = defineStore('auth', () => {
     updateUser,
   }
 })
+
 

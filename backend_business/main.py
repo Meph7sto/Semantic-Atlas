@@ -76,9 +76,9 @@ else:
 
 # 注册路由（Phase 2 逐步迁移）
 # - dedup 暂走 /api/v2，便于与 Flask 并行灰度
-# - auth 直接走 /api/auth，与前端和 Nginx 分流规则保持一致
-# - permission 走 /api/permission，与前端既有调用路径保持一致
-# - manage 走 /api/manage，项目管理模块
+# - auth 走 /api/v2/auth，认证模块
+# - permission 走 /api/v2/permission，权限管理模块
+# - manage 走 /api/v2/manage，项目管理模块
 # - product 走 /api/product，产品管理模块
 # - conflict 走 /api/conflict，冲突检测模块
 from backend_business.api.routers import (

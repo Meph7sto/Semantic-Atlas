@@ -1,6 +1,6 @@
 """
 权限管理路由聚合
-保持 prefix="/api/permission" 和既有路由路径不变。
+统一 v2 前缀：/api/v2/permission/*
 """
 
 from fastapi import APIRouter
@@ -24,7 +24,7 @@ def check_project_access(project_id: str, user_id: str) -> bool:
 
 from . import baselines, change_requests, context, members, reviews
 
-router = APIRouter(prefix="/api/permission", tags=["permission"])
+router = APIRouter(prefix="/api/v2/permission", tags=["permission"])
 router.include_router(members.router)
 router.include_router(reviews.router)
 router.include_router(baselines.router)
