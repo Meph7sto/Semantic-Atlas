@@ -2,6 +2,10 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps({
+  containers: {
+    type: Array,
+    default: () => []
+  },
   nodes: {
     type: Array,
     default: () => []
@@ -26,6 +30,16 @@ const NODE_WIDTH = 136
 const NODE_HEIGHT = 64
 const MIN_X = 24
 const MIN_Y = 24
+const CONTAINER_HEADER_HEIGHT = 34
+const CONTAINER_PADDING_X = 26
+const CONTAINER_PADDING_Y = 22
+const CONTAINER_MIN_WIDTH = 244
+const CONTAINER_MIN_HEIGHT = 150
+
+const AUTO_LAYOUT_BASE_X = 94
+const AUTO_LAYOUT_BASE_Y = 98
+const AUTO_LAYOUT_COLUMN_GAP = 320
+const AUTO_LAYOUT_ROW_GAP = 112
 
 const canvasRef = ref(null)
 const movedByDrag = ref(false)
@@ -35,9 +49,17 @@ const edgeOffsets = ref({})
 const nodeDragState = ref(null)
 const edgeDragState = ref(null)
 
+const nodeTypeRank = {
+  start: 0,
+  node: 1,
+  decision: 2,
+  handoff: 3,
+  end: 4
+}
+
 const nodeColors = {
   start: 'bg-emerald-100 border-emerald-500 text-emerald-900',
-  task: 'bg-blue-100 border-blue-500 text-blue-900',
+  node: 'bg-blue-100 border-blue-500 text-blue-900',
   decision: 'bg-amber-100 border-amber-500 text-amber-900',
   handoff: 'bg-sky-100 border-sky-500 text-sky-900',
   end: 'bg-rose-100 border-rose-500 text-rose-900'
@@ -45,10 +67,70 @@ const nodeColors = {
 
 const nodeLabels = {
   start: 'START',
-  task: 'TASK',
+  node: 'NODE',
   decision: 'DECISION',
   handoff: 'HANDOFF',
   end: 'END'
+}
+
+const edgeTypeLabels = {
+  call: '调用',
+  return: '返回',
+  retry: '重试'
+}
+
+const edgeRelationLabels = {
+  intra: '容器内',
+  cross: '跨容器',
+  partial: '跨未分配'
+}
+
+const edgeStyleMap = {
+  intra: {
+    color: '#475569',
+    activeColor: '#1d4ed8',
+    dash: '',
+    markerId: 'execution-graph-arrow-intra'
+  },
+  cross: {
+    color: '#b45309',
+    activeColor: '#1d4ed8',
+    dash: '7 5',
+    markerId: 'execution-graph-arrow-cross'
+  },
+  partial: {
+    color: '#7c3aed',
+    activeColor: '#1d4ed8',
+    dash: '4 4',
+    markerId: 'execution-graph-arrow-partial'
+  }
+}
+
+const containerPalettes = {
+  human: {
+    stroke: '#0f766e',
+    fill: 'rgba(20, 184, 166, 0.10)',
+    header: 'rgba(20, 184, 166, 0.16)',
+    text: '#134e4a'
+  },
+  agent: {
+    stroke: '#2563eb',
+    fill: 'rgba(59, 130, 246, 0.10)',
+    header: 'rgba(59, 130, 246, 0.18)',
+    text: '#1e3a8a'
+  },
+  system: {
+    stroke: '#7c3aed',
+    fill: 'rgba(124, 58, 237, 0.10)',
+    header: 'rgba(124, 58, 237, 0.18)',
+    text: '#4c1d95'
+  },
+  unassigned: {
+    stroke: '#64748b',
+    fill: 'rgba(148, 163, 184, 0.10)',
+    header: 'rgba(148, 163, 184, 0.18)',
+    text: '#334155'
+  }
 }
 
 const toNumber = (value, fallback = 0) => {
@@ -60,34 +142,81 @@ const clamp = (value, minValue = 0) => Math.max(value, minValue)
 
 const round2 = (value) => Math.round(value * 100) / 100
 
-const buildAutoLayout = (nodes) => {
+const normalizeLabel = (value, fallback = '') => {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback
+}
+
+const sortByOrderAndLabel = (a, b) => {
+  const orderDiff = toNumber(a?.order_index, 0) - toNumber(b?.order_index, 0)
+  if (orderDiff !== 0) return orderDiff
+  const aLabel = normalizeLabel(a?.label, normalizeLabel(a?.container_key, ''))
+  const bLabel = normalizeLabel(b?.label, normalizeLabel(b?.container_key, ''))
+  return aLabel.localeCompare(bLabel, 'zh-CN')
+}
+
+const sortNodes = (nodes) => {
+  return [...nodes].sort((a, b) => {
+    const orderDiff = toNumber(a?.order_index, 0) - toNumber(b?.order_index, 0)
+    if (orderDiff !== 0) return orderDiff
+    const rankDiff = toNumber(nodeTypeRank[a?.node_type], 99) - toNumber(nodeTypeRank[b?.node_type], 99)
+    if (rankDiff !== 0) return rankDiff
+    return normalizeLabel(a?.label, '').localeCompare(normalizeLabel(b?.label, ''), 'zh-CN')
+  })
+}
+
+const resolveContainerPalette = (roleType, isUnassigned = false) => {
+  if (isUnassigned) return containerPalettes.unassigned
+  return containerPalettes[roleType] || containerPalettes.agent
+}
+
+const buildNodeColumns = (nodes, containers) => {
+  const sortedContainers = [...containers].sort(sortByOrderAndLabel)
+  const grouped = {}
+  sortedContainers.forEach((container) => {
+    grouped[container.container_id] = []
+  })
+
+  const unassignedNodes = []
+  nodes.forEach((node) => {
+    if (node.container_id && grouped[node.container_id]) {
+      grouped[node.container_id].push(node)
+      return
+    }
+    unassignedNodes.push(node)
+  })
+
+  const columns = sortedContainers.map((container) => ({
+    id: container.container_id,
+    label: normalizeLabel(container.label, container.container_key || '未命名容器'),
+    roleType: container.role_type || 'agent',
+    isUnassigned: false,
+    nodes: sortNodes(grouped[container.container_id] || [])
+  }))
+
+  if (unassignedNodes.length > 0) {
+    columns.push({
+      id: '__unassigned__',
+      label: '未分配容器',
+      roleType: 'unassigned',
+      isUnassigned: true,
+      nodes: sortNodes(unassignedNodes)
+    })
+  }
+
+  return columns
+}
+
+const buildAutoLayout = (nodes, containers) => {
   const positions = {}
-  const gridCols = 4
-  const gridSpacingX = 220
-  const gridSpacingY = 140
+  const columns = buildNodeColumns(nodes, containers)
 
-  const startNodes = nodes.filter((n) => n.node_type === 'start')
-  const endNodes = nodes.filter((n) => n.node_type === 'end')
-  const normalNodes = nodes.filter((n) => n.node_type !== 'start' && n.node_type !== 'end')
-
-  startNodes.forEach((node, index) => {
-    positions[node.node_id] = { x: 80, y: 90 + index * gridSpacingY }
-  })
-
-  normalNodes.forEach((node, index) => {
-    const col = index % gridCols
-    const row = Math.floor(index / gridCols)
-    positions[node.node_id] = {
-      x: 260 + col * gridSpacingX,
-      y: 90 + row * gridSpacingY
-    }
-  })
-
-  endNodes.forEach((node, index) => {
-    positions[node.node_id] = {
-      x: 260 + gridCols * gridSpacingX,
-      y: 90 + index * gridSpacingY
-    }
+  columns.forEach((column, columnIndex) => {
+    column.nodes.forEach((node, rowIndex) => {
+      positions[node.node_id] = {
+        x: AUTO_LAYOUT_BASE_X + columnIndex * AUTO_LAYOUT_COLUMN_GAP + (rowIndex % 2 === 0 ? 0 : 8),
+        y: AUTO_LAYOUT_BASE_Y + rowIndex * AUTO_LAYOUT_ROW_GAP
+      }
+    })
   })
 
   return positions
@@ -96,7 +225,7 @@ const buildAutoLayout = (nodes) => {
 const syncLayoutState = () => {
   const incomingNodePositions = props.layout?.node_positions || {}
   const incomingEdgeOffsets = props.layout?.edge_offsets || {}
-  const autoLayout = buildAutoLayout(props.nodes)
+  const autoLayout = buildAutoLayout(props.nodes, props.containers)
   const mergedPositions = {}
 
   props.nodes.forEach((node) => {
@@ -130,7 +259,7 @@ const syncLayoutState = () => {
   edgeOffsets.value = mergedOffsets
 }
 
-watch([() => props.nodes, () => props.edges, () => props.layout], syncLayoutState, {
+watch([() => props.nodes, () => props.edges, () => props.containers, () => props.layout], syncLayoutState, {
   immediate: true,
   deep: true
 })
@@ -269,12 +398,87 @@ const handleEdgeClick = (edgePath) => {
   emit('select-edge', edgePath.id)
 }
 
+const nodeById = computed(() => {
+  const map = {}
+  props.nodes.forEach((node) => {
+    map[node.node_id] = node
+  })
+  return map
+})
+
+const containerBoxes = computed(() => {
+  const columns = buildNodeColumns(props.nodes, props.containers)
+  const boxes = []
+
+  columns.forEach((column, index) => {
+    const positionedNodes = column.nodes
+      .map((node) => ({
+        node,
+        position: nodePositions.value[node.node_id]
+      }))
+      .filter((item) => item.position)
+
+    let left
+    let top
+    let width
+    let height
+
+    if (positionedNodes.length > 0) {
+      const minX = Math.min(...positionedNodes.map((item) => item.position.x))
+      const minY = Math.min(...positionedNodes.map((item) => item.position.y))
+      const maxX = Math.max(...positionedNodes.map((item) => item.position.x))
+      const maxY = Math.max(...positionedNodes.map((item) => item.position.y))
+
+      left = clamp(minX - CONTAINER_PADDING_X, 10)
+      top = clamp(minY - CONTAINER_HEADER_HEIGHT - 14, 10)
+      width = Math.max(CONTAINER_MIN_WIDTH, maxX - minX + NODE_WIDTH + CONTAINER_PADDING_X * 2)
+      height = Math.max(
+        CONTAINER_MIN_HEIGHT,
+        maxY - minY + NODE_HEIGHT + CONTAINER_HEADER_HEIGHT + CONTAINER_PADDING_Y
+      )
+    } else {
+      left = 56 + index * AUTO_LAYOUT_COLUMN_GAP
+      top = 42
+      width = CONTAINER_MIN_WIDTH
+      height = CONTAINER_MIN_HEIGHT
+    }
+
+    boxes.push({
+      id: column.id,
+      label: column.label,
+      roleType: column.roleType,
+      nodeCount: column.nodes.length,
+      left,
+      top,
+      width,
+      height,
+      isUnassigned: column.isUnassigned,
+      palette: resolveContainerPalette(column.roleType, column.isUnassigned)
+    })
+  })
+
+  return boxes
+})
+
+const resolveEdgeRelation = (sourceContainerId, targetContainerId) => {
+  const sourceId = sourceContainerId || '__unassigned__'
+  const targetId = targetContainerId || '__unassigned__'
+  if (sourceId === targetId) return 'intra'
+  if (sourceId === '__unassigned__' || targetId === '__unassigned__') return 'partial'
+  return 'cross'
+}
+
 const edgePaths = computed(() => {
   return props.edges
     .map((edge) => {
       const sourcePos = nodePositions.value[edge.source_node_id]
       const targetPos = nodePositions.value[edge.target_node_id]
       if (!sourcePos || !targetPos) return null
+
+      const sourceNode = nodeById.value[edge.source_node_id]
+      const targetNode = nodeById.value[edge.target_node_id]
+      const relation = resolveEdgeRelation(sourceNode?.container_id, targetNode?.container_id)
+      const style = edgeStyleMap[relation] || edgeStyleMap.intra
 
       const startX = sourcePos.x + NODE_WIDTH
       const startY = sourcePos.y + NODE_HEIGHT / 2
@@ -301,6 +505,12 @@ const edgePaths = computed(() => {
         id: edge.edge_id,
         edgeType: edge.edge_type,
         label: edge.label,
+        relation,
+        relationLabel: edgeRelationLabels[relation] || '连线',
+        style,
+        displayLabel: edge.label
+          ? `${edge.label} · ${edgeRelationLabels[relation] || '连线'}`
+          : `${edgeTypeLabels[edge.edge_type] || edge.edge_type || '边'} · ${edgeRelationLabels[relation] || '连线'}`,
         path: `M ${startX} ${startY} Q ${controlX} ${controlY} ${endX} ${endY}`,
         controlX,
         controlY,
@@ -330,10 +540,44 @@ onBeforeUnmount(() => {
     class="relative bg-white border border-zinc-300 rounded-xl overflow-hidden"
     style="min-height: 560px; background-image: linear-gradient(0deg, rgba(15,23,42,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(15,23,42,0.04) 1px, transparent 1px); background-size: 24px 24px;"
   >
-    <svg class="absolute inset-0 w-full h-full" style="z-index: 1;">
+    <div class="absolute inset-0 pointer-events-none" style="z-index: 0;">
+      <div
+        v-for="box in containerBoxes"
+        :key="box.id"
+        class="absolute rounded-2xl border shadow-sm"
+        :style="{
+          left: `${box.left}px`,
+          top: `${box.top}px`,
+          width: `${box.width}px`,
+          height: `${box.height}px`,
+          borderColor: box.palette.stroke,
+          background: box.palette.fill
+        }"
+      >
+        <div
+          class="h-8 px-3 flex items-center justify-between text-[11px] font-semibold border-b rounded-t-2xl"
+          :style="{
+            borderColor: box.palette.stroke,
+            background: box.palette.header,
+            color: box.palette.text
+          }"
+        >
+          <span class="truncate">{{ box.label }}</span>
+          <span>{{ box.nodeCount }} 节点</span>
+        </div>
+      </div>
+    </div>
+
+    <svg class="absolute inset-0 w-full h-full" style="z-index: 2;">
       <defs>
-        <marker id="execution-graph-arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-          <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+        <marker id="execution-graph-arrow-intra" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#475569" />
+        </marker>
+        <marker id="execution-graph-arrow-cross" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#b45309" />
+        </marker>
+        <marker id="execution-graph-arrow-partial" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#7c3aed" />
         </marker>
       </defs>
 
@@ -351,9 +595,10 @@ onBeforeUnmount(() => {
         <path
           :d="edgePath.path"
           fill="none"
-          marker-end="url(#execution-graph-arrow)"
-          :stroke="selectedId === edgePath.id ? '#2563eb' : '#64748b'"
+          :marker-end="`url(#${edgePath.style.markerId})`"
+          :stroke="selectedId === edgePath.id ? edgePath.style.activeColor : edgePath.style.color"
           :stroke-width="selectedId === edgePath.id ? 2.8 : 2"
+          :stroke-dasharray="edgePath.style.dash"
           class="pointer-events-none transition-all"
         />
 
@@ -361,22 +606,22 @@ onBeforeUnmount(() => {
           :cx="edgePath.controlX"
           :cy="edgePath.controlY"
           :r="selectedId === edgePath.id ? 6 : 5"
-          :fill="selectedId === edgePath.id ? '#2563eb' : '#94a3b8'"
+          :fill="selectedId === edgePath.id ? edgePath.style.activeColor : edgePath.style.color"
           class="cursor-grab"
           @pointerdown.stop="handleEdgePointerDown(edgePath, $event)"
           @click.stop="handleEdgeClick(edgePath)"
         />
 
         <text
-          v-if="edgePath.label"
+          v-if="edgePath.displayLabel"
           :x="edgePath.labelX"
           :y="edgePath.labelY - 10"
           font-size="12"
-          :fill="selectedId === edgePath.id ? '#1d4ed8' : '#475569'"
+          :fill="selectedId === edgePath.id ? edgePath.style.activeColor : '#334155'"
           text-anchor="middle"
           class="pointer-events-none select-none"
         >
-          {{ edgePath.label }}
+          {{ edgePath.displayLabel }}
         </text>
       </g>
     </svg>
@@ -386,7 +631,7 @@ onBeforeUnmount(() => {
       :key="node.node_id"
       class="absolute select-none touch-none cursor-move transition-shadow"
       :class="[
-        nodeColors[node.node_type] || nodeColors.task,
+        nodeColors[node.node_type] || nodeColors.node,
         selectedId === node.node_id
           ? 'ring-2 ring-blue-500 shadow-lg border-2'
           : 'border-2 shadow-sm hover:shadow-md'
@@ -396,21 +641,37 @@ onBeforeUnmount(() => {
         top: `${nodePositions[node.node_id]?.y ?? MIN_Y}px`,
         width: `${NODE_WIDTH}px`,
         height: `${NODE_HEIGHT}px`,
-        zIndex: selectedId === node.node_id ? 12 : 8
+        zIndex: selectedId === node.node_id ? 16 : 10
       }"
       @pointerdown="handleNodePointerDown(node, $event)"
       @click.stop="handleNodeClick(node)"
     >
       <div class="flex flex-col items-center justify-center h-full px-2">
-        <span class="text-[10px] tracking-wide font-bold mb-1">{{ nodeLabels[node.node_type] || 'TASK' }}</span>
+        <span class="text-[10px] tracking-wide font-bold mb-1">{{ nodeLabels[node.node_type] || 'NODE' }}</span>
         <span class="text-xs font-medium truncate w-full text-center">{{ node.label }}</span>
       </div>
       <div class="absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 bg-white border border-zinc-400 rounded-full" />
       <div class="absolute -right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 bg-white border border-zinc-400 rounded-full" />
     </div>
 
+    <div class="absolute left-4 top-3 px-3 py-2 text-[11px] text-zinc-600 bg-white/95 rounded-lg border border-zinc-200 leading-5" style="z-index: 18;">
+      <div class="font-semibold text-zinc-700 mb-1">关系图例</div>
+      <div class="flex items-center gap-2">
+        <span class="inline-block w-5 h-0.5 bg-slate-600"></span>
+        <span>容器内边</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="inline-block w-5 h-0.5 border-t-2 border-dashed border-amber-700"></span>
+        <span>跨容器边</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="inline-block w-5 h-0.5 border-t-2 border-dashed border-violet-600"></span>
+        <span>跨未分配边</span>
+      </div>
+    </div>
+
     <div class="absolute right-4 top-3 px-2 py-1 text-[11px] text-zinc-500 bg-white/90 rounded border border-zinc-200">
-      拖动节点可移动，拖动边中点可调整连线路径
+      拖动节点可移动；拖动边中点可调整连线路径
     </div>
 
     <div v-if="nodes.length === 0" class="absolute inset-0 flex items-center justify-center text-zinc-400">

@@ -81,7 +81,7 @@
 <script setup>
 import { ref } from "vue";
 import { useRouter } from "vue-router";
-import { authApi } from "@/utils/api.js";
+import { authApi } from "@/api/auth";
 
 const router = useRouter();
 
@@ -205,3 +205,4 @@ const handleBack = () => {
   margin-top: 0.25rem;
 }
 </style>
+

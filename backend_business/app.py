@@ -33,6 +33,7 @@ from backend_business.routes.agent_task_routes import agent_task_bp
 from backend_business.routes.agent_monitor_routes import agent_monitor_bp
 from backend_business.routes.auth_routes import auth_bp
 from backend_business.routes.permission_routes import permission_bp
+from backend_business.routes.execution_topology_structure_routes import execution_topology_structure_bp
 
 
 def create_app() -> Flask:
@@ -67,6 +68,7 @@ def create_app() -> Flask:
     app.register_blueprint(agent_monitor_bp, url_prefix="/api/agent-monitor")
     app.register_blueprint(auth_bp, url_prefix="/api")
     app.register_blueprint(permission_bp, url_prefix="/api/permission")
+    app.register_blueprint(execution_topology_structure_bp, url_prefix="/api/v2/execution-topology")
 
     # 兼容主框架：提供 /health（非 /api/health）
     @app.get("/health")

@@ -1,5 +1,5 @@
 import { ref, computed, watch, onMounted } from 'vue'
-import { manageApi } from '../utils/api'
+import { manageApi } from '@/api/project'
 
 export function useCollectionProjects() {
   const projects = ref([])
@@ -51,3 +51,4 @@ export function useCollectionProjects() {
     loadProjects,
   }
 }
+

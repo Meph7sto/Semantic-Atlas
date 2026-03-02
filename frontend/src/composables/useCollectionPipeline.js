@@ -1,6 +1,7 @@
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import { requirementsL123Api, l4RequirementsApi, manageApi } from '../utils/api'
+import { requirementsL123Api, l4RequirementsApi } from '@/api/requirements'
+import { manageApi } from '@/api/project'
 
 export function useCollectionPipeline() {
   const router = useRouter()
@@ -444,3 +445,4 @@ export function useCollectionPipeline() {
     goToRequirements,
   }
 }
+

@@ -1,20 +1,20 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { 
-  Database, 
-  Sparkles, 
-  CheckCircle, 
-  AlertTriangle, 
-  Loader2, 
-  Play, 
-  RefreshCw, 
-  Trash2, 
+import {
+  Database,
+  Sparkles,
+  CheckCircle,
+  AlertTriangle,
+  Loader2,
+  Play,
+  RefreshCw,
+  Trash2,
   ChevronRight,
   ChevronDown,
   Info,
   Check
 } from 'lucide-vue-next'
-import { requirementsL123Api, l4Api, l4RequirementsApi } from '@/utils/api'
+import { requirementsL123Api, l4Api, l4RequirementsApi } from '@/api/requirements'
 
 // --- State ---
 const sessionId = ref('')
@@ -607,3 +607,4 @@ watch(reqLevelFilter, () => {
   background: #d4d4d8;
 }
 </style>
+

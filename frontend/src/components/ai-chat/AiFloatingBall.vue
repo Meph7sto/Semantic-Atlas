@@ -2,7 +2,8 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Bot, X } from 'lucide-vue-next'
 import AiChatPanel from './AiChatPanel.vue'
-import { aiChatApi, agentTaskApi } from '../../utils/api'
+import { aiChatApi } from '@/api/chat'
+import { agentTaskApi } from '@/api/agent'
 
 const props = defineProps({
     projectId: {
@@ -332,3 +333,4 @@ watch(() => props.projectId, () => {
   background: var(--teal);
 }
 </style>
+

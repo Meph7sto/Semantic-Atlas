@@ -1,6 +1,6 @@
 <script setup>
 import { ref } from 'vue'
-import { chatApi } from '../../utils/api'
+import { chatApi } from '@/api/chat'
 import { MessageSquare, Send, Sparkles } from 'lucide-vue-next'
 
 const question = ref('')
@@ -161,3 +161,4 @@ const askQuestion = async () => {
     </div>
   </div>
 </template>
+

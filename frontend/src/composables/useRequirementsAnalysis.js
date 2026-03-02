@@ -7,7 +7,7 @@ import {
   requirementsL123Api,
   getLatestClassification,
   l4RequirementsApi,
-} from '../utils/api'
+} from '@/api/requirements'
 
 function normalizeLevel(raw) {
   const text = String(raw || '').trim().toUpperCase()
@@ -318,3 +318,4 @@ export function useRequirementsAnalysis(sessionId, highLevelRequirements, lowLev
     loadExistingResults,
   }
 }
+

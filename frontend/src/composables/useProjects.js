@@ -1,5 +1,6 @@
 import { ref, watch } from 'vue'
-import { productApi, manageApi } from '../utils/api'
+import { productApi } from '@/api/product'
+import { manageApi } from '@/api/project'
 import { useRouter } from 'vue-router'
 
 export function useProjects(selectedProduct, loadProductDetails) {
@@ -100,3 +101,4 @@ export function useProjects(selectedProduct, loadProductDetails) {
     goToProject,
   }
 }
+

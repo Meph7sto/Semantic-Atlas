@@ -12,6 +12,8 @@ from backend_business.api.http.errors import ErrorResponse
 from backend_business.api.routers.schemas.execution_graph_schemas import (
     CreateGraphRequest,
     UpdateGraphRequest,
+    CreateContainerRequest,
+    UpdateContainerRequest,
     CreateNodeRequest,
     UpdateNodeRequest,
     CreateEdgeRequest,
@@ -19,6 +21,12 @@ from backend_business.api.routers.schemas.execution_graph_schemas import (
 )
 from backend_business.services.execution_graph_service import (
     ExecutionGraphService,
+)
+from backend_business.services.db_service import db_service
+from backend_business.services.agent.topology import (
+    GraphStructureBuilder,
+    StructureValidator,
+    TopologyStructureSerializer,
 )
 
 router = APIRouter(prefix="/api/v2/execution-topology", tags=["execution-topology"])
@@ -149,6 +157,77 @@ async def delete_graph(
 
 
 # ========================
+# Container Endpoints
+# ========================
+
+
+@router.post("/{graph_id}/containers")
+async def create_container(
+    graph_id: str,
+    req: CreateContainerRequest,
+    request: Request,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    """在图中创建容器"""
+    actor = _get_actor(request, current_user)
+    try:
+        container = _service.create_container(
+            graph_id=graph_id,
+            container_key=req.container_key,
+            label=req.label,
+            role_type=req.role_type,
+            config_json=req.config_json,
+            order_index=req.order_index,
+            created_by=actor,
+        )
+        return container
+    except ValueError as e:
+        raise ErrorResponse(str(e), 400)
+
+
+@router.patch("/containers/{container_id}")
+async def update_container(
+    container_id: str,
+    req: UpdateContainerRequest,
+    request: Request,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    """更新容器"""
+    actor = _get_actor(request, current_user)
+    try:
+        container = _service.update_container(
+            container_id=container_id,
+            label=req.label,
+            role_type=req.role_type,
+            config_json=req.config_json,
+            order_index=req.order_index,
+            updated_by=actor,
+        )
+        if not container:
+            raise ErrorResponse("容器不存在或已删除", 404)
+        return container
+    except ValueError as e:
+        raise ErrorResponse(str(e), 400)
+
+
+@router.delete("/containers/{container_id}")
+async def delete_container(
+    container_id: str,
+    request: Request,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    """删除容器"""
+    actor = _get_actor(request, current_user)
+    try:
+        deleted = _service.delete_container(container_id=container_id, updated_by=actor)
+        if not deleted:
+            raise ErrorResponse("容器不存在或已删除", 404)
+        return {"message": "删除成功"}
+    except ValueError as e:
+        raise ErrorResponse(str(e), 400)
+
+
+# ========================
 # Node Endpoints
 # ========================
 
@@ -169,6 +248,7 @@ async def create_node(
             label=req.label,
             node_type=req.node_type,
             role_type=req.role_type,
+            container_id=req.container_id,
             config_json=req.config_json,
             input_schema_json=req.input_schema_json,
             output_schema_json=req.output_schema_json,
@@ -192,6 +272,7 @@ async def update_node(
     try:
         node = _service.update_node(
             node_id=node_id,
+            container_id=req.container_id,
             label=req.label,
             node_type=req.node_type,
             role_type=req.role_type,
@@ -317,3 +398,192 @@ async def get_graph_detail(
         return detail
     except ValueError as e:
         raise ErrorResponse(str(e), 400)
+
+
+# ========================
+# Topology Structure Endpoints
+# ========================
+
+
+@router.get("/{graph_id}/structure")
+async def get_topology_structure(
+    graph_id: str,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    """获取编译的拓扑结构
+
+    This endpoint loads topology from database and returns
+    compiled runtime structure with containers and edges.
+    """
+    try:
+        # Load graph from database
+        graph = _service.get_execution_graph(graph_id)
+        if not graph:
+            raise ErrorResponse("Graph not found", 404)
+
+        # Load nodes and edges from database
+        nodes = _service.list_execution_nodes(graph_id)
+        containers = _service.list_execution_containers(graph_id)
+        edges = _service.list_execution_edges(graph_id)
+
+        # Build topology structure
+        builder = GraphStructureBuilder(db_service)
+        structure = builder.load_topology(
+            graph_id, graph, nodes, edges, containers
+        )
+
+        # Validate structure
+        validator = StructureValidator()
+        validation = validator.validate(structure)
+        structure.validation_status = "valid" if validation.is_valid else "invalid"
+        structure.validation_errors = validation.errors
+
+        return {
+            "success": True,
+            "structure": {
+                "graph_id": structure.graph_id,
+                "graph_name": structure.graph_name,
+                "containers": [c.to_dict() for c in structure.containers],
+                "edges": [e.to_dict() for e in structure.edges],
+                "start_containers": [c.container_id for c in structure.start_containers],
+                "end_containers": [c.container_id for c in structure.end_containers],
+                "validation_status": structure.validation_status,
+                "validation_errors": structure.validation_errors,
+            },
+        }
+    except ErrorResponse:
+        raise
+    except Exception as e:
+        raise ErrorResponse(f"Error getting topology structure: {e}", 500)
+
+
+@router.post("/{graph_id}/validate")
+async def validate_topology_structure(
+    graph_id: str,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    """验证拓扑结构
+
+    This endpoint loads and validates topology structure.
+    """
+    try:
+        # Load topology structure
+        graph = _service.get_execution_graph(graph_id)
+        if not graph:
+            raise ErrorResponse("Graph not found", 404)
+
+        nodes = _service.list_execution_nodes(graph_id)
+        containers = _service.list_execution_containers(graph_id)
+        edges = _service.list_execution_edges(graph_id)
+
+        builder = GraphStructureBuilder(db_service)
+        structure = builder.load_topology(
+            graph_id, graph, nodes, edges, containers
+        )
+
+        # Validate structure
+        validator = StructureValidator()
+        validation = validator.validate(structure)
+
+        return {
+            "success": True,
+            "result": {
+                "is_valid": validation.is_valid,
+                "errors": validation.errors,
+                "warnings": validation.warnings,
+            },
+        }
+    except ErrorResponse:
+        raise
+    except Exception as e:
+        raise ErrorResponse(f"Error validating topology structure: {e}", 500)
+
+
+@router.get("/{graph_id}/containers")
+async def get_containers(
+    graph_id: str,
+    node_type: Optional[str] = None,
+    role_type: Optional[str] = None,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    """获取所有容器定义
+
+    This endpoint returns list of AgentContainer objects
+    for specified graph, optionally filtered by type or role.
+
+    Query Parameters:
+        node_type: Filter by node type (optional)
+        role_type: Filter by role type (optional)
+    """
+    try:
+        containers = _service.list_execution_containers(graph_id)
+        nodes = _service.list_execution_nodes(graph_id)
+
+        # Apply filters from query parameters
+        if role_type:
+            containers = [c for c in containers if c.get("role_type") == role_type]
+        if node_type:
+            node_types_by_container = {}
+            for node in nodes:
+                cid = node.get("container_id")
+                if not cid:
+                    continue
+                if cid not in node_types_by_container:
+                    node_types_by_container[cid] = set()
+                node_types_by_container[cid].add(node.get("node_type"))
+            containers = [
+                c for c in containers if node_type in node_types_by_container.get(c.get("container_id"), set())
+            ]
+
+        return {
+            "success": True,
+            "containers": containers,
+        }
+    except Exception as e:
+        raise ErrorResponse(f"Error getting containers: {e}", 500)
+
+
+@router.get("/{graph_id}/export")
+async def export_topology(
+    graph_id: str,
+    format: str = "json",
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    """导出拓扑供代理使用
+
+    This endpoint exports topology structure in a format
+    that can be understood and taken over by intelligent agents.
+
+    Query Parameters:
+        format: Export format (only 'json' supported)
+    """
+    try:
+        if format != "json":
+            raise ErrorResponse("Only 'json' format is supported", 400)
+
+        # Load topology structure
+        graph = _service.get_execution_graph(graph_id)
+        if not graph:
+            raise ErrorResponse("Graph not found", 404)
+
+        nodes = _service.list_execution_nodes(graph_id)
+        containers = _service.list_execution_containers(graph_id)
+        edges = _service.list_execution_edges(graph_id)
+
+        builder = GraphStructureBuilder(db_service)
+        structure = builder.load_topology(
+            graph_id, graph, nodes, edges, containers
+        )
+
+        # Serialize for agent consumption
+        serializer = TopologyStructureSerializer()
+        exported_data = serializer.export_for_agent(structure)
+
+        return {
+            "success": True,
+            "exported": exported_data,
+        }
+    except ErrorResponse:
+        raise
+    except Exception as e:
+        raise ErrorResponse(f"Error exporting topology: {e}", 500)

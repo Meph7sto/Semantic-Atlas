@@ -81,12 +81,47 @@ class UpdateGraphRequest(BaseModel):
 
 
 # ========================
+# Container Schemas
+# ========================
+
+
+class CreateContainerRequest(BaseModel):
+    """创建容器请求"""
+    container_key: str = Field(..., min_length=1, description="容器唯一标识（图内唯一）")
+    label: str = Field(..., min_length=1, description="容器显示标签")
+    role_type: str = Field(..., description="角色类型: human|agent|system")
+    config_json: Optional[Dict[str, Any]] = Field(default_factory=dict, description="配置JSON")
+    order_index: int = Field(default=0, description="排序索引")
+
+    @field_validator("role_type")
+    @classmethod
+    def validate_role_type(cls, v):
+        return normalize_role_type(v)
+
+
+class UpdateContainerRequest(BaseModel):
+    """更新容器请求（支持部分字段）"""
+    label: Optional[str] = Field(None, min_length=1, description="容器显示标签")
+    role_type: Optional[str] = Field(None, description="角色类型: human|agent|system")
+    config_json: Optional[Dict[str, Any]] = Field(None, description="配置JSON")
+    order_index: Optional[int] = Field(None, description="排序索引")
+
+    @field_validator("role_type")
+    @classmethod
+    def validate_role_type(cls, v):
+        if v is not None:
+            return normalize_role_type(v)
+        return v
+
+
+# ========================
 # Node Schemas
 # ========================
 
 
 class CreateNodeRequest(BaseModel):
     """创建节点请求"""
+    container_id: Optional[str] = Field(default=None, description="所属容器ID（可选）")
     node_key: str = Field(..., min_length=1, description="节点唯一标识（图内唯一）")
     label: str = Field(..., min_length=1, description="节点显示标签")
     node_type: str = Field(..., description="节点类型: start|node|decision|handoff|end")
@@ -115,6 +150,7 @@ class CreateNodeRequest(BaseModel):
 
 class UpdateNodeRequest(BaseModel):
     """更新节点请求（支持部分字段）"""
+    container_id: Optional[str] = Field(None, description="所属容器ID（可选）")
     label: Optional[str] = Field(None, min_length=1, description="节点显示标签")
     node_type: Optional[str] = Field(None, description="节点类型: start|node|decision|handoff|end")
     role_type: Optional[str] = Field(None, description="角色类型: human|agent|system")

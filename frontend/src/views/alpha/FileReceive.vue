@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import { fileApi } from '../../utils/api'
+import { fileApi } from '@/api/system'
 import { FolderUp, RefreshCw, Download, Trash2, Eye, FileText, Image, File, FileArchive } from 'lucide-vue-next'
 
 const files = ref([])
@@ -213,3 +213,4 @@ onMounted(() => {
         </div>
     </div>
 </template>
+

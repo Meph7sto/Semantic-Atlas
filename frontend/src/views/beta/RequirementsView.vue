@@ -686,7 +686,7 @@ import { useAuthStore } from "@/stores/auth.js";
 import draggable from "vuedraggable";
 import Sidebar from "../../components/beta/Sidebar.vue";
 import RequirementTree from "../../components/charts/RequirementTree.vue";
-import { manageApi } from "../../utils/api";
+import { manageApi } from "@/api/project";
 import { Loader2, FileText, RefreshCw, Briefcase, Users, Layout, Layers, Circle, Clock, CheckCircle, GripVertical, Search, Filter, ChevronDown, ChevronUp, CheckCircle2, Plus, X, Pencil, Download, Upload } from "lucide-vue-next";
 
 const router = useRouter();
@@ -2947,4 +2947,5 @@ onUnmounted(() => {
   border-color: rgba(28, 40, 52, 0.3);
 }
 </style>
+
 

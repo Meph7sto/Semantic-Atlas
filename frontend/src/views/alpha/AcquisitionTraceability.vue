@@ -1,6 +1,14 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { traceabilityApi, conflictApi, classifyTexts, analysisApi, requirementsL123Api, getLatestClassification, l4RequirementsApi } from '../../utils/api'
+import {
+  traceabilityApi,
+  conflictApi,
+  classifyTexts,
+  analysisApi,
+  requirementsL123Api,
+  getLatestClassification,
+  l4RequirementsApi,
+} from '@/api/requirements'
 import draggable from 'vuedraggable'
 import {
   FileText,
@@ -2361,3 +2369,4 @@ onMounted(async () => {
   transform: rotate(2deg) scale(1.05);
 }
 </style>
+

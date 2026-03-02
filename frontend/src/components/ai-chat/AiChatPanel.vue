@@ -1,7 +1,9 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { X, Minus, MessageSquare, ClipboardCheck, History, Plus, Trash2, Pencil, Check, Send, Loader2, RefreshCw } from 'lucide-vue-next'
-import { aiChatApi, agentTaskApi, manageApi } from '../../utils/api'
+import { aiChatApi } from '@/api/chat'
+import { agentTaskApi } from '@/api/agent'
+import { manageApi } from '@/api/project'
 
 const props = defineProps({
     projectId: {
@@ -1154,3 +1156,4 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 4px rgba(196, 105, 47, 0.18);
 }
 </style>
+

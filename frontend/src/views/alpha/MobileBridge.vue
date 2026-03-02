@@ -1,7 +1,8 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import { useAuthStore } from '@/stores/auth.js'
-import { authApi, mobileChatApi } from '../../utils/api'
+import { authApi } from '@/api/auth'
+import { mobileChatApi } from '@/api/chat'
 import { Smartphone, PlugZap, Radio, Send, RefreshCw, CircleDot } from 'lucide-vue-next'
 
 const authStore = useAuthStore()
@@ -552,3 +553,4 @@ onBeforeUnmount(() => {
         </div>
     </div>
 </template>
+

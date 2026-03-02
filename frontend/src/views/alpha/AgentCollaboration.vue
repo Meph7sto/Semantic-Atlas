@@ -9,7 +9,7 @@ import {
     Search,
     Workflow,
 } from 'lucide-vue-next'
-import { agentMonitorApi } from '../../utils/api'
+import { agentMonitorApi } from '@/api/agent'
 import AlphaRequirementsPanel from '../../components/alpha/AlphaRequirementsPanel.vue'
 
 const loading = ref(false)
@@ -534,3 +534,4 @@ onBeforeUnmount(() => {
     background: rgba(219, 234, 254, 0.72);
 }
 </style>
+

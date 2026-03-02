@@ -4,7 +4,9 @@ import {
   MessageSquare, ClipboardCheck, History, Plus, Trash2, Pencil, Check, Send,
   Loader2, RefreshCw, X, Bot
 } from 'lucide-vue-next'
-import { aiChatApi, agentTaskApi, manageApi } from '../../utils/api'
+import { aiChatApi } from '@/api/chat'
+import { agentTaskApi } from '@/api/agent'
+import { manageApi } from '@/api/project'
 
 // Project context
 const projectId = ref(localStorage.getItem('lastProjectId') || '')
@@ -867,3 +869,4 @@ onBeforeUnmount(() => {
   border-radius: 0 !important;
 }
 </style>
+

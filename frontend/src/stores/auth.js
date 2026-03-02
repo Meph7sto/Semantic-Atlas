@@ -6,10 +6,9 @@
  * - 项目级权限上下文缓存
  * - 权限和角色检查
  */
-
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { authApi } from '@/utils/api.js'
+import { authApi } from '@/api/auth'
 
 export const useAuthStore = defineStore('auth', () => {
   // ========================
@@ -337,3 +336,4 @@ export const useAuthStore = defineStore('auth', () => {
     updateUser,
   }
 })
+

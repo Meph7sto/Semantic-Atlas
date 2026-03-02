@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { classifyTexts, classifyCsv } from '@/utils/api'
+import { classifyTexts, classifyCsv } from '@/api/requirements'
 import { UploadCloud, FileText, BarChart3, AlertCircle, CheckCircle2 } from 'lucide-vue-next'
 
 const textInput = ref('')
@@ -433,3 +433,4 @@ const buildGroupsFromCsv = (text, opts) => {
     </div>
   </div>
 </template>
+

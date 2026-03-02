@@ -1,9 +1,11 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
-import { executionGraphApi, manageApi } from '@/utils/api'
-import { Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { executionGraphApi } from '@/api/executionGraph'
+import { manageApi } from '@/api/project'
+import { Plus, RefreshCw, Trash2, Eye } from 'lucide-vue-next'
 import ExecutionGraphCanvas from '@/components/alpha/ExecutionGraphCanvas.vue'
 import ExecutionGraphInspector from '@/components/alpha/ExecutionGraphInspector.vue'
+import TopologyStructureViewer from '@/components/alpha/TopologyStructureViewer.vue'
 
 // 状态
 const projects = ref([])
@@ -13,6 +15,7 @@ const selectedGraphId = ref('')
 
 const graphDetail = ref({
   graph: null,
+  containers: [],
   nodes: [],
   edges: []
 })
@@ -35,7 +38,15 @@ const newGraphForm = ref({
 
 // 新建节点对话框状态
 const showNewNodeDialog = ref(false)
+const showNewContainerDialog = ref(false)
+const newContainerForm = ref({
+  container_key: '',
+  label: '',
+  role_type: 'agent'
+})
+
 const newNodeForm = ref({
+  container_id: '',
   node_key: '',
   label: '',
   node_type: 'node',
@@ -51,6 +62,12 @@ const newEdgeForm = ref({
   label: '',
   condition_expr: ''
 })
+
+// 拓扑结构查看器状态
+const showStructureViewer = ref(false)
+const structureData = ref(null)
+const structureLoading = ref(false)
+const structureError = ref('')
 
 // 节点类型选项
 const nodeTypeOptions = [
@@ -74,6 +91,10 @@ const edgeTypeOptions = [
   { value: 'return', label: 'Return' },
   { value: 'retry', label: 'Retry' }
 ]
+
+const getErrorMessage = (err, fallback) => {
+  return err?.response?.data?.detail || err?.response?.data?.error || err?.response?.data?.message || err?.message || fallback
+}
 
 // 获取当前选中的图
 const currentGraph = ref(null)
@@ -107,6 +128,26 @@ const selectedEdgeData = computed(() => {
   return null
 })
 
+const nodesByContainer = computed(() => {
+  const groups = {}
+  const unassigned = []
+  const containers = graphDetail.value.containers || []
+  const nodes = graphDetail.value.nodes || []
+
+  containers.forEach((container) => {
+    groups[container.container_id] = []
+  })
+  nodes.forEach((node) => {
+    const cid = node.container_id
+    if (cid && groups[cid]) {
+      groups[cid].push(node)
+    } else {
+      unassigned.push(node)
+    }
+  })
+  return { groups, unassigned }
+})
+
 // 加载项目列表
 const loadProjects = async () => {
   try {
@@ -119,7 +160,7 @@ const loadProjects = async () => {
       selectedProjectId.value = projectList[0].project_id
     }
   } catch (err) {
-    error.value = err.message || '加载项目列表失败'
+    error.value = getErrorMessage(err, '加载项目列表失败')
   } finally {
     loading.value = false
   }
@@ -133,7 +174,7 @@ const loadGraphs = async () => {
     loading.value = true
     graphs.value = await executionGraphApi.listGraphs(selectedProjectId.value)
   } catch (err) {
-    error.value = err.message || '加载图列表失败'
+    error.value = getErrorMessage(err, '加载图列表失败')
   } finally {
     loading.value = false
   }
@@ -149,8 +190,8 @@ const loadGraphDetail = async (graphId) => {
     graphDetail.value = await executionGraphApi.getGraphDetail(graphId)
     currentGraph.value = graphDetail.value.graph
   } catch (err) {
-    error.value = err.message || '加载图详情失败'
-    graphDetail.value = { graph: null, nodes: [], edges: [] }
+    error.value = getErrorMessage(err, '加载图详情失败')
+    graphDetail.value = { graph: null, containers: [], nodes: [], edges: [] }
   } finally {
     loading.value = false
   }
@@ -187,7 +228,32 @@ const handleCreateGraph = async () => {
     // 选择新创建的图
     handleSelectGraph(graph)
   } catch (err) {
-    error.value = err.message || '创建图失败'
+    error.value = getErrorMessage(err, '创建图失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+// 创建新容器
+const handleCreateContainer = async () => {
+  if (!selectedGraphId.value) {
+    error.value = '请先选择一个图'
+    return
+  }
+
+  try {
+    loading.value = true
+    error.value = ''
+    const container = await executionGraphApi.createContainer(selectedGraphId.value, newContainerForm.value)
+    graphDetail.value.containers.push(container)
+    showNewContainerDialog.value = false
+    newContainerForm.value = {
+      container_key: '',
+      label: '',
+      role_type: 'agent'
+    }
+  } catch (err) {
+    error.value = getErrorMessage(err, '创建容器失败')
   } finally {
     loading.value = false
   }
@@ -204,18 +270,23 @@ const handleCreateNode = async () => {
     loading.value = true
     error.value = ''
 
-    const node = await executionGraphApi.createNode(selectedGraphId.value, newNodeForm.value)
+    const payload = {
+      ...newNodeForm.value,
+      container_id: newNodeForm.value.container_id || null
+    }
+    const node = await executionGraphApi.createNode(selectedGraphId.value, payload)
 
     graphDetail.value.nodes.push(node)
     showNewNodeDialog.value = false
     newNodeForm.value = {
+      container_id: '',
       node_key: '',
       label: '',
       node_type: 'node',
       role_type: 'human'
     }
   } catch (err) {
-    error.value = err.message || '创建节点失败'
+    error.value = getErrorMessage(err, '创建节点失败')
   } finally {
     loading.value = false
   }
@@ -244,7 +315,42 @@ const handleCreateEdge = async () => {
       condition_expr: ''
     }
   } catch (err) {
-    error.value = err.message || '创建边失败'
+    error.value = getErrorMessage(err, '创建边失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+const handleAssignNodeContainer = async (nodeId, containerId) => {
+  try {
+    loading.value = true
+    error.value = ''
+    const updated = await executionGraphApi.updateNode(nodeId, {
+      container_id: containerId || ''
+    })
+    const idx = graphDetail.value.nodes.findIndex(n => n.node_id === nodeId)
+    if (idx !== -1) {
+      graphDetail.value.nodes[idx] = updated
+    }
+  } catch (err) {
+    error.value = getErrorMessage(err, '调整节点归属失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+const handleDeleteContainer = async (containerId) => {
+  if (!confirm('确定要删除此容器吗？删除后节点会变为未分配。')) return
+  try {
+    loading.value = true
+    error.value = ''
+    await executionGraphApi.deleteContainer(containerId)
+    graphDetail.value.containers = graphDetail.value.containers.filter(c => c.container_id !== containerId)
+    graphDetail.value.nodes = graphDetail.value.nodes.map((node) => (
+      node.container_id === containerId ? { ...node, container_id: null } : node
+    ))
+  } catch (err) {
+    error.value = getErrorMessage(err, '删除容器失败')
   } finally {
     loading.value = false
   }
@@ -271,7 +377,7 @@ const handleDeleteNode = async (nodeId) => {
       selectedObject.value = { type: 'graph', id: selectedGraphId.value }
     }
   } catch (err) {
-    error.value = err.message || '删除节点失败'
+    error.value = getErrorMessage(err, '删除节点失败')
   } finally {
     loading.value = false
   }
@@ -295,7 +401,7 @@ const handleDeleteEdge = async (edgeId) => {
       selectedObject.value = { type: 'graph', id: selectedGraphId.value }
     }
   } catch (err) {
-    error.value = err.message || '删除边失败'
+    error.value = getErrorMessage(err, '删除边失败')
   } finally {
     loading.value = false
   }
@@ -317,12 +423,12 @@ const handleDeleteGraph = async (graphId) => {
     // 如果删除的是当前图，清空详情
     if (selectedGraphId.value === graphId) {
       selectedGraphId.value = ''
-      graphDetail.value = { graph: null, nodes: [], edges: [] }
+      graphDetail.value = { graph: null, containers: [], nodes: [], edges: [] }
       selectedObject.value = { type: 'graph', id: null }
       currentGraph.value = null
     }
   } catch (err) {
-    error.value = err.message || '删除图失败'
+    error.value = getErrorMessage(err, '删除图失败')
   } finally {
     loading.value = false
   }
@@ -354,7 +460,7 @@ const handleUpdateObject = async (data) => {
       }
     }
   } catch (err) {
-    error.value = err.message || '更新失败'
+    error.value = getErrorMessage(err, '更新失败')
   } finally {
     loading.value = false
   }
@@ -400,7 +506,7 @@ const handleCanvasLayoutChange = (layoutPatch) => {
         currentGraph.value = updated
       }
     } catch (err) {
-      error.value = err.message || '保存画布布局失败'
+      error.value = getErrorMessage(err, '保存画布布局失败')
     }
   }, 450)
 }
@@ -419,6 +525,44 @@ const handleRefresh = () => {
   } else {
     loadGraphs()
   }
+}
+
+// 查看拓扑结构
+const handleViewStructure = async () => {
+  if (!selectedGraphId.value) {
+    error.value = '请先选择一个图'
+    return
+  }
+
+  try {
+    structureLoading.value = true
+    structureError.value = ''
+    error.value = ''
+
+    // 调用后端 API 获取拓扑结构
+    const data = await executionGraphApi.getTopologyStructure(selectedGraphId.value)
+
+    if (data.success) {
+      structureData.value = data.structure
+      showStructureViewer.value = true
+    } else {
+      structureError.value = data.error || '获取拓扑结构失败'
+      error.value = data.error || '获取拓扑结构失败'
+    }
+  } catch (err) {
+    const message = getErrorMessage(err, '获取拓扑结构失败')
+    structureError.value = message
+    error.value = message
+  } finally {
+    structureLoading.value = false
+  }
+}
+
+// 关闭结构查看器
+const handleCloseStructureViewer = () => {
+  showStructureViewer.value = false
+  structureData.value = null
+  structureError.value = ''
 }
 
 // 页面加载时初始化
@@ -506,6 +650,46 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
+        <!-- 容器列表 -->
+        <div v-if="selectedGraphId" class="border-t border-zinc-200 flex-1 flex flex-col overflow-hidden">
+          <div class="px-4 py-3 border-b border-zinc-200 flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-zinc-900">容器</h3>
+            <div class="flex gap-1">
+              <button
+                @click="showNewContainerDialog = true"
+                class="p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 rounded-md transition-colors"
+                title="新建容器"
+              >
+                <Plus class="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          <div class="flex-1 overflow-y-auto px-2 py-2 max-h-40">
+            <div
+              v-for="container in graphDetail.containers"
+              :key="container.container_id"
+              class="mb-1 p-2 border rounded flex items-center justify-between border-zinc-200"
+            >
+              <div class="flex-1 min-w-0">
+                <div class="text-xs font-medium text-zinc-900">{{ container.label }}</div>
+                <div class="text-[11px] text-zinc-500">{{ container.container_key }} · {{ container.role_type }}</div>
+              </div>
+              <button
+                @click.stop="handleDeleteContainer(container.container_id)"
+                class="p-1 text-zinc-400 hover:text-red-500 transition-colors"
+                title="删除容器"
+              >
+                <Trash2 class="w-3 h-3" />
+              </button>
+            </div>
+
+            <div v-if="graphDetail.containers.length === 0" class="text-center py-4 text-zinc-400">
+              <p class="text-xs">暂无容器</p>
+            </div>
+          </div>
+        </div>
+
         <!-- 节点列表 -->
         <div v-if="selectedGraphId" class="border-t border-zinc-200 flex-1 flex flex-col overflow-hidden">
           <div class="px-4 py-3 border-b border-zinc-200 flex items-center justify-between">
@@ -521,32 +705,95 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div class="flex-1 overflow-y-auto px-2 py-2 max-h-48">
+          <div class="flex-1 overflow-y-auto px-2 py-2 max-h-56">
             <div
-              v-for="node in graphDetail.nodes"
-              :key="node.node_id"
-              class="mb-1 p-2 border rounded cursor-pointer flex items-center justify-between"
-              :class="[
-                selectedObject.type === 'node' && selectedObject.id === node.node_id
-                  ? 'border-blue-500 bg-blue-50'
-                  : 'border-zinc-200 hover:border-zinc-300'
-              ]"
-              @click="handleSelectNode(node.node_id)"
+              v-for="container in graphDetail.containers"
+              :key="`group-${container.container_id}`"
+              class="mb-2"
             >
-              <div class="flex-1 min-w-0">
-                <div class="text-xs font-medium text-zinc-900">{{ node.label }}</div>
-                <div class="text-xs text-zinc-500">{{ node.node_type }}</div>
+              <div class="px-1 py-1 text-[11px] font-semibold text-zinc-500">
+                {{ container.label }}
               </div>
-              <button
-                @click.stop="handleDeleteNode(node.node_id)"
-                class="p-1 text-zinc-400 hover:text-red-500 transition-colors"
-                title="删除"
+              <div
+                v-for="node in nodesByContainer.groups[container.container_id] || []"
+                :key="node.node_id"
+                class="mb-1 p-2 border rounded cursor-pointer"
+                :class="[
+                  selectedObject.type === 'node' && selectedObject.id === node.node_id
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-zinc-200 hover:border-zinc-300'
+                ]"
+                @click="handleSelectNode(node.node_id)"
               >
-                <Trash2 class="w-3 h-3" />
-              </button>
+                <div class="flex items-center justify-between gap-2">
+                  <div class="min-w-0">
+                    <div class="text-xs font-medium text-zinc-900 truncate">{{ node.label }}</div>
+                    <div class="text-xs text-zinc-500">{{ node.node_type }}</div>
+                  </div>
+                  <button
+                    @click.stop="handleDeleteNode(node.node_id)"
+                    class="p-1 text-zinc-400 hover:text-red-500 transition-colors"
+                    title="删除"
+                  >
+                    <Trash2 class="w-3 h-3" />
+                  </button>
+                </div>
+                <select
+                  :value="node.container_id || ''"
+                  @change="handleAssignNodeContainer(node.node_id, $event.target.value)"
+                  class="mt-1 w-full px-2 py-1 border border-zinc-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="">未分配</option>
+                  <option v-for="opt in graphDetail.containers" :key="opt.container_id" :value="opt.container_id">
+                    {{ opt.label }}
+                  </option>
+                </select>
+              </div>
             </div>
 
-            <div v-if="graphDetail.nodes.length === 0" class="text-center py-4 text-zinc-400">
+            <div v-if="nodesByContainer.unassigned.length" class="mb-2">
+              <div class="px-1 py-1 text-[11px] font-semibold text-zinc-500">未分配</div>
+              <div
+                v-for="node in nodesByContainer.unassigned"
+                :key="`unassigned-${node.node_id}`"
+                class="mb-1 p-2 border rounded cursor-pointer"
+                :class="[
+                  selectedObject.type === 'node' && selectedObject.id === node.node_id
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-zinc-200 hover:border-zinc-300'
+                ]"
+                @click="handleSelectNode(node.node_id)"
+              >
+                <div class="flex items-center justify-between gap-2">
+                  <div class="min-w-0">
+                    <div class="text-xs font-medium text-zinc-900 truncate">{{ node.label }}</div>
+                    <div class="text-xs text-zinc-500">{{ node.node_type }}</div>
+                  </div>
+                  <button
+                    @click.stop="handleDeleteNode(node.node_id)"
+                    class="p-1 text-zinc-400 hover:text-red-500 transition-colors"
+                    title="删除"
+                  >
+                    <Trash2 class="w-3 h-3" />
+                  </button>
+                </div>
+                <select
+                  :value="node.container_id || ''"
+                  @change="handleAssignNodeContainer(node.node_id, $event.target.value)"
+                  class="mt-1 w-full px-2 py-1 border border-zinc-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="">未分配</option>
+                  <option v-for="opt in graphDetail.containers" :key="opt.container_id" :value="opt.container_id">
+                    {{ opt.label }}
+                  </option>
+                </select>
+              </div>
+            </div>
+
+            <div
+              v-if="graphDetail.nodes.length === 0"
+              class="text-center py-4 text-zinc-400"
+            >
               <p class="text-xs">暂无节点</p>
             </div>
           </div>
@@ -614,6 +861,16 @@ onBeforeUnmount(() => {
             </button>
             <button
               v-if="selectedGraphId"
+              @click="handleViewStructure"
+              :disabled="structureLoading"
+              class="p-1.5 text-xs text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-zinc-500"
+              title="查看结构"
+            >
+              <Eye v-if="!structureLoading" class="w-4 h-4" />
+              <div v-else class="w-4 h-4 animate-spin border-2 border-zinc-300 border-t-blue-600 rounded-full"></div>
+            </button>
+            <button
+              v-if="selectedGraphId"
               @click="handleRefresh"
               class="p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 rounded transition-colors"
               title="刷新"
@@ -626,6 +883,7 @@ onBeforeUnmount(() => {
         <div class="flex-1 p-4 overflow-auto">
           <ExecutionGraphCanvas
             v-if="selectedGraphId"
+            :containers="graphDetail.containers"
             :nodes="graphDetail.nodes"
             :edges="graphDetail.edges"
             :layout="graphDetail.graph?.layout_json || {}"
@@ -700,6 +958,61 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <!-- 新建容器对话框 -->
+    <div v-if="showNewContainerDialog" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div class="bg-white rounded-lg shadow-xl w-96 max-w-full mx-4">
+        <div class="px-6 py-4 border-b border-zinc-200">
+          <h3 class="text-lg font-semibold text-zinc-900">新建容器</h3>
+        </div>
+        <div class="p-6 space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-zinc-700 mb-1">容器 Key *</label>
+            <input
+              v-model="newContainerForm.container_key"
+              type="text"
+              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="例如: planner_agent"
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-zinc-700 mb-1">容器名称 *</label>
+            <input
+              v-model="newContainerForm.label"
+              type="text"
+              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="例如: 规划 Agent"
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-zinc-700 mb-1">角色类型</label>
+            <select
+              v-model="newContainerForm.role_type"
+              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option v-for="opt in roleTypeOptions" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+          </div>
+        </div>
+        <div class="px-6 py-4 border-t border-zinc-200 flex justify-end gap-2">
+          <button
+            @click="showNewContainerDialog = false"
+            class="px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100 rounded transition-colors"
+          >
+            取消
+          </button>
+          <button
+            @click="handleCreateContainer"
+            :disabled="loading || !newContainerForm.container_key || !newContainerForm.label"
+            class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-400 rounded transition-colors"
+          >
+            创建
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- 新建节点对话框 -->
     <div v-if="showNewNodeDialog" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div class="bg-white rounded-lg shadow-xl w-96 max-w-full mx-4">
@@ -707,6 +1020,18 @@ onBeforeUnmount(() => {
           <h3 class="text-lg font-semibold text-zinc-900">新建节点</h3>
         </div>
         <div class="p-6 space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-zinc-700 mb-1">所属容器</label>
+            <select
+              v-model="newNodeForm.container_id"
+              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">未分配</option>
+              <option v-for="container in graphDetail.containers" :key="container.container_id" :value="container.container_id">
+                {{ container.label }} ({{ container.container_key }})
+              </option>
+            </select>
+          </div>
           <div>
             <label class="block text-sm font-medium text-zinc-700 mb-1">节点 Key *</label>
             <input
@@ -844,5 +1169,14 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
+
+    <!-- 拓扑结构查看器 -->
+    <TopologyStructureViewer
+      v-if="showStructureViewer"
+      :structure="structureData"
+      :loading="structureLoading"
+      @close="handleCloseStructureViewer"
+    />
   </div>
 </template>
+

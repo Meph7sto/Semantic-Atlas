@@ -228,7 +228,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { User as UserIcon, Lock as LockIcon, Eye as EyeIcon, EyeOff as EyeOffIcon } from 'lucide-vue-next'
-import { authApi } from '@/utils/api.js'
+import { authApi } from '@/api/auth'
 import Sidebar from '@/components/beta/Sidebar.vue'
 
 const router = useRouter()
@@ -870,3 +870,4 @@ onMounted(() => {
   .avatar-info { text-align: left; }
 }
 </style>
+

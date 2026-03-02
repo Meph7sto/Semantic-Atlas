@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { Copy, Loader2, Play, RefreshCw, Trash2 } from 'lucide-vue-next'
-import { analysisApi, requirementsL123Api } from '@/utils/api'
+import { analysisApi, requirementsL123Api } from '@/api/requirements'
 
 const sessionId = ref('')
 const contextRunId = ref('')
@@ -803,4 +803,5 @@ onMounted(async () => {
     </div>
   </div>
 </template>
+
 
