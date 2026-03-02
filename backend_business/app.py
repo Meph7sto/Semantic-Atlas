@@ -19,12 +19,9 @@ if project_root not in sys.path:
 
 from backend_business.config import settings
 from backend_business.routes.analysis_route import analysis_bp
-from backend_business.routes.conflict_routes import conflict_bp
 from backend_business.routes.file_route import file_bp
 from backend_business.routes.requirements_route import requirements_bp
-from backend_business.routes.classification_routes import classification_bp
 from backend_business.routes.manage_routes import manage_bp
-from backend_business.routes.product_routes import product_bp
 from backend_business.routes.push_routes import push_bp
 from backend_business.routes.mobile_chat_routes import mobile_chat_bp
 from backend_business.routes.deduplication_route import dedup_bp
@@ -54,12 +51,9 @@ def create_app() -> Flask:
 
     # Register blueprints
     app.register_blueprint(analysis_bp, url_prefix="/api")
-    app.register_blueprint(conflict_bp, url_prefix="/api/conflict")
     app.register_blueprint(file_bp, url_prefix="/api")
     app.register_blueprint(requirements_bp, url_prefix="/api")
-    app.register_blueprint(classification_bp, url_prefix="/api/classification")
     app.register_blueprint(manage_bp, url_prefix="/api/manage")
-    app.register_blueprint(product_bp, url_prefix="/api/product")
     app.register_blueprint(push_bp, url_prefix="/api/push")
     app.register_blueprint(mobile_chat_bp, url_prefix="/api/mobile")
     app.register_blueprint(dedup_bp, url_prefix="/api/dedup")

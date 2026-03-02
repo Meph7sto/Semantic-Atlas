@@ -45,9 +45,11 @@ const canvasRef = ref(null)
 const movedByDrag = ref(false)
 const nodePositions = ref({})
 const edgeOffsets = ref({})
+const containerOffsets = ref({})
 
 const nodeDragState = ref(null)
 const edgeDragState = ref(null)
+const containerDragState = ref(null)
 
 const nodeTypeRank = {
   start: 0,
@@ -225,6 +227,7 @@ const buildAutoLayout = (nodes, containers) => {
 const syncLayoutState = () => {
   const incomingNodePositions = props.layout?.node_positions || {}
   const incomingEdgeOffsets = props.layout?.edge_offsets || {}
+  const incomingContainerOffsets = props.layout?.container_offsets || {}
   const autoLayout = buildAutoLayout(props.nodes, props.containers)
   const mergedPositions = {}
 
@@ -257,6 +260,28 @@ const syncLayoutState = () => {
   })
 
   edgeOffsets.value = mergedOffsets
+
+  const mergedContainerOffsets = {}
+  props.containers.forEach((container) => {
+    const containerId = container.container_id
+    const incoming = incomingContainerOffsets[containerId]
+    const existing = containerOffsets.value[containerId]
+    const source = incoming || existing || { dx: 0, dy: 0 }
+    mergedContainerOffsets[containerId] = {
+      dx: toNumber(source?.dx, 0),
+      dy: toNumber(source?.dy, 0)
+    }
+  })
+
+  const unassignedOffset = incomingContainerOffsets.__unassigned__ || containerOffsets.value.__unassigned__
+  if (unassignedOffset) {
+    mergedContainerOffsets.__unassigned__ = {
+      dx: toNumber(unassignedOffset?.dx, 0),
+      dy: toNumber(unassignedOffset?.dy, 0)
+    }
+  }
+
+  containerOffsets.value = mergedContainerOffsets
 }
 
 watch([() => props.nodes, () => props.edges, () => props.containers, () => props.layout], syncLayoutState, {
@@ -281,9 +306,18 @@ const emitLayoutChange = () => {
     }
   })
 
+  const normalizedContainerOffsets = {}
+  Object.entries(containerOffsets.value).forEach(([containerId, offset]) => {
+    normalizedContainerOffsets[containerId] = {
+      dx: round2(toNumber(offset.dx)),
+      dy: round2(toNumber(offset.dy))
+    }
+  })
+
   emit('layout-change', {
     node_positions: normalizedPositions,
-    edge_offsets: normalizedEdgeOffsets
+    edge_offsets: normalizedEdgeOffsets,
+    container_offsets: normalizedContainerOffsets
   })
 }
 
@@ -334,6 +368,43 @@ const handleEdgePointerDown = (edgePath, event) => {
   event.preventDefault()
 }
 
+const resolveNodeContainerId = (node) => {
+  if (!node?.container_id) return '__unassigned__'
+  const exists = props.containers.some((container) => container.container_id === node.container_id)
+  return exists ? node.container_id : '__unassigned__'
+}
+
+const handleContainerPointerDown = (box, event) => {
+  if (event.button !== undefined && event.button !== 0) return
+  const pointer = toCanvasPoint(event)
+  const targetContainerId = box.id
+  const nodeIds = props.nodes
+    .filter((node) => resolveNodeContainerId(node) === targetContainerId)
+    .map((node) => node.node_id)
+
+  const originNodePositions = {}
+  nodeIds.forEach((nodeId) => {
+    const pos = nodePositions.value[nodeId] || { x: MIN_X, y: MIN_Y }
+    originNodePositions[nodeId] = { x: pos.x, y: pos.y }
+  })
+
+  const currentOffset = containerOffsets.value[targetContainerId] || { dx: 0, dy: 0 }
+
+  movedByDrag.value = false
+  containerDragState.value = {
+    pointerId: event.pointerId,
+    containerId: targetContainerId,
+    nodeIds,
+    originNodePositions,
+    originOffsetDx: toNumber(currentOffset.dx, 0),
+    originOffsetDy: toNumber(currentOffset.dy, 0),
+    startX: pointer.x,
+    startY: pointer.y
+  }
+
+  event.preventDefault()
+}
+
 const handleGlobalPointerMove = (event) => {
   if (nodeDragState.value && nodeDragState.value.pointerId === event.pointerId) {
     const pointer = toCanvasPoint(event)
@@ -345,6 +416,35 @@ const handleGlobalPointerMove = (event) => {
       [nodeDragState.value.nodeId]: {
         x: clamp(nodeDragState.value.originX + deltaX, MIN_X),
         y: clamp(nodeDragState.value.originY + deltaY, MIN_Y)
+      }
+    }
+
+    movedByDrag.value = true
+    return
+  }
+
+  if (containerDragState.value && containerDragState.value.pointerId === event.pointerId) {
+    const pointer = toCanvasPoint(event)
+    const deltaX = pointer.x - containerDragState.value.startX
+    const deltaY = pointer.y - containerDragState.value.startY
+
+    if (containerDragState.value.nodeIds.length > 0) {
+      const nextPositions = { ...nodePositions.value }
+      containerDragState.value.nodeIds.forEach((nodeId) => {
+        const origin = containerDragState.value.originNodePositions[nodeId] || { x: MIN_X, y: MIN_Y }
+        nextPositions[nodeId] = {
+          x: clamp(origin.x + deltaX, MIN_X),
+          y: clamp(origin.y + deltaY, MIN_Y)
+        }
+      })
+      nodePositions.value = nextPositions
+    } else {
+      containerOffsets.value = {
+        ...containerOffsets.value,
+        [containerDragState.value.containerId]: {
+          dx: containerDragState.value.originOffsetDx + deltaX,
+          dy: containerDragState.value.originOffsetDy + deltaY
+        }
       }
     }
 
@@ -372,6 +472,12 @@ const handleGlobalPointerMove = (event) => {
 const finishDragging = (event) => {
   if (nodeDragState.value && nodeDragState.value.pointerId === event.pointerId) {
     nodeDragState.value = null
+    emitLayoutChange()
+    return
+  }
+
+  if (containerDragState.value && containerDragState.value.pointerId === event.pointerId) {
+    containerDragState.value = null
     emitLayoutChange()
     return
   }
@@ -448,8 +554,8 @@ const containerBoxes = computed(() => {
       label: column.label,
       roleType: column.roleType,
       nodeCount: column.nodes.length,
-      left,
-      top,
+      left: clamp(left + toNumber(containerOffsets.value[column.id]?.dx, 0), 10),
+      top: clamp(top + toNumber(containerOffsets.value[column.id]?.dy, 0), 10),
       width,
       height,
       isUnassigned: column.isUnassigned,
@@ -540,7 +646,7 @@ onBeforeUnmount(() => {
     class="relative bg-white border border-zinc-300 rounded-xl overflow-hidden"
     style="min-height: 560px; background-image: linear-gradient(0deg, rgba(15,23,42,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(15,23,42,0.04) 1px, transparent 1px); background-size: 24px 24px;"
   >
-    <div class="absolute inset-0 pointer-events-none" style="z-index: 0;">
+    <div class="absolute inset-0" style="z-index: 1;">
       <div
         v-for="box in containerBoxes"
         :key="box.id"
@@ -555,12 +661,13 @@ onBeforeUnmount(() => {
         }"
       >
         <div
-          class="h-8 px-3 flex items-center justify-between text-[11px] font-semibold border-b rounded-t-2xl"
+          class="h-8 px-3 flex items-center justify-between text-[11px] font-semibold border-b rounded-t-2xl cursor-move select-none touch-none"
           :style="{
             borderColor: box.palette.stroke,
             background: box.palette.header,
             color: box.palette.text
           }"
+          @pointerdown.stop="handleContainerPointerDown(box, $event)"
         >
           <span class="truncate">{{ box.label }}</span>
           <span>{{ box.nodeCount }} 节点</span>
@@ -568,7 +675,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <svg class="absolute inset-0 w-full h-full" style="z-index: 2;">
+    <svg class="absolute inset-0 w-full h-full pointer-events-none" style="z-index: 2;">
       <defs>
         <marker id="execution-graph-arrow-intra" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
           <polygon points="0 0, 10 3.5, 0 7" fill="#475569" />
@@ -587,7 +694,7 @@ onBeforeUnmount(() => {
           fill="none"
           stroke="transparent"
           stroke-width="16"
-          class="cursor-grab"
+          class="cursor-grab pointer-events-auto"
           @pointerdown.stop="handleEdgePointerDown(edgePath, $event)"
           @click.stop="handleEdgeClick(edgePath)"
         />
@@ -607,7 +714,7 @@ onBeforeUnmount(() => {
           :cy="edgePath.controlY"
           :r="selectedId === edgePath.id ? 6 : 5"
           :fill="selectedId === edgePath.id ? edgePath.style.activeColor : edgePath.style.color"
-          class="cursor-grab"
+          class="cursor-grab transition-all pointer-events-auto"
           @pointerdown.stop="handleEdgePointerDown(edgePath, $event)"
           @click.stop="handleEdgeClick(edgePath)"
         />
@@ -671,7 +778,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="absolute right-4 top-3 px-2 py-1 text-[11px] text-zinc-500 bg-white/90 rounded border border-zinc-200">
-      拖动节点可移动；拖动边中点可调整连线路径
+      拖动容器标题可整体移动；拖动节点可微调；拖动边中点可调整连线路径
     </div>
 
     <div v-if="nodes.length === 0" class="absolute inset-0 flex items-center justify-center text-zinc-400">

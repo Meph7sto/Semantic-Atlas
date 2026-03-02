@@ -20,7 +20,7 @@ from backend_business.api.routers.schemas.product_schemas import (
 )
 from backend_business.api.deps.auth import get_current_user
 
-router = APIRouter(prefix="/api/product", tags=["product"])
+router = APIRouter(prefix="/api/v2/product", tags=["product"])
 _service = ProductService(dsn=settings.POSTGRES_DSN)
 
 

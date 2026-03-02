@@ -14,7 +14,7 @@ from backend_business.api.routers.schemas.conflict_schemas import (
 from backend_business.services.ai_proxy import ai_proxy
 from backend_business.services.db_service import db_service
 
-router = APIRouter(prefix="/api/conflict", tags=["conflict"])
+router = APIRouter(prefix="/api/v2/conflict", tags=["conflict"])
 
 
 def _normalize_session_id(session_id: str | None) -> str | None:

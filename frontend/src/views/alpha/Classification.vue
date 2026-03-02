@@ -8,6 +8,23 @@ const predictions = ref([])
 const labelDistribution = ref({})
 const textLoading = ref(false)
 
+// 示例数据
+const exampleRequirements = [
+  '系统应在 1 秒内响应用户请求',
+  '用户可以在系统中创建和管理项目',
+  '系统支持批量导入需求数据',
+  '系统应提供数据导出功能',
+  '用户权限应由管理员统一管理',
+  '系统应支持多级需求分类',
+  '需求变更需要审批流程',
+  '系统应记录所有操作日志',
+  '支持实时需求追踪和状态查询'
+]
+
+const loadExample = () => {
+  textInput.value = exampleRequirements.join('\n')
+}
+
 const selectedFile = ref(null)
 const fileInputRef = ref(null)
 const filePreview = ref('未选择文件')
@@ -259,6 +276,20 @@ const buildGroupsFromCsv = (text, opts) => {
             <h2 class="text-lg font-semibold text-zinc-900">文本批量分类</h2>
           </div>
           <p class="text-sm text-zinc-500 mb-4">每行一条需求，点击分类获取标签与分布。</p>
+          <div class="mb-4">
+            <button
+              @click="loadExample"
+              class="text-xs text-blue-600 hover:text-blue-700 underline"
+            >
+              加载示例数据（10 条）
+            </button>
+            <button
+              @click="textInput = ''"
+              class="text-xs text-zinc-500 hover:text-zinc-700 underline ml-4"
+            >
+              清空
+            </button>
+          </div>
           <textarea
             v-model="textInput"
             rows="10"

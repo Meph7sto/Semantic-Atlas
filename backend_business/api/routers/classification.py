@@ -17,7 +17,7 @@ from backend_business.api.routers.schemas.classification_schemas import (
 from backend_business.config import settings
 from backend_business.services.db_service import db_service
 
-router = APIRouter(prefix="/api/classification", tags=["classification"])
+router = APIRouter(prefix="/api/v2/classification", tags=["classification"])
 
 # Allow separating classification service URL; fallback to inference URL
 CLASSIFICATION_URL = os.getenv("CLASSIFICATION_URL", settings.INFERENCE_BASE_URL)
