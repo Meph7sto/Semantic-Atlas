@@ -2,8 +2,7 @@ export { api, inferenceAxios } from './request'
 export { authApi } from './auth'
 export { manageApi } from './project'
 export { productApi } from './product'
-export { chatApi, aiChatApi, mobileChatApi } from './chat'
-export { agentMonitorApi, agentTaskApi } from './agent'
+export { chatApi, mobileChatApi } from './chat'
 export {
     analysisApi,
     traceabilityApi,

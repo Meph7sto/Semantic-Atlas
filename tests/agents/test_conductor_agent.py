@@ -25,9 +25,6 @@ from backend_business.services.agent.tools.base import (  # noqa: E402
     ToolDefinition,
     tool_registry,
 )
-from backend_business.routes.agent_monitor_routes import (  # noqa: E402
-    _filter_messages_by_project,
-)
 from backend_business.services.agent.messaging.channel import (  # noqa: E402
     ChannelManager,
 )
@@ -49,6 +46,24 @@ def _dummy_schema(name: str) -> dict:
 
 def _noop_handler(_args, _ctx):
     return {"ok": True}
+
+
+def _filter_messages_by_project(messages, project_id):
+    """Keep project-matched messages and replies in matched channels."""
+    if not project_id:
+        return messages
+
+    matched = [m for m in messages if m.get("project_id") == project_id]
+    if not matched:
+        return []
+
+    matched_channel_ids = {m.get("channel_id") for m in matched if m.get("channel_id")}
+    return [
+        m
+        for m in messages
+        if m.get("project_id") == project_id
+        or (m.get("channel_id") and m.get("channel_id") in matched_channel_ids)
+    ]
 
 
 class TestConductorAgent(unittest.TestCase):

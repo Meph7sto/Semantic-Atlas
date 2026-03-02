@@ -1,3 +1,5 @@
+  > 状态更新（2026-03-02）：assistant 相关接口 `/api/ai-chat/*`、`/api/agent-tasks/*`、`/api/agent-monitor/*` 已下线；本文涉及这些模块的迁移条目仅保留历史记录。
+
 • Proposed Plan
 
 
@@ -65,9 +67,9 @@
   - backend_business/api/routers/classification.py
   - backend_business/api/routers/deduplication.py
   - backend_business/api/routers/file.py
-  - backend_business/api/routers/ai_chat.py
-  - backend_business/api/routers/agent_task.py
-  - backend_business/api/routers/agent_monitor.py
+  - backend_business/api/routers/ai_chat.py [已下线]
+  - backend_business/api/routers/agent_task.py [已下线]
+  - backend_business/api/routers/agent_monitor.py [已下线]
   - backend_business/api/routers/mobile_chat.py
   - backend_business/api/routers/push.py
   - backend_business/api/routers/auth.py
@@ -133,7 +135,7 @@
 
   - deduplication -> auth -> permission -> manage -> product [已完成]
   - analysis -> requirements -> conflict -> classification [进行中: analysis, conflict 已完成]
-  - ai_chat -> agent_task -> agent_monitor -> push -> file [待开始]
+  - ai_chat -> agent_task -> agent_monitor -> push -> file [历史记录；前 3 个模块已下线]
   - mobile_chat [已完成]
 
   2. 每个模块迁移后即补充对应合同测试并通过再进入下一个模块。[已完成 analysis/auth/conflict/dedup/manage/permission/product 合同测试]

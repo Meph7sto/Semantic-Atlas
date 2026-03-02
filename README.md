@@ -15,7 +15,7 @@ Semantic-Atlas 是面向需求工程的语义分析平台，覆盖会议转写�
 - **需求去重**：重复需求识别与合并
 - **项目与产品管理**：项目 CRUD、产品管理、里程碑与分支管理
 - **多 Agent 协作**：基于 MessageBus + Channel 的多 Agent 通信架构（详见 [AGENT_ARCHITECTURE.md](./AGENT_ARCHITECTURE.md)）
-- **AI 对话**：流式 chat、工具调用接口（DeepSeek tool call 兼容）
+- **通用对话**：流式 chat（`/inference/chat/stream`）
 - **移动端支持**：移动端消息桥接与推送通知
 
 ## 核心流程（Phase 1-3）
@@ -150,8 +150,6 @@ bash deploy/stop_services.sh
 | `/alpha/acquisition` | RequirementsAcquisition | 需求获取 |
 | `/alpha/acquisition-trace` | AcquisitionTraceability | 获取 + 追溯 |
 | `/alpha/chat` | GeneralChat | 通用对话 |
-| `/alpha/agent-chat` | AgentChat | Agent 对话 |
-| `/alpha/agent-collaboration` | AgentCollaboration | 多 Agent 协作 |
 | `/alpha/message-push` | MessagePush | 消息推送 |
 | `/alpha/mobile-bridge` | MobileBridge | 移动端桥接 |
 | `/alpha/file-receive` | FileReceive | 文件接收 |
@@ -210,9 +208,6 @@ POSTGRES_DB=semantic_atlas
 | `conflict_bp` | `/api/conflict` | 冲突检测代理 |
 | `classification_bp` | `/api/classification` | 分类代理 |
 | `dedup_bp` | `/api/dedup` | 需求去重 |
-| `ai_chat_bp` | `/api/ai-chat` | AI 对话 |
-| `agent_task_bp` | `/api/agent-tasks` | Agent 任务管理 |
-| `agent_monitor_bp` | `/api/agent-monitor` | Agent 监控 |
 | `push_bp` | `/api/push` | 推送通知 |
 | `mobile_chat_bp` | `/api/mobile` | 移动端消息 |
 | `file_bp` | `/api` | CSV 上传/下载 |
@@ -266,8 +261,6 @@ POSTGRES_DB=semantic_atlas
 | `agent_channels` | 通信通道（direct / group / broadcast） |
 | `agent_channel_members` | 通道成员 |
 | `agent_messages` | Agent 消息记录 |
-| `agent_pending_tasks` | Agent 待处理任务 |
-| `ai_chat_sessions` | AI 对话会话 |
 
 ## 多 Agent 架构
 
@@ -306,8 +299,6 @@ frontend/                          # Vue 3 + Vite + Tailwind
         RequirementsView.vue       #   需求展示
         RequirementsSessionView.vue #  会话级需求
       alpha/                       # 实验功能页面
-        AgentChat.vue              #   Agent 对话
-        AgentCollaboration.vue     #   多 Agent 协作
         ConflictDetection.vue      #   冲突检测
         Traceability.vue           #   追溯分析
         Classification.vue         #   需求分类
@@ -331,9 +322,6 @@ backend_business/                  # Flask 业务编排 + 存储
     conflict_routes.py             #   冲突检测代理
     classification_routes.py       #   分类代理
     deduplication_route.py         #   需求去重
-    ai_chat_routes.py              #   AI 对话
-    agent_task_routes.py           #   Agent 任务
-    agent_monitor_routes.py        #   Agent 监控
     push_routes.py                 #   推送通知
     mobile_chat_routes.py          #   移动端消息
     file_route.py                  #   CSV 上传/下载
@@ -343,7 +331,6 @@ backend_business/                  # Flask 业务编排 + 存储
     requirements_extraction/       # Phase 3 需求抽取
     requirements_deduplication/    # 需求去重
     requirements_manage_service.py # 需求管理服务
-    ai_chat_service.py             # AI 对话服务
     product_service.py             # 产品服务
     mobile_chat_service.py         # 移动端消息服务
     push_service.py                # 推送服务

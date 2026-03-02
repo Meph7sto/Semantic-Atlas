@@ -1,15 +1,7 @@
 import os
 import sys
-import logging
 from flask import Flask
 from flask_cors import CORS
-
-class EndpointFilter(logging.Filter):
-    def filter(self, record):
-        msg = record.getMessage()
-        return '/api/ai-chat/unread-count' not in msg and '/api/agent-tasks/pending-count' not in msg
-
-logging.getLogger("werkzeug").addFilter(EndpointFilter())
 
 # Ensure project root is on sys.path so `python backend_business/app.py` works reliably
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -24,9 +16,6 @@ from backend_business.routes.requirements_route import requirements_bp
 from backend_business.routes.push_routes import push_bp
 from backend_business.routes.mobile_chat_routes import mobile_chat_bp
 from backend_business.routes.deduplication_route import dedup_bp
-from backend_business.routes.ai_chat_routes import ai_chat_bp
-from backend_business.routes.agent_task_routes import agent_task_bp
-from backend_business.routes.agent_monitor_routes import agent_monitor_bp
 from backend_business.routes.execution_topology_structure_routes import execution_topology_structure_bp
 
 
@@ -53,9 +42,6 @@ def create_app() -> Flask:
     app.register_blueprint(push_bp, url_prefix="/api/push")
     app.register_blueprint(mobile_chat_bp, url_prefix="/api/mobile")
     app.register_blueprint(dedup_bp, url_prefix="/api/dedup")
-    app.register_blueprint(ai_chat_bp, url_prefix="/api/ai-chat")
-    app.register_blueprint(agent_task_bp, url_prefix="/api/agent-tasks")
-    app.register_blueprint(agent_monitor_bp, url_prefix="/api/agent-monitor")
     app.register_blueprint(execution_topology_structure_bp, url_prefix="/api/v2/execution-topology")
 
     # 兼容主框架：提供 /health（非 /api/health）
