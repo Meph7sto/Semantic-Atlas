@@ -1,6 +1,6 @@
 """
 需求分析路由
-对应 Flask blueprint: analysis_bp (url_prefix="/api")
+对应历史蓝图: analysis_bp (url_prefix="/api/v2")
 """
 
 import json
@@ -15,15 +15,20 @@ from psycopg2.extras import RealDictCursor
 from backend_business.api.http.errors import ErrorResponse
 from backend_business.api.http.sse import sse_response_raw
 from backend_business.api.routers.schemas.analysis_schemas import (
+    BatchTraceRelationRequest,
     BuildContextRequest,
     IngestTranscriptRequest,
+    TraceByMappingRequest,
+    TraceRelationRequest,
+    TriggerAnalysisRequest,
 )
+from backend_business.services.ai_proxy import ai_proxy
 from backend_business.services.context_builder import context_builder
 from backend_business.services.db_service import db_service
 from backend_business.services.transcript_parser import parse_transcript_to_spans
 
 
-router = APIRouter(prefix="/api", tags=["analysis"])
+router = APIRouter(prefix="/api/v2", tags=["analysis"])
 
 
 def _require_db_service():
@@ -34,6 +39,16 @@ def _require_db_service():
 
 def _sse_data(payload: Dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+@router.get("/health")
+def health():
+    data: Dict[str, Any] = {"status": "ok"}
+    try:
+        data["inference"] = ai_proxy.health()
+    except Exception as exc:
+        data["inference"] = {"status": "error", "detail": str(exc)}
+    return {"success": True, "data": data}
 
 
 @router.post("/analysis/ingest_transcript")
@@ -137,8 +152,12 @@ def ingest_transcript_stream(req: IngestTranscriptRequest):
 def get_sample_transcript():
     current_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
-    sample_path = os.path.join(project_root, "tests", "sample_transcript.txt")
-    if not os.path.exists(sample_path):
+    candidate_paths = [
+        os.path.join(project_root, "tests", "sample_transcript.txt"),
+        os.path.join(project_root, "tests", "fixtures", "sample_transcript.txt"),
+    ]
+    sample_path = next((path for path in candidate_paths if os.path.exists(path)), None)
+    if not sample_path:
         raise ErrorResponse("sample transcript not found", 404)
     with open(sample_path, "r", encoding="utf-8") as handle:
         content = handle.read()
@@ -314,3 +333,217 @@ def get_spans_by_session(session_id: str):
         spans.append(span)
 
     return {"success": True, "data": spans}
+
+
+@router.post("/trace-relation")
+def trace_relation(req: TraceRelationRequest):
+    try:
+        result = ai_proxy.trace_relation(
+            req.high_level_requirement,
+            req.low_level_requirement,
+            max_new_tokens=req.max_new_tokens,
+        )
+        record_id = None
+        if req.save_to_db:
+            service = _require_db_service()
+            record_id = service.save_relation(
+                req.high_level_requirement,
+                req.low_level_requirement,
+                result,
+            )
+        return {"success": True, "data": result, "record_id": record_id}
+    except ErrorResponse:
+        raise
+    except Exception as exc:
+        raise ErrorResponse(str(exc), 500)
+
+
+@router.post("/batch-trace-relation")
+def batch_trace_relation(req: BatchTraceRelationRequest):
+    highs = [text for text in req.high_level_requirements if text]
+    lows = [text for text in req.low_level_requirements if text]
+    if not highs or not lows:
+        raise ErrorResponse("请提供顶层需求列表和底层需求列表", 400)
+
+    try:
+        result = ai_proxy.trace_batch(highs, lows, max_new_tokens=req.max_new_tokens)
+        record_id = None
+        if req.save_to_db:
+            service = _require_db_service()
+            record_id = service.save_batch(
+                highs, lows, result, session_id=req.session_id
+            )
+        return {"success": True, "data": result, "record_id": record_id}
+    except ErrorResponse:
+        raise
+    except Exception as exc:
+        raise ErrorResponse(str(exc), 500)
+
+
+@router.get("/trace/latest")
+def get_latest_trace_batch(session_id: str = Query(...)):
+    normalized_session_id = session_id.strip()
+    if not normalized_session_id:
+        raise ErrorResponse("缺少 session_id", 400)
+
+    service = _require_db_service()
+    data = service.get_latest_trace_batch(normalized_session_id)
+    return {"success": True, "data": data}
+
+
+@router.post("/trace-by-mapping")
+def trace_by_mapping(req: TraceByMappingRequest):
+    service = _require_db_service()
+
+    try:
+        pairs = service.get_requirement_pairs_for_trace(req.session_id)
+
+        if not pairs:
+            empty_result = {
+                "summary": "未找到需求映射关系，未执行追溯分析",
+                "statistics": {
+                    "total_combinations": 0,
+                    "relations_found": 0,
+                    "relation_rate": 0.0,
+                },
+                "high_level_requirements": [],
+                "low_level_requirements": [],
+                "relations": [],
+                "trace_network": {
+                    "nodes": [],
+                    "links": [],
+                },
+                "relation_types_count": None,
+            }
+            return {
+                "success": True,
+                "data": empty_result,
+                "record_id": None,
+                "pairs_analyzed": 0,
+                "total_possible_pairs": 0,
+            }
+
+        high_texts: List[str] = []
+        low_texts: List[str] = []
+        high_index_map: Dict[str, int] = {}
+        low_index_map: Dict[str, int] = {}
+
+        for pair in pairs:
+            high_text = pair["high_req_text"]
+            low_text = pair["low_req_text"]
+            if high_text not in high_index_map:
+                high_index_map[high_text] = len(high_texts)
+                high_texts.append(high_text)
+            if low_text not in low_index_map:
+                low_index_map[low_text] = len(low_texts)
+                low_texts.append(low_text)
+
+        pair_indices: List[tuple[int, int]] = []
+        seen_pairs: set[tuple[int, int]] = set()
+        for pair in pairs:
+            idx_pair = (
+                high_index_map[pair["high_req_text"]],
+                low_index_map[pair["low_req_text"]],
+            )
+            if idx_pair in seen_pairs:
+                continue
+            seen_pairs.add(idx_pair)
+            pair_indices.append(idx_pair)
+
+        result = ai_proxy.trace_batch_selective(
+            high_texts,
+            low_texts,
+            pair_indices,
+            max_new_tokens=req.max_new_tokens,
+        )
+
+        pair_id_map: Dict[tuple[int, int], tuple[Any, Any]] = {}
+        for pair in pairs:
+            idx_pair = (
+                high_index_map[pair["high_req_text"]],
+                low_index_map[pair["low_req_text"]],
+            )
+            pair_id_map[idx_pair] = (pair["high_req_id"], pair["low_req_id"])
+
+        for relation in result.get("relations", []):
+            hi = relation.get("high_level_index")
+            li = relation.get("low_level_index")
+            if hi is None or li is None:
+                continue
+            pair_key = (hi, li)
+            if pair_key in pair_id_map:
+                relation["high_req_id"], relation["low_req_id"] = pair_id_map[pair_key]
+
+        record_id = None
+        if req.save_to_db:
+            record_id = service.save_batch(
+                high_texts,
+                low_texts,
+                result,
+                session_id=req.session_id,
+            )
+
+        return {
+            "success": True,
+            "data": result,
+            "record_id": record_id,
+            "pairs_analyzed": len(pair_indices),
+            "total_possible_pairs": len(high_texts) * len(low_texts),
+        }
+    except ErrorResponse:
+        raise
+    except Exception as exc:
+        raise ErrorResponse(str(exc), 500)
+
+
+@router.get("/requirements")
+def list_requirements(
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=10, ge=1),
+):
+    service = _require_db_service()
+    data = service.list_requirements(page=page, per_page=per_page)
+    return {"success": True, "data": data}
+
+
+@router.get("/requirements/{requirement_id}")
+def get_requirement_detail(requirement_id: int):
+    service = _require_db_service()
+    detail = service.get_requirement_detail(requirement_id)
+    if not detail:
+        raise ErrorResponse("资源未找到", 404)
+    return {"success": True, "data": detail}
+
+
+@router.delete("/requirements/{requirement_id}")
+def delete_requirement(requirement_id: int):
+    service = _require_db_service()
+    deleted = service.delete_requirement(requirement_id)
+    if not deleted:
+        raise ErrorResponse("资源未找到", 404)
+    return {"success": True, "message": "删除成功"}
+
+
+@router.get("/statistics")
+def statistics():
+    service = _require_db_service()
+    data = service.statistics()
+    return {"success": True, "data": data}
+
+
+@router.post("/trigger_analysis")
+def trigger_analysis(req: TriggerAnalysisRequest):
+    high = req.high_level_requirement or req.requirement_a or ""
+    low = req.low_level_requirement or req.requirement_b or ""
+    if not high or not low:
+        raise ErrorResponse(
+            "请提供 high_level_requirement 与 low_level_requirement", 400
+        )
+
+    try:
+        result = ai_proxy.trace_relation(high, low)
+        return {"success": True, "data": result}
+    except ErrorResponse:
+        raise
+    except Exception as exc:
+        raise ErrorResponse(str(exc), 500)

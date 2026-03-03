@@ -1,6 +1,6 @@
 """
 冲突分析路由 - FastAPI 版本
-对应 Flask blueprint: conflict_bp (url_prefix="/api/conflict")
+对应历史蓝图: conflict_bp (url_prefix="/api/v2/conflict")
 """
 
 from fastapi import APIRouter, Query

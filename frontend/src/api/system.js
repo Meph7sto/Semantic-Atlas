@@ -69,7 +69,7 @@ export const pushApi = {
      * @returns {EventSource}
      */
     createSSEConnection() {
-        return new EventSource('/api/push/stream')
+        return new EventSource('/api/v2/push/stream')
     },
 }
 
@@ -85,7 +85,7 @@ export const fileApi = {
 
     download(filename) {
         // 直接打开下载链接
-        window.open(`/api/uploads/${encodeURIComponent(filename)}?download=true`, '_blank')
+        window.open(`/api/v2/uploads/${encodeURIComponent(filename)}?download=true`, '_blank')
     },
 
     async delete(filename) {
@@ -97,6 +97,6 @@ export const fileApi = {
     },
 
     getPreviewUrl(filename) {
-        return `/api/uploads/${encodeURIComponent(filename)}`
+        return `/api/v2/uploads/${encodeURIComponent(filename)}`
     },
 }

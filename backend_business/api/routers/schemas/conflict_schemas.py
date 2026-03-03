@@ -1,6 +1,6 @@
 """
 Conflict API Pydantic 请求模型
-对应 Flask blueprint: conflict_bp
+对应历史蓝图: conflict_bp
 """
 
 from typing import Annotated

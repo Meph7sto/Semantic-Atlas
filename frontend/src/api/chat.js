@@ -74,6 +74,6 @@ export const mobileChatApi = {
             session_id: sessionId,
         })
         if (userId) params.set('user_id', userId)
-        return new EventSource(`/api/mobile/stream?${params.toString()}`)
+        return new EventSource(`/api/v2/mobile/stream?${params.toString()}`)
     },
 }

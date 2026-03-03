@@ -1,6 +1,6 @@
 """
 产品管理路由 - FastAPI 版本
-对应 Flask blueprint: product_bp (url_prefix="/api/product")
+对应历史蓝图: product_bp (url_prefix="/api/v2/product")
 """
 
 from typing import Optional

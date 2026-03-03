@@ -608,7 +608,7 @@ function toggleBundle(bundleId) {
 
 async function fetchBundles(contextRunId) {
   try {
-    const response = await fetch(`/api/analysis/bundles/${contextRunId}`)
+    const response = await fetch(`/api/v2/analysis/bundles/${contextRunId}`)
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`)
     }
@@ -634,8 +634,8 @@ async function fetchMatrixData(contextRunId) {
 
   try {
     const [linksResponse, spansResponse] = await Promise.all([
-      fetch(`/api/analysis/span_links/${contextRunId}`),
-      fetch(`/api/analysis/spans/${encodeURIComponent(session)}`)
+      fetch(`/api/v2/analysis/span_links/${contextRunId}`),
+      fetch(`/api/v2/analysis/spans/${encodeURIComponent(session)}`)
     ])
 
     if (!linksResponse.ok) {
@@ -671,7 +671,7 @@ async function startBuildContext() {
   }
 
   try {
-    const response = await fetch('/api/analysis/build_context/stream', {
+    const response = await fetch('/api/v2/analysis/build_context/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)

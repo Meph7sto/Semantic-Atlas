@@ -1,6 +1,6 @@
 """
 Auth API Pydantic 请求模型
-对应 Flask blueprint: auth_bp
+对应历史蓝图: auth_bp
 """
 
 import re

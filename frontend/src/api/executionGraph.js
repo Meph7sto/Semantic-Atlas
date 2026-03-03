@@ -19,7 +19,7 @@ export const executionGraphApi = {
    * @param {object} data - 图数据 {name, description}
    */
   async createGraph(projectId, data) {
-    const resp = await api.post(`/v2/execution-topology/projects/${encodeURIComponent(projectId)}`, data)
+    const resp = await api.post(`/execution-topology/projects/${encodeURIComponent(projectId)}`, data)
     return resp.data
   },
 
@@ -28,7 +28,7 @@ export const executionGraphApi = {
    * @param {string} projectId - 项目 ID
    */
   async listGraphs(projectId) {
-    const resp = await api.get(`/v2/execution-topology/projects/${encodeURIComponent(projectId)}`)
+    const resp = await api.get(`/execution-topology/projects/${encodeURIComponent(projectId)}`)
     return resp.data?.graphs || []
   },
 
@@ -37,7 +37,7 @@ export const executionGraphApi = {
    * @param {string} graphId - 图 ID
    */
   async getGraph(graphId) {
-    const resp = await api.get(`/v2/execution-topology/${encodeURIComponent(graphId)}`)
+    const resp = await api.get(`/execution-topology/${encodeURIComponent(graphId)}`)
     return resp.data
   },
 
@@ -47,7 +47,7 @@ export const executionGraphApi = {
    * @param {object} data - 更新数据 {name, description, status, layout_json, meta_json}
    */
   async updateGraph(graphId, data) {
-    const resp = await api.patch(`/v2/execution-topology/${encodeURIComponent(graphId)}`, data)
+    const resp = await api.patch(`/execution-topology/${encodeURIComponent(graphId)}`, data)
     return resp.data
   },
 
@@ -56,7 +56,7 @@ export const executionGraphApi = {
    * @param {string} graphId - 图 ID
    */
   async deleteGraph(graphId) {
-    const resp = await api.delete(`/v2/execution-topology/${encodeURIComponent(graphId)}`)
+    const resp = await api.delete(`/execution-topology/${encodeURIComponent(graphId)}`)
     return resp.data
   },
 
@@ -70,7 +70,7 @@ export const executionGraphApi = {
    * @param {object} data - 容器数据 {container_key, label, role_type, config_json, order_index}
    */
   async createContainer(graphId, data) {
-    const resp = await api.post(`/v2/execution-topology/${encodeURIComponent(graphId)}/containers`, data)
+    const resp = await api.post(`/execution-topology/${encodeURIComponent(graphId)}/containers`, data)
     return resp.data
   },
 
@@ -80,7 +80,7 @@ export const executionGraphApi = {
    * @param {object} data - 更新数据 {label, role_type, config_json, order_index}
    */
   async updateContainer(containerId, data) {
-    const resp = await api.patch(`/v2/execution-topology/containers/${encodeURIComponent(containerId)}`, data)
+    const resp = await api.patch(`/execution-topology/containers/${encodeURIComponent(containerId)}`, data)
     return resp.data
   },
 
@@ -89,7 +89,7 @@ export const executionGraphApi = {
    * @param {string} containerId - 容器 ID
    */
   async deleteContainer(containerId) {
-    const resp = await api.delete(`/v2/execution-topology/containers/${encodeURIComponent(containerId)}`)
+    const resp = await api.delete(`/execution-topology/containers/${encodeURIComponent(containerId)}`)
     return resp.data
   },
 
@@ -103,7 +103,7 @@ export const executionGraphApi = {
    * @param {object} data - 节点数据 {node_key, label, node_type, role_type, config_json, input_schema_json, output_schema_json, order_index}
    */
   async createNode(graphId, data) {
-    const resp = await api.post(`/v2/execution-topology/${encodeURIComponent(graphId)}/nodes`, data)
+    const resp = await api.post(`/execution-topology/${encodeURIComponent(graphId)}/nodes`, data)
     return resp.data
   },
 
@@ -113,7 +113,7 @@ export const executionGraphApi = {
    * @param {object} data - 更新数据 {label, node_type, role_type, config_json, input_schema_json, output_schema_json, order_index}
    */
   async updateNode(nodeId, data) {
-    const resp = await api.patch(`/v2/execution-topology/nodes/${encodeURIComponent(nodeId)}`, data)
+    const resp = await api.patch(`/execution-topology/nodes/${encodeURIComponent(nodeId)}`, data)
     return resp.data
   },
 
@@ -122,7 +122,7 @@ export const executionGraphApi = {
    * @param {string} nodeId - 节点 ID
    */
   async deleteNode(nodeId) {
-    const resp = await api.delete(`/v2/execution-topology/nodes/${encodeURIComponent(nodeId)}`)
+    const resp = await api.delete(`/execution-topology/nodes/${encodeURIComponent(nodeId)}`)
     return resp.data
   },
 
@@ -136,7 +136,7 @@ export const executionGraphApi = {
    * @param {object} data - 边数据 {source_node_id, target_node_id, edge_type, label, condition_expr, config_json, order_index}
    */
   async createEdge(graphId, data) {
-    const resp = await api.post(`/v2/execution-topology/${encodeURIComponent(graphId)}/edges`, data)
+    const resp = await api.post(`/execution-topology/${encodeURIComponent(graphId)}/edges`, data)
     return resp.data
   },
 
@@ -146,7 +146,7 @@ export const executionGraphApi = {
    * @param {object} data - 更新数据 {label, edge_type, condition_expr, config_json, order_index}
    */
   async updateEdge(edgeId, data) {
-    const resp = await api.patch(`/v2/execution-topology/edges/${encodeURIComponent(edgeId)}`, data)
+    const resp = await api.patch(`/execution-topology/edges/${encodeURIComponent(edgeId)}`, data)
     return resp.data
   },
 
@@ -155,7 +155,7 @@ export const executionGraphApi = {
    * @param {string} edgeId - 边 ID
    */
   async deleteEdge(edgeId) {
-    const resp = await api.delete(`/v2/execution-topology/edges/${encodeURIComponent(edgeId)}`)
+    const resp = await api.delete(`/execution-topology/edges/${encodeURIComponent(edgeId)}`)
     return resp.data
   },
 
@@ -168,7 +168,7 @@ export const executionGraphApi = {
    * @param {string} graphId - 图 ID
    */
   async getGraphDetail(graphId) {
-    const resp = await api.get(`/v2/execution-topology/${encodeURIComponent(graphId)}/detail`)
+    const resp = await api.get(`/execution-topology/${encodeURIComponent(graphId)}/detail`)
     return resp.data
   },
 
@@ -181,7 +181,7 @@ export const executionGraphApi = {
    * @param {string} graphId - 图 ID
    */
   async getTopologyStructure(graphId) {
-    const resp = await api.get(`/v2/execution-topology/${encodeURIComponent(graphId)}/structure`)
+    const resp = await api.get(`/execution-topology/${encodeURIComponent(graphId)}/structure`)
     return resp.data
   },
 
@@ -190,7 +190,7 @@ export const executionGraphApi = {
    * @param {string} graphId - 图 ID
    */
   async validateTopologyStructure(graphId) {
-    const resp = await api.post(`/v2/execution-topology/${encodeURIComponent(graphId)}/validate`)
+    const resp = await api.post(`/execution-topology/${encodeURIComponent(graphId)}/validate`)
     return resp.data
   },
 
@@ -205,7 +205,7 @@ export const executionGraphApi = {
     if (nodeType) params.append('node_type', nodeType)
     if (roleType) params.append('role_type', roleType)
     const queryString = params.toString()
-    const resp = await api.get(`/v2/execution-topology/${encodeURIComponent(graphId)}/containers${queryString ? '?' + queryString : ''}`)
+    const resp = await api.get(`/execution-topology/${encodeURIComponent(graphId)}/containers${queryString ? '?' + queryString : ''}`)
     return resp.data
   },
 
@@ -218,7 +218,7 @@ export const executionGraphApi = {
     const params = new URLSearchParams()
     if (format) params.append('format', format)
     const queryString = params.toString()
-    const resp = await api.get(`/v2/execution-topology/${encodeURIComponent(graphId)}/export${queryString ? '?' + queryString : ''}`)
+    const resp = await api.get(`/execution-topology/${encodeURIComponent(graphId)}/export${queryString ? '?' + queryString : ''}`)
     return resp.data
   },
 }

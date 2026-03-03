@@ -1,6 +1,6 @@
 """
 文件上传/下载路由 - FastAPI 版本
-对应 Flask blueprint: file_bp (url_prefix="/api")
+对应历史蓝图: file_bp (url_prefix="/api/v2")
 """
 
 import csv
@@ -19,7 +19,7 @@ from backend_business.api.http.errors import ErrorResponse
 from backend_business.services.ai_proxy import ai_proxy
 from backend_business.services.db_service import db_service
 
-router = APIRouter(prefix="/api", tags=["file"])
+router = APIRouter(prefix="/api/v2", tags=["file"])
 
 # 文件上传配置
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
@@ -192,7 +192,7 @@ def download_uploaded_file(
     """
     下载/预览已上传文件。
 
-    GET /api/uploads/{filename}
+    GET /api/v2/uploads/{filename}
     可选参数：?download=true 强制下载（而非预览）
     """
     safe_filename = secure_filename(filename)
@@ -287,7 +287,7 @@ async def upload_csv(
 def download_result(record_id: int = Query(alias="id")):
     """
     下载某条分析记录的 output_json（作为 .json 文件）。
-    GET /api/download_result?id=123
+    GET /api/v2/download_result?id=123
     """
     if db_service is None:
         raise ErrorResponse("数据库服务未初始化", 500)

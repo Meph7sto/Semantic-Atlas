@@ -44,7 +44,7 @@ async def get_current_user(request: Request) -> dict:
             detail="Token 无效或已过期",
         )
 
-    # 返回用户信息（与 Flask 格式一致）
+    # 返回用户信息（与历史返回格式一致）
     user_info = {
         "user_id": payload.get("user_id"),
         "username": payload.get("username"),

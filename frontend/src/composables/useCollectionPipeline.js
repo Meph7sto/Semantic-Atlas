@@ -90,7 +90,7 @@ export function useCollectionPipeline() {
     }
     if (sessionId.value.trim()) payload.session_id = sessionId.value.trim()
 
-    const response = await fetch('/api/analysis/ingest_transcript/stream', {
+    const response = await fetch('/api/v2/analysis/ingest_transcript/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -167,7 +167,7 @@ export function useCollectionPipeline() {
       },
     }
 
-    const response = await fetch('/api/analysis/build_context/stream', {
+    const response = await fetch('/api/v2/analysis/build_context/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -408,7 +408,7 @@ export function useCollectionPipeline() {
     if (isSampleLoading.value) return
     isSampleLoading.value = true
     try {
-      const response = await fetch('/api/analysis/sample_transcript', { cache: 'no-store' })
+      const response = await fetch('/api/v2/analysis/sample_transcript', { cache: 'no-store' })
       if (!response.ok) throw new Error(`加载示例失败: HTTP ${response.status}`)
       const text = await response.text()
       if (!text.trim()) throw new Error('示例文件为空')

@@ -314,7 +314,7 @@ const buildGroupsFromCsv = (text, opts) => {
                 开始分类
               </span>
             </button>
-            <p class="text-xs text-zinc-400">分发至 /api/classification/predict-texts</p>
+            <p class="text-xs text-zinc-400">分发至 /api/v2/classification/predict-texts</p>
           </div>
 
           <div v-if="predictions.length" class="mt-5 space-y-4">
@@ -414,7 +414,7 @@ const buildGroupsFromCsv = (text, opts) => {
             >
               重置
             </button>
-            <p class="text-xs text-zinc-400">分发至 /api/classification/predict-csv</p>
+            <p class="text-xs text-zinc-400">分发至 /api/v2/classification/predict-csv</p>
           </div>
 
           <div class="mt-4">

@@ -1,7 +1,5 @@
 """
 FastAPI strict contract tests for permission routes.
-
-Despite the filename, this suite no longer compares against Flask behavior.
 It ensures we do not keep compatibility coercions for legacy callers.
 """
 

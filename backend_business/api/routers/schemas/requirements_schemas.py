@@ -1,6 +1,6 @@
 """
 Requirements API Pydantic 请求模型
-对应 Flask blueprint: requirements_bp
+对应历史蓝图: requirements_bp
 """
 
 from typing import Any, Literal

@@ -87,7 +87,7 @@ const deleteFile = async (filename) => {
 
 const previewUrl = computed(() => {
     if (!selectedFile.value) return null
-    return `/api/uploads/${encodeURIComponent(selectedFile.value.filename)}`
+    return `/api/v2/uploads/${encodeURIComponent(selectedFile.value.filename)}`
 })
 
 onMounted(() => {
@@ -205,7 +205,7 @@ onMounted(() => {
                         <div class="text-xs text-zinc-500 space-y-2">
                             <p>Files uploaded from mobile devices will appear here automatically.</p>
                             <p>Supported formats: images, documents, archives (max 50MB)</p>
-                            <p class="font-medium text-zinc-600">API Endpoint: POST /api/upload</p>
+                            <p class="font-medium text-zinc-600">API Endpoint: POST /api/v2/upload</p>
                         </div>
                     </div>
                 </div>

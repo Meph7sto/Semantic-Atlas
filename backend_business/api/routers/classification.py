@@ -1,6 +1,6 @@
 """
 分类路由 - FastAPI 版本
-对应 Flask blueprint: classification_bp (url_prefix="/api/classification")
+对应历史蓝图: classification_bp (url_prefix="/api/v2/classification")
 """
 
 import os

@@ -1,6 +1,6 @@
 """
 Classification API Pydantic 请求模型
-对应 Flask blueprint: classification_bp
+对应历史蓝图: classification_bp
 """
 
 from typing import Optional

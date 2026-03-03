@@ -63,7 +63,7 @@ export const conflictApi = {
         if (sessionId) {
             payload.session_id = sessionId
         }
-        const resp = await api.post('/v2/conflict/check', payload)
+        const resp = await api.post('/conflict/check', payload)
         return resp.data
     },
 
@@ -75,12 +75,12 @@ export const conflictApi = {
         if (sessionId) {
             payload.session_id = sessionId
         }
-        const resp = await api.post('/v2/conflict/check/batch', payload)
+        const resp = await api.post('/conflict/check/batch', payload)
         return resp.data
     },
 
     async getLatest(sessionId) {
-        const resp = await api.get('/v2/conflict/latest', {
+        const resp = await api.get('/conflict/latest', {
             params: { session_id: sessionId },
         })
         return resp.data
@@ -176,7 +176,7 @@ export const requirementsL123Api = {
      * @returns {Promise<void>}
      */
     async extractStream(payload, onEvent) {
-        const response = await fetch('/api/requirements/extract_l123/stream', {
+        const response = await fetch('/api/v2/requirements/extract_l123/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
@@ -308,11 +308,11 @@ export const classifyTexts = (payload, saveToDb = false, sessionId = null) => {
     if (sessionId) {
         finalPayload.session_id = sessionId
     }
-    return api.post('/v2/classification/predict-texts', finalPayload)
+    return api.post('/classification/predict-texts', finalPayload)
 }
 
 export const getLatestClassification = async (sessionId) => {
-    const resp = await api.get('/v2/classification/latest', {
+    const resp = await api.get('/classification/latest', {
         params: { session_id: sessionId },
     })
     return resp.data?.data ?? resp.data
@@ -321,7 +321,7 @@ export const getLatestClassification = async (sessionId) => {
 export const classifyCsv = (file) => {
     const formData = new FormData()
     formData.append('file', file)
-    return api.post('/v2/classification/predict-csv', formData, {
+    return api.post('/classification/predict-csv', formData, {
         responseType: 'blob',
         headers: { 'Content-Type': 'multipart/form-data' },
     })

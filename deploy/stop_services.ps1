@@ -98,8 +98,8 @@ else {
   Write-Host "Nginx 停止成功。"
 }
 
-Write-Host "[stop] 结束占用端口的进程: 8000 (FastAPI), 5001 (Flask), 5002 (FastAPI Business), 8008 (Nginx)"
-$ports = @(8000, 5001, 5002, 8008)
+Write-Host "[stop] 结束占用端口的进程: 8000 (FastAPI Inference), 5002 (FastAPI Business), 8008 (Nginx)"
+$ports = @(8000, 5002, 8008)
 foreach ($port in $ports) {
   $conns = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
   if ($conns) {
@@ -116,7 +116,6 @@ try {
   Where-Object {
     $_.CommandLine -and (
       $_.CommandLine -match "backend_inference" -or
-      $_.CommandLine -match "backend_business[/\\]app.py" -or
       $_.CommandLine -match "backend_business[/\\]main.py" -or
       $_.CommandLine -match "uvicorn.*backend_business.main"
     )

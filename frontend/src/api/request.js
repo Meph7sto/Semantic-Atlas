@@ -1,10 +1,11 @@
 import axios from 'axios'
 
 // 约定：
-// - 开发环境通过 Vite 代理 /api 到业务后端 (5001)
-// - 生产环境由 Nginx 反代 /api 到后端
+// - 开发环境通过 Vite 代理 /api/v2 到业务后端 (5002)
+// - 业务接口统一走 /api/v2/*
+// - 生产环境由 Nginx 反代 /api/v2 到后端
 export const api = axios.create({
-    baseURL: '/api',
+    baseURL: '/api/v2',
     timeout: 1800000, // 30分钟超时，批量分析需要较长时间
     headers: { 'Content-Type': 'application/json' },
 })

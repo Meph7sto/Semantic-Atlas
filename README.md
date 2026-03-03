@@ -30,10 +30,10 @@ Semantic-Atlas 是面向需求工程的语义分析平台，覆盖会议转写�
 ┌─────────────────────────────────────────────────────────────┐
 │                    Frontend (Vue 3 + Vite + Tailwind)       │
 │                         Port: 8008                          │
-│   /api → Business Backend    /inference → Inference Backend │
+│ /api/v2 → Business Backend   /inference → Inference Backend │
 ├─────────────────────────────────────────────────────────────┤
-│  Business Backend (Flask)  │  Inference Backend (FastAPI)   │
-│       Port: 5001           │        Port: 8000              │
+│ Business Backend (FastAPI) │  Inference Backend (FastAPI)   │
+│       Port: 5002           │        Port: 8000              │
 │  编排 / 存储 / 推理代理      │  LLM / ML 模型推理             │
 ├─────────────────────────────────────────────────────────────┤
 │                  PostgreSQL (Port: 5432)                     │
@@ -41,8 +41,8 @@ Semantic-Atlas 是面向需求工程的语义分析平台，覆盖会议转写�
 └─────────────────────────────────────────────────────────────┘
 ```
 
-- **Frontend**: Vue 3 + Vite + Tailwind (`frontend/`)，通过 `/api` 代理访问业务后端，`/inference` 代理访问推理后端
-- **Business Backend**: Flask (`backend_business/`)，负责 `/api/*` 编排、存储与推理代理
+- **Frontend**: Vue 3 + Vite + Tailwind (`frontend/`)，通过 `/api/v2` 代理访问业务后端，`/inference` 代理访问推理后端
+- **Business Backend**: FastAPI (`backend_business/`)，负责 `/api/v2/*` 编排、存储与推理代理
 - **Inference Backend**: FastAPI (`backend_inference/`)，负责冲突/追溯/分类/需求抽取/L4 生成/知识库/对话
 - **可选 Nginx**: `deploy/nginx*.conf`，统一入口端口 8008
 
@@ -74,10 +74,10 @@ docker compose up -d
 uvicorn backend_inference.main:app --host 0.0.0.0 --port 8000
 ```
 
-5) 启动业务后端（Flask）
+5) 启动业务后端（FastAPI）
 
 ```bash
-python backend_business/app.py
+uvicorn backend_business.main:app --host 0.0.0.0 --port 5002
 ```
 
 6) 启动前端（Vite Dev Server）
@@ -179,7 +179,7 @@ bash deploy/stop_services.sh
 | `CLASSIFICATION_URL` | 分类服务地址 | `http://localhost:8000` |
 | `DATABASE_URL` | PostgreSQL 连接串（优先） | - |
 | `POSTGRES_HOST` / `PORT` / `USER` / `PASSWORD` / `DB` | 数据库连接参数 | `127.0.0.1` / `5432` / `semantic` / `semantic_dev` / `semantic_atlas` |
-| `BUSINESS_HOST` / `BUSINESS_PORT` / `BUSINESS_DEBUG` | Flask 服务配置 | - |
+| `BUSINESS_HOST` / `BUSINESS_PORT` / `BUSINESS_DEBUG` | FastAPI 业务服务配置 | - |
 | `CORS_ORIGINS` | CORS 允许源 | `*` |
 
 ### 示例 `.env`
@@ -197,23 +197,23 @@ POSTGRES_DB=semantic_atlas
 
 ## API 概览
 
-### 业务后端（Flask, 前缀 `/api`）
+### 业务后端（FastAPI, 前缀 `/api/v2`）
 
 | 蓝图 | 前缀 | 说明 |
 |------|------|------|
-| `analysis_bp` | `/api` | Phase 1 & 2 流水线 |
-| `requirements_bp` | `/api` | Phase 3 & 需求 CRUD |
-| `manage_bp` | `/api/manage` | 项目/需求/里程碑管理 |
-| `product_bp` | `/api/product` | 产品管理 |
-| `conflict_bp` | `/api/conflict` | 冲突检测代理 |
-| `classification_bp` | `/api/classification` | 分类代理 |
-| `dedup_bp` | `/api/dedup` | 需求去重 |
-| `push_bp` | `/api/push` | 推送通知 |
-| `mobile_chat_bp` | `/api/mobile` | 移动端消息 |
-| `file_bp` | `/api` | CSV 上传/下载 |
+| `analysis_bp` | `/api/v2` | Phase 1 & 2 流水线 |
+| `requirements_bp` | `/api/v2` | Phase 3 & 需求 CRUD |
+| `manage_bp` | `/api/v2/manage` | 项目/需求/里程碑管理 |
+| `product_bp` | `/api/v2/product` | 产品管理 |
+| `conflict_bp` | `/api/v2/conflict` | 冲突检测代理 |
+| `classification_bp` | `/api/v2/classification` | 分类代理 |
+| `dedup_bp` | `/api/v2/dedup` | 需求去重 |
+| `push_bp` | `/api/v2/push` | 推送通知 |
+| `mobile_chat_bp` | `/api/v2/mobile` | 移动端消息 |
+| `file_bp` | `/api/v2` | CSV 上传/下载 |
 
-另有 `GET /health` 健康检查（非 `/api` 前缀）。
-`/api/mobile/*` 相关接口支持可选 `user_id` 参数；未传时回退 `X-Actor`，再回退 `anonymous`。
+另有 `GET /health` 健康检查（非 `/api/v2` 前缀）。
+`/api/v2/mobile/*` 相关接口支持可选 `user_id` 参数；未传时回退 `X-Actor`，再回退 `anonymous`。
 
 ### 推理后端（FastAPI）
 
@@ -312,19 +312,19 @@ frontend/                          # Vue 3 + Vite + Tailwind
     router/index.js                # 路由配置
     utils/api.js                   # 统一 API 客户端
 
-backend_business/                  # Flask 业务编排 + 存储
-  app.py                           # 应用入口
-  routes/                          # API 路由蓝图
-    analysis_route.py              #   Phase 1 & 2
-    requirements_route.py          #   Phase 3 & 需求 CRUD
-    manage_routes.py               #   项目/需求管理
-    product_routes.py              #   产品管理
-    conflict_routes.py             #   冲突检测代理
-    classification_routes.py       #   分类代理
-    deduplication_route.py         #   需求去重
-    push_routes.py                 #   推送通知
-    mobile_chat_routes.py          #   移动端消息
-    file_route.py                  #   CSV 上传/下载
+backend_business/                  # FastAPI 业务编排 + 存储
+  main.py                          # FastAPI 应用入口
+  api/routers/                     # FastAPI Router
+    analysis.py                    #   Phase 1 & 2
+    requirements.py                #   Phase 3 & 需求 CRUD
+    manage.py                      #   项目/需求管理
+    product.py                     #   产品管理
+    conflict.py                    #   冲突检测代理
+    classification.py              #   分类代理
+    deduplication.py               #   需求去重
+    push.py                        #   推送通知
+    mobile_chat.py                 #   移动端消息
+    file.py                        #   CSV 上传/下载
   services/
     agent/                         # 多 Agent 架构
     context_builder/               # Phase 2 上下文构建
@@ -366,7 +366,7 @@ docker-compose.yml                 # PostgreSQL + Adminer
 | 服务 | 端口 |
 |------|------|
 | 前端开发服务器（Vite） | 8008 |
-| 业务后端（Flask） | 5001 |
+| 业务后端（FastAPI） | 5002 |
 | 推理后端（FastAPI） | 8000 |
 | PostgreSQL | 5432 |
 | Adminer | 8080 |
@@ -374,5 +374,5 @@ docker-compose.yml                 # PostgreSQL + Adminer
 
 ## 前端开发代理
 
-- `/api` → `http://localhost:5001`（业务后端）
+- `/api/v2` → `http://localhost:5002`（业务后端）
 - `/inference` → `http://localhost:8000`（推理后端，路径去掉 `/inference` 前缀）

@@ -17,22 +17,6 @@ export default defineConfig({
                 target: 'http://localhost:5002',
                 changeOrigin: true
             },
-            '/api/analysis': {
-                target: 'http://localhost:5002',
-                changeOrigin: true
-            },
-            '/api/conflict': {
-                target: 'http://localhost:5002',
-                changeOrigin: true
-            },
-            '/api/classification': {
-                target: 'http://localhost:5002',
-                changeOrigin: true
-            },
-            '/api': {
-                target: 'http://localhost:5001',
-                changeOrigin: true
-            },
             '/inference': {
                 target: 'http://localhost:8000',
                 changeOrigin: true,
@@ -45,22 +29,6 @@ export default defineConfig({
         proxy: {
             '/api/v2/': {
                 target: 'http://localhost:5002',
-                changeOrigin: true
-            },
-            '/api/analysis': {
-                target: 'http://localhost:5002',
-                changeOrigin: true
-            },
-            '/api/conflict': {
-                target: 'http://localhost:5002',
-                changeOrigin: true
-            },
-            '/api/classification': {
-                target: 'http://localhost:5002',
-                changeOrigin: true
-            },
-            '/api': {
-                target: 'http://localhost:5001',
                 changeOrigin: true
             },
             '/inference': {

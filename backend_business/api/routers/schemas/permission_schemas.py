@@ -1,6 +1,6 @@
 """
 Permission API Pydantic 请求模型
-对应 Flask blueprint: permission_bp
+对应历史蓝图: permission_bp
 """
 
 from typing import Optional

@@ -1,6 +1,6 @@
 """
 需求去重路由 - FastAPI 版本
-对应 Flask blueprint: dedup_bp (url_prefix="/api/dedup")
+对应历史蓝图: dedup_bp (url_prefix="/api/v2/dedup")
 """
 
 from fastapi import APIRouter
@@ -18,7 +18,7 @@ from backend_business.api.routers.schemas.deduplication_schemas import (
     UpdateRequirementRequest,
 )
 
-router = APIRouter(prefix="/api/dedup", tags=["deduplication"])
+router = APIRouter(prefix="/api/v2/dedup", tags=["deduplication"])
 
 # 初始化去重服务
 _dedup_service = RequirementsDeduplicationService(dsn=settings.POSTGRES_DSN)

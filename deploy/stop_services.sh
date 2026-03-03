@@ -61,8 +61,8 @@ if command -v pgrep >/dev/null 2>&1; then
   fi
 fi
 
-echo "[stop] 结束占用端口的进程: 8000 (FastAPI), 5001 (Flask), 5002 (FastAPI Business), 8008 (Nginx)"
-for port in 8000 5001 5002 8008; do
+echo "[stop] 结束占用端口的进程: 8000 (FastAPI Inference), 5002 (FastAPI Business), 8008 (Nginx)"
+for port in 8000 5002 8008; do
   if command -v lsof >/dev/null 2>&1; then
     PIDS=$(lsof -ti :"${port}" 2>/dev/null || true)
     if [[ -n "${PIDS}" ]]; then
@@ -89,14 +89,6 @@ if command -v pgrep >/dev/null 2>&1; then
   for pid in $(pgrep -f "backend_inference" 2>/dev/null || true); do
     if [[ -n "$pid" ]]; then
       echo " - python PID ${pid} (backend_inference) -> stopping"
-      stop_process_tree "$pid" "python"
-    fi
-  done
-
-  # 匹配 backend_business/app.py
-  for pid in $(pgrep -f "backend_business[/\\\\]app.py" 2>/dev/null || true); do
-    if [[ -n "$pid" ]]; then
-      echo " - python PID ${pid} (backend_business/app.py) -> stopping"
       stop_process_tree "$pid" "python"
     fi
   done
