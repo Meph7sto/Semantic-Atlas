@@ -149,17 +149,10 @@ def login(req: LoginRequest):
     user_role = user["role"]
     user_external_type = user.get("external_type")
 
-    # 特殊处理：test 用户可以模拟任何角色和外部身份
+    # 特殊处理：test 用户可以模拟标准角色
     if username == "test":
         if selected_role in ("super_admin", "admin", "member", "viewer"):
             user_role = selected_role
-        # 如果前端选择了外部身份
-        if selected_role == "client":
-            user_role = "member"  # 外部客户的基础角色
-            user_external_type = "CLIENT"
-        elif selected_role == "contractor":
-            user_role = "member"  # 外包成员的基础角色
-            user_external_type = "CONTRACTOR"
 
     # 生成 JWT token
     token = auth_service.generate_token(

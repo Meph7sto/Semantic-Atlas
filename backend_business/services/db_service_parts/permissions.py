@@ -10,8 +10,6 @@ from typing import Dict, List, Optional, Set
 # ========================
 SYS_ADMIN = "SYS_ADMIN"       # 超级管理员（全权限）
 SYS_USER = "SYS_USER"         # 普通内部用户
-SYS_CLIENT = "SYS_CLIENT"     # 甲方客户
-SYS_CONTRACTOR = "SYS_CONTRACTOR"  # 外包成员
 
 
 # ========================
@@ -158,20 +156,13 @@ class PermissionsMixin:
             user: 用户信息字典
 
         Returns:
-            系统级身份：SYS_ADMIN, SYS_USER, SYS_CLIENT, SYS_CONTRACTOR
+            系统级身份：SYS_ADMIN, SYS_USER
         """
         # 根据系统级角色判断
         role = user.get("role", "")
 
         if role == "super_admin":
             return SYS_ADMIN
-
-        external_type = user.get("external_type")
-
-        if external_type == "CLIENT":
-            return SYS_CLIENT
-        elif external_type == "CONTRACTOR":
-            return SYS_CONTRACTOR
 
         return SYS_USER
 
@@ -205,13 +196,6 @@ class PermissionsMixin:
         # 超级管理员拥有所有权限
         if system_identity == SYS_ADMIN:
             return set(ALL_PERMISSIONS)
-
-        # 外部身份只能使用特定权限
-        if system_identity == SYS_CLIENT:
-            return set(ROLE_PERMISSIONS.get(ROLE_CLIENT, []))
-
-        if system_identity == SYS_CONTRACTOR:
-            return set(ROLE_PERMISSIONS.get(ROLE_CONTRACTOR, []))
 
         # 普通用户：基于项目角色计算权限
         roles = self.get_user_roles(project_id, user_id)
@@ -348,28 +332,19 @@ class PermissionsMixin:
         external_type: Optional[str] = None,
     ) -> Dict:
         """
-        构建查询过滤条件（用于外部身份的可见性过滤）
+        构建基础查询过滤条件（兼容旧接口）
 
         Args:
             project_id: 项目 ID
             user_id: 用户 ID
-            external_type: 外部身份类型
+            external_type: 外部身份类型（兼容字段，不参与过滤）
 
         Returns:
             包含 WHERE 条件和参数的字典
         """
+        _ = user_id, external_type
         conditions = ["project_id = %s", "deleted = FALSE"]
         params = [project_id]
-
-        # 根据外部身份添加过滤条件
-        if external_type == "CLIENT":
-            # 客户只能看到已确认或已完成的需求
-            conditions.append("status IN (%s, %s)")
-            params.extend(["confirmed", "completed"])
-        elif external_type == "CONTRACTOR":
-            # 外包成员只能看到指派给自己的需求
-            conditions.append("assignee = %s")
-            params.append(user_id)
 
         return {
             "where_clause": " AND ".join(conditions),
@@ -1055,37 +1030,45 @@ class PermissionsMixin:
                 "params": tuple(),
             }
 
-        system_identity = self.get_system_identity(user)
-
         # 超级管理员可以看到所有需求
-        if system_identity == SYS_ADMIN:
+        if self.get_system_identity(user) == SYS_ADMIN:
             return {
                 "where_clause": "project_id = %s AND deleted = FALSE",
                 "params": (project_id,),
             }
 
-        # 普通内部用户：基于权限判断
-        if system_identity == SYS_USER:
-            permissions = self.get_user_permissions(project_id, user_id, user)
+        permissions = self.get_user_permissions(project_id, user_id, user)
 
-            # 有查看权限可以看到所有
-            if PERM_REQ_VIEW in permissions:
-                return {
-                    "where_clause": "project_id = %s AND deleted = FALSE",
-                    "params": (project_id,),
-                }
-            # 只有查看指派任务的权限
-            elif PERM_REQ_VIEW_ASSIGNED in permissions:
-                return {
-                    "where_clause": "project_id = %s AND deleted = FALSE AND assignee = %s",
-                    "params": (project_id, user_id),
-                }
+        # 有查看权限可以看到所有
+        if PERM_REQ_VIEW in permissions:
+            return {
+                "where_clause": "project_id = %s AND deleted = FALSE",
+                "params": (project_id,),
+            }
 
-        # 外部身份使用特定的过滤规则
-        filter_dict = self.build_query_filter(
-            project_id,
-            user_id,
-            user.get("external_type")
+        visibility_conditions = []
+        visibility_params: List[str] = []
+
+        if PERM_REQ_VIEW_ASSIGNED in permissions:
+            visibility_conditions.append("assignee = %s")
+            visibility_params.append(user_id)
+
+        if PERM_REQ_VIEW_SHARED in permissions:
+            visibility_conditions.append("status IN (%s, %s)")
+            visibility_params.extend(["confirmed", "completed"])
+
+        if not visibility_conditions:
+            return {
+                "where_clause": "FALSE",
+                "params": tuple(),
+            }
+
+        where_clause = (
+            "project_id = %s AND deleted = FALSE AND ("
+            + " OR ".join(visibility_conditions)
+            + ")"
         )
-
-        return filter_dict
+        return {
+            "where_clause": where_clause,
+            "params": (project_id, *visibility_params),
+        }

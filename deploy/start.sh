@@ -64,6 +64,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# 尝试加载 .env 文件 (用于持久化配置)
+ENV_FILE="${BASE_DIR}/.env"
+if [[ -f "$ENV_FILE" ]]; then
+  echo "[start] Loading secrets from .env..."
+  set -a
+  source "$ENV_FILE"
+  set +a
+fi
+
 # 网络模式选择（本地运行 vs frp 内网穿透）
 if [[ -z "$FRP_MODE" ]]; then
   echo "请选择网络模式: 1=本地运行(默认) 2=开启frp内网穿透"
@@ -194,15 +203,6 @@ if [[ -z "$ENTRY" ]]; then
 fi
 
 export FRONTEND_ENTRY="$ENTRY"
-
-# 尝试加载 .env 文件 (用于持久化 API Key)
-ENV_FILE="${BASE_DIR}/.env"
-if [[ -f "$ENV_FILE" ]]; then
-  echo "[start] Loading secrets from .env..."
-  set -a
-  source "$ENV_FILE"
-  set +a
-fi
 
 # Chutes API Token 检查
 if [[ "$PROVIDER" == "chutes" && -z "${CHUTES_API_TOKEN:-}" ]]; then
