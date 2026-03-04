@@ -124,20 +124,20 @@
         <div class="col-span-full rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
           <div class="flex items-center justify-between mb-3">
             <div>
-              <div class="text-sm font-medium text-zinc-700">并行处理模式</div>
-              <div class="text-xs text-zinc-500">同时处理多个窗口，提升 4-5 倍速度</div>
+              <div class="text-sm font-medium text-zinc-700">窗口并行模式（Phase 2）</div>
+              <div class="text-xs text-zinc-500">并行处理多个窗口（window），用于上下文构建提速</div>
             </div>
             <label class="relative inline-flex items-center cursor-pointer">
               <input type="checkbox" v-model="options.enable_parallel_windows" class="sr-only peer">
               <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-              <span class="ml-3 text-sm font-medium text-zinc-600">启用并行</span>
+              <span class="ml-3 text-sm font-medium text-zinc-600">启用窗口并行</span>
             </label>
           </div>
 
           <!-- Max Concurrent Windows -->
           <div v-if="options.enable_parallel_windows" class="mt-3">
             <label class="block text-sm font-medium text-zinc-700 mb-1">
-              最大并发窗口数
+              最大并发窗口数（Phase 2）
             </label>
             <div class="flex items-center gap-3">
               <input

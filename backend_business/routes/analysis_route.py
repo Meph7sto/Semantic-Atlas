@@ -33,8 +33,12 @@ def _build_ingest_options(payload: dict) -> dict:
     max_spans_returned = options.get("max_spans_returned", 200)
     return {
         "estimate_timestamps_if_missing": bool(estimate_missing),
-        "default_span_ms": int(default_span_ms) if str(default_span_ms).isdigit() else 8000,
-        "max_spans_returned": int(max_spans_returned) if str(max_spans_returned).isdigit() else 200,
+        "default_span_ms": int(default_span_ms)
+        if str(default_span_ms).isdigit()
+        else 8000,
+        "max_spans_returned": int(max_spans_returned)
+        if str(max_spans_returned).isdigit()
+        else 200,
     }
 
 
@@ -43,7 +47,7 @@ def _sse_event(payload: dict) -> str:
 
 
 @analysis_bp.route("/analysis/ingest_transcript", methods=["POST"])
-def ingest_transcript():
+def ingest_transcript():  # 已迁移到 backend_business/api/routers/analysis.py
     payload = request.get_json(silent=True) or {}
     transcript_text = (payload.get("transcript_text") or "").strip()
     if not transcript_text:
@@ -53,10 +57,13 @@ def ingest_transcript():
     options = _build_ingest_options(payload)
     max_spans_returned = options.pop("max_spans_returned")
 
-    spans, warnings, stats = parse_transcript_to_spans(transcript_text, session_id, options)
+    spans, warnings, stats = parse_transcript_to_spans(
+        transcript_text, session_id, options
+    )
     upsert_result = db_service.upsert_spans(spans)
     conflict_warnings = [
-        f"span_id conflict: {conflict['span_id']}" for conflict in upsert_result["conflicts"]
+        f"span_id conflict: {conflict['span_id']}"
+        for conflict in upsert_result["conflicts"]
     ]
     all_warnings = warnings + conflict_warnings
 
@@ -75,7 +82,7 @@ def ingest_transcript():
 
 
 @analysis_bp.route("/analysis/ingest_transcript/stream", methods=["POST"])
-def ingest_transcript_stream():
+def ingest_transcript_stream():  # 已迁移到 backend_business/api/routers/analysis.py
     payload = request.get_json(silent=True) or {}
     transcript_text = (payload.get("transcript_text") or "").strip()
     if not transcript_text:
@@ -97,7 +104,9 @@ def ingest_transcript_stream():
             }
         )
 
-        spans, warnings, stats = parse_transcript_to_spans(transcript_text, session_id, options)
+        spans, warnings, stats = parse_transcript_to_spans(
+            transcript_text, session_id, options
+        )
         yield _sse_event(
             {
                 "event": "parsed",
@@ -118,7 +127,8 @@ def ingest_transcript_stream():
         )
 
         conflict_warnings = [
-            f"span_id conflict: {conflict['span_id']}" for conflict in upsert_result["conflicts"]
+            f"span_id conflict: {conflict['span_id']}"
+            for conflict in upsert_result["conflicts"]
         ]
         all_warnings = warnings + conflict_warnings
         yield _sse_event(
@@ -143,7 +153,7 @@ def ingest_transcript_stream():
 
 
 @analysis_bp.route("/analysis/sample_transcript", methods=["GET"])
-def get_sample_transcript():
+def get_sample_transcript():  # 已迁移到 backend_business/api/routers/analysis.py
     current_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
     sample_path = os.path.join(project_root, "tests", "sample_transcript.txt")
@@ -196,13 +206,17 @@ def batch_trace_relation():
     lows = [str(s).strip() for s in lows if str(s).strip()]
 
     if not highs or not lows:
-        return jsonify({"success": False, "error": "请提供顶层需求列表和底层需求列表"}), 400
+        return jsonify(
+            {"success": False, "error": "请提供顶层需求列表和底层需求列表"}
+        ), 400
 
     try:
         result = ai_proxy.trace_batch(highs, lows, max_new_tokens=max_new_tokens)
         record_id = None
         if save_to_db:
-            record_id = db_service.save_batch(highs, lows, result, session_id=session_id)
+            record_id = db_service.save_batch(
+                highs, lows, result, session_id=session_id
+            )
         return jsonify({"success": True, "data": result, "record_id": record_id})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
@@ -223,10 +237,10 @@ def get_latest_trace_batch():
 def trace_by_mapping():
     """
     基于数据库映射关系的追溯分析
-    
+
     只分析验证数据库中已有对应关系的顶层-底层需求对，
     而不是全量笛卡尔积分析，大幅减少分析组合数。
-    
+
     请求体：
     {
         "session_id": "xxx",
@@ -245,7 +259,7 @@ def trace_by_mapping():
     try:
         # 从数据库获取有映射关系的需求对
         pairs = db_service.get_requirement_pairs_for_trace(session_id)
-        
+
         if not pairs:
             empty_result = {
                 "summary": "未找到需求映射关系，未执行追溯分析",
@@ -263,21 +277,23 @@ def trace_by_mapping():
                 },
                 "relation_types_count": None,
             }
-            return jsonify({
-                "success": True,
-                "data": empty_result,
-                "record_id": None,
-                "pairs_analyzed": 0,
-                "total_possible_pairs": 0,
-            })
+            return jsonify(
+                {
+                    "success": True,
+                    "data": empty_result,
+                    "record_id": None,
+                    "pairs_analyzed": 0,
+                    "total_possible_pairs": 0,
+                }
+            )
 
         # 构建追溯分析所需的数据结构
         # 去重：同一个顶层需求可能对应多个底层需求
         high_texts = []
         low_texts = []
         high_id_map = {}  # text -> id
-        low_id_map = {}   # text -> id
-        
+        low_id_map = {}  # text -> id
+
         for pair in pairs:
             ht = pair["high_req_text"]
             lt = pair["low_req_text"]
@@ -299,10 +315,7 @@ def trace_by_mapping():
 
         # 调用推理后端进行追溯分析（仅分析指定的对）
         result = ai_proxy.trace_batch_selective(
-            high_texts, 
-            low_texts, 
-            pair_indices,
-            max_new_tokens=max_new_tokens
+            high_texts, low_texts, pair_indices, max_new_tokens=max_new_tokens
         )
 
         # 为关系补充顶层/底层需求ID，便于前端正确连线
@@ -319,18 +332,22 @@ def trace_by_mapping():
                 continue
             if (hi, li) in pair_id_map:
                 rel["high_req_id"], rel["low_req_id"] = pair_id_map[(hi, li)]
-        
+
         record_id = None
         if save_to_db:
-            record_id = db_service.save_batch(high_texts, low_texts, result, session_id=session_id)
+            record_id = db_service.save_batch(
+                high_texts, low_texts, result, session_id=session_id
+            )
 
-        return jsonify({
-            "success": True, 
-            "data": result, 
-            "record_id": record_id,
-            "pairs_analyzed": len(pair_indices),
-            "total_possible_pairs": len(high_texts) * len(low_texts),
-        })
+        return jsonify(
+            {
+                "success": True,
+                "data": result,
+                "record_id": record_id,
+                "pairs_analyzed": len(pair_indices),
+                "total_possible_pairs": len(high_texts) * len(low_texts),
+            }
+        )
 
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
@@ -373,10 +390,19 @@ def trigger_analysis():
     这里直接复用 /trace-relation 的能力，便于后续扩展成异步任务。
     """
     payload = request.get_json(silent=True) or {}
-    high = (payload.get("high_level_requirement") or payload.get("requirement_a") or "").strip()
-    low = (payload.get("low_level_requirement") or payload.get("requirement_b") or "").strip()
+    high = (
+        payload.get("high_level_requirement") or payload.get("requirement_a") or ""
+    ).strip()
+    low = (
+        payload.get("low_level_requirement") or payload.get("requirement_b") or ""
+    ).strip()
     if not high or not low:
-        return jsonify({"success": False, "error": "请提供 high_level_requirement 与 low_level_requirement"}), 400
+        return jsonify(
+            {
+                "success": False,
+                "error": "请提供 high_level_requirement 与 low_level_requirement",
+            }
+        ), 400
     try:
         result = ai_proxy.trace_relation(high, low)
         return jsonify({"success": True, "data": result})
@@ -388,12 +414,13 @@ def trigger_analysis():
 # Phase 2: Context Building APIs
 # ========================
 
+
 @analysis_bp.route("/analysis/build_context", methods=["POST"])
-def build_context():
+def build_context():  # 已迁移到 backend_business/api/routers/analysis.py
     """
     Phase 2: 构建上下文（非流式）
     POST /api/analysis/build_context
-    
+
     Request:
     {
         "session_id": "...",
@@ -409,15 +436,15 @@ def build_context():
     }
     """
     from backend_business.services.context_builder import context_builder
-    
+
     payload = request.get_json(silent=True) or {}
     session_id = (payload.get("session_id") or "").strip()
-    
+
     if not session_id:
         return jsonify({"success": False, "error": "session_id 不能为空"}), 400
-    
+
     options = payload.get("options") or {}
-    
+
     try:
         result = context_builder.build_context(session_id, options)
         return jsonify({"success": True, "data": result})
@@ -428,35 +455,32 @@ def build_context():
 
 
 @analysis_bp.route("/analysis/build_context/stream", methods=["POST"])
-def build_context_stream():
+def build_context_stream():  # 已迁移到 backend_business/api/routers/analysis.py
     """
     Phase 2: 构建上下文（SSE流式）
     POST /api/analysis/build_context/stream
-    
+
     返回 text/event-stream
     """
     from backend_business.services.context_builder import context_builder
-    
+
     payload = request.get_json(silent=True) or {}
     session_id = (payload.get("session_id") or "").strip()
-    
+
     if not session_id:
         return jsonify({"success": False, "error": "session_id 不能为空"}), 400
-    
+
     options = payload.get("options") or {}
-    
+
     def generate():
         try:
             for event in context_builder.build_context_stream(session_id, options):
-                event_data = {
-                    "event": event.event,
-                    **event.data
-                }
+                event_data = {"event": event.event, **event.data}
                 yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
         except Exception as e:
             error_data = {"event": "error", "message": str(e)}
             yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
-    
+
     headers = {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -466,15 +490,15 @@ def build_context_stream():
 
 
 @analysis_bp.route("/analysis/context_runs", methods=["GET"])
-def list_context_runs():
+def list_context_runs():  # 已迁移到 backend_business/api/routers/analysis.py
     """
     获取context_runs列表
     GET /api/analysis/context_runs?session_id=xxx
     """
     from backend_business.services.db_service import db_service
-    
+
     session_id = request.args.get("session_id", "").strip()
-    
+
     with db_service._connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             if session_id:
@@ -485,7 +509,7 @@ def list_context_runs():
                     WHERE session_id = %s
                     ORDER BY created_at DESC
                     """,
-                    (session_id,)
+                    (session_id,),
                 )
             else:
                 cur.execute(
@@ -497,19 +521,21 @@ def list_context_runs():
                     """
                 )
             rows = cur.fetchall()
-    
+
     return jsonify({"success": True, "data": rows})
 
 
 @analysis_bp.route("/analysis/bundles/<context_run_id>", methods=["GET"])
-def get_bundles(context_run_id: str):
+def get_bundles(
+    context_run_id: str,
+):  # 已迁移到 backend_business/api/routers/analysis.py
     """
     获取指定context_run下的bundles和bundle_items
     GET /api/analysis/bundles/<context_run_id>
     """
     from backend_business.services.db_service import db_service
     from psycopg2.extras import RealDictCursor
-    
+
     with db_service._connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # 获取bundles
@@ -520,13 +546,13 @@ def get_bundles(context_run_id: str):
                 WHERE context_run_id = %s
                 ORDER BY order_index
                 """,
-                (context_run_id,)
+                (context_run_id,),
             )
             bundles = cur.fetchall()
-            
+
             if not bundles:
                 return jsonify({"success": False, "error": "No bundles found"}), 404
-            
+
             # 获取bundle_items
             bundle_ids = [b["bundle_id"] for b in bundles]
             cur.execute(
@@ -537,10 +563,10 @@ def get_bundles(context_run_id: str):
                 WHERE bi.bundle_id = ANY(%s)
                 ORDER BY bi.bundle_id, bi.order_index
                 """,
-                (bundle_ids,)
+                (bundle_ids,),
             )
             items = cur.fetchall()
-    
+
     # 组织数据
     items_by_bundle = {}
     for item in items:
@@ -548,34 +574,42 @@ def get_bundles(context_run_id: str):
         if bid not in items_by_bundle:
             items_by_bundle[bid] = []
         items_by_bundle[bid].append(dict(item))
-    
+
     result = []
     for bundle in bundles:
         bundle_data = dict(bundle)
         bundle_data["items"] = items_by_bundle.get(bundle["bundle_id"], [])
-        
+
         # 生成bundle_text（使用短引用）
         bundle_text_lines = []
         for item in bundle_data["items"]:
-            time_info = f"{item['start_ms']}-{item['end_ms']}" if item['start_ms'] is not None else "?"
-            speaker = item['speaker'] or 'unknown'
-            bundle_text_lines.append(f"[{item['span_ref']}] [{time_info}] [{speaker}]: {item['text']}")
+            time_info = (
+                f"{item['start_ms']}-{item['end_ms']}"
+                if item["start_ms"] is not None
+                else "?"
+            )
+            speaker = item["speaker"] or "unknown"
+            bundle_text_lines.append(
+                f"[{item['span_ref']}] [{time_info}] [{speaker}]: {item['text']}"
+            )
         bundle_data["bundle_text"] = "\n".join(bundle_text_lines)
-        
+
         result.append(bundle_data)
-    
+
     return jsonify({"success": True, "data": result})
 
 
 @analysis_bp.route("/analysis/span_links/<context_run_id>", methods=["GET"])
-def get_span_links(context_run_id: str):
+def get_span_links(
+    context_run_id: str,
+):  # 已迁移到 backend_business/api/routers/analysis.py
     """
     获取指定context_run下的边列表
     GET /api/analysis/span_links/<context_run_id>
     """
     from backend_business.services.db_service import db_service
     from psycopg2.extras import RealDictCursor
-    
+
     with db_service._connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
@@ -585,15 +619,17 @@ def get_span_links(context_run_id: str):
                 WHERE context_run_id = %s
                 ORDER BY strength DESC
                 """,
-                (context_run_id,)
+                (context_run_id,),
             )
             rows = cur.fetchall()
-    
+
     return jsonify({"success": True, "data": rows})
 
 
 @analysis_bp.route("/analysis/spans/<session_id>", methods=["GET"])
-def get_spans_by_session(session_id: str):
+def get_spans_by_session(
+    session_id: str,
+):  # 已迁移到 backend_business/api/routers/analysis.py
     """
     获取指定session下的spans（按时间顺序），带短引用序号
     GET /api/analysis/spans/<session_id>
@@ -626,4 +662,3 @@ def get_spans_by_session(session_id: str):
         spans.append(span)
 
     return jsonify({"success": True, "data": spans})
-

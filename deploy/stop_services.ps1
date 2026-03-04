@@ -43,7 +43,8 @@ else {
 if ($NginxExe) {
   try {
     & $NginxExe -c $NginxConf -p $DeployDir -g "pid logs/nginx.pid;" -s stop
-  } catch {
+  }
+  catch {
     Write-Warning "停止 Nginx 时出错: $_"
   }
 }
@@ -54,23 +55,51 @@ if (Test-Path $NginxPidPath) {
       $nginxProcId = [int]$nginxProcIdText
       Stop-ProcessTree -ProcessId $nginxProcId -Label "nginx"
     }
-  } catch {
+  }
+  catch {
     Write-Warning "根据 pid 文件停止 Nginx 失败: $_"
   }
   Remove-Item $NginxPidPath -Force -ErrorAction SilentlyContinue
 }
 try {
   $nginxMatches = Get-CimInstance Win32_Process -Filter "Name='nginx.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -and $_.CommandLine -match [regex]::Escape($NginxConf) }
-  foreach ($proc in $nginxMatches) {
-    Stop-ProcessTree -ProcessId $proc.ProcessId -Label "nginx"
+  Where-Object { $_.CommandLine -and $_.CommandLine -match [regex]::Escape($NginxConf) }
+  
+  # 对 Nginx，由于停止 worker 进程会导致 master 立即重启 worker，
+  # 我们需要先关闭 master 进程（它的 ParentProcessId 不在当前的 Nginx 进程 ID 列表中）。
+  $allPids = $nginxMatches | Select-Object -ExpandProperty ProcessId
+  if ($allPids) {
+    if ($allPids -isnot [array]) { $allPids = @($allPids) }
+    $masters = $nginxMatches | Where-Object { $_.ParentProcessId -notin $allPids }
+    $workers = $nginxMatches | Where-Object { $_.ParentProcessId -in $allPids }
+  }
+  else {
+    $masters = @()
+    $workers = @()
+  }
+
+  foreach ($proc in $masters) {
+    Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+  }
+  foreach ($proc in $workers) {
+    Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
   }
 }
 catch {
 }
 
-Write-Host "[stop] 结束占用端口的进程: 8000 (FastAPI), 5001 (Flask), 8008 (Nginx)"
-$ports = @(8000, 5001, 8008)
+Start-Sleep -Milliseconds 500
+$nginxLeft = Get-CimInstance Win32_Process -Filter "Name='nginx.exe'" -ErrorAction SilentlyContinue |
+Where-Object { $_.CommandLine -and $_.CommandLine -match [regex]::Escape($NginxConf) }
+if ($nginxLeft) {
+  Write-Warning "Nginx 停止失败，可能有残留进程。"
+}
+else {
+  Write-Host "Nginx 停止成功。"
+}
+
+Write-Host "[stop] 结束占用端口的进程: 8000 (FastAPI), 5001 (Flask), 5002 (FastAPI Business), 8008 (Nginx)"
+$ports = @(8000, 5001, 5002, 8008)
 foreach ($port in $ports) {
   $conns = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
   if ($conns) {
@@ -84,15 +113,46 @@ foreach ($port in $ports) {
 
 try {
   $pythonMatches = Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
-    Where-Object {
-      $_.CommandLine -and (
-        $_.CommandLine -match "backend_inference" -or
-        $_.CommandLine -match "backend_business[/\\]app.py"
-      )
-    }
+  Where-Object {
+    $_.CommandLine -and (
+      $_.CommandLine -match "backend_inference" -or
+      $_.CommandLine -match "backend_business[/\\]app.py" -or
+      $_.CommandLine -match "backend_business[/\\]main.py" -or
+      $_.CommandLine -match "uvicorn.*backend_business.main"
+    )
+  }
   foreach ($proc in $pythonMatches) {
     Write-Host (" - python PID {0} -> stopping" -f $proc.ProcessId)
     Stop-ProcessTree -ProcessId $proc.ProcessId -Label "python"
+  }
+}
+catch {
+}
+
+# 停止 FRP 客户端
+Write-Host "[stop] 检查 FRP 客户端..."
+$FrpPidPath = Join-Path $DeployDir "logs/frpc.pid"
+if (Test-Path $FrpPidPath) {
+  try {
+    $frpPidText = (Get-Content $FrpPidPath -Raw).Trim()
+    if ($frpPidText) {
+      $frpPid = [int]$frpPidText
+      Write-Host " - frpc PID $frpPid -> stopping"
+      Stop-ProcessTree -ProcessId $frpPid -Label "frpc"
+    }
+  }
+  catch {
+    Write-Warning "根据 pid 文件停止 frpc 失败: $_"
+  }
+  Remove-Item $FrpPidPath -Force -ErrorAction SilentlyContinue
+}
+
+# 通过进程名匹配 frpc
+try {
+  $frpMatches = Get-CimInstance Win32_Process -Filter "Name='frpc.exe'" -ErrorAction SilentlyContinue
+  foreach ($proc in $frpMatches) {
+    Write-Host (" - frpc PID {0} -> stopping" -f $proc.ProcessId)
+    Stop-ProcessTree -ProcessId $proc.ProcessId -Label "frpc"
   }
 }
 catch {

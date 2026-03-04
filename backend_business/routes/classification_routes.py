@@ -1,3 +1,9 @@
+"""
+迁移说明：
+- 本文件为 Flask 兼容路由实现。
+- FastAPI 版本已迁移至 backend_business/api/routers/classification.py。
+"""
+
 from flask import Blueprint, Response, jsonify, request
 import requests
 import os

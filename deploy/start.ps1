@@ -8,12 +8,93 @@ param(
   [ValidateSet("local", "chutes", "deepseek")]
   [string]$Provider,
 
-  # 前端入口：alpha=测试页面，main=正式页面
-  [ValidateSet("alpha", "main")]
-  [string]$Entry
+  # 前端入口：alpha=测试页面，main=正式页面，all=全部模式(引导页)
+  [ValidateSet("alpha", "main", "all")]
+  [string]$Entry,
+
+  # 是否启动 FastAPI 业务后端 (与 Flask 并行运行，使用 /api/v2/ 前缀)
+  [switch]$EnableFastAPIBusiness,
+
+  # 是否启用 FRP 内网穿透
+  [switch]$Frp
 )
 
 $ErrorActionPreference = "Stop"
+
+# 网络模式选择（本地运行 vs frp 内网穿透）
+$FrpMode = $false
+$FrpServerAddr = ""
+$FrpToken = ""
+
+if (-not $Frp) {
+  Write-Host "请选择网络模式: 1=本地运行(默认) 2=开启frp内网穿透" -ForegroundColor Cyan
+  $netChoice = Read-Host "输入编号 (默认 1)"
+  if ($netChoice -eq "2") {
+    $FrpMode = $true
+  }
+}
+else {
+  $FrpMode = $true
+}
+
+# .env 文件路径（用于保存/读取配置）
+$Script:EnvFile = Join-Path (Split-Path -Parent $PSScriptRoot) ".env"
+
+# 从 .env 文件加载配置到环境变量
+function Load-EnvFile {
+  if (Test-Path $Script:EnvFile) {
+    Write-Host "[start] Loading secrets from .env..." -ForegroundColor Cyan
+    Get-Content $Script:EnvFile | ForEach-Object {
+      if ($_ -match '^([^#][^=]+)=(.*)$') {
+        $name = $matches[1].Trim()
+        $value = $matches[2].Trim().Trim('"').Trim("'")
+        if (-not [Environment]::GetEnvironmentVariable($name)) {
+          [Environment]::SetEnvironmentVariable($name, $value, "Process")
+        }
+      }
+    }
+  }
+}
+
+# 加载 .env 文件（FRP 配置需要）
+Load-EnvFile
+
+# 从环境变量读取已保存的 FRP 配置
+if (-not $FrpServerAddr -and $env:FRP_SERVER_ADDR) {
+  $FrpServerAddr = $env:FRP_SERVER_ADDR
+}
+if (-not $FrpToken -and $env:FRP_TOKEN) {
+  $FrpToken = $env:FRP_TOKEN
+}
+
+# 如果启用了 frp 模式，收集配置信息
+if ($FrpMode) {
+  Write-Host "[start] FRP 模式已启用" -ForegroundColor Yellow
+  if (-not $FrpServerAddr) {
+    $FrpServerAddr = Read-Host "请输入 frp 服务器 IP 地址（留空则跳过）"
+    if ($FrpServerAddr) {
+      $env:FRP_SERVER_ADDR = $FrpServerAddr
+      if (-not (Select-String -Path $Script:EnvFile -Pattern "FRP_SERVER_ADDR=" -Quiet)) {
+        Add-Content -Path $Script:EnvFile -Value "FRP_SERVER_ADDR=`"$FrpServerAddr`""
+        Write-Host "[start] FRP Server Address saved to .env" -ForegroundColor Green
+      }
+    }
+  }
+  if (-not $FrpToken) {
+    $FrpToken = Read-Host "请输入 frp 服务器密码 (token)（留空则跳过）"
+    if ($FrpToken) {
+      $env:FRP_TOKEN = $FrpToken
+      if (-not (Select-String -Path $Script:EnvFile -Pattern "FRP_TOKEN=" -Quiet)) {
+        Add-Content -Path $Script:EnvFile -Value "FRP_TOKEN=`"$FrpToken`""
+        Write-Host "[start] FRP Token saved to .env" -ForegroundColor Green
+      }
+    }
+  }
+  if (-not $FrpServerAddr -or -not $FrpToken) {
+    Write-Host "[start] 错误：FRP 模式需要提供服务器 IP 和密码" -ForegroundColor Red
+    exit 1
+  }
+}
 
 # 启动模式选择
 if (-not $Mode) {
@@ -71,16 +152,41 @@ if (-not $Entry) {
 
 $env:FRONTEND_ENTRY = $Entry
 
+# 是否启动 FastAPI 业务后端
+if (-not $EnableFastAPIBusiness) {
+  Write-Host "是否启动 FastAPI 业务后端 (/api/v2/)? 1=yes(默认, 与Flask并行) 2=no" -ForegroundColor Cyan
+  $choice = Read-Host "输入编号 (默认 1/yes)"
+  if ($choice -eq "2" -or $choice -eq "no") {
+    $EnableFastAPIBusiness = $false
+  }
+  else {
+    $EnableFastAPIBusiness = $true
+    Write-Host "[start] FastAPI business backend will be enabled." -ForegroundColor Yellow
+  }
+}
+
 if ($Provider -eq "chutes" -and -not $env:CHUTES_API_TOKEN) {
   Write-Host "检测到使用 chutes 模式，但未设置 CHUTES_API_TOKEN。" -ForegroundColor Yellow
   $token = Read-Host "请输入 Chutes API Token（留空则跳过）"
-  if ($token) { $env:CHUTES_API_TOKEN = $token }
+  if ($token) {
+    $env:CHUTES_API_TOKEN = $token
+    if (-not (Select-String -Path $Script:EnvFile -Pattern "CHUTES_API_TOKEN=" -Quiet)) {
+      Add-Content -Path $Script:EnvFile -Value "CHUTES_API_TOKEN=`"$token`""
+      Write-Host "[start] Chutes Token saved to .env" -ForegroundColor Green
+    }
+  }
 }
 
 if ($Provider -eq "deepseek" -and -not $env:DEEPSEEK_API_KEY) {
   Write-Host "检测到使用 deepseek 模式，但未设置 DEEPSEEK_API_KEY。" -ForegroundColor Yellow
   $key = Read-Host "请输入 DeepSeek API Key（留空则跳过）"
-  if ($key) { $env:DEEPSEEK_API_KEY = $key }
+  if ($key) {
+    $env:DEEPSEEK_API_KEY = $key
+    if (-not (Select-String -Path $Script:EnvFile -Pattern "DEEPSEEK_API_KEY=" -Quiet)) {
+      Add-Content -Path $Script:EnvFile -Value "DEEPSEEK_API_KEY=`"$key`""
+      Write-Host "[start] DeepSeek Key saved to .env" -ForegroundColor Green
+    }
+  }
   else { Write-Host "未输入 Key，后续调用将失败。" -ForegroundColor Yellow }
 }
 
@@ -513,10 +619,10 @@ if ($doNginx -and $doFrontend) {
     $TempDir = Join-Path $BASE_DIR "deploy/temp"
     if (-not (Test-Path $TempDir)) { New-Item -ItemType Directory -Force -Path $TempDir | Out-Null }
 
-    $NginxArgs = @(
-      "-c", $NginxGeneratedPath,
-      "-p", (Join-Path $BASE_DIR "deploy")
-    )
+    $NginxPrefix = Join-Path $BASE_DIR "deploy"
+    # Start-Process 在 Windows 上会拆分带空格的参数；这里使用单字符串并显式加引号，
+    # 避免 -g 的值 "pid logs/nginx.pid;" 被拆成多个参数导致 nginx 启动失败。
+    $NginxArgs = "-c `"$NginxGeneratedPath`" -p `"$NginxPrefix`" -g `"pid logs/nginx.pid;`""
     Write-Host "[start] Starting/reloading Nginx..."
     Start-Process -FilePath $NginxExe -ArgumentList $NginxArgs -NoNewWindow
   }
@@ -554,7 +660,7 @@ if ($doInference -or $doBusiness) {
 
 # 3.6) PostgreSQL smoke test (default when business enabled)
 if ($doBusiness) {
-  $TestScript = Join-Path $BASE_DIR "backend_business/scripts/test_postgres.py"
+  $TestScript = Join-Path $BASE_DIR "tests/fixtures/test_postgres.py"
   if (Test-Path $TestScript) {
     Write-Host "[start] Running PostgreSQL smoke test..." -ForegroundColor Cyan
     & $PythonExe $TestScript
@@ -577,18 +683,103 @@ if ($doInference) {
   )
   Write-Host "[start] Starting FastAPI inference service (8000)..."
   Write-Host "[start] Working directory: $BASE_DIR"
-  # 使用 -WorkingDirectory 确保从项目根目录启动，这样 .env 文件能被正确加载
-  Start-Process -FilePath $PythonExe -ArgumentList $UvicornArgs -WorkingDirectory $BASE_DIR -NoNewWindow
+  # 使用 -WorkingDirectory 确保从项目根目录启动，这样 .env 文件能被正确加载；
+  # 不使用 -NoNewWindow，让每个端口在独立终端窗口运行。
+  Start-Process -FilePath $PythonExe -ArgumentList $UvicornArgs -WorkingDirectory $BASE_DIR
 }
 
-# 5) 启动 Flask 业务服务
+# 5) 启动业务服务 (Flask 默认，FastAPI 可选并行)
 if ($doBusiness) {
+  # Flask (主业务后端)
   Write-Host "[start] Starting Flask business service (5001)..."
-  # 使用 -WorkingDirectory 确保从项目根目录启动
-  Start-Process -FilePath $PythonExe -ArgumentList @("backend_business/app.py") -WorkingDirectory $BASE_DIR -NoNewWindow
+  Start-Process -FilePath $PythonExe -ArgumentList @("backend_business/app.py") -WorkingDirectory $BASE_DIR
+
+  # FastAPI 业务后端 (可选，使用 /api/v2/ 前缀)
+  if ($EnableFastAPIBusiness) {
+    Write-Host "[start] Starting FastAPI business service (5002) with /api/v2/ prefix..."
+    Write-Host "[start] Working directory: $BASE_DIR"
+    $UvicornArgs = @("-m", "uvicorn", "backend_business.main:app", "--host", "0.0.0.0", "--port", "5002")
+    Start-Process -FilePath $PythonExe -ArgumentList $UvicornArgs -WorkingDirectory $BASE_DIR
+  }
 }
 
 
 Write-Host "[start] Done. Mode=$Mode; Model provider=$Provider; Entry=$Entry"
-Write-Host "[start] Nginx 8008 (if enabled), FastAPI 8000 (if enabled), Flask 5001 (if enabled)."
+$backendInfo = if ($EnableFastAPIBusiness) { "Flask 5001 + FastAPI 5002 (/api/v2/)" } else { "Flask 5001" }
+Write-Host "[start] Nginx 8008 (if enabled), FastAPI 8000 (if enabled), Business: $backendInfo."
 Write-Host "[start] Logs located in $LogsDir"
+
+# 6) 启动 FRP 客户端（如果启用）
+if ($FrpMode) {
+  $FrpDir = Join-Path $BASE_DIR "deploy/frp"
+  $FrpConfigPath = Join-Path $FrpDir "frpc.toml"
+  $FrpPidPath = Join-Path $LogsDir "frpc.pid"
+  
+  Write-Host "[start] Setting up FRP client..." -ForegroundColor Cyan
+  
+  New-Item -ItemType Directory -Force -Path $FrpDir | Out-Null
+  
+  # 获取最新版本号
+  $FrpVersion = "0.61.1"
+  try {
+    $latestRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/fatedier/frp/releases/latest" -ErrorAction Stop
+    if ($latestRelease.tag_name) {
+      $FrpVersion = $latestRelease.tag_name
+      Write-Host "[start] Latest FRP version: $FrpVersion"
+    }
+  }
+  catch {
+    Write-Host "[start] Could not fetch latest version, using default: $FrpVersion" -ForegroundColor Yellow
+  }
+  
+  $FrpVersionNum = $FrpVersion -replace '^v', ''
+  $FrpZipName = "frp_${FrpVersionNum}_windows_amd64.zip"
+  $FrpDirName = "frp_${FrpVersionNum}_windows_amd64"
+  $FrpDownloadUrl = "https://github.com/fatedier/frp/releases/download/${FrpVersion}/${FrpZipName}"
+  $FrpExe = Join-Path $FrpDir "$FrpDirName/frpc.exe"
+  
+  # 检查是否需要下载
+  if (-not (Test-Path $FrpExe)) {
+    Write-Host "[start] Downloading FRP client from $FrpDownloadUrl..." -ForegroundColor Yellow
+    $FrpZipPath = Join-Path $FrpDir $FrpZipName
+    try {
+      Invoke-WebRequest -Uri $FrpDownloadUrl -OutFile $FrpZipPath -UseBasicParsing
+      Expand-Archive -Path $FrpZipPath -DestinationPath $FrpDir -Force
+      Remove-Item -Path $FrpZipPath -Force
+      Write-Host "[start] FRP client downloaded and extracted" -ForegroundColor Green
+    }
+    catch {
+      Write-Warning "[start] Failed to download FRP client: $_"
+      exit 1
+    }
+  }
+  else {
+    Write-Host "[start] FRP client already exists at $FrpExe"
+  }
+  
+  # 生成 frpc.toml 配置文件
+  $FrpConfigContent = @"
+serverAddr = "$FrpServerAddr"
+serverPort = 7000
+
+auth.method = "token"
+auth.token = "$FrpToken"
+
+[[proxies]]
+name = "nginx"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 8008
+remotePort = 16666
+"@
+  
+  Set-Content -Path $FrpConfigPath -Value $FrpConfigContent -Encoding UTF8
+  Write-Host "[start] FRP config generated at $FrpConfigPath"
+  
+  # 启动 frpc
+  Write-Host "[start] Starting FRP client..." -ForegroundColor Cyan
+  $FrpProcess = Start-Process -FilePath $FrpExe -ArgumentList "-c", $FrpConfigPath -PassThru
+  $FrpProcess.Id | Out-File -FilePath $FrpPidPath -Encoding UTF8
+  Write-Host "[start] FRP client started (PID: $($FrpProcess.Id))" -ForegroundColor Green
+  Write-Host "[start] Remote access: ${FrpServerAddr}:16666 -> local:8008" -ForegroundColor Green
+}

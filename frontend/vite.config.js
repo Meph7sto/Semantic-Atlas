@@ -13,6 +13,18 @@ export default defineConfig({
     server: {
         port: 8008,
         proxy: {
+            '/api/analysis': {
+                target: 'http://localhost:5002',
+                changeOrigin: true
+            },
+            '/api/conflict': {
+                target: 'http://localhost:5002',
+                changeOrigin: true
+            },
+            '/api/classification': {
+                target: 'http://localhost:5002',
+                changeOrigin: true
+            },
             '/api': {
                 target: 'http://localhost:5001',
                 changeOrigin: true
@@ -27,6 +39,18 @@ export default defineConfig({
     preview: {
         port: 8008,
         proxy: {
+            '/api/analysis': {
+                target: 'http://localhost:5002',
+                changeOrigin: true
+            },
+            '/api/conflict': {
+                target: 'http://localhost:5002',
+                changeOrigin: true
+            },
+            '/api/classification': {
+                target: 'http://localhost:5002',
+                changeOrigin: true
+            },
             '/api': {
                 target: 'http://localhost:5001',
                 changeOrigin: true

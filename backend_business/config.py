@@ -60,5 +60,12 @@ class Settings:
     # CORS
     CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*")  # 生产建议配置为具体域名
 
+    # JWT 认证
+    JWT_SECRET_KEY = os.environ.get(
+        "JWT_SECRET_KEY", "semantic-atlas-jwt-secret-key-2024-change-in-production"
+    )
+    JWT_ALGORITHM = "HS256"
+    JWT_EXPIRY_HOURS = int(os.environ.get("JWT_EXPIRY_HOURS", "24"))
+
 
 settings = Settings()

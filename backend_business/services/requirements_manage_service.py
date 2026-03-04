@@ -11,11 +11,66 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg2
+from psycopg2 import IntegrityError
 from psycopg2.extras import RealDictCursor
 
 
 def _utc_now_iso() -> str:
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+
+_ALLOWED_PRIORITIES = {"low", "medium", "high"}
+_ALLOWED_REQUIREMENT_STATUSES = (
+    "draft",
+    "under_review",
+    "confirmed",
+    "in_progress",
+    "completed",
+    "archived",
+)
+_ALLOWED_REQUIREMENT_STATUS_SET = set(_ALLOWED_REQUIREMENT_STATUSES)
+_REQUIREMENT_STATUS_ALIASES = {"backlog": "draft"}
+
+
+def normalize_priority(priority: Any, allow_none: bool = True) -> Optional[str]:
+    """Normalize priority values to low/medium/high."""
+    if priority is None:
+        return None if allow_none else "medium"
+
+    text = str(priority).strip()
+    if not text:
+        return None if allow_none else "medium"
+
+    normalized = text.lower()
+    if normalized in _ALLOWED_PRIORITIES:
+        return normalized
+    raise ValueError("priority 必须是 low、medium、high")
+
+
+def normalize_requirement_status(
+    status: Any, allow_none: bool = True
+) -> Optional[str]:
+    """Normalize requirement status and accept backlog as draft."""
+    if status is None:
+        if allow_none:
+            return None
+        raise ValueError(
+            f"status 必须是: {', '.join(_ALLOWED_REQUIREMENT_STATUSES)}"
+        )
+
+    text = str(status).strip()
+    if not text:
+        if allow_none:
+            return None
+        raise ValueError(
+            f"status 必须是: {', '.join(_ALLOWED_REQUIREMENT_STATUSES)}"
+        )
+
+    normalized = _REQUIREMENT_STATUS_ALIASES.get(text.lower(), text.lower())
+    if normalized in _ALLOWED_REQUIREMENT_STATUS_SET:
+        return normalized
+
+    raise ValueError(f"status 必须是: {', '.join(_ALLOWED_REQUIREMENT_STATUSES)}")
 
 
 class RequirementsManageService:
@@ -34,31 +89,36 @@ class RequirementsManageService:
         project_id = str(uuid.uuid4())
         with self._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(
-                    """
-                    INSERT INTO manage_projects(project_id, name, description, created_by, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, NOW(), NOW())
-                    RETURNING project_id, name, description, status, created_by, created_at::text AS created_at
-                    """,
-                    (project_id, name, description, created_by),
-                )
-                project = dict(cur.fetchone())
-                cur.execute(
-                    """
-                    INSERT INTO manage_branch_refs (ref_id, project_id, ref_name, ref_type, milestone_id, created_by, created_at, updated_at)
-                    VALUES (%s, %s, %s, 'branch', NULL, %s, NOW(), NOW())
-                    ON CONFLICT (project_id, ref_name) DO NOTHING
-                    """,
-                    (str(uuid.uuid4()), project_id, "main", created_by),
-                )
-                return project
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO manage_projects(project_id, name, description, created_by, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, NOW(), NOW())
+                        RETURNING project_id, name, description, status, product_id, current_session_id, created_by, created_at::text AS created_at
+                        """,
+                        (project_id, name, description, created_by),
+                    )
+                    project = dict(cur.fetchone())
+                    cur.execute(
+                        """
+                        INSERT INTO manage_branch_refs (ref_id, project_id, ref_name, ref_type, milestone_id, created_by, created_at, updated_at)
+                        VALUES (%s, %s, %s, 'branch', NULL, %s, NOW(), NOW())
+                        ON CONFLICT (project_id, ref_name) DO NOTHING
+                        """,
+                        (str(uuid.uuid4()), project_id, "main", created_by),
+                    )
+                    return project
+                except IntegrityError as e:
+                    if "uk_manage_projects_name" in str(e) or "unique" in str(e).lower():
+                        raise ValueError(f"项目名称 '{name}' 已存在")
+                    raise
 
     def list_projects(self) -> List[Dict[str, Any]]:
         with self._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     """
-                    SELECT project_id, name, description, status, created_by, created_at::text AS created_at
+                    SELECT project_id, name, description, status, product_id, current_session_id, created_by, created_at::text AS created_at
                     FROM manage_projects
                     ORDER BY created_at DESC
                     """
@@ -70,7 +130,7 @@ class RequirementsManageService:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     """
-                    SELECT project_id, name, description, status, created_by, created_at::text AS created_at
+                    SELECT project_id, name, description, status, product_id, current_session_id, created_by, created_at::text AS created_at
                     FROM manage_projects
                     WHERE project_id = %s
                     """,
@@ -78,6 +138,69 @@ class RequirementsManageService:
                 )
                 row = cur.fetchone()
                 return dict(row) if row else None
+
+    def set_project_session(
+        self, project_id: str, session_id: str, updated_by: str = ""
+    ) -> Dict[str, Any]:
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    UPDATE manage_projects
+                    SET current_session_id = %s, updated_at = NOW()
+                    WHERE project_id = %s
+                    RETURNING project_id, name, description, status, product_id, current_session_id, created_by, created_at::text AS created_at
+                    """,
+                    (session_id, project_id),
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise ValueError("项目不存在")
+                return dict(row)
+
+    def update_project_info(
+        self,
+        project_id: str,
+        name: str = None,
+        description: str = None,
+        updated_by: str = "",
+    ) -> Dict[str, Any]:
+        fields = []
+        values = []
+        if name is not None:
+            fields.append("name = %s")
+            values.append(name)
+        if description is not None:
+            fields.append("description = %s")
+            values.append(description)
+        if not fields:
+            return self.get_project(project_id)
+        fields.append("updated_at = NOW()")
+        values.append(project_id)
+        sql = (
+            f"UPDATE manage_projects SET {', '.join(fields)} WHERE project_id = %s"
+            " RETURNING project_id, name, description, status, product_id, current_session_id, created_by, created_at::text AS created_at"
+        )
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(sql, values)
+                row = cur.fetchone()
+                if not row:
+                    raise ValueError("项目不存在")
+                return dict(row)
+
+    def archive_project(self, project_id: str, updated_by: str = "") -> int:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE manage_projects
+                    SET status = 'archived', updated_at = NOW()
+                    WHERE project_id = %s AND status != 'archived'
+                    """,
+                    (project_id,),
+                )
+                return cur.rowcount
 
     # ----------------------
     # Requirements
@@ -110,6 +233,8 @@ class RequirementsManageService:
         custom_fields: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         req_id = str(uuid.uuid4())
+        status = normalize_requirement_status(status, allow_none=False)
+        priority = normalize_priority(priority, allow_none=True)
         tags_payload = json.dumps(tags or [])
         custom_payload = json.dumps(custom_fields or {})
 
@@ -229,6 +354,14 @@ class RequirementsManageService:
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             raise ValueError("没有可更新字段")
+        if "priority" in updates:
+            updates["priority"] = normalize_priority(
+                updates.get("priority"), allow_none=True
+            )
+        if "status" in updates:
+            updates["status"] = normalize_requirement_status(
+                updates.get("status"), allow_none=False
+            )
 
         set_clauses = []
         values = []
@@ -272,16 +405,7 @@ class RequirementsManageService:
     ) -> Dict[str, Any]:
         if not req_ids:
             raise ValueError("缺少需求ID列表")
-        allowed_status = {
-            "draft",
-            "under_review",
-            "confirmed",
-            "in_progress",
-            "completed",
-            "archived",
-        }
-        if status not in allowed_status:
-            raise ValueError("非法状态")
+        status = normalize_requirement_status(status, allow_none=False)
 
         with self._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -452,9 +576,9 @@ class RequirementsManageService:
         return found
 
     # ----------------------
-    # Import from L123
+    # Import from Session
     # ----------------------
-    def import_from_l123(
+    def import_from_session(
         self,
         session_id: str,
         project_id: str,
@@ -698,6 +822,21 @@ class RequirementsManageService:
                 "unlinked_l4": unlinked_l4,
             },
         }
+
+    # Backward-compatible alias: historically named import_from_l123.
+    def import_from_l123(
+        self,
+        session_id: str,
+        project_id: str,
+        created_by: str = "",
+        mapping_mode: str = "tree",
+    ) -> Dict[str, Any]:
+        return self.import_from_session(
+            session_id=session_id,
+            project_id=project_id,
+            created_by=created_by,
+            mapping_mode=mapping_mode,
+        )
 
     # ----------------------
     # Test cases & binding
@@ -1591,8 +1730,8 @@ class RequirementsManageService:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO manage_audit_logs (log_id, project_id, actor, action, target_type, target_id, detail, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
+                    INSERT INTO manage_audit_logs (log_id, project_id, product_id, actor, action, target_type, target_id, detail, created_at)
+                    VALUES (%s, %s, NULL, %s, %s, %s, %s, %s::jsonb, NOW())
                     """,
                     (
                         log_id,

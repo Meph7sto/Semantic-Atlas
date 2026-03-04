@@ -8,6 +8,11 @@ cd "$BASE_DIR"
 MODE=""
 PROVIDER=""
 ENTRY=""
+BUSINESS_BACKEND=""
+ENABLE_FASTAPI_BUSINESS=""
+FRP_MODE=""
+FRP_SERVER_ADDR=""
+FRP_TOKEN=""
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -36,6 +41,14 @@ while [[ $# -gt 0 ]]; do
       ENTRY="$2"
       shift 2
       ;;
+    --enable-fastapi-business)
+      ENABLE_FASTAPI_BUSINESS=1
+      shift
+      ;;
+    --frp|-f)
+      FRP_MODE=1
+      shift
+      ;;
     *)
       if [[ -z "$MODE" ]]; then
         MODE="$1"
@@ -51,6 +64,45 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# 网络模式选择（本地运行 vs frp 内网穿透）
+if [[ -z "$FRP_MODE" ]]; then
+  echo "请选择网络模式: 1=本地运行(默认) 2=开启frp内网穿透"
+  read -r -p "输入编号 (默认 1): " net_choice
+  if [[ "$net_choice" == "2" ]]; then
+    FRP_MODE=1
+  fi
+fi
+
+# 如果启用了 frp 模式，收集配置信息
+if [[ "$FRP_MODE" == "1" ]]; then
+  echo "[start] FRP 模式已启用"
+  if [[ -z "$FRP_SERVER_ADDR" ]]; then
+    read -r -p "请输入 frp 服务器 IP 地址（留空则跳过）: " FRP_SERVER_ADDR
+    if [[ -n "$FRP_SERVER_ADDR" ]]; then
+      export FRP_SERVER_ADDR
+      if ! grep -q "FRP_SERVER_ADDR=" "$ENV_FILE" 2>/dev/null; then
+        echo "FRP_SERVER_ADDR=\"$FRP_SERVER_ADDR\"" >> "$ENV_FILE"
+        echo "[start] FRP Server Address saved to .env"
+      fi
+    fi
+  fi
+  if [[ -z "$FRP_TOKEN" ]]; then
+    read -r -p "请输入 frp 服务器密码 (token)（留空则跳过）: " FRP_TOKEN
+    if [[ -n "$FRP_TOKEN" ]]; then
+      export FRP_TOKEN
+      if ! grep -q "FRP_TOKEN=" "$ENV_FILE" 2>/dev/null; then
+        echo "FRP_TOKEN=\"$FRP_TOKEN\"" >> "$ENV_FILE"
+        echo "[start] FRP Token saved to .env"
+      fi
+    fi
+  fi
+  if [[ -z "$FRP_SERVER_ADDR" || -z "$FRP_TOKEN" ]]; then
+    echo "[start] 错误：FRP 模式需要提供服务器 IP 和密码"
+    exit 1
+  fi
+  export FRP_MODE FRP_SERVER_ADDR FRP_TOKEN
+fi
 
 # 启动模式选择
 if [[ -z "$MODE" ]]; then
@@ -143,6 +195,18 @@ if [[ -z "$ENTRY" ]]; then
 fi
 
 export FRONTEND_ENTRY="$ENTRY"
+
+# 是否启动 FastAPI 业务后端
+if [[ "$ENABLE_FASTAPI_BUSINESS" != "1" ]]; then
+  echo "是否启动 FastAPI 业务后端 (/api/v2/)? 1=yes(默认, 与Flask并行) 2=no"
+  read -r -p "输入编号 (默认 1/yes): " choice
+  if [[ "$choice" == "2" || "$choice" == "no" ]]; then
+    ENABLE_FASTAPI_BUSINESS=0
+  else
+    ENABLE_FASTAPI_BUSINESS=1
+    echo "[start] FastAPI business backend will be enabled."
+  fi
+fi
 
 # 尝试加载 .env 文件 (用于持久化 API Key)
 ENV_FILE="${BASE_DIR}/.env"
@@ -524,13 +588,31 @@ if [[ "$do_business" -eq 1 ]]; then
       pg_bin=$(command -v pg_ctl || true)
     fi
 
-    # 启动 PostgreSQL 服务 (直接使用 pg_ctl 绕过 systemd/service)
-    echo "[start] Starting PostgreSQL service using pg_ctl..."
-    if [[ -n "$pg_bin" && -d "$pg_data" ]]; then
-      # 确保目录权限正确
+    # 确保 PostgreSQL 启动环境权限（解决 autodl 等容器环境下的 root 启动问题）
+    echo "[start] Preparing PostgreSQL runtime environment..."
+    mkdir -p /var/run/postgresql
+    chown -R postgres:postgres /var/run/postgresql
+    chmod 2775 /var/run/postgresql
+
+    # 在 /tmp 下创建日志，解决 /root 目录权限导致的拒绝访问问题
+    PG_TMP_LOG="/tmp/semantic_atlas_postgres.log"
+    touch "$PG_TMP_LOG"
+    chown postgres:postgres "$PG_TMP_LOG"
+    chmod 666 "$PG_TMP_LOG"
+
+    # 启动 PostgreSQL 服务 (优先使用 pg_ctlcluster，适应 Ubuntu 拆分路径)
+    echo "[start] Starting PostgreSQL service..."
+    if command -v pg_ctlcluster >/dev/null 2>&1 && [[ -n "${pg_version:-}" && -n "${pg_cluster:-}" ]]; then
+      echo "[start] Using pg_ctlcluster to start PostgreSQL ${pg_version} ${pg_cluster}..."
+      pg_ctlcluster "${pg_version}" "${pg_cluster}" start || true
+    elif [[ -n "$pg_bin" && -d "$pg_data" ]]; then
+      # 确保数据目录权限正确
       chown -R postgres:postgres "$pg_data" 2>/dev/null || true
-      # 切换到 postgres 用户启动
-      run_as_postgres "$pg_bin" -D "$pg_data" -l "${LOGS_DIR}/postgresql.log" start || true
+      # 切换到 postgres 用户启动，将日志重定向到 /tmp 下的任务文件
+      if ! run_as_postgres "$pg_bin" -D "$pg_data" -o "-k /var/run/postgresql" -l "$PG_TMP_LOG" start; then
+        echo "[start] pg_ctl failed to start. Log content from ${PG_TMP_LOG}:"
+        cat "$PG_TMP_LOG"
+      fi
     else
       # 备选：尝试使用服务方式（通常在容器里会由于 policy-rc.d 失败）
       service postgresql start || true
@@ -550,9 +632,13 @@ if [[ "$do_business" -eq 1 ]]; then
     done
 
     if [[ "$pg_ready" -eq 0 ]]; then
-      echo "[start] ERROR: PostgreSQL failed to start. Check ${LOGS_DIR}/postgresql.log"
+      echo "[start] ERROR: PostgreSQL failed to start. Last log entries from ${PG_TMP_LOG}:"
       # 打印最后几行日志帮助调试
-      [[ -f "${LOGS_DIR}/postgresql.log" ]] && tail -n 20 "${LOGS_DIR}/postgresql.log"
+      if [[ -f "$PG_TMP_LOG" ]]; then
+        tail -n 20 "$PG_TMP_LOG"
+      else
+        echo "Log file not found at ${PG_TMP_LOG}"
+      fi
     fi
 
     # 创建用户和数据库
@@ -611,6 +697,8 @@ fi
 
 # 前端产物目录，可通过环境变量 FRONTEND_ROOT 覆盖
 FRONTEND_ROOT="${FRONTEND_ROOT:-${BASE_DIR}/frontend/dist}"
+# envsubst 只读取导出的环境变量，不导出会导致 ${FRONTEND_ROOT} 被替换为空
+export FRONTEND_ROOT
 
 # 0) 先执行停止脚本清理环境
 stop_script="${BASE_DIR}/deploy/stop_services.sh"
@@ -625,9 +713,9 @@ if [[ "$do_frontend" -eq 1 ]]; then
 fi
 
 if [[ "$do_frontend" -eq 1 ]]; then
-  # 检查并安装 Node.js/npm
-  if ! command -v npm >/dev/null 2>&1; then
-    echo "[start] npm not found. Installing Node.js..."
+  # 检查并安装 Node.js
+  if ! command -v node >/dev/null 2>&1; then
+    echo "[start] Node.js not found. Installing..."
     if command -v apt-get >/dev/null 2>&1; then
       # Debian/Ubuntu
       curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
@@ -644,11 +732,25 @@ if [[ "$do_frontend" -eq 1 ]]; then
       echo "[start] Cannot auto-install Node.js. Please install manually."
       exit 1
     fi
-    echo "[start] Node.js installed: $(node --version), npm: $(npm --version)"
+    echo "[start] Node.js installed: $(node --version)"
+  fi
+
+  # 选择前端包管理器：
+  # - 若存在 package-lock.json，优先 npm ci（可复现，避免依赖漂移）
+  # - 否则回退到 pnpm
+  FRONTEND_PM="pnpm"
+  if [[ -f "${BASE_DIR}/frontend/package-lock.json" ]]; then
+    FRONTEND_PM="npm"
+  fi
+
+  if [[ "$FRONTEND_PM" == "pnpm" ]] && ! command -v pnpm >/dev/null 2>&1; then
+    echo "[start] pnpm not found. Installing via npm..."
+    npm install -g pnpm
+    echo "[start] pnpm installed: $(pnpm --version)"
   fi
 
   # 1) 前端构建
-  echo "[start] Building frontend (npm install & npm run build)..."
+  echo "[start] Building frontend (${FRONTEND_PM} install + build)..."
   if [[ -d "$FRONTEND_ROOT" ]]; then
     rm -rf "$FRONTEND_ROOT"
   fi
@@ -698,33 +800,224 @@ module.exports = {
 }
 EOF
 
-  (cd "${BASE_DIR}/frontend" && npm install && npm run build)
+  # 仅在显式开启时清理依赖目录，默认保留以减少安装波动与耗时
+  if [[ "${CLEAN_FRONTEND_DEPS:-0}" == "1" ]]; then
+    if [[ -d "${BASE_DIR}/frontend/node_modules" ]]; then
+      echo "[start] CLEAN_FRONTEND_DEPS=1 -> cleaning node_modules..."
+      rm -rf "${BASE_DIR}/frontend/node_modules"
+    fi
+  fi
+
+  # 根据 Linux 可用内存动态设置 Node 堆上限，避免固定 4096 在低内存机器上触发 OOM
+  mem_total_mb="$(awk '/MemTotal:/ { printf "%d", $2/1024 }' /proc/meminfo 2>/dev/null || echo 2048)"
+  mem_limit_mb=""
+
+  # cgroup v2
+  if [[ -r /sys/fs/cgroup/memory.max ]]; then
+    cgroup_limit="$(cat /sys/fs/cgroup/memory.max 2>/dev/null || true)"
+    if [[ -n "$cgroup_limit" && "$cgroup_limit" != "max" ]]; then
+      mem_limit_mb="$((cgroup_limit / 1024 / 1024))"
+    fi
+  fi
+  # cgroup v1
+  if [[ -z "$mem_limit_mb" && -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]]; then
+    cgroup_limit="$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || true)"
+    if [[ -n "$cgroup_limit" && "$cgroup_limit" -lt 9223372036854771712 ]]; then
+      mem_limit_mb="$((cgroup_limit / 1024 / 1024))"
+    fi
+  fi
+
+  available_mem_mb="$mem_total_mb"
+  if [[ -n "$mem_limit_mb" && "$mem_limit_mb" -gt 0 && "$mem_limit_mb" -lt "$available_mem_mb" ]]; then
+    available_mem_mb="$mem_limit_mb"
+  fi
+
+  # 某些环境会通过 ulimit -v 限制单进程虚拟内存；若存在，则进一步收紧
+  vmem_limit_kb="$(ulimit -v 2>/dev/null || true)"
+  vmem_limit_mb=""
+  if [[ "$vmem_limit_kb" =~ ^[0-9]+$ && "$vmem_limit_kb" -gt 0 ]]; then
+    vmem_limit_mb="$((vmem_limit_kb / 1024))"
+    if [[ "$vmem_limit_mb" -lt "$available_mem_mb" ]]; then
+      available_mem_mb="$vmem_limit_mb"
+    fi
+  fi
+
+  node_heap_mb="$((available_mem_mb * 65 / 100))"
+  if [[ "$node_heap_mb" -lt 768 ]]; then
+    node_heap_mb=768
+  fi
+  if [[ "$node_heap_mb" -gt 2048 ]]; then
+    node_heap_mb=2048
+  fi
+
+  node_runtime_opts=""
+  node_no_snapshot_supported=0
+  node_no_snapshot_env_supported=0
+  use_cli_no_snapshot_mode=0
+
+  # ARM64 部分环境会在快照反序列化阶段崩溃，优先关闭 node snapshot
+  if [[ "${DISABLE_NODE_SNAPSHOT:-1}" == "1" ]]; then
+    if node --no-node-snapshot -e "process.exit(0)" >/dev/null 2>&1; then
+      node_no_snapshot_supported=1
+    fi
+    if NODE_OPTIONS="--no-node-snapshot" node -e "process.exit(0)" >/dev/null 2>&1; then
+      node_no_snapshot_env_supported=1
+      node_runtime_opts="--no-node-snapshot"
+    fi
+    # 某些 Node 版本/发行包不允许通过 NODE_OPTIONS 注入该参数，改为命令行直传
+    if [[ "$node_no_snapshot_supported" -eq 1 && "$node_no_snapshot_env_supported" -eq 0 ]]; then
+      use_cli_no_snapshot_mode=1
+    fi
+  fi
+  build_node_opts="--max-old-space-size=${node_heap_mb}"
+  conservative_node_opts="--max-old-space-size=1024"
+  if [[ -n "$node_runtime_opts" ]]; then
+    build_node_opts="${node_runtime_opts} ${build_node_opts}"
+    conservative_node_opts="${node_runtime_opts} ${conservative_node_opts}"
+  fi
+
+  run_with_node_options() {
+    local opts="$1"
+    shift
+    if [[ -n "$opts" ]]; then
+      NODE_OPTIONS="$opts" "$@"
+    else
+      "$@"
+    fi
+  }
+
+  echo "[start] Node runtime: path=$(command -v node), version=$(node --version), arch=$(uname -m), page_size=$(getconf PAGESIZE 2>/dev/null || echo unknown), cli_no_snapshot_mode=${use_cli_no_snapshot_mode}"
+  echo "[start] Memory detected: host=${mem_total_mb}MB, cgroup=${mem_limit_mb:-none}MB, ulimit_v=${vmem_limit_mb:-none}MB, node_heap=${node_heap_mb}MB, node_opts=${node_runtime_opts:-none}"
+
+  if [[ "$FRONTEND_PM" == "npm" ]]; then
+    (
+      cd "${BASE_DIR}/frontend"
+      npm_cli_path="$(command -v npm)"
+      vite_cli_path="${BASE_DIR}/frontend/node_modules/vite/bin/vite.js"
+
+      run_npm_ci() {
+        if [[ "$use_cli_no_snapshot_mode" -eq 1 ]]; then
+          node --no-node-snapshot "$npm_cli_path" ci --no-audit --no-fund
+        else
+          run_with_node_options "$node_runtime_opts" npm ci --no-audit --no-fund
+        fi
+      }
+
+      run_npm_build_with_opts() {
+        local opts="$1"
+        if [[ "$use_cli_no_snapshot_mode" -eq 1 && -f "$vite_cli_path" ]]; then
+          # 直接执行 vite，确保 no-snapshot 作为 Node CLI 参数生效
+          if [[ -n "$opts" ]]; then
+            node --no-node-snapshot $opts "$vite_cli_path" build
+          else
+            node --no-node-snapshot "$vite_cli_path" build
+          fi
+        else
+          run_with_node_options "$opts" npm run build
+        fi
+      }
+
+      if ! run_npm_ci; then
+        echo "[start] npm ci failed, retrying once after cleaning node_modules..."
+        rm -rf node_modules
+        run_npm_ci
+      fi
+
+      build_ok=0
+      if run_with_node_options "$build_node_opts" node -e "process.exit(0)" >/dev/null 2>&1; then
+        if run_npm_build_with_opts "$build_node_opts"; then
+          build_ok=1
+        fi
+      else
+        echo "[start] Node runtime check failed with NODE_OPTIONS='${build_node_opts}'; will build without NODE_OPTIONS."
+      fi
+
+      if [[ "$build_ok" -eq 0 ]]; then
+        echo "[start] Retrying frontend build without NODE_OPTIONS..."
+        if run_npm_build_with_opts ""; then
+          build_ok=1
+        fi
+      fi
+
+      if [[ "$build_ok" -eq 0 ]]; then
+        echo "[start] Retrying frontend build with conservative heap=1024MB..."
+        if run_npm_build_with_opts "$conservative_node_opts"; then
+          build_ok=1
+        fi
+      fi
+
+      if [[ "$build_ok" -ne 1 ]]; then
+        echo "[start] Frontend build failed after retries."
+        exit 1
+      fi
+    )
+  else
+    (
+      cd "${BASE_DIR}/frontend"
+      if [[ -f "${BASE_DIR}/frontend/pnpm-lock.yaml" ]]; then
+        run_with_node_options "$node_runtime_opts" pnpm install --frozen-lockfile
+      else
+        run_with_node_options "$node_runtime_opts" pnpm install
+      fi
+
+      build_ok=0
+      if run_with_node_options "$build_node_opts" node -e "process.exit(0)" >/dev/null 2>&1; then
+        if run_with_node_options "$build_node_opts" pnpm run build; then
+          build_ok=1
+        fi
+      else
+        echo "[start] Node runtime check failed with NODE_OPTIONS='${build_node_opts}'; will build without NODE_OPTIONS."
+      fi
+
+      if [[ "$build_ok" -eq 0 ]]; then
+        echo "[start] Retrying frontend build without NODE_OPTIONS..."
+        if pnpm run build; then
+          build_ok=1
+        fi
+      fi
+
+      if [[ "$build_ok" -eq 0 ]]; then
+        echo "[start] Retrying frontend build with conservative heap=1024MB..."
+        if run_with_node_options "$conservative_node_opts" pnpm run build; then
+          build_ok=1
+        fi
+      fi
+
+      if [[ "$build_ok" -ne 1 ]]; then
+        echo "[start] Frontend build failed after retries."
+        exit 1
+      fi
+    )
+  fi
 
   # 2) 生成 Nginx 配置
   MIME_PATH="${BASE_DIR}/deploy/mime.types"
   NGINX_TEMPLATE="${BASE_DIR}/deploy/nginx_linux.conf"
   NGINX_GENERATED_PATH="${BASE_DIR}/deploy/nginx.generated.conf"
 
-  export FRONTEND_ROOT
-  export MIME_TYPES_PATH="$MIME_PATH"
-  export BASE_DIR
-
   if command -v envsubst >/dev/null 2>&1; then
-    envsubst '$FRONTEND_ROOT $MIME_TYPES_PATH' < "$NGINX_TEMPLATE" > "$NGINX_GENERATED_PATH"
+    envsubst '$FRONTEND_ROOT' < "$NGINX_TEMPLATE" | tr -d '\r' > "$NGINX_GENERATED_PATH"
   else
     # fallback: only replace known placeholders to avoid touching nginx variables like $uri
-    python - <<'PY'
+    python - <<PY
 import os
 
-src = os.path.join(os.environ["BASE_DIR"], "deploy", "nginx_linux.conf")
-dst = os.path.join(os.environ["BASE_DIR"], "deploy", "nginx.generated.conf")
+BASE_DIR = "${BASE_DIR}"
+FRONTEND_ROOT = "${FRONTEND_ROOT}"
+
+src = os.path.join(BASE_DIR, "deploy", "nginx_linux.conf")
+dst = os.path.join(BASE_DIR, "deploy", "nginx.generated.conf")
 with open(src, "r", encoding="utf-8") as f:
     data = f.read()
-data = data.replace("${FRONTEND_ROOT}", os.environ.get("FRONTEND_ROOT", ""))
-data = data.replace("${MIME_TYPES_PATH}", os.environ.get("MIME_TYPES_PATH", ""))
-with open(dst, "w", encoding="utf-8") as f:
+data = data.replace("\r\n", "\n").replace("\r", "\n")
+data = data.replace("\${FRONTEND_ROOT}", FRONTEND_ROOT)
+with open(dst, "w", encoding="utf-8", newline="\n") as f:
     f.write(data)
 PY
+  fi
+  if grep -qE '^[[:space:]]*root[[:space:]]*;' "$NGINX_GENERATED_PATH"; then
+    echo "[start] Invalid nginx root generated (empty FRONTEND_ROOT)."
+    exit 1
   fi
   echo "[start] Nginx config generated at $NGINX_GENERATED_PATH"
 fi
@@ -793,7 +1086,7 @@ fi
 
 # 3.6) PostgreSQL smoke test (default when business enabled)
 if [[ "$do_business" -eq 1 ]]; then
-  TEST_SCRIPT="${BASE_DIR}/backend_business/scripts/test_postgres.py"
+  TEST_SCRIPT="${BASE_DIR}/tests/fixtures/test_postgres.py"
   if [[ -f "$TEST_SCRIPT" ]]; then
     echo "[start] Running PostgreSQL smoke test..."
     if ! "$PYTHON_EXE" "$TEST_SCRIPT"; then
@@ -813,13 +1106,118 @@ if [[ "$do_inference" -eq 1 ]]; then
     > "${LOGS_DIR}/inference.log" 2>&1 &
 fi
 
-# 5) 启动 Flask 业务服务
+# 5) 启动业务服务 (Flask 默认，FastAPI 可选并行)
 if [[ "$do_business" -eq 1 ]]; then
+  # Flask (主业务后端)
   echo "[start] Starting Flask business service (5001)..."
   nohup "$PYTHON_EXE" "${BASE_DIR}/backend_business/app.py" \
     > "${LOGS_DIR}/business.log" 2>&1 &
+
+  # FastAPI 业务后端 (可选，使用 /api/v2/ 前缀)
+  if [[ "$ENABLE_FASTAPI_BUSINESS" == "1" ]]; then
+    echo "[start] Starting FastAPI business service (5002) with /api/v2/ prefix..."
+    echo "[start] Working directory: $BASE_DIR"
+    nohup "$PYTHON_EXE" -m uvicorn backend_business.main:app --host 0.0.0.0 --port 5002 \
+      > "${LOGS_DIR}/business_fastapi.log" 2>&1 &
+  fi
+fi
+
+backend_info="Flask 5001"
+if [[ "$ENABLE_FASTAPI_BUSINESS" == "1" ]]; then
+  backend_info="Flask 5001 + FastAPI 5002 (/api/v2/)"
 fi
 
 echo "[start] Done. Mode=$MODE; Model provider=$PROVIDER; Entry=$ENTRY"
-echo "[start] Nginx 8008 (if enabled), FastAPI 8000 (if enabled), Flask 5001 (if enabled)."
+echo "[start] Nginx 8008 (if enabled), FastAPI 8000 (if enabled), Business: $backend_info."
 echo "[start] Logs located in $LOGS_DIR"
+
+# 6) 启动 FRP 客户端（如果启用）
+if [[ "$FRP_MODE" == "1" ]]; then
+  FRP_DIR="${BASE_DIR}/deploy/frp"
+  FRP_CONFIG="${FRP_DIR}/frpc.toml"
+  FRP_PID_FILE="${LOGS_DIR}/frpc.pid"
+  
+  echo "[start] Setting up FRP client..."
+  
+  # 检测系统架构
+  os_name="linux"
+  arch_name="$(uname -m)"
+  case "$arch_name" in
+    x86_64|amd64) arch_name="amd64" ;;
+    aarch64|arm64) arch_name="arm64" ;;
+    armv7l|armhf) arch_name="arm" ;;
+    i386|i686) arch_name="386" ;;
+    *) echo "[start] Warning: Unknown architecture $arch_name, falling back to amd64"; arch_name="amd64" ;;
+  esac
+  
+  # 获取最新版本号
+  FRP_VERSION=""
+  if command -v curl >/dev/null 2>&1; then
+    FRP_VERSION=$(curl -sI "https://github.com/fatedier/frp/releases/latest" 2>/dev/null | grep -i "location:" | sed 's/.*tag\///' | tr -d '\r\n')
+  fi
+  if [[ -z "$FRP_VERSION" ]]; then
+    FRP_VERSION="0.61.1"
+    echo "[start] Could not fetch latest version, using default: $FRP_VERSION"
+  else
+    echo "[start] Latest FRP version: $FRP_VERSION"
+  fi
+  
+  FRP_TAR_NAME="frp_${FRP_VERSION#v}_${os_name}_${arch_name}.tar.gz"
+  FRP_DIR_NAME="frp_${FRP_VERSION#v}_${os_name}_${arch_name}"
+  FRP_DOWNLOAD_URL="https://github.com/fatedier/frp/releases/download/${FRP_VERSION}/${FRP_TAR_NAME}"
+  FRP_EXE="${FRP_DIR}/${FRP_DIR_NAME}/frpc"
+  
+  mkdir -p "$FRP_DIR"
+  
+  # 检查是否需要下载
+  if [[ ! -f "$FRP_EXE" ]]; then
+    echo "[start] Downloading FRP client from $FRP_DOWNLOAD_URL..."
+    FRP_TAR_PATH="${FRP_DIR}/${FRP_TAR_NAME}"
+    if command -v curl >/dev/null 2>&1; then
+      curl -L -o "$FRP_TAR_PATH" "$FRP_DOWNLOAD_URL"
+    elif command -v wget >/dev/null 2>&1; then
+      wget -O "$FRP_TAR_PATH" "$FRP_DOWNLOAD_URL"
+    else
+      echo "[start] Error: Neither curl nor wget is available"
+      exit 1
+    fi
+    
+    if [[ -f "$FRP_TAR_PATH" ]]; then
+      tar -xzf "$FRP_TAR_PATH" -C "$FRP_DIR"
+      rm -f "$FRP_TAR_PATH"
+      echo "[start] FRP client downloaded and extracted"
+    else
+      echo "[start] Error: Failed to download FRP client"
+      exit 1
+    fi
+  else
+    echo "[start] FRP client already exists at $FRP_EXE"
+  fi
+  
+  # 生成 frpc.toml 配置文件
+  cat > "$FRP_CONFIG" <<EOF
+serverAddr = "${FRP_SERVER_ADDR}"
+serverPort = 7000
+
+auth.method = "token"
+auth.token = "${FRP_TOKEN}"
+
+[[proxies]]
+name = "nginx"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 8008
+remotePort = 16666
+EOF
+  
+  echo "[start] FRP config generated at $FRP_CONFIG"
+  
+  # 启动 frpc
+  echo "[start] Starting FRP client..."
+  chmod +x "$FRP_EXE"
+  nohup "$FRP_EXE" -c "$FRP_CONFIG" > "${LOGS_DIR}/frpc.log" 2>&1 &
+  FRP_PID=$!
+  echo "$FRP_PID" > "$FRP_PID_FILE"
+  echo "[start] FRP client started (PID: $FRP_PID)"
+  echo "[start] Remote access: ${FRP_SERVER_ADDR}:16666 -> local:8008"
+fi

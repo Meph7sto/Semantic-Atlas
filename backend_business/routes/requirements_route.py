@@ -2,6 +2,7 @@
 需求相关路由
 包含传统需求抽取和基于 EgoBundle 的 L1-L3 需求抽取
 """
+
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -10,12 +11,42 @@ from flask import Blueprint, Response, jsonify, request, stream_with_context
 
 from backend_business.config import settings
 from backend_business.services.ai_proxy import ai_proxy
-from backend_business.services.requirements_extraction_service import RequirementsExtractionService
+from backend_business.services.requirements_extraction import (
+    RequirementsExtractionService,
+)
+from backend_business.services.requirements_deduplication import (
+    RequirementsDeduplicationService,
+)
 
 requirements_bp = Blueprint("requirements", __name__)
 
 # 初始化需求抽取服务
 requirements_service = RequirementsExtractionService(dsn=settings.POSTGRES_DSN)
+dedup_service = RequirementsDeduplicationService(dsn=settings.POSTGRES_DSN)
+
+
+def _parse_bool(value: Any, default: bool = False) -> bool:
+    """Parse common bool-like inputs from JSON payloads."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "y", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "n", "off", ""}:
+            return False
+    return bool(value)
+
+
+def _parse_optional_bool(value: Any):
+    """Parse bool-like input and preserve None when missing."""
+    if value is None:
+        return None
+    return _parse_bool(value, default=False)
 
 
 @requirements_bp.post("/requirements/extract")
@@ -24,20 +55,20 @@ def extract_requirements():
     data = request.get_json()
     if not data or "text" not in data:
         return jsonify({"error": "Missing 'text' field"}), 400
-    
+
     text = data["text"]
     chunk_size = data.get("chunk_size", 3600)
     overlap = data.get("overlap", 500)
     clean_model = data.get("clean_model", "deepseek-chat")
     extract_model = data.get("extract_model", "deepseek-reasoner")
-    
+
     try:
         result = ai_proxy.extract_requirements(
-            text, 
-            chunk_size, 
-            overlap, 
-            clean_model=clean_model, 
-            extract_model=extract_model
+            text,
+            chunk_size,
+            overlap,
+            clean_model=clean_model,
+            extract_model=extract_model,
         )
         return jsonify({"success": True, "data": result})
     except Exception as e:
@@ -72,9 +103,9 @@ def extract_requirements_stream():
             payload = ""
             for line in block_lines:
                 if line.startswith("event:"):
-                    event = line[len("event:"):].strip() or "message"
+                    event = line[len("event:") :].strip() or "message"
                 elif line.startswith("data:"):
-                    payload += line[len("data:"):].strip()
+                    payload += line[len("data:") :].strip()
             return event, payload
 
         for raw in upstream.iter_lines(decode_unicode=True):
@@ -109,17 +140,46 @@ def extract_l123_requirements():
     session_id = data["session_id"]
     context_run_id = data.get("context_run_id")
     bundle_strategy = data.get("bundle_strategy", "sequence")  # sequence | graph
-    anchor_strategy = data.get("anchor_strategy", "informative")  # all | keyword | informative
+    anchor_strategy = data.get(
+        "anchor_strategy", "informative"
+    )  # all | keyword | informative
     r = data.get("r", 2)
     model_name = data.get("model", "deepseek-chat")
-    use_toolcall = bool(data.get("use_toolcall", True))
-    adaptive_retry_r2 = bool(data.get("adaptive_retry_r2", False))
+    use_toolcall = _parse_bool(data.get("use_toolcall"), default=True)
+    adaptive_retry_r2 = _parse_optional_bool(data.get("adaptive_retry_r2"))
     max_spans_per_bundle = data.get("max_spans_per_bundle")
     token_limit = data.get("token_limit")
     top_m_2hop = data.get("top_m_2hop")
     keywords = data.get("keywords")
+    history_aware = _parse_bool(data.get("history_aware"), default=False)
+    reset_before_extract = _parse_bool(data.get("reset_before_extract"), default=True)
+
+    # Optional: post extraction dedup
+    post_dedup = _parse_bool(data.get("post_dedup"), default=False)
+    dedup_with_llm = _parse_bool(data.get("dedup_with_llm"), default=False)
+    dedup_auto_merge = _parse_bool(data.get("dedup_auto_merge"), default=False)
+    dedup_threshold = data.get("dedup_threshold")
+    try:
+        dedup_max_concurrent = int(data.get("dedup_max_concurrent", 5))
+    except (TypeError, ValueError):
+        dedup_max_concurrent = 5
+    dedup_max_concurrent = max(1, min(10, dedup_max_concurrent))
+
+    # 可选并发参数（与 Phase 2 保持一致的命名）
+    enable_parallel = _parse_bool(data.get("enable_parallel_windows"), default=False)
+    try:
+        max_concurrent = int(data.get("max_concurrent_windows", 5))
+    except (TypeError, ValueError):
+        max_concurrent = 5
+    max_concurrent = max(1, min(10, max_concurrent))
 
     try:
+        cleared_before_extract = 0
+        if reset_before_extract:
+            cleared_before_extract = (
+                requirements_service.clear_requirements_for_session(session_id)
+            )
+
         result = requirements_service.extract_requirements_for_session(
             session_id=session_id,
             context_run_id=context_run_id,
@@ -133,10 +193,152 @@ def extract_l123_requirements():
             token_limit=token_limit,
             top_m_2hop=top_m_2hop,
             keywords=keywords,
+            enable_parallel=enable_parallel,
+            max_concurrent=max_concurrent,
+            history_aware=history_aware,
         )
+
+        if post_dedup:
+            # Use per-request threshold if provided
+            service = dedup_service
+            if dedup_threshold is not None:
+                service = RequirementsDeduplicationService(
+                    dsn=settings.POSTGRES_DSN,
+                    similarity_threshold=float(dedup_threshold),
+                    default_model=model_name,
+                )
+
+            dedup_result = service.detect_duplicates(
+                session_id=session_id,
+                level=None,
+                with_llm_decision=dedup_with_llm,
+                auto_merge=dedup_auto_merge,
+                model_name=model_name,
+                max_concurrent=dedup_max_concurrent,
+            )
+            result["deduplication"] = dedup_result
+        result["cleared_before_extract"] = cleared_before_extract
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@requirements_bp.post("/requirements/extract_l123/stream")
+def extract_l123_requirements_stream():
+    """
+    L1-L3 需求抽取流式接口
+    支持并发处理和实时进度反馈
+    """
+    data = request.get_json()
+    if not data or "session_id" not in data:
+        return jsonify({"error": "Missing 'session_id' field"}), 400
+
+    session_id = data["session_id"]
+    context_run_id = data.get("context_run_id")
+    bundle_strategy = data.get("bundle_strategy", "sequence")
+    anchor_strategy = data.get("anchor_strategy", "informative")
+    r = data.get("r", 2)
+    model_name = data.get("model", "deepseek-chat")
+    use_toolcall = _parse_bool(data.get("use_toolcall"), default=True)
+    adaptive_retry_r2 = _parse_optional_bool(data.get("adaptive_retry_r2"))
+    max_spans_per_bundle = data.get("max_spans_per_bundle")
+    token_limit = data.get("token_limit")
+    top_m_2hop = data.get("top_m_2hop")
+    keywords = data.get("keywords")
+    history_aware = _parse_bool(data.get("history_aware"), default=False)
+    reset_before_extract = _parse_bool(data.get("reset_before_extract"), default=True)
+
+    # Optional: post extraction dedup
+    post_dedup = _parse_bool(data.get("post_dedup"), default=False)
+    dedup_with_llm = _parse_bool(data.get("dedup_with_llm"), default=False)
+    dedup_auto_merge = _parse_bool(data.get("dedup_auto_merge"), default=False)
+    dedup_threshold = data.get("dedup_threshold")
+    try:
+        dedup_max_concurrent = int(data.get("dedup_max_concurrent", 5))
+    except (TypeError, ValueError):
+        dedup_max_concurrent = 5
+    dedup_max_concurrent = max(1, min(10, dedup_max_concurrent))
+
+    # 并发参数（复用 Phase 2 的参数名）
+    enable_parallel = _parse_bool(data.get("enable_parallel_windows"), default=False)
+    try:
+        max_concurrent = int(data.get("max_concurrent_windows", 5))
+    except (TypeError, ValueError):
+        max_concurrent = 5
+    max_concurrent = max(1, min(10, max_concurrent))
+
+    try:
+        cleared_before_extract = 0
+        if reset_before_extract:
+            cleared_before_extract = (
+                requirements_service.clear_requirements_for_session(session_id)
+            )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    def _generate_events():
+        try:
+            yield f"event: reset\n"
+            yield (
+                f"data: {json.dumps({'cleared_before_extract': cleared_before_extract})}\n\n"
+            )
+
+            for (
+                event_dict
+            ) in requirements_service.extract_requirements_for_session_stream(
+                session_id=session_id,
+                context_run_id=context_run_id,
+                bundle_strategy=bundle_strategy,
+                anchor_strategy=anchor_strategy,
+                r=r,
+                model_name=model_name,
+                use_toolcall=use_toolcall,
+                adaptive_retry_r2=adaptive_retry_r2,
+                max_spans_per_bundle=max_spans_per_bundle,
+                token_limit=token_limit,
+                top_m_2hop=top_m_2hop,
+                keywords=keywords,
+                enable_parallel=enable_parallel,
+                max_concurrent=max_concurrent,
+                history_aware=history_aware,
+            ):
+                event_name = event_dict.get("event", "message")
+                event_data = event_dict.get("data", {})
+
+                yield f"event: {event_name}\n"
+                yield f"data: {json.dumps(event_data)}\n\n"
+
+            # Run dedup after stream completes successfully
+            if post_dedup:
+                yield "event: dedup_start\n"
+                yield f"data: {json.dumps({'session_id': session_id})}\n\n"
+
+                service = dedup_service
+                if dedup_threshold is not None:
+                    service = RequirementsDeduplicationService(
+                        dsn=settings.POSTGRES_DSN,
+                        similarity_threshold=float(dedup_threshold),
+                        default_model=model_name,
+                    )
+
+                dedup_result = service.detect_duplicates(
+                    session_id=session_id,
+                    level=None,
+                    with_llm_decision=dedup_with_llm,
+                    auto_merge=dedup_auto_merge,
+                    model_name=model_name,
+                    max_concurrent=dedup_max_concurrent,
+                )
+
+                yield "event: dedup_final\n"
+                yield f"data: {json.dumps(dedup_result)}\n\n"
+        except Exception as e:
+            yield f"event: error\n"
+            yield f"data: {json.dumps({'message': str(e)})}\n\n"
+
+    return Response(
+        stream_with_context(_generate_events()), mimetype="text/event-stream"
+    )
 
 
 @requirements_bp.get("/requirements/session/<session_id>")
@@ -211,7 +413,7 @@ from backend_business.services.db_service import db_service
 def get_l4_requirements(session_id: str):
     """
     查询指定 session 的 L4 底层需求
-    
+
     如果数据库中有缓存，直接返回；否则返回空列表
     """
     page = int(request.args.get("page", 1))
@@ -242,12 +444,12 @@ def check_l4_exists(session_id: str):
 def generate_l4_requirements():
     """
     生成 L4 底层需求
-    
+
     流程：
     1. 检查数据库是否有缓存
     2. 如有缓存，直接返回
     3. 如无缓存，调用推理后端生成，然后保存到数据库
-    
+
     请求体：
     {
         "session_id": "xxx",
@@ -272,11 +474,15 @@ def generate_l4_requirements():
     try:
         requested_ids = [r.get("id") for r in requirements if r.get("id")]
         if not requested_ids:
-            return jsonify({"success": False, "error": "所有顶层需求必须包含 'id' 字段"}), 400
+            return jsonify(
+                {"success": False, "error": "所有顶层需求必须包含 'id' 字段"}
+            ), 400
 
         # 检查缓存（按本次请求的顶层需求范围）
         if not force_regenerate:
-            existing_ids = db_service.get_existing_top_req_ids(session_id, requested_ids)
+            existing_ids = db_service.get_existing_top_req_ids(
+                session_id, requested_ids
+            )
             missing_ids = [rid for rid in requested_ids if rid not in set(existing_ids)]
 
             # 如果所有都有缓存，直接返回
@@ -286,12 +492,15 @@ def generate_l4_requirements():
                     per_page=500,
                     top_req_ids=requested_ids,
                 )
-                return jsonify({
-                    "success": True,
-                    "from_cache": True,
-                    "requirements": cached.get("requirements", []),
-                    "total": cached.get("total", 0),
-                })
+                return jsonify(
+                    {
+                        "success": True,
+                        "from_cache": True,
+                        "requirements": cached.get("requirements", []),
+                        "total": cached.get("total", 0),
+                        "generation_results": [],
+                    }
+                )
 
             # 只对缺失的顶层需求生成
             requirements = [r for r in requirements if r.get("id") in set(missing_ids)]
@@ -344,17 +553,20 @@ def generate_l4_requirements():
             top_req_ids=requested_ids,
         )
 
-        return jsonify({
-            "success": True,
-            "from_cache": False,
-            "requirements": saved.get("requirements", []),
-            "total": saved.get("total", 0),
-            "inserted_count": save_result.get("inserted", 0),
-            "duplicates_skipped": save_result.get("duplicates", 0),
-            "kb_version": resp_data.get("kb_version", ""),
-            "model_id": resp_data.get("model_id", ""),
-            "missing_top_ids": missing_ids if "missing_ids" in locals() else [],
-        })
+        return jsonify(
+            {
+                "success": True,
+                "from_cache": False,
+                "requirements": saved.get("requirements", []),
+                "total": saved.get("total", 0),
+                "inserted_count": save_result.get("inserted", 0),
+                "duplicates_skipped": save_result.get("duplicates", 0),
+                "generation_results": resp_data.get("results", []),
+                "kb_version": resp_data.get("kb_version", ""),
+                "model_id": resp_data.get("model_id", ""),
+                "missing_top_ids": missing_ids if "missing_ids" in locals() else [],
+            }
+        )
 
     except requests.exceptions.RequestException as e:
         return jsonify({"success": False, "error": f"推理后端调用失败: {str(e)}"}), 500

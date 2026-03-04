@@ -236,3 +236,17 @@ git_status_output.txt
 
 # References
 frontend_ref/
+.claude
+AGENTS.md
+CLAUDE.md
+
+# FRP
+frp/
+frpc
+frpc.exe
+frps
+frps.exe
+frpc.toml
+frps.toml
+frpc.ini
+frps.ini
