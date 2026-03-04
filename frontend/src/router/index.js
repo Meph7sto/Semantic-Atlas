@@ -16,6 +16,7 @@ import MessagePush from '../views/alpha/MessagePush.vue'
 import MobileBridge from '../views/alpha/MobileBridge.vue'
 import FileReceive from '../views/alpha/FileReceive.vue'
 import ExecutionTopologyTemplate from '../views/alpha/ExecutionTopologyTemplate.vue'
+import ActorVisualTester from '../views/alpha/ActorVisualTester.vue'
 
 // Main views (migrated from frontend_ref)
 import LoginView from '../views/beta/LoginView.vue'
@@ -212,6 +213,11 @@ const router = createRouter({
                     name: 'execution-topology',
                     component: ExecutionTopologyTemplate,
                     meta: { keepAlive: true }
+                },
+                {
+                    path: 'actor-visual-tester',
+                    name: 'actor-visual-tester',
+                    component: ActorVisualTester
                 }
             ]
         },

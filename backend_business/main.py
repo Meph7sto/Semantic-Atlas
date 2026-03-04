@@ -93,8 +93,9 @@ from backend_business.api.routers import (
     manage,
     mobile_chat,
     permission,
-    push,
     product,
+    push,
+    requirement_actor,
     requirements,
 )
 app.include_router(deduplication.router)
@@ -106,6 +107,8 @@ app.include_router(analysis.router)
 app.include_router(conflict.router)
 app.include_router(classification.router)
 app.include_router(requirements.router)
+app.include_router(requirement_actor.router)
+app.include_router(requirement_actor.internals_router)
 app.include_router(push.router)
 app.include_router(mobile_chat.router)
 app.include_router(file.router)
