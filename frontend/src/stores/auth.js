@@ -6,10 +6,9 @@
  * - 项目级权限上下文缓存
  * - 权限和角色检查
  */
-
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { authApi } from '@/utils/api.js'
+import { authApi } from '@/api/auth'
 
 export const useAuthStore = defineStore('auth', () => {
   // ========================
@@ -27,16 +26,9 @@ export const useAuthStore = defineStore('auth', () => {
   const systemIdentity = computed(() => {
     // 从用户信息中获取系统级身份
     const role = user.value?.role
-    const externalType = user.value?.external_type
 
     if (role === 'super_admin' || role === 'admin') {
       return 'SYS_ADMIN'
-    }
-    if (externalType === 'CLIENT') {
-      return 'SYS_CLIENT'
-    }
-    if (externalType === 'CONTRACTOR') {
-      return 'SYS_CONTRACTOR'
     }
     return 'SYS_USER'
   })
@@ -46,19 +38,12 @@ export const useAuthStore = defineStore('auth', () => {
   // 获取身份显示标签（用于侧边栏）
   const identityLabel = computed(() => {
     const role = user.value?.role
-    const externalType = user.value?.external_type
 
     if (role === 'super_admin') {
       return '超级管理员'
     }
     if (role === 'admin') {
       return '管理员'
-    }
-    if (externalType === 'CLIENT') {
-      return '甲方客户'
-    }
-    if (externalType === 'CONTRACTOR') {
-      return '外包成员'
     }
     if (role === 'member') {
       return '项目成员'
@@ -156,7 +141,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     try {
-      const resp = await fetch(`/api/permission/projects/${encodeURIComponent(projectId)}/context`, {
+      const resp = await fetch(`/api/v2/permission/projects/${encodeURIComponent(projectId)}/context`, {
         headers: {
           'Authorization': `Bearer ${token.value}`
         }
@@ -337,3 +322,5 @@ export const useAuthStore = defineStore('auth', () => {
     updateUser,
   }
 })
+
+

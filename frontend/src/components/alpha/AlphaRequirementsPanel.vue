@@ -530,7 +530,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import draggable from 'vuedraggable'
 import RequirementTree from '../charts/RequirementTree.vue'
-import { manageApi } from '../../utils/api'
+import { manageApi } from '@/api/project'
 import {
   Loader2, FileText, RefreshCw, Briefcase, Circle, Clock, CheckCircle,
   GripVertical, Search, Filter, ChevronDown, ChevronUp, CheckCircle2,
@@ -1055,3 +1055,4 @@ onMounted(async () => {
   if (selectedProjectId.value) await loadRequirements()
 })
 </script>
+

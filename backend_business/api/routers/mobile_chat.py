@@ -1,6 +1,6 @@
 """
 移动端对话路由（FastAPI）
-对应 Flask blueprint: mobile_chat_bp (url_prefix="/api/mobile")
+对应历史蓝图: mobile_chat_bp (url_prefix="/api/v2/mobile")
 """
 
 from typing import Any
@@ -12,7 +12,7 @@ from backend_business.api.http.errors import ErrorResponse
 from backend_business.api.http.sse import sse_response_raw
 from backend_business.services.mobile_chat_service import mobile_chat_service
 
-router = APIRouter(prefix="/api/mobile", tags=["mobile-chat"])
+router = APIRouter(prefix="/api/v2/mobile", tags=["mobile-chat"])
 
 
 class CreateMessageRequest(BaseModel):

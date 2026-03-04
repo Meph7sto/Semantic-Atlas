@@ -1,78 +1,26 @@
 """
 文件上传/下载路由 - FastAPI 版本
-对应 Flask blueprint: file_bp (url_prefix="/api")
+对应历史蓝图: file_bp (url_prefix="/api/v2")
 """
 
 import csv
 import io
 import json
-import os
-import uuid
-from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import FileResponse, Response
-from werkzeug.utils import secure_filename
 
+from backend_business.api.deps.auth import get_current_user
 from backend_business.api.http.errors import ErrorResponse
+from backend_business.config import settings
 from backend_business.services.ai_proxy import ai_proxy
 from backend_business.services.db_service import db_service
+from backend_business.services.file_service import FileService
 
-router = APIRouter(prefix="/api", tags=["file"])
+router = APIRouter(prefix="/api/v2", tags=["file"])
 
-# 文件上传配置
-UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
-ALLOWED_EXTENSIONS = {
-    "txt",
-    "pdf",
-    "png",
-    "jpg",
-    "jpeg",
-    "gif",
-    "doc",
-    "docx",
-    "xls",
-    "xlsx",
-    "csv",
-    "json",
-    "xml",
-    "zip",
-}
-
-# 确保上传目录存在
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-# 内存缓存：存储上传文件的元数据
-_uploaded_files_cache: dict[str, dict[str, Any]] = {}
-
-
-def _allowed_file(filename: str) -> bool:
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
-
-
-def _get_file_extension(filename: str) -> str:
-    return filename.rsplit(".", 1)[1].lower() if "." in filename else ""
-
-
-def _guess_mime_type(ext: str) -> str:
-    mime_map = {
-        "txt": "text/plain",
-        "pdf": "application/pdf",
-        "png": "image/png",
-        "jpg": "image/jpeg",
-        "jpeg": "image/jpeg",
-        "gif": "image/gif",
-        "doc": "application/msword",
-        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "xls": "application/vnd.ms-excel",
-        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "csv": "text/csv",
-        "json": "application/json",
-        "xml": "application/xml",
-        "zip": "application/zip",
-    }
-    return mime_map.get(ext.lower(), "application/octet-stream")
+file_service = FileService(settings.UPLOAD_FOLDER)
 
 
 def _uniq(xs: list[str]) -> list[str]:
@@ -90,53 +38,30 @@ def _uniq(xs: list[str]) -> list[str]:
 async def upload_file(
     file: UploadFile = File(...),
     description: str = Form(default=""),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     通用文件上传端点（供移动端使用）。
     """
-    if not file.filename:
-        raise ErrorResponse("No file selected", 400)
-
-    original_filename = file.filename
-    if not _allowed_file(original_filename):
-        allowed_types = ", ".join(sorted(ALLOWED_EXTENSIONS))
-        raise ErrorResponse(f"File type not allowed. Allowed types: {allowed_types}", 400)
-
-    ext = _get_file_extension(original_filename)
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    unique_id = uuid.uuid4().hex[:8]
-    raw_base = original_filename.rsplit(".", 1)[0] if "." in original_filename else original_filename
-    safe_base = secure_filename(raw_base)
-    safe_base = safe_base[:50] if len(safe_base) > 50 else safe_base
-    saved_filename = f"{timestamp}_{unique_id}_{safe_base}.{ext}" if ext else f"{timestamp}_{unique_id}_{safe_base}"
-
-    file_path = os.path.join(UPLOAD_FOLDER, saved_filename)
+    user_id = current_user["user_id"]
 
     try:
         content = await file.read()
-        with open(file_path, "wb") as f:
-            f.write(content)
-
-        file_size = os.path.getsize(file_path)
-        upload_time = datetime.utcnow().isoformat() + "Z"
-
-        _uploaded_files_cache[saved_filename] = {
-            "filename": saved_filename,
-            "originalFilename": original_filename,
-            "fileSize": file_size,
-            "uploadTime": upload_time,
-            "mimeType": file.content_type or "application/octet-stream",
-            "extension": ext,
-            "description": description,
-        }
+        saved_file = file_service.save_uploaded_file(
+            user_id=user_id,
+            original_filename=file.filename or "",
+            content=content,
+            description=description,
+            content_type=file.content_type,
+        )
 
         return {
             "success": True,
             "message": "Upload successful",
-            "filename": saved_filename,
-            "originalFilename": original_filename,
-            "fileSize": file_size,
-            "uploadTime": upload_time,
+            "filename": saved_file["filename"],
+            "originalFilename": saved_file["originalFilename"],
+            "fileSize": saved_file["fileSize"],
+            "uploadTime": saved_file["uploadTime"],
         }
     except ErrorResponse:
         raise
@@ -145,37 +70,12 @@ async def upload_file(
 
 
 @router.get("/uploads")
-def list_uploaded_files():
+def list_uploaded_files(current_user: dict = Depends(get_current_user)):
     """
     获取已上传文件列表。
     """
-    files: list[dict[str, Any]] = []
-
-    if os.path.exists(UPLOAD_FOLDER):
-        for filename in os.listdir(UPLOAD_FOLDER):
-            file_path = os.path.join(UPLOAD_FOLDER, filename)
-            if not os.path.isfile(file_path):
-                continue
-
-            if filename in _uploaded_files_cache:
-                files.append(_uploaded_files_cache[filename])
-                continue
-
-            stat = os.stat(file_path)
-            ext = _get_file_extension(filename)
-            file_info = {
-                "filename": filename,
-                "originalFilename": filename,
-                "fileSize": stat.st_size,
-                "uploadTime": datetime.utcfromtimestamp(stat.st_mtime).isoformat() + "Z",
-                "mimeType": _guess_mime_type(ext),
-                "extension": ext,
-                "description": "",
-            }
-            _uploaded_files_cache[filename] = file_info
-            files.append(file_info)
-
-    files.sort(key=lambda x: x["uploadTime"], reverse=True)
+    user_id = current_user["user_id"]
+    files: list[dict[str, Any]] = file_service.list_uploaded_files(user_id)
 
     return {
         "success": True,
@@ -188,21 +88,18 @@ def list_uploaded_files():
 def download_uploaded_file(
     filename: str,
     download: bool = Query(default=False),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     下载/预览已上传文件。
 
-    GET /api/uploads/{filename}
+    GET /api/v2/uploads/{filename}
     可选参数：?download=true 强制下载（而非预览）
     """
-    safe_filename = secure_filename(filename)
-    file_path = os.path.join(UPLOAD_FOLDER, safe_filename)
-
-    if not os.path.exists(file_path):
-        raise ErrorResponse("File not found", 404)
-
-    ext = _get_file_extension(safe_filename)
-    mime = _guess_mime_type(ext)
+    user_id = current_user["user_id"]
+    file_path, mime, safe_filename = file_service.resolve_accessible_file(
+        user_id, filename
+    )
     if download:
         return FileResponse(
             path=file_path,
@@ -215,23 +112,22 @@ def download_uploaded_file(
 
 
 @router.delete("/uploads/{filename}")
-def delete_uploaded_file(filename: str):
+def delete_uploaded_file(
+    filename: str,
+    current_user: dict = Depends(get_current_user),
+):
     """
     删除已上传文件。
     """
-    safe_filename = secure_filename(filename)
-    file_path = os.path.join(UPLOAD_FOLDER, safe_filename)
-
-    if not os.path.exists(file_path):
-        raise ErrorResponse("File not found", 404)
-
+    user_id = current_user["user_id"]
     try:
-        os.remove(file_path)
-        _uploaded_files_cache.pop(safe_filename, None)
+        file_service.delete_uploaded_file(user_id, filename)
         return {
             "success": True,
             "message": "File deleted successfully",
         }
+    except ErrorResponse:
+        raise
     except Exception as exc:
         raise ErrorResponse(f"Failed to delete file: {str(exc)}", 500)
 
@@ -256,8 +152,12 @@ async def upload_csv(
     lows: list[str] = []
 
     for row in reader:
-        high = (row.get("high_level_requirement") or row.get("high") or row.get("A") or "").strip()
-        low = (row.get("low_level_requirement") or row.get("low") or row.get("B") or "").strip()
+        high = (
+            row.get("high_level_requirement") or row.get("high") or row.get("A") or ""
+        ).strip()
+        low = (
+            row.get("low_level_requirement") or row.get("low") or row.get("B") or ""
+        ).strip()
         if high and low:
             highs.append(high)
             lows.append(low)
@@ -287,7 +187,7 @@ async def upload_csv(
 def download_result(record_id: int = Query(alias="id")):
     """
     下载某条分析记录的 output_json（作为 .json 文件）。
-    GET /api/download_result?id=123
+    GET /api/v2/download_result?id=123
     """
     if db_service is None:
         raise ErrorResponse("数据库服务未初始化", 500)

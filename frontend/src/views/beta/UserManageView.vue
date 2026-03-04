@@ -275,7 +275,7 @@
 import { ref, reactive, computed, watch, nextTick, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import Sidebar from '@/components/beta/Sidebar.vue'
-import { authApi } from '@/utils/api.js'
+import { authApi } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth.js'
 
 const router = useRouter()
@@ -752,3 +752,4 @@ onMounted(async () => {
 .scope-table input[type='checkbox']{transform:scale(1.05)}
 @media (max-width: 768px){.user-manage-page{padding:16px}.modal-card{width:100%;max-width:none;height:100%;border-radius:0}}
 </style>
+

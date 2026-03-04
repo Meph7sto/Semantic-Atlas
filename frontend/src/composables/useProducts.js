@@ -1,5 +1,5 @@
 import { ref, computed, watch, onMounted } from 'vue'
-import { productApi } from '../utils/api'
+import { productApi } from '@/api/product'
 
 export function useProducts() {
   const loading = ref(false)
@@ -111,3 +111,4 @@ export function useProducts() {
     handleDeleteProduct,
   }
 }
+

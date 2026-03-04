@@ -1,6 +1,6 @@
 """
 认证路由 - FastAPI 版本
-对应 Flask blueprint: auth_bp (url_prefix="/api")
+统一 v2 前缀：/api/v2/auth/*
 """
 
 from typing import Optional
@@ -23,7 +23,7 @@ from backend_business.api.routers.schemas.auth_schemas import (
     UpdateUserScopesRequest,
 )
 
-router = APIRouter(prefix="/api", tags=["auth"])
+router = APIRouter(prefix="/api/v2", tags=["auth"])
 
 
 _ROLE_SUPER_ADMIN = "super_admin"
@@ -149,17 +149,10 @@ def login(req: LoginRequest):
     user_role = user["role"]
     user_external_type = user.get("external_type")
 
-    # 特殊处理：test 用户可以模拟任何角色和外部身份
+    # 特殊处理：test 用户可以模拟标准角色
     if username == "test":
         if selected_role in ("super_admin", "admin", "member", "viewer"):
             user_role = selected_role
-        # 如果前端选择了外部身份
-        if selected_role == "client":
-            user_role = "member"  # 外部客户的基础角色
-            user_external_type = "CLIENT"
-        elif selected_role == "contractor":
-            user_role = "member"  # 外包成员的基础角色
-            user_external_type = "CONTRACTOR"
 
     # 生成 JWT token
     token = auth_service.generate_token(
@@ -590,7 +583,8 @@ def create_user(
         role=role,
         external_type=external_type,
     )
-    db_service.grant_full_scopes_for_user(user_id, granted_by=operator["user_id"])
+    # 新用户默认无权限，需要管理员手动分配范围
+    # db_service.grant_full_scopes_for_user(user_id, granted_by=operator["user_id"])
 
     return {"success": True, "data": user}
 
@@ -642,13 +636,12 @@ def update_user(
     if not user:
         raise ErrorResponse("用户不存在", 404)
 
-    # 仅当用户没有现有 scope 配置时才授予全权限
-    # 避免覆盖由 super_admin 精心配置的可见范围
-    if target_user.get("role") not in ("super_admin",):
-        scopes = db_service.get_user_scopes(user_id)
-        has_existing_scopes = bool(scopes.get("product_scopes") or scopes.get("project_scopes"))
-        if not has_existing_scopes:
-            db_service.grant_full_scopes_for_user(user_id, granted_by=operator["user_id"])
+    # 不再自动授予全权限，需要管理员手动分配范围
+    # if target_user.get("role") not in ("super_admin",):
+    #     scopes = db_service.get_user_scopes(user_id)
+    #     has_existing_scopes = bool(scopes.get("product_scopes") or scopes.get("project_scopes"))
+    #     if not has_existing_scopes:
+    #         db_service.grant_full_scopes_for_user(user_id, granted_by=operator["user_id"])
 
     return {"success": True, "data": user}
 
@@ -844,7 +837,8 @@ def approve_registration_endpoint(
     if not user:
         raise ErrorResponse("用户不存在或已被处理", 404)
 
-    db_service.grant_full_scopes_for_user(user_id, granted_by=admin_user_id)
+    # 注册审批通过后不自动授予权限，需要管理员手动分配范围
+    # db_service.grant_full_scopes_for_user(user_id, granted_by=admin_user_id)
 
     return {
         "success": True,

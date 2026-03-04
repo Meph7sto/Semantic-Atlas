@@ -1,6 +1,6 @@
 <script setup>
   import { ref, computed } from 'vue'
-  import { traceabilityApi } from '../../utils/api'
+  import { traceabilityApi } from '@/api/requirements'
   import TraceNetworkChart from '../../components/charts/TraceNetworkChart.vue'
   import { FileSearch, Plus, Trash2, Sparkles } from 'lucide-vue-next'
   
@@ -482,3 +482,4 @@
     </div>
   </template>
   
+

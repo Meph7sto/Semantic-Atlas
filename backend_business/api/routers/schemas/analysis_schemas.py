@@ -61,3 +61,76 @@ class BuildContextRequest(BaseModel):
             raise ValueError("session_id 不能为空")
         return text
 
+
+class TraceRelationRequest(BaseModel):
+    high_level_requirement: str = Field(min_length=1)
+    low_level_requirement: str = Field(min_length=1)
+    save_to_db: bool = False
+    max_new_tokens: int = Field(default=800, ge=1)
+
+    @field_validator("high_level_requirement", "low_level_requirement")
+    @classmethod
+    def validate_requirement_text(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("需求文本不能为空")
+        return text
+
+
+class BatchTraceRelationRequest(BaseModel):
+    high_level_requirements: list[str] = Field(default_factory=list)
+    low_level_requirements: list[str] = Field(default_factory=list)
+    save_to_db: bool = False
+    session_id: Optional[str] = None
+    max_new_tokens: int = Field(default=1600, ge=1)
+
+    @field_validator("high_level_requirements", "low_level_requirements", mode="before")
+    @classmethod
+    def normalize_requirement_list(cls, value):
+        if value is None:
+            return []
+        if not isinstance(value, (list, tuple)):
+            raise ValueError("需求列表格式错误")
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    @field_validator("session_id")
+    @classmethod
+    def normalize_optional_session_id(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = value.strip()
+        return text or None
+
+
+class TraceByMappingRequest(BaseModel):
+    session_id: str = Field(min_length=1)
+    save_to_db: bool = False
+    max_new_tokens: int = Field(default=800, ge=1)
+
+    @field_validator("session_id")
+    @classmethod
+    def validate_mapping_session_id(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("session_id 不能为空")
+        return text
+
+
+class TriggerAnalysisRequest(BaseModel):
+    high_level_requirement: Optional[str] = None
+    low_level_requirement: Optional[str] = None
+    requirement_a: Optional[str] = None
+    requirement_b: Optional[str] = None
+
+    @field_validator(
+        "high_level_requirement",
+        "low_level_requirement",
+        "requirement_a",
+        "requirement_b",
+    )
+    @classmethod
+    def normalize_optional_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = value.strip()
+        return text or None

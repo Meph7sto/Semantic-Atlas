@@ -230,6 +230,7 @@ deploy/nginx-1.26.1/
 backend_business/data/
 data/audit_logs/
 data/kb_indexes/
+data/uploads/
 *.csv
 mission.txt
 git_status_output.txt

@@ -1,6 +1,6 @@
 """
 Deduplication API Pydantic 请求模型
-对应 Flask blueprint: dedup_bp
+对应历史蓝图: dedup_bp
 """
 
 from typing import Optional

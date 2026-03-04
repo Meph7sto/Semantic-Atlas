@@ -1,6 +1,6 @@
 """
 Product API Pydantic 请求模型
-对应 Flask blueprint: product_bp (url_prefix="/api/product")
+对应历史蓝图: product_bp (url_prefix="/api/v2/product")
 """
 
 from typing import Any, Dict, List, Optional

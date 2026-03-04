@@ -1,6 +1,6 @@
 <script setup>
 import { ref } from 'vue'
-import { conflictApi } from '../../utils/api'
+import { conflictApi } from '@/api/requirements'
 import { Play, CheckCircle2, AlertCircle, Sparkles } from 'lucide-vue-next'
 
 const reqA = ref('')
@@ -204,3 +204,4 @@ const detectConflict = async () => {
 <style scoped>
 /* Scoped styles overrides if needed, but Tailwind handles most */
 </style>
+

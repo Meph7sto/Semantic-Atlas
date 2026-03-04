@@ -15,8 +15,7 @@ import RequirementsManageTableDebug from '../views/alpha/RequirementsManageTable
 import MessagePush from '../views/alpha/MessagePush.vue'
 import MobileBridge from '../views/alpha/MobileBridge.vue'
 import FileReceive from '../views/alpha/FileReceive.vue'
-import AgentCollaboration from '../views/alpha/AgentCollaboration.vue'
-import AgentChat from '../views/alpha/AgentChat.vue'
+import ExecutionTopologyTemplate from '../views/alpha/ExecutionTopologyTemplate.vue'
 
 // Main views (migrated from frontend_ref)
 import LoginView from '../views/beta/LoginView.vue'
@@ -210,15 +209,9 @@ const router = createRouter({
                     meta: { keepAlive: true }
                 },
                 {
-                    path: 'agent-collaboration',
-                    name: 'agent-collaboration',
-                    component: AgentCollaboration,
-                    meta: { keepAlive: true }
-                },
-                {
-                    path: 'agent-chat',
-                    name: 'agent-chat',
-                    component: AgentChat,
+                    path: 'execution-topology',
+                    name: 'execution-topology',
+                    component: ExecutionTopologyTemplate,
                     meta: { keepAlive: true }
                 }
             ]

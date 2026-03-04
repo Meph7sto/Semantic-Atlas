@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { manageApi } from '../utils/api'
+import { manageApi } from '@/api/project'
 import { normalizeLevel, normalizePriority } from './useSessionRequirements'
 
 /**
@@ -167,3 +167,4 @@ export function useRequirementModals(
     submitEditRequirement,
   }
 }
+

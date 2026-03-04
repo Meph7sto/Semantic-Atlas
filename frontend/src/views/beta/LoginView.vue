@@ -109,23 +109,13 @@ const roles = [
     tag: "平台管理",
   },
   {
-    value: "client",
-    title: "甲方客户 (SYS_CLIENT)",
-    tag: "查看已发布需求",
-  },
-  {
-    value: "contractor",
-    title: "外包成员 (SYS_CONTRACTOR)",
-    tag: "执行分配任务",
-  },
-  {
     value: "member",
-    title: "项目成员 (SYS_USER)",
+    title: "项目成员 (MEMBER)",
     tag: "内部员工",
   },
   {
     value: "viewer",
-    title: "访客 (SYS_USER - 只读)",
+    title: "访客 (VIEWER)",
     tag: "只读权限",
   },
 ];

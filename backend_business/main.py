@@ -1,6 +1,6 @@
 """
 FastAPI 业务后端入口点
-用于并行运行与 Flask 后端（端口 5001）的新 FastAPI 后端（端口 5002）
+统一承载业务接口（包含 /api/v2/*）
 """
 
 import os
@@ -74,27 +74,30 @@ else:
     )
 
 
-# 注册路由（Phase 2 逐步迁移）
-# - dedup 暂走 /api/v2，便于与 Flask 并行灰度
-# - auth 直接走 /api/auth，与前端和 Nginx 分流规则保持一致
-# - permission 走 /api/permission，与前端既有调用路径保持一致
-# - manage 走 /api/manage，项目管理模块
-# - product 走 /api/product，产品管理模块
-# - conflict 走 /api/conflict，冲突检测模块
+# 注册路由（FastAPI）
+# - auth 走 /api/v2/auth，认证模块
+# - permission 走 /api/v2/permission，权限管理模块
+# - manage 走 /api/v2/manage，项目管理模块
+# - product 走 /api/v2/product，产品管理模块
+# - conflict 走 /api/v2/conflict，冲突检测模块
+# - mobile_chat 走 /api/v2/mobile，移动端消息模块
+# - file 走 /api/v2/*，文件上传下载模块
 from backend_business.api.routers import (
     analysis,
     auth,
     classification,
     conflict,
     deduplication,
+    execution_graph,
     file,
     manage,
     mobile_chat,
     permission,
+    push,
     product,
     requirements,
 )
-app.include_router(deduplication.router, prefix="/api/v2")
+app.include_router(deduplication.router)
 app.include_router(auth.router)
 app.include_router(permission.router)
 app.include_router(manage.router)
@@ -103,8 +106,10 @@ app.include_router(analysis.router)
 app.include_router(conflict.router)
 app.include_router(classification.router)
 app.include_router(requirements.router)
+app.include_router(push.router)
 app.include_router(mobile_chat.router)
 app.include_router(file.router)
+app.include_router(execution_graph.router)
 
 # 注册业务异常处理器（保留 FastAPI 原生 HTTPException / validation 语义）
 app.add_exception_handler(ErrorResponse, error_response_handler)
@@ -136,6 +141,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "backend_business.main:app",
         host=settings.HOST,
-        port=5002,  # FastAPI 使用端口 5002，Flask 使用 5001
+        port=settings.PORT,
         reload=settings.DEBUG,
     )

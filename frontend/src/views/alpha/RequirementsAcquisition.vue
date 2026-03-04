@@ -24,7 +24,7 @@ const extractModel = ref('deepseek-reasoner')
 const cleanModel = ref('deepseek-chat')
 
 // 通过业务后端代理推理后端（保留 SSE 进度流，并在后端自动入库）
-const INFERENCE_BASE = '/api/requirements'
+const INFERENCE_BASE = '/api/v2/requirements'
 
 const cleanPercent = computed(() => {
   const total = progress.value.clean.total

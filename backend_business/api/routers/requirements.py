@@ -1,6 +1,6 @@
 """
 需求管理路由 - FastAPI 版本
-对应 Flask blueprint: requirements_bp (url_prefix="/api")
+对应历史蓝图: requirements_bp (url_prefix="/api/v2")
 """
 
 import json
@@ -28,7 +28,7 @@ from backend_business.services.requirements_extraction import (
     RequirementsExtractionService,
 )
 
-router = APIRouter(prefix="/api", tags=["requirements"])
+router = APIRouter(prefix="/api/v2", tags=["requirements"])
 
 requirements_service = RequirementsExtractionService(dsn=settings.POSTGRES_DSN)
 dedup_service = RequirementsDeduplicationService(dsn=settings.POSTGRES_DSN)
@@ -156,8 +156,8 @@ def extract_l123_requirements(req: ExtractL123Request):
     try:
         cleared_before_extract = 0
         if req.reset_before_extract:
-            cleared_before_extract = requirements_service.clear_requirements_for_session(
-                req.session_id
+            cleared_before_extract = (
+                requirements_service.clear_requirements_for_session(req.session_id)
             )
 
         result = requirements_service.extract_requirements_for_session(
@@ -206,8 +206,8 @@ def extract_l123_requirements_stream(req: ExtractL123Request):
     try:
         cleared_before_extract = 0
         if req.reset_before_extract:
-            cleared_before_extract = requirements_service.clear_requirements_for_session(
-                req.session_id
+            cleared_before_extract = (
+                requirements_service.clear_requirements_for_session(req.session_id)
             )
     except Exception as exc:
         raise ErrorResponse(str(exc), 500)
@@ -216,7 +216,9 @@ def extract_l123_requirements_stream(req: ExtractL123Request):
         yield _sse_event("reset", {"cleared_before_extract": cleared_before_extract})
 
         try:
-            for event_dict in requirements_service.extract_requirements_for_session_stream(
+            for (
+                event_dict
+            ) in requirements_service.extract_requirements_for_session_stream(
                 session_id=req.session_id,
                 context_run_id=req.context_run_id,
                 bundle_strategy=req.bundle_strategy,
@@ -389,7 +391,9 @@ def generate_l4_requirements(req: GenerateL4RequirementsRequest):
 
     try:
         if not req.force_regenerate:
-            existing_ids = service.get_existing_top_req_ids(req.session_id, requested_ids)
+            existing_ids = service.get_existing_top_req_ids(
+                req.session_id, requested_ids
+            )
             existing_id_set = set(existing_ids)
             missing_ids = [rid for rid in requested_ids if rid not in existing_id_set]
 
@@ -444,9 +448,15 @@ def generate_l4_requirements(req: GenerateL4RequirementsRequest):
                 l4_item["source_top_ids"] = [source_top_id] if source_top_id else []
                 all_l4_requirements.append(l4_item)
 
-        save_result: dict[str, Any] = {"inserted": 0, "duplicates": 0, "inserted_ids": []}
+        save_result: dict[str, Any] = {
+            "inserted": 0,
+            "duplicates": 0,
+            "inserted_ids": [],
+        }
         if all_l4_requirements:
-            save_result = service.save_l4_requirements(req.session_id, all_l4_requirements)
+            save_result = service.save_l4_requirements(
+                req.session_id, all_l4_requirements
+            )
 
         saved = service.get_l4_requirements_by_session(
             req.session_id,

@@ -1,5 +1,6 @@
 import { ref, computed, watch } from 'vue'
-import { manageApi, requirementsL123Api, l4RequirementsApi, analysisApi } from '../utils/api'
+import { manageApi } from '@/api/project'
+import { requirementsL123Api, l4RequirementsApi, analysisApi } from '@/api/requirements'
 
 function normalizeLevel(raw) {
   const text = String(raw || '').trim().toUpperCase()
@@ -128,3 +129,4 @@ export function useAnalysisSession() {
     loadRequirements,
   }
 }
+

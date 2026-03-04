@@ -1,6 +1,6 @@
 """
 Manage API Pydantic 请求模型
-对应 Flask blueprint: manage_bp (url_prefix="/api/manage")
+对应历史蓝图: manage_bp (url_prefix="/api/v2/manage")
 """
 
 from typing import Any, Dict, List, Optional

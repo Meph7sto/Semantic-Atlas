@@ -1,6 +1,6 @@
 """
 产品管理路由 - FastAPI 版本
-对应 Flask blueprint: product_bp (url_prefix="/api/product")
+对应历史蓝图: product_bp (url_prefix="/api/v2/product")
 """
 
 from typing import Optional
@@ -20,7 +20,7 @@ from backend_business.api.routers.schemas.product_schemas import (
 )
 from backend_business.api.deps.auth import get_current_user
 
-router = APIRouter(prefix="/api/product", tags=["product"])
+router = APIRouter(prefix="/api/v2/product", tags=["product"])
 _service = ProductService(dsn=settings.POSTGRES_DSN)
 
 

@@ -74,7 +74,8 @@
 
 <script setup>
 import { ref, computed, onMounted, watch, nextTick } from "vue";
-import { productApi } from "../../utils/api";
+import { productApi } from "@/api/product";
+
 
 const props = defineProps({
   modelValue: {
@@ -308,3 +309,4 @@ defineExpose({
   z-index: 99;
 }
 </style>
+

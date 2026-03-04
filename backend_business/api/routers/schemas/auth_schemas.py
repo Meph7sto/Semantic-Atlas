@@ -1,12 +1,14 @@
 """
 Auth API Pydantic 请求模型
-对应 Flask blueprint: auth_bp
+对应历史蓝图: auth_bp
 """
 
 import re
 from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
+
+_STANDARD_LOGIN_ROLES = {"super_admin", "admin", "member", "viewer"}
 
 
 class LoginRequest(BaseModel):
@@ -28,6 +30,14 @@ class LoginRequest(BaseModel):
         if not v:
             raise ValueError("密码不能为空")
         return v
+
+    @field_validator('role')
+    @classmethod
+    def validate_role(cls, v):
+        role = str(v or "").strip().lower()
+        if role not in _STANDARD_LOGIN_ROLES:
+            raise ValueError("无效的角色，必须是 super_admin、admin、member 或 viewer")
+        return role
 
 
 class RegisterRequest(BaseModel):

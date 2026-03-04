@@ -11,20 +11,6 @@ from psycopg2.extras import RealDictCursor
 from backend_business.services.db_service import db_service
 from backend_business.services.agent.context import AgentContext
 from backend_business.services.agent.tools.base import ToolDefinition, tool_registry
-from backend_business.services.agent.tasks.queue import agent_task_queue
-from backend_business.services.requirements_manage_service import normalize_priority
-
-ALLOWED_UPDATE_FIELDS = {
-    "title",
-    "description",
-    "status",
-    "priority",
-    "assignee",
-    "tags",
-    "due_date",
-    "custom_fields",
-    "order_index",
-}
 
 # ========================
 # OpenAI Schemas
@@ -354,71 +340,14 @@ def _list_handler(args: dict, ctx: AgentContext) -> dict:
 
 
 def _update_handler(args: dict, ctx: AgentContext) -> dict:
-    """Create a pending task for requirement_update (write op, requires approval)."""
-    req_project_id = args.get("project_id", "")
-    req_id = args.get("req_id", "")
-    fields = args.get("fields", {})
-    rationale = args.get("rationale", "")
-
-    if not req_id:
-        raise ValueError("req_id is required")
-    if not fields:
-        raise ValueError("fields is required")
-
-    filtered_fields = {k: v for k, v in fields.items() if k in ALLOWED_UPDATE_FIELDS}
-    if not filtered_fields:
-        raise ValueError(f"No valid fields. Allowed: {sorted(ALLOWED_UPDATE_FIELDS)}")
-    if "priority" in filtered_fields:
-        filtered_fields["priority"] = normalize_priority(
-            filtered_fields.get("priority"), allow_none=True
-        )
-
-    # Fetch before-snapshot
-    before = _get_handler(
-        {"project_id": req_project_id or ctx.project_id or "", "req_id": req_id}, ctx
-    )
-    if before.get("error"):
-        raise ValueError(before["error"])
-
-    current_req = before.get("requirement", {})
-
-    # Build diff preview
-    diff_preview = {}
-    for key, new_val in filtered_fields.items():
-        old_val = current_req.get(key)
-        if old_val != new_val:
-            diff_preview[key] = {"before": old_val, "after": new_val}
-
-    field_names = (
-        ", ".join(diff_preview.keys()) if diff_preview else ", ".join(filtered_fields.keys())
-    )
-    title = f"更新需求: {current_req.get('title', req_id)[:30]}"
-    description = f"修改字段: {field_names}\n原因: {rationale}"
-
-    payload = {
-        "project_id": req_project_id or ctx.project_id,
-        "req_id": req_id,
-        "fields": filtered_fields,
-        "rationale": rationale,
-        "before": current_req,
-        "diff_preview": diff_preview,
-        "source": {
-            "agent_id": ctx.agent_id,
-            "session_id": ctx.session_id,
-            "user_message_id": ctx.user_message_id,
-            "tool_call_id": ctx.tool_call_id,
-        },
+    """requirement_update is retired with assistant/task APIs and approval queue."""
+    return {
+        "error": (
+            "requirement_update is unavailable: assistant task approval APIs "
+            "and queue storage were removed."
+        ),
+        "status": "disabled",
     }
-
-    return agent_task_queue.create_task(
-        user_id=ctx.user_id,
-        task_type="requirement_update",
-        title=title,
-        description=description,
-        payload=payload,
-        session_id=ctx.session_id,
-        project_id=req_project_id or ctx.project_id,
-    )
 
 
 # ========================

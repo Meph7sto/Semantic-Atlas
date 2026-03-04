@@ -8,7 +8,9 @@ import sys
 from typing import Any
 
 import pytest
-from flask import Flask
+from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
+from fastapi.testclient import TestClient
 
 os.environ["SKIP_DB_INIT"] = "1"
 
@@ -16,8 +18,9 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
+from backend_business.api.http.errors import error_response_handler, validation_error_handler
+from backend_business.api.routers import mobile_chat
 import backend_business.services.mobile_chat_service as mobile_chat_module
-from backend_business.routes import mobile_chat_routes
 from backend_business.services.mobile_chat_service import MobileChatService
 
 
@@ -112,11 +115,15 @@ class _StubMobileChatService:
 @pytest.fixture
 def mobile_client(monkeypatch):
     stub = _StubMobileChatService()
-    monkeypatch.setattr(mobile_chat_routes, "mobile_chat_service", stub)
+    monkeypatch.setattr(mobile_chat, "mobile_chat_service", stub)
 
-    app = Flask(__name__)
-    app.register_blueprint(mobile_chat_routes.mobile_chat_bp, url_prefix="/api/mobile")
-    with app.test_client() as client:
+    app = FastAPI()
+    app.include_router(mobile_chat.router)
+    app.add_exception_handler(RequestValidationError, validation_error_handler)
+    app.add_exception_handler(HTTPException, error_response_handler)
+    app.add_exception_handler(Exception, error_response_handler)
+
+    with TestClient(app, raise_server_exceptions=False) as client:
         yield client, stub
 
 
@@ -167,7 +174,7 @@ def test_create_message_user_id_priority_payload_over_header(mobile_client):
 def test_stream_uses_user_id_for_subscription(mobile_client):
     client, stub = mobile_client
     resp = client.get("/api/mobile/stream?session_id=s-stream&user_id=u-stream")
-    _ = resp.get_data(as_text=True)
+    _ = resp.text
     assert resp.status_code == 200
     assert stub.last_subscribe == {"user_id": "u-stream", "session_id": "s-stream"}
     assert stub.last_stream == {"user_id": "u-stream", "session_id": "s-stream"}

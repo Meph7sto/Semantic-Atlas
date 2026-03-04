@@ -22,16 +22,24 @@ if load_dotenv:
 class Settings:
     """
     业务后端（backend_business）配置：
-    - 负责对外提供 /api/* 业务接口
+    - 负责对外提供 /api/v2/* 业务接口
     - 负责数据落库（PostgreSQL）
     - 负责调用 backend_inference 推理服务（默认 http://localhost:8000）
     """
 
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    # 项目根目录（backend_business 的上一级）
+    ROOT_DIR = os.path.dirname(BASE_DIR)
 
-    # Flask
+    # 文件上传目录：优先读取环境变量，默认使用项目根下的 data/uploads/
+    UPLOAD_FOLDER = os.environ.get(
+        "UPLOAD_FOLDER",
+        os.path.join(ROOT_DIR, "data", "uploads"),
+    )
+
+    # Business API (FastAPI)
     HOST = os.environ.get("BUSINESS_HOST", "0.0.0.0")
-    PORT = int(os.environ.get("BUSINESS_PORT", "5001"))
+    PORT = int(os.environ.get("BUSINESS_PORT", "5002"))
     DEBUG = os.environ.get("BUSINESS_DEBUG", "1") in ("1", "true", "True")
 
     # Inference service (FastAPI)

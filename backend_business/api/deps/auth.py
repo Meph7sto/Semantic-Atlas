@@ -44,9 +44,16 @@ async def get_current_user(request: Request) -> dict:
             detail="Token 无效或已过期",
         )
 
-    # 返回用户信息（与 Flask 格式一致）
+    user_id = payload.get("user_id") or payload.get("uid") or payload.get("sub")
+    if user_id is None or not str(user_id).strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token 缺少 user_id",
+        )
+
+    # 返回用户信息（与历史返回格式一致）
     user_info = {
-        "user_id": payload.get("user_id"),
+        "user_id": str(user_id),
         "username": payload.get("username"),
         "role": payload.get("role"),
         "external_type": payload.get("external_type"),

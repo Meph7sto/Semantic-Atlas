@@ -18,8 +18,7 @@ import {
   Smartphone,
   ArrowLeft,
   FolderUp,
-  Workflow,
-  Bot
+  Workflow
 } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -221,21 +220,12 @@ const toggleSidebar = (open) => {
       </RouterLink>
 
       <RouterLink
-        to="/alpha/agent-collaboration"
+        to="/alpha/execution-topology"
         active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
         class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
       >
         <Workflow class="w-4 h-4" />
-        <span class="whitespace-nowrap">Agent 协作台</span>
-      </RouterLink>
-
-      <RouterLink
-        to="/alpha/agent-chat"
-        active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
-        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
-      >
-        <Bot class="w-4 h-4" />
-        <span class="whitespace-nowrap">Agent Chat</span>
+        <span class="whitespace-nowrap">执行拓扑模板</span>
       </RouterLink>
     </nav>
 

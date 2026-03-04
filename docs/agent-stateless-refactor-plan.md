@@ -1,6 +1,8 @@
 # Agent 无状态化改造计划
 ## 任务队列化 + 状态机（Stateless Workers）
 
+> 状态更新（2026-03-02）：`/api/ai-chat/*`、`/api/agent-tasks/*`、`/api/agent-monitor/*` 已从当前代码移除；`ai_chat_sessions`、`ai_chat_messages`、`agent_pending_tasks` 已列入下线表。本文中的相关段落仅保留为历史方案记录。
+
 **目标**：将现有的有状态 Agent 系统改造为无状态 Worker 架构，支持 100+ 并发用户。
 
 **核心思想**：Agent 变成无状态的工人（Stateless Worker），所有对话上下文和消息全部存在数据库或 Redis 里，任何空闲的 Worker 都可以处理任何用户的消息。
@@ -573,7 +575,7 @@ class StatelessAgentWorker:
 
 #### 3.2.2 修改 API Gateway
 
-**文件位置**：`backend_business/routes/ai_chat_routes.py`
+**历史文件位置**：`backend_business/routes/ai_chat_routes.py`（该文件已删除）
 
 **改造前**（同步模型）：
 ```python
@@ -749,7 +751,7 @@ def resume_after_approval(self, original_task_id: str) -> str:
 
 #### 3.4.1 管理 API
 
-**新增 Route**：`backend_business/routes/agent_monitor_routes.py`
+**历史 Route 位置**：`backend_business/routes/agent_monitor_routes.py`（该文件已删除）
 
 **端点设计**：
 ```python
@@ -1090,7 +1092,7 @@ TASK_QUEUE_ENABLED = os.getenv("TASK_QUEUE_ENABLED", "false").lower() == "true"
 
 **API 路由适配**：
 ```python
-# backend_business/routes/ai_chat_routes.py
+# backend_business/routes/ai_chat_routes.py（历史示例，文件已删除）
 @ai_chat_bp.route("/stream", methods=["POST"])
 def stream_chat():
     if TASK_QUEUE_ENABLED:
@@ -1114,8 +1116,8 @@ def _stream_chat_queue_mode():
 
 ### 4.2 数据迁移
 
-**现有数据不受影响**：
-- `ai_chat_sessions` 和 `ai_chat_messages` 保持不变
+**现有数据不受影响（历史描述，现已过时）**：
+- `ai_chat_sessions` 和 `ai_chat_messages` 在当前代码中已移除，不再作为保留表
 - 新增的表只用于队列和状态管理
 
 **迁移路径**：

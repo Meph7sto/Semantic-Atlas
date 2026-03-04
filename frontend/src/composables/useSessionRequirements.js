@@ -1,5 +1,6 @@
 import { ref, computed, watch } from 'vue'
-import { requirementsL123Api, l4RequirementsApi, analysisApi, manageApi } from '../utils/api'
+import { requirementsL123Api, l4RequirementsApi, analysisApi } from '@/api/requirements'
+import { manageApi } from '@/api/project'
 
 // ---- 纯工具函数 ----
 export function normalizeLevel(raw) {
@@ -606,3 +607,4 @@ export function useSessionRequirements() {
     handleAnalysisCompleted,
   }
 }
+

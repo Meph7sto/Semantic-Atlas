@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 [CmdletBinding()]
 param(
   [ValidateSet("all", "backend", "inference", "business", "frontend")]
@@ -12,7 +12,7 @@ param(
   [ValidateSet("alpha", "main", "all")]
   [string]$Entry,
 
-  # 是否启动 FastAPI 业务后端 (与 Flask 并行运行，使用 /api/v2/ 前缀)
+  # 兼容旧参数：已废弃，业务后端固定使用 FastAPI 5002
   [switch]$EnableFastAPIBusiness,
 
   # 是否启用 FRP 内网穿透
@@ -151,19 +151,6 @@ if (-not $Entry) {
 }
 
 $env:FRONTEND_ENTRY = $Entry
-
-# 是否启动 FastAPI 业务后端
-if (-not $EnableFastAPIBusiness) {
-  Write-Host "是否启动 FastAPI 业务后端 (/api/v2/)? 1=yes(默认, 与Flask并行) 2=no" -ForegroundColor Cyan
-  $choice = Read-Host "输入编号 (默认 1/yes)"
-  if ($choice -eq "2" -or $choice -eq "no") {
-    $EnableFastAPIBusiness = $false
-  }
-  else {
-    $EnableFastAPIBusiness = $true
-    Write-Host "[start] FastAPI business backend will be enabled." -ForegroundColor Yellow
-  }
-}
 
 if ($Provider -eq "chutes" -and -not $env:CHUTES_API_TOKEN) {
   Write-Host "检测到使用 chutes 模式，但未设置 CHUTES_API_TOKEN。" -ForegroundColor Yellow
@@ -438,7 +425,8 @@ if ($doBusiness) {
       }
     }
     if ($needsOverride) {
-      $selectedPort = Select-PostgresPort -DefaultPort ([int]$env:POSTGRES_PORT) -DockerExe ($dockerCmd ? $dockerCmd.Source : $null) -ContainerName "semantic-atlas-postgres"
+      $dockerExePath = if ($dockerCmd) { $dockerCmd.Source } else { $null }
+      $selectedPort = Select-PostgresPort -DefaultPort ([int]$env:POSTGRES_PORT) -DockerExe $dockerExePath -ContainerName "semantic-atlas-postgres"
       if ($selectedPort -ne [int]$env:POSTGRES_PORT) {
         Write-Warning "[start] Port $($env:POSTGRES_PORT) is in use. Switching PostgreSQL host port to $selectedPort."
         $env:POSTGRES_PORT = "$selectedPort"
@@ -688,24 +676,17 @@ if ($doInference) {
   Start-Process -FilePath $PythonExe -ArgumentList $UvicornArgs -WorkingDirectory $BASE_DIR
 }
 
-# 5) 启动业务服务 (Flask 默认，FastAPI 可选并行)
+# 5) 启动业务服务（FastAPI）
 if ($doBusiness) {
-  # Flask (主业务后端)
-  Write-Host "[start] Starting Flask business service (5001)..."
-  Start-Process -FilePath $PythonExe -ArgumentList @("backend_business/app.py") -WorkingDirectory $BASE_DIR
-
-  # FastAPI 业务后端 (可选，使用 /api/v2/ 前缀)
-  if ($EnableFastAPIBusiness) {
-    Write-Host "[start] Starting FastAPI business service (5002) with /api/v2/ prefix..."
-    Write-Host "[start] Working directory: $BASE_DIR"
-    $UvicornArgs = @("-m", "uvicorn", "backend_business.main:app", "--host", "0.0.0.0", "--port", "5002")
-    Start-Process -FilePath $PythonExe -ArgumentList $UvicornArgs -WorkingDirectory $BASE_DIR
-  }
+  Write-Host "[start] Starting FastAPI business service (5002)..."
+  Write-Host "[start] Working directory: $BASE_DIR"
+  $UvicornArgs = @("-m", "uvicorn", "backend_business.main:app", "--host", "0.0.0.0", "--port", "5002")
+  Start-Process -FilePath $PythonExe -ArgumentList $UvicornArgs -WorkingDirectory $BASE_DIR
 }
 
 
 Write-Host "[start] Done. Mode=$Mode; Model provider=$Provider; Entry=$Entry"
-$backendInfo = if ($EnableFastAPIBusiness) { "Flask 5001 + FastAPI 5002 (/api/v2/)" } else { "Flask 5001" }
+$backendInfo = "FastAPI 5002"
 Write-Host "[start] Nginx 8008 (if enabled), FastAPI 8000 (if enabled), Business: $backendInfo."
 Write-Host "[start] Logs located in $LogsDir"
 

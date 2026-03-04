@@ -1,5 +1,5 @@
 import { ref, computed, watch } from 'vue'
-import { productApi } from '../utils/api'
+import { productApi } from '@/api/product'
 
 export function useProductDetail(selectedProduct) {
   const overview = ref(null)
@@ -78,3 +78,4 @@ export function useProductDetail(selectedProduct) {
     switchAggTab,
   }
 }
+
