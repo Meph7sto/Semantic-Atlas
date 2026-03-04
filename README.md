@@ -14,15 +14,18 @@ Semantic-Atlas 是面向需求工程的语义分析平台，覆盖会议转写�
 - **需求分类**：文本/CSV 批量分类与统计
 - **需求去重**：重复需求识别与合并
 - **项目与产品管理**：项目 CRUD、产品管理、里程碑与分支管理
+- **用户认证与权限**：JWT 认证、RBAC 权限管理、系统身份控制
+- **执行图管理**：Agent 执行拓扑结构与可视化
+- **需求 Actor**：需求执行者分配与管理
 - **多 Agent 协作**：基于 MessageBus + Channel 的多 Agent 通信架构（详见 [AGENT_ARCHITECTURE.md](./AGENT_ARCHITECTURE.md)）
 - **通用对话**：流式 chat（`/inference/chat/stream`）
 - **移动端支持**：移动端消息桥接与推送通知
 
 ## 核心流程（Phase 1-3）
 
-1. `/analysis/ingest_transcript`：会议转写解析 → spans
-2. `/analysis/build_context`：构建关联图 → bundles / context_run_id
-3. `/requirements/extract_l123`：EgoBundle 抽取 L1/L2/L3 需求 → PostgreSQL
+1. `/api/v2/ingest_transcript`：会议转写解析 → spans
+2. `/api/v2/build_context`：构建关联图 → bundles / context_run_id
+3. `/api/v2/requirements/extract_l123`：EgoBundle 抽取 L1/L2/L3 需求 → PostgreSQL
 
 ## 架构
 
@@ -48,7 +51,16 @@ Semantic-Atlas 是面向需求工程的语义分析平台，覆盖会议转写�
 
 ## 快速开始（本地开发）
 
-> 建议使用 Python 3.12（`psycopg2-binary` 依赖版本要求）项目采用conda进行环境管理，运行前请自行创建conda activate semantic-Atlas。
+> 建议使用 Python 3.12（`psycopg2-binary` 依赖版本要求）项目采用 conda 进行环境管理，运行前请自行创建并激活 `semantic-Atlas` 环境（注意大小写）。
+
+### 环境准备
+
+```bash
+conda create -n semantic-Atlas python=3.12
+conda activate semantic-Atlas
+```
+
+### 安装依赖
 
 1) 安装 Python 依赖
 
@@ -61,6 +73,8 @@ pip install -r requirements.txt
 ```bash
 cd frontend && npm install
 ```
+
+### 启动服务
 
 3) 启动 PostgreSQL（Docker）
 
@@ -119,20 +133,23 @@ bash deploy/stop_services.sh
 
 ## 前端路由
 
-前端分为两套页面体系:
+前端分为三套页面体系:
 
-### Main（正式功能）`/main/*`
+### Beta（正式功能）`/beta/*`
 
 | 路由 | 页面 | 说明 |
 |------|------|------|
-| `/main/login` | LoginView | 登录 |
-| `/main/dashboard` | DashboardView | 仪表盘 |
-| `/main/project` | ProjectManageView | 项目管理 |
-| `/main/products` | ProductManageView | 产品管理 |
-| `/main/requirements-collection` | RequirementsCollectionView | Phase 1-3 流水线入口 |
-| `/main/requirements-analysis` | RequirementsAnalysisView | 需求分析 |
-| `/main/requirements` | RequirementsView | 需求展示 |
-| `/main/requirements-session` | RequirementsSessionView | 会话级需求查看 |
+| `/beta/login` | LoginView | 登录 |
+| `/beta/register` | RegisterView | 注册 |
+| `/beta/dashboard` | DashboardView | 仪表盘 |
+| `/beta/project` | ProjectManageView | 项目管理 |
+| `/beta/products` | ProductManageView | 产品管理 |
+| `/beta/requirements-collection` | RequirementsCollectionView | Phase 1-3 流水线入口 |
+| `/beta/requirements-analysis` | RequirementsAnalysisView | 需求分析 |
+| `/beta/requirements` | RequirementsView | 需求展示 |
+| `/beta/requirements-session` | RequirementsSessionView | 会话级需求查看 |
+| `/beta/account` | AccountView | 账户设置 |
+| `/beta/user-manage` | UserManageView | 用户管理（仅系统管理员） |
 
 ### Alpha（实验功能）`/alpha/*`
 
@@ -153,6 +170,14 @@ bash deploy/stop_services.sh
 | `/alpha/message-push` | MessagePush | 消息推送 |
 | `/alpha/mobile-bridge` | MobileBridge | 移动端桥接 |
 | `/alpha/file-receive` | FileReceive | 文件接收 |
+| `/alpha/execution-topology` | ExecutionTopologyTemplate | 执行拓扑可视化 |
+| `/alpha/actor-visual-tester` | ActorVisualTester | Actor 可视化测试 |
+
+### 引导页
+
+| 路由 | 说明 |
+|------|------|
+| `/guide` | 引导页/入口点 |
 
 ## 配置说明
 
@@ -181,6 +206,7 @@ bash deploy/stop_services.sh
 | `POSTGRES_HOST` / `PORT` / `USER` / `PASSWORD` / `DB` | 数据库连接参数 | `127.0.0.1` / `5432` / `semantic` / `semantic_dev` / `semantic_atlas` |
 | `BUSINESS_HOST` / `BUSINESS_PORT` / `BUSINESS_DEBUG` | FastAPI 业务服务配置 | - |
 | `CORS_ORIGINS` | CORS 允许源 | `*` |
+| `JWT_SECRET_KEY` | JWT 签名密钥（生产环境需更改） | - |
 
 ### 示例 `.env`
 
@@ -193,32 +219,37 @@ POSTGRES_PORT=5432
 POSTGRES_USER=semantic
 POSTGRES_PASSWORD=semantic_dev
 POSTGRES_DB=semantic_atlas
+JWT_SECRET_KEY=your_secret_key_here
 ```
 
 ## API 概览
 
 ### 业务后端（FastAPI, 前缀 `/api/v2`）
 
-| 蓝图 | 前缀 | 说明 |
-|------|------|------|
-| `analysis_bp` | `/api/v2` | Phase 1 & 2 流水线 |
-| `requirements_bp` | `/api/v2` | Phase 3 & 需求 CRUD |
-| `manage_bp` | `/api/v2/manage` | 项目/需求/里程碑管理 |
-| `product_bp` | `/api/v2/product` | 产品管理 |
-| `conflict_bp` | `/api/v2/conflict` | 冲突检测代理 |
-| `classification_bp` | `/api/v2/classification` | 分类代理 |
-| `dedup_bp` | `/api/v2/dedup` | 需求去重 |
-| `push_bp` | `/api/v2/push` | 推送通知 |
-| `mobile_chat_bp` | `/api/v2/mobile` | 移动端消息 |
-| `file_bp` | `/api/v2` | CSV 上传/下载 |
+| Router | 前缀 | 说明 |
+|--------|------|------|
+| `analysis` | `/api/v2` | Phase 1 & 2 流水线 |
+| `requirements` | `/api/v2` | Phase 3 & 需求 CRUD |
+| `manage` | `/api/v2/manage` | 项目/需求/里程碑管理 |
+| `product` | `/api/v2/product` | 产品管理 |
+| `conflict` | `/api/v2/conflict` | 冲突检测代理 |
+| `classification` | `/api/v2/classification` | 分类代理 |
+| `deduplication` | `/api/v2/dedup` | 需求去重 |
+| `push` | `/api/v2/push` | 推送通知（SSE） |
+| `mobile_chat` | `/api/v2/mobile` | 移动端消息 |
+| `file` | `/api/v2` | CSV 上传/下载 |
+| `auth` | `/api/v2` | 用户认证（JWT） |
+| `permission` | `/api/v2/permission` | 权限管理 |
+| `execution_graph` | `/api/v2/execution_graph` | 执行图管理 |
+| `execution_topology_structure` | `/api/v2/topology` | 执行拓扑结构 |
+| `requirement_actor` | `/api/v2/actor` | 需求 Actor 管理 |
 
 另有 `GET /health` 健康检查（非 `/api/v2` 前缀）。
-`/api/v2/mobile/*` 相关接口支持可选 `user_id` 参数；未传时回退 `X-Actor`，再回退 `anonymous`。
 
 ### 推理后端（FastAPI）
 
-| 路由模块 | 说明 |
-|----------|------|
+| Router | 说明 |
+|--------|------|
 | `conflict` | 冲突检测 (`/conflict/check`, `/conflict/stream_check`) |
 | `traceability` | 追溯分析 (`/traceability/relation`, `/traceability/batch-relation`) |
 | `classification` | 需求分类 (`/classification/predict-texts`, `/classification/predict-csv`) |
@@ -230,7 +261,7 @@ POSTGRES_DB=semantic_atlas
 
 ## 数据库设计
 
-数据库 schema 在 `backend_business/services/db_service_parts/schema.py` 中定义，首次启动自动建表。
+数据库 schema 在 `backend_business/services/db_service_parts/schema.py` 中定义，模块化 schema 在 `backend_business/services/db_service_parts/schemas/`，首次启动自动建表。
 
 ### 流水线层（session_id 主键）
 
@@ -261,6 +292,25 @@ POSTGRES_DB=semantic_atlas
 | `agent_channels` | 通信通道（direct / group / broadcast） |
 | `agent_channel_members` | 通道成员 |
 | `agent_messages` | Agent 消息记录 |
+| `agent_pending_tasks` | Agent 待处理任务 |
+| `ai_chat_sessions` | AI 对话会话 |
+
+### 认证与权限层
+
+| 表 | 说明 |
+|----|------|
+| `auth_users` | 用户账户（JWT 认证） |
+| `permissions` | 权限定义 |
+| `member_roles` | 用户在项目中的角色 |
+| `project_members` | 项目成员分配 |
+
+### 执行与 Actor 层
+
+| 表 | 说明 |
+|----|------|
+| `execution_graphs` | 执行图记录 |
+| `execution_nodes` | 执行节点 |
+| `requirement_actors` | 需求执行者分配 |
 
 ## 多 Agent 架构
 
@@ -273,7 +323,9 @@ backend_business/services/agent/
 ├── orchestration/    # 编排层（supervisor, workflow, strategies）
 ├── agents/           # Agent 定义（conductor, requirements）
 ├── tools/            # 工具层（requirement_tools, messaging_tools）
-└── tasks/            # 任务队列
+├── topology/         # Agent 拓扑与容器管理
+├── engines/          # 思考工具引擎
+└── tasks/            # 任务队列与执行器
 ```
 
 通信模式:
@@ -289,8 +341,9 @@ backend_business/services/agent/
 frontend/                          # Vue 3 + Vite + Tailwind
   src/
     views/
-      main/                        # 正式功能页面
+      beta/                        # 正式功能页面
         LoginView.vue              #   登录
+        RegisterView.vue           #   注册
         DashboardView.vue          #   仪表盘
         ProjectManageView.vue      #   项目管理
         ProductManageView.vue      #   产品管理
@@ -298,19 +351,25 @@ frontend/                          # Vue 3 + Vite + Tailwind
         RequirementsAnalysisView.vue    # 需求分析
         RequirementsView.vue       #   需求展示
         RequirementsSessionView.vue #  会话级需求
+        AccountView.vue           #   账户设置
+        UserManageView.vue        #   用户管理
       alpha/                       # 实验功能页面
         ConflictDetection.vue      #   冲突检测
         Traceability.vue           #   追溯分析
         Classification.vue         #   需求分类
-        TranscriptIngestion.vue    #   Phase 1
+        TranscriptIngestion.vue   #   Phase 1
         ContextBuilder.vue         #   Phase 2
         RequirementsExtraction.vue #   Phase 3
-        L4Testing.vue              #   L4 测试
-        GeneralChat.vue            #   通用对话
+        L4Testing.vue             #   L4 测试
+        GeneralChat.vue           #   通用对话
+        ExecutionTopologyTemplate.vue  # 执行拓扑
+        ActorVisualTester.vue     #   Actor 可视化测试
         ...
       GuideView.vue                # 引导页
     router/index.js                # 路由配置
     utils/api.js                   # 统一 API 客户端
+    stores/                        # Pinia 状态管理
+      auth.js                      #   认证与权限
 
 backend_business/                  # FastAPI 业务编排 + 存储
   main.py                          # FastAPI 应用入口
@@ -325,31 +384,46 @@ backend_business/                  # FastAPI 业务编排 + 存储
     push.py                        #   推送通知
     mobile_chat.py                 #   移动端消息
     file.py                        #   CSV 上传/下载
+    auth.py                        #   用户认证
+    permission.py                  #   权限管理
+    execution_graph.py             #   执行图管理
+    execution_topology_structure.py #   执行拓扑结构
+    requirement_actor.py            #   需求 Actor 管理
   services/
     agent/                         # 多 Agent 架构
     context_builder/               # Phase 2 上下文构建
     requirements_extraction/       # Phase 3 需求抽取
-    requirements_deduplication/    # 需求去重
+    requirements_deduplication/    #   需求去重
     requirements_manage_service.py # 需求管理服务
-    product_service.py             # 产品服务
-    mobile_chat_service.py         # 移动端消息服务
-    push_service.py                # 推送服务
+    product_service.py             #   产品服务
+    mobile_chat_service.py         #   移动端消息服务
+    push_service.py                #   推送服务
+    auth_service.py                #   认证服务
+    permission_service.py          #   权限服务
     db_service.py                  # 数据库连接
     db_service_parts/              # 数据库 schema 与分模块操作
+      schemas/
+        trace_schema.py            #   追溯相关表
+        requirement_schema.py      #   需求相关表
+        project_schema.py          #   项目相关表
+        agent_chat_schema.py      #   Agent 通信表
+        auth_user_schema.py       #   认证用户表
+        execution_schema.py       #   执行图表
+        requirement_actor_schema.py #   Actor 表
 
 backend_inference/                 # FastAPI 推理服务
   main.py                          # 应用入口
   routers/
     conflict.py                    # 冲突检测
     traceability.py                # 追溯分析
-    classification.py              # 需求分类
-    requirements_acquisition.py    # 需求获取
-    chat.py                        # 对话服务
-    kb.py                          # 知识库
-    l4_generation.py               # L4 需求生成
-    l4_validation.py               # L4 需求验证
+    classification.py              #   需求分类
+    requirements_acquisition.py    #   需求获取
+    chat.py                        #   对话服务
+    kb.py                          #   知识库
+    l4_generation.py               #   L4 需求生成
+    l4_validation.py               #   L4 需求验证
   services/                        # 对应推理服务实现
-    kb_service/                    # 知识库服务
+    kb_service/                    #   知识库服务
 
 deploy/                            # 部署脚本与 Nginx 配置
   start.sh / start.ps1             # 一键启动
@@ -376,3 +450,15 @@ docker-compose.yml                 # PostgreSQL + Adminer
 
 - `/api/v2` → `http://localhost:5002`（业务后端）
 - `/inference` → `http://localhost:8000`（推理后端，路径去掉 `/inference` 前缀）
+
+## 前端 API 客户端认证
+
+前端使用 `@/utils/api.js` 中定义的两个 Axios 实例：
+- `api` - 业务后端（`/api/v2` 路由）
+- `inferenceAxios` - 推理后端（`/inference` 路由）
+
+认证方式：
+- **JWT Token**: `Authorization: Bearer <token>` 请求头
+- **Legacy fallback**: `X-Actor` 和 `X-Role` 请求头（兼容旧版）
+
+401 响应自动跳转到 `/beta/login`（除非已在登录/guide 页面）。
