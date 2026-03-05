@@ -1,7 +1,17 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from '@/api/request'
+import { manageApi } from '@/api/project'
 
+// 项目和需求选择相关
+const projects = ref([])
+const selectedProjectId = ref('')
+const requirements = ref([])
+const isLoadingProjects = ref(false)
+const isLoadingReqs = ref(false)
+const projectError = ref('')
+
+// Actor 测试相关
 const requirementId = ref('')
 const minVersion = ref('')
 const updatePayloadText = ref('{"title":"actor visual test"}')
@@ -111,7 +121,7 @@ const sendUpdate = async () => {
   if (!id) return
   await runAction(async () => {
     const updates = JSON.parse(updatePayloadText.value || '{}')
-    await api.post('/requirement-actor/command/update-content', updates, {
+    await api.post('/requirement-actor/command/update-content', { updates }, {
       params: { requirement_id: id }
     })
   })
@@ -130,10 +140,53 @@ const queryWithFence = async () => {
   })
 }
 
+// 项目和需求加载函数
+const loadProjects = async () => {
+  projectError.value = ''
+  isLoadingProjects.value = true
+  try {
+    const data = await manageApi.listProjects()
+    projects.value = data.projects || []
+    // 默认选择第一个项目（最高权限）
+    if (projects.value.length > 0 && !selectedProjectId.value) {
+      selectedProjectId.value = projects.value[0].project_id
+    }
+  } catch (err) {
+    projectError.value = err?.message || '加载项目失败'
+  } finally {
+    isLoadingProjects.value = false
+  }
+}
+
+const loadRequirements = async () => {
+  if (!selectedProjectId.value) {
+    requirements.value = []
+    return
+  }
+  isLoadingReqs.value = true
+  try {
+    const listData = await manageApi.listRequirements(selectedProjectId.value)
+    requirements.value = listData.requirements || []
+  } catch (err) {
+    console.error('加载需求失败:', err)
+    requirements.value = []
+  } finally {
+    isLoadingReqs.value = false
+  }
+}
+
+// 监听项目选择变化，自动加载对应的需求
+watch(selectedProjectId, () => {
+  if (selectedProjectId.value) {
+    loadRequirements()
+  }
+})
+
 onMounted(async () => {
   connectWs()
   await refreshStats()
   statsTimer = setInterval(refreshStats, 5000)
+  await loadProjects()
 })
 
 onBeforeUnmount(() => {
@@ -148,10 +201,51 @@ onBeforeUnmount(() => {
 <template>
   <div class="h-full w-full overflow-y-auto bg-zinc-50">
     <div class="mx-auto w-full max-w-7xl p-6 md:p-8 space-y-6">
+      <!-- 项目和需求选择区 -->
+      <section class="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="min-w-[200px] flex-1">
+            <label class="block text-xs font-medium text-zinc-500 mb-1">项目</label>
+            <select
+              v-model="selectedProjectId"
+              :disabled="isLoadingProjects"
+              @change="() => { requirementId = '' }"
+              class="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-400"
+            >
+              <option value="">选择项目</option>
+              <option v-for="p in projects" :key="p.project_id" :value="p.project_id">{{ p.name }}</option>
+            </select>
+          </div>
+          <div class="min-w-[200px] flex-1">
+            <label class="block text-xs font-medium text-zinc-500 mb-1">需求</label>
+            <select
+              v-model="requirementId"
+              :disabled="isLoadingReqs || !selectedProjectId"
+              class="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-400"
+            >
+              <option value="">选择需求</option>
+              <option v-for="req in requirements" :key="req.req_id" :value="req.req_id">
+                {{ req.title || req.text }} ({{ req.req_id }})
+              </option>
+            </select>
+          </div>
+          <button
+            class="inline-flex items-center gap-2 text-sm text-zinc-700 border border-zinc-300 rounded-md px-3 py-1.5 hover:bg-zinc-50"
+            @click="loadProjects"
+            :disabled="isLoadingProjects"
+          >
+            <span v-if="isLoadingProjects">刷新中...</span>
+            <span v-else>刷新项目</span>
+          </button>
+        </div>
+        <p v-if="projectError" class="mt-3 text-sm text-red-600">{{ projectError }}</p>
+      </section>
+
+      <!-- Actor 操作区 -->
       <section class="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
         <div class="flex flex-wrap items-end gap-3">
           <div class="min-w-[220px] flex-1">
-            <label class="block text-xs font-medium text-zinc-500 mb-1">Requirement ID</label>
+            <label class="block text-xs font-medium text-zinc-500 mb-1">需求ID</label>
             <input
               v-model="requirementId"
               type="text"
@@ -160,7 +254,7 @@ onBeforeUnmount(() => {
             />
           </div>
           <div class="w-36">
-            <label class="block text-xs font-medium text-zinc-500 mb-1">Min Version</label>
+            <label class="block text-xs font-medium text-zinc-500 mb-1">最小版本</label>
             <input
               v-model="minVersion"
               type="number"
@@ -169,25 +263,25 @@ onBeforeUnmount(() => {
             />
           </div>
           <button class="rounded-lg bg-zinc-900 px-4 py-2 text-sm text-white disabled:opacity-50" :disabled="busy" @click="forceActivate">
-            Force Activate
+            强制激活
           </button>
           <button class="rounded-lg bg-zinc-700 px-4 py-2 text-sm text-white disabled:opacity-50" :disabled="busy" @click="forcePassivate">
-            Force Passivate
+            强制停用
           </button>
           <button class="rounded-lg bg-emerald-700 px-4 py-2 text-sm text-white disabled:opacity-50" :disabled="busy" @click="queryWithFence">
-            Query With Fence
+            带围栏查询
           </button>
         </div>
 
         <div class="mt-4">
-          <label class="block text-xs font-medium text-zinc-500 mb-1">Update Payload (JSON)</label>
+          <label class="block text-xs font-medium text-zinc-500 mb-1">更新载荷 (JSON)</label>
           <textarea
             v-model="updatePayloadText"
             rows="3"
             class="w-full rounded-lg border border-zinc-300 px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-zinc-400"
           />
           <button class="mt-2 rounded-lg bg-blue-700 px-4 py-2 text-sm text-white disabled:opacity-50" :disabled="busy" @click="sendUpdate">
-            Send Update Command
+            发送更新命令
           </button>
         </div>
 
@@ -196,7 +290,7 @@ onBeforeUnmount(() => {
 
       <section class="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <article class="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-          <h2 class="text-base font-semibold text-zinc-900">Actor Internals Stats</h2>
+          <h2 class="text-base font-semibold text-zinc-900">Actor 内部状态</h2>
           <p class="mt-1 text-xs text-zinc-500">
             ws={{ wsState }} | total={{ stats?.total_actors || 0 }} | active={{ stats?.active_actors || 0 }} | faulted={{ stats?.faulted_actors || 0 }} | mailbox({{ requirementId || '-' }})={{ selectedMailboxSize }}
           </p>
@@ -204,22 +298,22 @@ onBeforeUnmount(() => {
         </article>
 
         <article class="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-          <h2 class="text-base font-semibold text-zinc-900">Query Result</h2>
+          <h2 class="text-base font-semibold text-zinc-900">查询结果</h2>
           <pre class="mt-3 max-h-[360px] overflow-auto rounded-lg bg-zinc-900 p-3 text-xs text-zinc-100">{{ JSON.stringify(queryResult, null, 2) }}</pre>
         </article>
       </section>
 
       <section class="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-        <h2 class="text-base font-semibold text-zinc-900">Live Trace (actor_dev_trace)</h2>
+        <h2 class="text-base font-semibold text-zinc-900">实时追踪 (actor_dev_trace)</h2>
         <div class="mt-3 max-h-[420px] overflow-auto rounded-lg border border-zinc-200">
           <table class="w-full min-w-[780px] border-collapse text-xs">
             <thead class="bg-zinc-100 text-zinc-600">
               <tr>
-                <th class="px-3 py-2 text-left font-medium">Timestamp</th>
-                <th class="px-3 py-2 text-left font-medium">Requirement</th>
-                <th class="px-3 py-2 text-left font-medium">Stage</th>
-                <th class="px-3 py-2 text-left font-medium">Level</th>
-                <th class="px-3 py-2 text-left font-medium">Details</th>
+                <th class="px-3 py-2 text-left font-medium">时间戳</th>
+                <th class="px-3 py-2 text-left font-medium">需求</th>
+                <th class="px-3 py-2 text-left font-medium">阶段</th>
+                <th class="px-3 py-2 text-left font-medium">级别</th>
+                <th class="px-3 py-2 text-left font-medium">详情</th>
               </tr>
             </thead>
             <tbody>
@@ -235,7 +329,7 @@ onBeforeUnmount(() => {
                 </td>
               </tr>
               <tr v-if="logs.length === 0">
-                <td colspan="5" class="px-3 py-6 text-center text-zinc-500">No trace events yet</td>
+                <td colspan="5" class="px-3 py-6 text-center text-zinc-500">暂无追踪事件</td>
               </tr>
             </tbody>
           </table>

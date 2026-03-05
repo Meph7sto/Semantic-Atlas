@@ -173,16 +173,28 @@ async def create_requirement(
 @router.post("/command/update-content")
 async def update_content(
     requirement_id: str,
-    updates: dict,
+    payload: dict,
     request: Request,
-    metadata: Optional[dict] = None,
     current_user: Optional[dict] = Depends(get_current_user),
 ):
-    """更新需求内容"""
+    """更新需求内容（兼容嵌套/非嵌套请求体）"""
+    if "updates" in payload:
+        updates = payload.get("updates")
+        if not isinstance(updates, dict):
+            raise ErrorResponse("updates 必须是对象", 400)
+
+        metadata = payload.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            raise ErrorResponse("metadata 必须是对象", 400)
+    else:
+        # 兼容历史调用：直接将请求体作为 updates
+        updates = payload
+        metadata = {}
+
     command = {
         "type": "UpdateRequirementContent",
         "updates": updates,
-        "metadata": metadata or {}
+        "metadata": metadata,
     }
     command["source"] = _get_actor(request, current_user)
 

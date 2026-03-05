@@ -61,12 +61,12 @@ class EventStore:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 # 获取下一个序列号
                 cur.execute("""
-                    SELECT COALESCE(MAX(event_sequence), 0) + 1
+                    SELECT COALESCE(MAX(event_sequence), 0) + 1 AS next_sequence
                     FROM requirement_events
                     WHERE requirement_id = %s
                 """, (requirement_id,))
                 row = cur.fetchone()
-                next_sequence = row["coalesce"] if row["coalesce"] is not None else 1
+                next_sequence = row["next_sequence"] if row and row["next_sequence"] is not None else 1
 
                 event_id = f"{requirement_id}_{event_type}_{next_sequence}"
                 occurred_at = event.get("occurred_at", datetime.utcnow())
