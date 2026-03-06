@@ -17,4 +17,5 @@ export {
 export { permissionApi } from './permission'
 export { executionGraphApi } from './executionGraph'
 export { fileApi, pushApi } from './system'
+export { asrApi } from './asr'
 export { default } from './request'

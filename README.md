@@ -376,3 +376,28 @@ docker-compose.yml                 # PostgreSQL + Adminer
 
 - `/api/v2` → `http://localhost:5002`（业务后端）
 - `/inference` → `http://localhost:8000`（推理后端，路径去掉 `/inference` 前缀）
+
+## 远端 ASR（VibeVoice）部署说明
+
+业务后端支持将音频/MP4 转写请求转发到远端推理服务（可通过 FRP 暴露）：
+
+- 业务后端配置（`.env`）：
+  - `ASR_REMOTE_BASE_URL`：远端推理服务地址
+  - `ASR_REMOTE_TRANSCRIBE_PATH`：转写接口路径，默认 `/asr/transcribe`
+  - `ASR_REMOTE_HEALTH_PATH`：健康检查路径，默认 `/asr/health`
+  - `ASR_REMOTE_AUTH_TOKEN`：远端鉴权 token（可选）
+  - `ASR_REMOTE_TIMEOUT_SECONDS`：单任务超时（秒）
+  - `ASR_MAX_UPLOAD_MB`：上传大小限制
+  - `ASR_ALLOWED_EXTENSIONS`：允许的扩展名（默认 `wav,mp3,m4a,mp4`）
+
+- 远端推理服务配置（`backend_inference`）：
+  - `VIBEVOICE_ASR_MODEL`：默认 `microsoft/VibeVoice-ASR-HF`
+  - `ASR_AUTO_WARMUP`：启动时是否预热模型
+
+新增业务接口：
+
+- `POST /api/v2/asr/sessions` 上传并创建转写会话
+- `GET /api/v2/asr/sessions` 会话列表
+- `GET /api/v2/asr/sessions/{session_id}` 会话详情
+- `POST /api/v2/asr/sessions/{session_id}/retry` 失败重试
+- `GET /api/v2/asr/sessions/{session_id}/export?format=txt|json` 导出结果

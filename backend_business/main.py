@@ -84,6 +84,7 @@ else:
 # - file 走 /api/v2/*，文件上传下载模块
 from backend_business.api.routers import (
     analysis,
+    asr,
     auth,
     classification,
     conflict,
@@ -110,6 +111,7 @@ app.include_router(push.router)
 app.include_router(mobile_chat.router)
 app.include_router(file.router)
 app.include_router(execution_graph.router)
+app.include_router(asr.router)
 
 # 注册业务异常处理器（保留 FastAPI 原生 HTTPException / validation 语义）
 app.add_exception_handler(ErrorResponse, error_response_handler)
