@@ -1,0 +1,32 @@
+1. P0 Version Fencing 实际未实现，min_version 参数被声明但未使用。
+     docs/RequirementActor独立设计方案.md:85
+     backend_business/api/routers/requirement_actor.py:244
+     backend_business/api/routers/requirement_actor.py:255
+     backend_business/services/read_projections/requirement_projection.py:158
+  2. P0 集群唯一实例约束未落到主链路。ActorManager 仅本进程内 _actors；分布式协调器存在但未接入，且转发仍是 TODO。
+     backend_business/services/actor/actor_manager.py:23
+     backend_business/services/actor/actor_manager.py:58
+     backend_business/services/agent/coordinator/distributed_coordinator.py:79
+     backend_business/services/agent/coordinator/distributed_coordinator.py:182
+  3. P1 Actor 熔断后不会清空/失败化已积压 future，可能导致请求挂起。
+     backend_business/services/actor/actors/requirement_actor.py:201
+  4. P1 休眠安全性不满足方案要求：快照失败被吞掉，且 Actor 只 break 本地循环，没有自动由 Manager 完成卸载闭环。
+     backend_business/services/actor/actors/requirement_actor.py:436
+     backend_business/services/actor/actors/requirement_actor.py:458
+     backend_business/services/actor/actors/requirement_actor.py:475
+     backend_business/api/routers/requirement_actor.py:418
+  5. P1 业务拒绝异常 DomainException 大概率被返回为 500，不是设计里的 4xx 语义。
+     backend_business/services/actor/actors/requirement_actor.py:316
+     backend_business/api/routers/requirement_actor.py:88
+     backend_business/api/routers/requirement_actor.py:90
+  6. P1 force-activate 创建了未纳入 ActorManager 的裸 Actor，可能引入同 ID 双实例/资源泄漏风险。
+     backend_business/api/routers/requirement_actor.py:381
+     backend_business/api/routers/requirement_actor.py:389
+  7. P2 文档要求的前端 actor-visual-tester、/_internals/actors/stats、WebSocket actor_dev_trace 未完成；当前是 /stats +
+     SSE 心跳。
+     docs/RequirementActor独立设计方案.md:216
+     docs/RequirementActor独立设计方案.md:246
+     docs/RequirementActor独立设计方案.md:247
+     backend_business/api/routers/requirement_actor.py:341
+     backend_business/api/routers/requirement_actor.py:348
+     frontend/src/router/index.js:3
