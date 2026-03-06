@@ -773,7 +773,7 @@ name = "nginx"
 type = "tcp"
 localIP = "127.0.0.1"
 localPort = 8008
-remotePort = 16666
+remotePort = 16667
 "@
   
   Set-Content -Path $FrpConfigPath -Value $FrpConfigContent -Encoding UTF8

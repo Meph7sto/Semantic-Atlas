@@ -63,7 +63,7 @@ class ASROrchestrator:
             headers["Authorization"] = f"Bearer {settings.ASR_REMOTE_AUTH_TOKEN}"
 
         try:
-            with httpx.Client(timeout=5.0) as client:
+            with httpx.Client(timeout=5.0, trust_env=False) as client:
                 resp = client.get(self._compose_health_url(), headers=headers)
             if resp.status_code != 200:
                 return {
@@ -130,7 +130,9 @@ class ASROrchestrator:
 
         try:
             timeout = settings.ASR_REMOTE_TIMEOUT_SECONDS
-            with open(file_path, "rb") as fp, httpx.Client(timeout=timeout) as client:
+            with open(file_path, "rb") as fp, httpx.Client(
+                timeout=timeout, trust_env=False
+            ) as client:
                 resp = client.post(
                     self._compose_remote_url(),
                     data={"session_id": session_id, "attempt_no": str(attempt_no)},
@@ -218,12 +220,13 @@ class ASROrchestrator:
                 time.time() - started_at,
             )
         except Exception as exc:
+            error_message = f"{type(exc).__name__}: {exc}"
             db_service.fail_transcription_session(
                 session_id=session_id,
                 attempt_no=attempt_no,
                 status="failed",
                 error_code="REMOTE_EXCEPTION",
-                error_message=str(exc),
+                error_message=error_message,
                 remote_request_id=remote_request_id,
             )
             logger.exception(
