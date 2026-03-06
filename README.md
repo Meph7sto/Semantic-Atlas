@@ -8,7 +8,6 @@ Semantic-Atlas 是面向需求工程的语义分析平台，覆盖会议转写�
 - **上下文构建（Phase 2）**：基于 spans 生成关联图、bundles 与 context_run_id
 - **L1/L2/L3 需求抽取（Phase 3）**：EgoBundle + tool-call 写入 `requirements_l123`
 - **L4 需求生成**：基于知识库的低层级需求细化生成与验证
-- **需求获取**：原始文本清洗 + 抽取为 L1/L2/L3 卡片（流式进度）
 - **需求追溯**：单对/批量关系分析、追溯网络可视化、结果入库/下载
 - **冲突检测**：单对/流式冲突识别
 - **需求分类**：文本/CSV 批量分类与统计
@@ -164,7 +163,6 @@ bash deploy/stop_services.sh
 | `/alpha/conflict` | ConflictDetection | 冲突检测 |
 | `/alpha/traceability` | Traceability | 追溯分析 |
 | `/alpha/classification` | Classification | 需求分类 |
-| `/alpha/acquisition` | RequirementsAcquisition | 需求获取 |
 | `/alpha/acquisition-trace` | AcquisitionTraceability | 获取 + 追溯 |
 | `/alpha/chat` | GeneralChat | 通用对话 |
 | `/alpha/message-push` | MessagePush | 消息推送 |
@@ -253,7 +251,7 @@ JWT_SECRET_KEY=your_secret_key_here
 | `conflict` | 冲突检测 (`/conflict/check`, `/conflict/stream_check`) |
 | `traceability` | 追溯分析 (`/traceability/relation`, `/traceability/batch-relation`) |
 | `classification` | 需求分类 (`/classification/predict-texts`, `/classification/predict-csv`) |
-| `requirements_acquisition` | 需求获取 (`/acquisition/extract`, `/acquisition/extract/stream`) |
+| `requirements_acquisition` | 需求获取 (`/acquisition/extract`) |
 | `chat` | 对话服务 (`/chat/stream`, `/chat/completions`, `/chat/completions/tools`) |
 | `kb` | 知识库管理 |
 | `l4_generation` | L4 需求生成 |

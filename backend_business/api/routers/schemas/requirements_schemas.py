@@ -5,7 +5,7 @@ Requirements API Pydantic 请求模型
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from pydantic import BaseModel, Field, StrictBool, field_validator
 
 
 class ExtractRequirementsRequest(BaseModel):
@@ -21,21 +21,6 @@ class ExtractRequirementsRequest(BaseModel):
         text = value.strip()
         if not text:
             raise ValueError("字段不能为空")
-        return text
-
-
-class ExtractRequirementsStreamRequest(BaseModel):
-    # 允许透传额外参数给推理后端流式接口
-    model_config = ConfigDict(extra="allow")
-
-    text: str = Field(min_length=1)
-
-    @field_validator("text")
-    @classmethod
-    def validate_text(cls, value: str) -> str:
-        text = value.strip()
-        if not text:
-            raise ValueError("text 不能为空")
         return text
 
 

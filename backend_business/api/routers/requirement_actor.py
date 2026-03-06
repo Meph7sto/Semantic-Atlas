@@ -541,3 +541,152 @@ async def get_transitions():
         "status_enum": [s.value for s in RequirementStatus],
         "transitions": transitions
     }
+
+
+# ========================
+# 回放端点
+# ========================
+
+@router.get("/versions/{requirement_id}")
+async def get_version_history(
+    requirement_id: str,
+    limit: int = Query(default=50, ge=1, le=1000),
+):
+    """
+    获取需求的版本历史列表
+
+    返回每个事件的基本信息（版本号、事件类型、时间戳、来源）
+    """
+    from backend_business.services.event_store.event_store import EventStore
+
+    event_store = EventStore(settings.POSTGRES_DSN)
+
+    try:
+        events = event_store.get_events_by_requirement(
+            requirement_id, limit=limit, offset=0
+        )
+
+        versions = [
+            {
+                "version": e["event_sequence"],
+                "event_type": e["event_type"],
+                "occurred_at": e["occurred_at"].isoformat() if e.get("occurred_at") else None,
+                "source": e.get("source", "system"),
+                "event_id": e["event_id"]
+            }
+            for e in events
+        ]
+
+        return {
+            "requirement_id": requirement_id,
+            "versions": versions,
+            "total": len(versions)
+        }
+    except Exception as e:
+        logger.error(f"Get version history failed: {e}", exc_info=True)
+        raise ErrorResponse(str(e), 500)
+
+
+@router.get("/replay/{requirement_id}/{version}")
+async def replay_to_version(
+    requirement_id: str,
+    version: int,
+    use_snapshot: bool = Query(default=True),
+):
+    """
+    重放事件到指定版本
+
+    Args:
+        version: 目标版本号
+        use_snapshot: 是否使用快照优化
+
+    Returns:
+        重建的需求状态
+    """
+    from backend_business.services.event_store.event_store import EventStore
+    from backend_business.services.actor.actors.state_machine import RequirementStatus
+
+    event_store = EventStore(settings.POSTGRES_DSN)
+
+    try:
+        # 获取所有事件
+        all_events = event_store.get_events_by_requirement(
+            requirement_id, limit=10000, offset=0
+        )
+
+        if not all_events:
+            raise ErrorResponse("需求不存在或无事件历史", 404)
+
+        max_version = all_events[-1]["event_sequence"]
+        if version < 0 or version > max_version:
+            raise ErrorResponse(f"版本号超出范围 (0-{max_version})", 400)
+
+        # 过滤到指定版本的事件
+        events_to_replay = [e for e in all_events if e["event_sequence"] <= version]
+
+        # 初始状态
+        requirement_state = {
+            "requirement_id": requirement_id,
+            "title": "",
+            "description": "",
+            "status": "Draft",
+            "priority": "medium",
+            "quality_markers": {},
+            "created_at": None,
+            "updated_at": None,
+            "version": version
+        }
+
+        # 应用每个事件
+        for event in events_to_replay:
+            event_type = event["event_type"]
+            event_data = event.get("event_data", {})
+
+            if event_type == "RequirementCreated":
+                requirement_state.update({
+                    "title": event_data.get("title", ""),
+                    "description": event_data.get("description", ""),
+                    "status": event_data.get("status", "Draft"),
+                    "priority": event_data.get("priority", "medium"),
+                    "created_at": event.get("occurred_at"),
+                })
+
+            elif event_type == "RequirementContentUpdated":
+                updates = event_data.get("updates", {})
+                requirement_state.update(updates)
+
+            elif event_type == "RequirementStatusChanged":
+                requirement_state["status"] = event_data.get("new_status", requirement_state["status"])
+
+            elif event_type == "RequirementQualityMarkerAdded":
+                markers = requirement_state.get("quality_markers", {})
+                markers[event_data.get("marker_type", "")] = event_data.get("marker_value", "")
+                requirement_state["quality_markers"] = markers
+
+            elif event_type == "RequirementPriorityChanged":
+                requirement_state["priority"] = event_data.get("new_priority", requirement_state["priority"])
+
+            elif event_type == "RequirementEvidenceLinkAdded":
+                # Handle evidence links if needed
+                pass
+
+            requirement_state["updated_at"] = event.get("occurred_at")
+
+        # 格式化时间
+        if requirement_state.get("created_at"):
+            requirement_state["created_at"] = requirement_state["created_at"].isoformat()
+        if requirement_state.get("updated_at"):
+            requirement_state["updated_at"] = requirement_state["updated_at"].isoformat()
+
+        return {
+            "requirement_id": requirement_id,
+            "version": version,
+            "max_version": max_version,
+            "state": requirement_state,
+            "events_count": len(events_to_replay)
+        }
+    except ErrorResponse:
+        raise
+    except Exception as e:
+        logger.error(f"Replay to version failed: {e}", exc_info=True)
+        raise ErrorResponse(str(e), 500)

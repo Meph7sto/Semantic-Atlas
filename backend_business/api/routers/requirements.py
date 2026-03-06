@@ -15,7 +15,6 @@ from backend_business.api.http.sse import sse_response_raw
 from backend_business.api.routers.schemas.requirements_schemas import (
     ExtractL123Request,
     ExtractRequirementsRequest,
-    ExtractRequirementsStreamRequest,
     GenerateL4RequirementsRequest,
 )
 from backend_business.config import settings
@@ -80,72 +79,6 @@ def extract_requirements(req: ExtractRequirementsRequest):
         return result
     except Exception as exc:
         raise ErrorResponse(str(exc), 500)
-
-
-@router.post("/requirements/extract/stream")
-def extract_requirements_stream(req: ExtractRequirementsStreamRequest):
-    """
-    代理推理后端的 SSE 流式需求抽取
-    """
-    base_url = settings.INFERENCE_BASE_URL.rstrip("/")
-    url = f"{base_url}/acquisition/extract/stream"
-    payload = req.model_dump(exclude_none=True)
-
-    try:
-        upstream = requests.post(url, json=payload, stream=True, timeout=900)
-    except requests.exceptions.RequestException as exc:
-        raise ErrorResponse(str(exc), 500)
-
-    if upstream.status_code != 200:
-        try:
-            error_text = upstream.text
-        finally:
-            upstream.close()
-        raise ErrorResponse(error_text or "上游服务调用失败", upstream.status_code)
-
-    def generate() -> Generator[str, None, None]:
-        buffer: list[str] = []
-
-        def flush_block(lines: list[str]) -> tuple[str, str] | None:
-            if not lines:
-                return None
-            event_name = "message"
-            payload_text = ""
-            for line in lines:
-                if line.startswith("event:"):
-                    event_name = line[len("event:") :].strip() or "message"
-                elif line.startswith("data:"):
-                    payload_text += line[len("data:") :].strip()
-            return event_name, payload_text
-
-        try:
-            for raw in upstream.iter_lines(decode_unicode=True):
-                if raw is None:
-                    continue
-                line = str(raw)
-
-                if line == "":
-                    parsed = flush_block(buffer)
-                    buffer = []
-                    if not parsed:
-                        yield "\n"
-                        continue
-                    event_name, payload_text = parsed
-                    yield f"event: {event_name}\n"
-                    yield f"data: {payload_text}\n\n"
-                    continue
-
-                buffer.append(line)
-
-            parsed = flush_block(buffer)
-            if parsed:
-                event_name, payload_text = parsed
-                yield f"event: {event_name}\n"
-                yield f"data: {payload_text}\n\n"
-        finally:
-            upstream.close()
-
-    return sse_response_raw(generate())
 
 
 @router.post("/requirements/extract_l123")

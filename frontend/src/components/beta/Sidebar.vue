@@ -398,6 +398,7 @@ const getIconColor = (key) => {
     requirements: "#c4692f",
     "requirements-session": "#5d6b76",
     "requirements-analysis": "#c4692f",
+    "requirement-replay": "#5d6b76",
   };
   return colors[key] || "#9eabb4";
 };

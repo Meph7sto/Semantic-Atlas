@@ -142,38 +142,6 @@ class _StubDBService:
         return {"inserted": len(reqs), "duplicates": 0, "inserted_ids": ["l4-1"]}
 
 
-class _StubRequestsResponse:
-    def __init__(
-        self,
-        *,
-        status_code: int = 200,
-        text: str = "",
-        lines: list[str] | None = None,
-        json_data: dict[str, Any] | None = None,
-        raise_error: Exception | None = None,
-    ):
-        self.status_code = status_code
-        self.text = text
-        self._lines = lines or []
-        self._json_data = json_data or {}
-        self._raise_error = raise_error
-        self.closed = False
-
-    def iter_lines(self, decode_unicode: bool = True):
-        for line in self._lines:
-            yield line
-
-    def raise_for_status(self):
-        if self._raise_error is not None:
-            raise self._raise_error
-
-    def json(self):
-        return self._json_data
-
-    def close(self):
-        self.closed = True
-
-
 @pytest.fixture
 def fastapi_client(monkeypatch):
     stub_ai = _StubAIProxy()
@@ -218,51 +186,6 @@ def test_extract_requirements_missing_text_returns_422(fastapi_client):
     assert response.status_code == 422
     detail = response.json()["detail"]
     assert any(item.get("loc") == ["body", "text"] for item in detail)
-
-
-def test_extract_requirements_stream_proxy_success(fastapi_client, monkeypatch):
-    client, _, _, _, _ = fastapi_client
-
-    def _mock_post(*args, **kwargs):
-        return _StubRequestsResponse(
-            status_code=200,
-            lines=[
-                "event: progress",
-                'data: {"step":1}',
-                "",
-                "event: done",
-                'data: {"ok":true}',
-                "",
-            ],
-        )
-
-    monkeypatch.setattr(requirements.requests, "post", _mock_post)
-
-    response = client.post("/api/v2/requirements/extract/stream", json={"text": "abc"})
-
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/event-stream")
-    assert response.headers["cache-control"] == "no-cache"
-    assert response.headers["x-accel-buffering"] == "no"
-    assert "event: progress" in response.text
-    assert 'data: {"step":1}' in response.text
-    assert "event: done" in response.text
-
-
-def test_extract_requirements_stream_upstream_error_returns_status(
-    fastapi_client, monkeypatch
-):
-    client, _, _, _, _ = fastapi_client
-
-    def _mock_post(*args, **kwargs):
-        return _StubRequestsResponse(status_code=502, text="bad gateway")
-
-    monkeypatch.setattr(requirements.requests, "post", _mock_post)
-
-    response = client.post("/api/v2/requirements/extract/stream", json={"text": "abc"})
-
-    assert response.status_code == 502
-    assert response.json()["detail"] == "bad gateway"
 
 
 def test_extract_l123_strict_bool_validation_returns_422(fastapi_client):

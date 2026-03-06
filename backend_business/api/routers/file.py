@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 
-from backend_business.api.deps.auth import get_current_user
+from backend_business.api.deps.auth import get_current_user, require_admin
 from backend_business.api.http.errors import ErrorResponse
 from backend_business.config import settings
 from backend_business.services.ai_proxy import ai_proxy
@@ -130,6 +130,22 @@ def delete_uploaded_file(
         raise
     except Exception as exc:
         raise ErrorResponse(f"Failed to delete file: {str(exc)}", 500)
+
+
+@router.get("/admin/uploads")
+def list_all_user_files(current_user: dict = Depends(require_admin)):
+    """
+    管理员获取所有用户上传的文件列表，按用户分组。
+    """
+    files_by_user = file_service.list_all_users_files()
+    total_files = sum(len(files) for files in files_by_user.values())
+
+    return {
+        "success": True,
+        "files": files_by_user,
+        "total": total_files,
+        "userCount": len(files_by_user),
+    }
 
 
 @router.post("/upload_csv")
