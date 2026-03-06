@@ -32,6 +32,7 @@ import ProductManageView from '../views/beta/ProductManageView.vue'
 import AccountView from '../views/beta/AccountView.vue'
 import UserManageView from '../views/beta/UserManageView.vue'
 import AsrTranscription from '../views/alpha/AsrTranscription.vue'
+import AsrTranscriptionView from '../views/beta/AsrTranscriptionView.vue'
 
 // Guide view
 import GuideView from '../views/GuideView.vue'
@@ -105,6 +106,12 @@ const router = createRouter({
                     meta: { requiresAuth: true }
                 },
 
+                {
+                    path: 'asr',
+                    name: 'beta-asr',
+                    component: AsrTranscriptionView,
+                    meta: { requiresAuth: true }
+                },
                 {
                     path: 'products',
                     name: 'beta-products',
