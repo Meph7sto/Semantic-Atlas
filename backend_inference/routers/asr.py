@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
@@ -8,6 +9,7 @@ from core.config import settings
 from services.asr_service import asr_service
 
 router = APIRouter(prefix="/asr", tags=["asr"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/health")
@@ -56,7 +58,13 @@ async def transcribe(
             content_type=file.content_type or "application/octet-stream",
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.exception(
+            "asr transcribe failed filename=%s content_type=%s size=%s",
+            file.filename,
+            file.content_type,
+            len(file_bytes),
+        )
+        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}")
 
     return {
         "remote_request_id": uuid.uuid4().hex,
