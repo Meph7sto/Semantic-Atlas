@@ -86,6 +86,13 @@ class Settings:
     DEFAULT_MAX_TOKENS = 8096
     DEFAULT_SYSTEM_PROMPT = "你是一个有用的中文助手。"
 
+    # ASR (VibeVoice)
+    VIBEVOICE_ASR_MODEL = os.getenv(
+        "VIBEVOICE_ASR_MODEL", "microsoft/VibeVoice-ASR-HF"
+    )
+    ASR_AUTO_WARMUP = os.getenv("ASR_AUTO_WARMUP", "false").lower() == "true"
+    ASR_SERVICE_TOKEN = os.getenv("ASR_SERVICE_TOKEN", "")
+
 
 # 实例化配置对象，供其他模块使用
 settings = Settings()

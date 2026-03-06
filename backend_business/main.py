@@ -32,7 +32,10 @@ class InternalEndpointsFilter(Filter):
 
     def filter(self, record):
         # 过滤掉内部端点的 INFO 级别日志
-        if "/api/v2/_internals/" in record.getMessage() and record.levelno == logging.INFO:
+        if (
+            "/api/v2/_internals/" in record.getMessage()
+            and record.levelno == logging.INFO
+        ):
             return False
         return True
 
@@ -58,7 +61,9 @@ async def lifespan(app: FastAPI):
     # 启动时的逻辑
     print("[lifespan] FastAPI business backend starting...")
     print(f"[lifespan] Inference URL: {settings.INFERENCE_BASE_URL}")
-    print(f"[lifespan] Database: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}")
+    print(
+        f"[lifespan] Database: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"
+    )
     app.state.classification_http_client = httpx.AsyncClient()
     app.state.http_client = httpx.AsyncClient()
 
@@ -113,6 +118,7 @@ else:
 # - file 走 /api/v2/*，文件上传下载模块
 from backend_business.api.routers import (
     analysis,
+    asr,
     auth,
     classification,
     conflict,
@@ -128,6 +134,7 @@ from backend_business.api.routers import (
     requirements,
     vision,
 )
+
 app.include_router(deduplication.router)
 app.include_router(auth.router)
 app.include_router(permission.router)
@@ -144,6 +151,7 @@ app.include_router(mobile_chat.router)
 app.include_router(file.router)
 app.include_router(execution_graph.router)
 app.include_router(vision.router)
+app.include_router(asr.router)
 
 # 注册业务异常处理器（保留 FastAPI 原生 HTTPException / validation 语义）
 app.add_exception_handler(ErrorResponse, error_response_handler)

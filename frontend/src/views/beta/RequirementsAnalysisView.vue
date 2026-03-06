@@ -99,6 +99,7 @@ const routeNameToPageKey = {
   'beta-requirements-session': 'requirements-session',
   'beta-requirements-analysis': 'requirements-analysis',
   'beta-requirements-collection': 'requirements-collection',
+  'beta-asr': 'asr-transcription',
   'beta-user-manage': 'user-management',
 }
 
@@ -110,6 +111,7 @@ const pageKeyToRouteName = {
   'requirements-session': 'beta-requirements-session',
   'requirements-analysis': 'beta-requirements-analysis',
   'requirements-collection': 'beta-requirements-collection',
+  'asr-transcription': 'beta-asr',
   'user-management': 'beta-user-manage',
 }
 
