@@ -16,6 +16,7 @@ import MessagePush from '../views/alpha/MessagePush.vue'
 import MobileBridge from '../views/alpha/MobileBridge.vue'
 import FileReceive from '../views/alpha/FileReceive.vue'
 import ExecutionTopologyTemplate from '../views/alpha/ExecutionTopologyTemplate.vue'
+import ImageCaptionPreview from '../views/alpha/ImageCaptionPreview.vue'
 
 // Main views (migrated from frontend_ref)
 import LoginView from '../views/beta/LoginView.vue'
@@ -212,6 +213,12 @@ const router = createRouter({
                     path: 'execution-topology',
                     name: 'execution-topology',
                     component: ExecutionTopologyTemplate,
+                    meta: { keepAlive: true }
+                },
+                {
+                    path: 'image-caption',
+                    name: 'image-caption',
+                    component: ImageCaptionPreview,
                     meta: { keepAlive: true }
                 }
             ]

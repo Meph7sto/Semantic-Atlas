@@ -75,5 +75,17 @@ class Settings:
     JWT_ALGORITHM = "HS256"
     JWT_EXPIRY_HOURS = int(os.environ.get("JWT_EXPIRY_HOURS", "24"))
 
+    # Vision 回调来源校验
+    VISION_CALLBACK_SOURCE = os.environ.get("VISION_CALLBACK_SOURCE", "autodl")
+    VISION_CALLBACK_TOKEN = os.environ.get("VISION_CALLBACK_TOKEN") or os.environ.get(
+        "FRP_TOKEN", ""
+    )
+    VISION_CAPTION_URL = os.environ.get(
+        "VISION_CAPTION_URL", "http://127.0.0.1:9000/caption-image"
+    )
+    VISION_CAPTION_TIMEOUT_SECONDS = float(
+        os.environ.get("VISION_CAPTION_TIMEOUT_SECONDS", "120")
+    )
+
 
 settings = Settings()
