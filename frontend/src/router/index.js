@@ -23,6 +23,7 @@ import RegisterView from '../views/beta/RegisterView.vue'
 import DashboardView from '../views/beta/DashboardView.vue'
 import ProjectManageView from '../views/beta/ProjectManageView.vue'
 import RequirementsView from '../views/beta/RequirementsView.vue'
+import RequirementsManageWorkbenchView from '../views/beta/RequirementsManageWorkbenchView.vue'
 import RequirementsSessionView from '../views/beta/RequirementsSessionView.vue'
 import RequirementsAnalysisView from '../views/beta/RequirementsAnalysisView.vue'
 import RequirementsCollectionView from '../views/beta/RequirementsCollectionView.vue'
@@ -79,6 +80,12 @@ const router = createRouter({
                 {
                     path: 'requirements',
                     name: 'beta-requirements',
+                    component: RequirementsManageWorkbenchView,
+                    meta: { requiresAuth: true }
+                },
+                {
+                    path: 'requirements-overview',
+                    name: 'beta-requirements-overview',
                     component: RequirementsView,
                     meta: { requiresAuth: true }
                 },
