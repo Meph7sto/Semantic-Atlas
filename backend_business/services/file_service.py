@@ -223,3 +223,32 @@ class FileService:
             self._uploaded_files_cache.pop(os.path.abspath(file_path), None)
         except Exception as exc:
             raise ErrorResponse(f"Failed to delete file: {str(exc)}", 500)
+
+    def list_all_users_files(self) -> dict[str, list[dict[str, Any]]]:
+        """
+        获取所有用户的文件列表，按 user_id 分组返回。
+        返回格式: {user_id: [file1, file2, ...]}
+        """
+        all_files = {}
+        if not os.path.exists(self.upload_folder):
+            return all_files
+
+        for user_dir_name in os.listdir(self.upload_folder):
+            user_dir_path = os.path.join(self.upload_folder, user_dir_name)
+            if not os.path.isdir(user_dir_path):
+                continue
+
+            files = []
+            for filename in os.listdir(user_dir_path):
+                file_path = os.path.join(user_dir_path, filename)
+                if not os.path.isfile(file_path):
+                    continue
+                file_info = self._build_file_info(file_path, filename)
+                file_info["user_id"] = user_dir_name  # 添加 user_id
+                files.append(file_info)
+
+            if files:
+                files.sort(key=lambda x: x["uploadTime"], reverse=True)
+                all_files[user_dir_name] = files
+
+        return all_files

@@ -3,7 +3,6 @@ import { useAuthStore } from '@/stores/auth.js'
 import Classification from '../views/alpha/Classification.vue'
 import ConflictDetection from '../views/alpha/ConflictDetection.vue'
 import Traceability from '../views/alpha/Traceability.vue'
-import RequirementsAcquisition from '../views/alpha/RequirementsAcquisition.vue'
 import AcquisitionTraceability from '../views/alpha/AcquisitionTraceability.vue'
 import GeneralChat from '../views/alpha/GeneralChat.vue'
 import TranscriptIngestion from '../views/alpha/TranscriptIngestion.vue'
@@ -16,6 +15,8 @@ import MessagePush from '../views/alpha/MessagePush.vue'
 import MobileBridge from '../views/alpha/MobileBridge.vue'
 import FileReceive from '../views/alpha/FileReceive.vue'
 import ExecutionTopologyTemplate from '../views/alpha/ExecutionTopologyTemplate.vue'
+import ActorVisualTester from '../views/alpha/ActorVisualTester.vue'
+import RequirementReplay from '../views/alpha/RequirementReplay.vue'
 import ImageCaptionPreview from '../views/alpha/ImageCaptionPreview.vue'
 
 // Main views (migrated from frontend_ref)
@@ -179,11 +180,6 @@ const router = createRouter({
                     component: Classification
                 },
                 {
-                    path: 'acquisition',
-                    name: 'acquisition',
-                    component: RequirementsAcquisition
-                },
-                {
                     path: 'acquisition-trace',
                     name: 'acquisition-trace',
                     component: AcquisitionTraceability
@@ -214,6 +210,16 @@ const router = createRouter({
                     name: 'execution-topology',
                     component: ExecutionTopologyTemplate,
                     meta: { keepAlive: true }
+                },
+                {
+                    path: 'actor-visual-tester',
+                    name: 'actor-visual-tester',
+                    component: ActorVisualTester
+                },
+                {
+                    path: 'requirement-replay',
+                    name: 'requirement-replay',
+                    component: RequirementReplay
                 },
                 {
                     path: 'image-caption',

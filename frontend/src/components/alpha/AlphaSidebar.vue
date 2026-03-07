@@ -7,7 +7,6 @@ import {
   FileSearch,
   PanelLeftClose,
   PanelLeftOpen,
-  FileText,
   MessageSquare,
   Folder,
   ChevronDown,
@@ -18,7 +17,8 @@ import {
   Smartphone,
   ArrowLeft,
   FolderUp,
-  Workflow
+  Workflow,
+  Radio
 } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -31,6 +31,8 @@ const props = defineProps({
 const emit = defineEmits(['update:isOpen'])
 
 const isTopGroupOpen = ref(true)
+const isPostProcessingOpen = ref(false)   // 需求后处理（默认折叠）
+const isMobileManagementOpen = ref(false) // 移动端管理（默认折叠）
 
 const toggleSidebar = (open) => {
   emit('update:isOpen', open)
@@ -120,25 +122,53 @@ const toggleSidebar = (open) => {
           </div>
         </div>
 
+      <!-- Collapsible group: 需求后处理 -->
+      <div class="space-y-1">
+        <button
+          type="button"
+          @click="isPostProcessingOpen = !isPostProcessingOpen"
+          class="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+          :aria-expanded="isPostProcessingOpen"
+        >
+          <span class="flex items-center gap-3 min-w-0">
+            <Folder class="w-4 h-4 flex-shrink-0" />
+            <span class="whitespace-nowrap truncate">需求后处理</span>
+          </span>
+          <ChevronDown v-if="isPostProcessingOpen" class="w-4 h-4 flex-shrink-0" />
+          <ChevronRight v-else class="w-4 h-4 flex-shrink-0" />
+        </button>
+
+        <div v-show="isPostProcessingOpen" class="pl-4 ml-3 border-l border-zinc-200 space-y-1">
+          <RouterLink
+            to="/alpha/conflict"
+            active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
+            class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+          >
+            <GitCompare class="w-4 h-4" />
+            <span class="whitespace-nowrap">Requirement Conflict</span>
+          </RouterLink>
+
+          <RouterLink
+            to="/alpha/classification"
+            active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
+            class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+          >
+            <LayoutDashboard class="w-4 h-4" />
+            <span class="whitespace-nowrap">Classification</span>
+          </RouterLink>
+
+          <RouterLink
+            to="/alpha/traceability"
+            active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
+            class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+          >
+            <FileSearch class="w-4 h-4" />
+            <span class="whitespace-nowrap">Traceability</span>
+          </RouterLink>
+        </div>
+      </div>
+
       <!-- Standalone nav items -->
-      <RouterLink
-        to="/alpha/conflict"
-        active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
-        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
-      >
-        <GitCompare class="w-4 h-4" />
-        <span class="whitespace-nowrap">Requirement Conflict</span>
-      </RouterLink>
-
-      <RouterLink
-        to="/alpha/classification"
-        active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
-        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
-      >
-        <LayoutDashboard class="w-4 h-4" />
-        <span class="whitespace-nowrap">Classification</span>
-      </RouterLink>
-
       <RouterLink
         to="/alpha/requirements-manage"
         active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
@@ -155,24 +185,6 @@ const toggleSidebar = (open) => {
       >
         <ClipboardList class="w-4 h-4" />
         <span class="whitespace-nowrap">Requirements Table</span>
-      </RouterLink>
-
-      <RouterLink
-        to="/alpha/traceability"
-        active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
-        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
-      >
-        <FileSearch class="w-4 h-4" />
-        <span class="whitespace-nowrap">Traceability</span>
-      </RouterLink>
-
-      <RouterLink
-        to="/alpha/acquisition"
-        active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
-        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
-      >
-        <FileText class="w-4 h-4" />
-        <span class="whitespace-nowrap">Acquisition</span>
       </RouterLink>
 
       <RouterLink
@@ -193,32 +205,51 @@ const toggleSidebar = (open) => {
         <span class="whitespace-nowrap">General Q&amp;A</span>
       </RouterLink>
 
-      <RouterLink
-        to="/alpha/message-push"
-        active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
-        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
-      >
-        <Bell class="w-4 h-4" />
-        <span class="whitespace-nowrap">Message Push</span>
-      </RouterLink>
+      <!-- Collapsible group: 移动端管理 -->
+      <div class="space-y-1">
+        <button
+          type="button"
+          @click="isMobileManagementOpen = !isMobileManagementOpen"
+          class="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+          :aria-expanded="isMobileManagementOpen"
+        >
+          <span class="flex items-center gap-3 min-w-0">
+            <Smartphone class="w-4 h-4 flex-shrink-0" />
+            <span class="whitespace-nowrap truncate">移动端管理</span>
+          </span>
+          <ChevronDown v-if="isMobileManagementOpen" class="w-4 h-4 flex-shrink-0" />
+          <ChevronRight v-else class="w-4 h-4 flex-shrink-0" />
+        </button>
 
-      <RouterLink
-        to="/alpha/mobile-bridge"
-        active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
-        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
-      >
-        <Smartphone class="w-4 h-4" />
-        <span class="whitespace-nowrap">Mobile Bridge</span>
-      </RouterLink>
+        <div v-show="isMobileManagementOpen" class="pl-4 ml-3 border-l border-zinc-200 space-y-1">
+          <RouterLink
+            to="/alpha/message-push"
+            active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
+            class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+          >
+            <Bell class="w-4 h-4" />
+            <span class="whitespace-nowrap">Message Push</span>
+          </RouterLink>
 
-      <RouterLink
-        to="/alpha/file-receive"
-        active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
-        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
-      >
-        <FolderUp class="w-4 h-4" />
-        <span class="whitespace-nowrap">File Receive</span>
-      </RouterLink>
+          <RouterLink
+            to="/alpha/mobile-bridge"
+            active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
+            class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+          >
+            <Smartphone class="w-4 h-4" />
+            <span class="whitespace-nowrap">Mobile Bridge</span>
+          </RouterLink>
+
+          <RouterLink
+            to="/alpha/file-receive"
+            active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
+            class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+          >
+            <FolderUp class="w-4 h-4" />
+            <span class="whitespace-nowrap">File Receive</span>
+          </RouterLink>
+        </div>
+      </div>
 
       <RouterLink
         to="/alpha/image-caption"
@@ -236,6 +267,24 @@ const toggleSidebar = (open) => {
       >
         <Workflow class="w-4 h-4" />
         <span class="whitespace-nowrap">执行拓扑模板</span>
+      </RouterLink>
+
+      <RouterLink
+        to="/alpha/actor-visual-tester"
+        active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
+        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+      >
+        <Radio class="w-4 h-4" />
+        <span class="whitespace-nowrap">Actor Visual Tester</span>
+      </RouterLink>
+
+      <RouterLink
+        to="/alpha/requirement-replay"
+        active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
+        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+      >
+        <ArrowLeft class="w-4 h-4" />
+        <span class="whitespace-nowrap">需求回放</span>
       </RouterLink>
       </nav>
 

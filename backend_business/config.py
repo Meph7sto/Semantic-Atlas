@@ -75,6 +75,10 @@ class Settings:
     JWT_ALGORITHM = "HS256"
     JWT_EXPIRY_HOURS = int(os.environ.get("JWT_EXPIRY_HOURS", "24"))
 
+    # RequirementActor 分布式协调（可选）
+    REDIS_URL = os.environ.get("REDIS_URL", "").strip()
+    ACTOR_INSTANCE_ID = os.environ.get("ACTOR_INSTANCE_ID", "").strip()
+
     # Vision 回调来源校验
     VISION_CALLBACK_SOURCE = os.environ.get("VISION_CALLBACK_SOURCE", "autodl")
     VISION_CALLBACK_TOKEN = os.environ.get("VISION_CALLBACK_TOKEN") or os.environ.get(
