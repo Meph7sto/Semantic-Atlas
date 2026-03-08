@@ -192,7 +192,6 @@ const pageKeyToRouteName = {
   'requirements-session': 'beta-requirements-session',
   'requirements-analysis': 'beta-requirements-analysis',
   'requirements-collection': 'beta-requirements-collection',
-  'asr-transcription': 'beta-asr',
   'user-management': 'beta-user-manage',
 }
 
