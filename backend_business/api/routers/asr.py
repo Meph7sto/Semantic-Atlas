@@ -63,7 +63,9 @@ async def create_transcription_session(
     source_filename = _safe_name(file.filename or "")
     content = await file.read()
     source_size_bytes = len(content)
-    source_extension = asr_orchestrator.validate_upload(source_filename, source_size_bytes)
+    source_extension = asr_orchestrator.validate_upload(
+        source_filename, source_size_bytes
+    )
 
     user_dir = _user_upload_dir(user_id)
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
@@ -177,18 +179,14 @@ def export_transcription_session(
         raise ErrorResponse("转写结果尚未就绪，无法导出", 409)
 
     filename_base = f"{row['session_id']}_transcript"
-    text = row.get("transcript_text") or ""
-    segments = row.get("transcript_segments") or []
-    metadata = row.get("transcript_metadata") or {}
+    raw_out = row.get("transcript_text") or ""
 
     if format == "json":
         payload = json.dumps(
             {
                 "session_id": row["session_id"],
                 "status": row["status"],
-                "text": text,
-                "segments": segments,
-                "metadata": metadata,
+                "raw_out": raw_out,
             },
             ensure_ascii=False,
             indent=2,
@@ -202,8 +200,7 @@ def export_transcription_session(
         )
 
     return Response(
-        content=text.encode("utf-8"),
+        content=raw_out.encode("utf-8"),
         media_type="text/plain; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename_base}.txt"'},
     )
-

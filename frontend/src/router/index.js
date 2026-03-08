@@ -30,7 +30,7 @@ import RequirementsCollectionView from '../views/beta/RequirementsCollectionView
 import ProductManageView from '../views/beta/ProductManageView.vue'
 import AccountView from '../views/beta/AccountView.vue'
 import UserManageView from '../views/beta/UserManageView.vue'
-import AsrTranscriptionView from '../views/beta/AsrTranscriptionView.vue'
+import AsrTranscription from '../views/alpha/AsrTranscription.vue'
 
 // Guide view
 import GuideView from '../views/GuideView.vue'
@@ -102,12 +102,7 @@ const router = createRouter({
                     component: RequirementsCollectionView,
                     meta: { requiresAuth: true }
                 },
-                {
-                    path: 'asr',
-                    name: 'beta-asr',
-                    component: AsrTranscriptionView,
-                    meta: { requiresAuth: true }
-                },
+
                 {
                     path: 'products',
                     name: 'beta-products',
@@ -203,6 +198,11 @@ const router = createRouter({
                     path: 'mobile-bridge',
                     name: 'mobile-bridge',
                     component: MobileBridge
+                },
+                {
+                    path: 'asr',
+                    name: 'alpha-asr',
+                    component: AsrTranscription
                 },
                 {
                     path: 'file-receive',

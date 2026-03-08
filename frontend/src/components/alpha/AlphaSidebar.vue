@@ -7,6 +7,8 @@ import {
   FileSearch,
   PanelLeftClose,
   PanelLeftOpen,
+  FileText,
+  Mic,
   MessageSquare,
   Folder,
   ChevronDown,
@@ -230,6 +232,7 @@ const toggleSidebar = (open) => {
             <span class="whitespace-nowrap">Message Push</span>
           </RouterLink>
 
+<<<<<<< HEAD
           <RouterLink
             to="/alpha/mobile-bridge"
             active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
@@ -249,6 +252,25 @@ const toggleSidebar = (open) => {
           </RouterLink>
         </div>
       </div>
+=======
+      <RouterLink
+        to="/alpha/asr"
+        active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
+        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+      >
+        <Mic class="w-4 h-4" />
+        <span class="whitespace-nowrap">语音转写</span>
+      </RouterLink>
+
+      <RouterLink
+        to="/alpha/file-receive"
+        active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
+        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+      >
+        <FolderUp class="w-4 h-4" />
+        <span class="whitespace-nowrap">File Receive</span>
+      </RouterLink>
+>>>>>>> 09319d9 (Refactor ASR Transcription View and Update Route Mappings)
 
       <RouterLink
         to="/alpha/execution-topology"

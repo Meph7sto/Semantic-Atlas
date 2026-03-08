@@ -18,11 +18,42 @@ class ASROrchestrator:
     def __init__(self):
         raw = str(settings.ASR_ALLOWED_EXTENSIONS or "")
         self.allowed_extensions = {
-            item.strip().lower().lstrip(".")
-            for item in raw.split(",")
-            if item.strip()
+            item.strip().lower().lstrip(".") for item in raw.split(",") if item.strip()
         }
         self.max_upload_bytes = int(settings.ASR_MAX_UPLOAD_MB) * 1024 * 1024
+
+    @staticmethod
+    def _normalize_remote_transcribe_payload(
+        payload: Any, raw_body_text: str = ""
+    ) -> tuple[str, dict[str, Any], str | None]:
+        """Extract raw_out, metadata, and remote_request_id from the remote response."""
+        payload_dict = payload if isinstance(payload, dict) else {"result": payload}
+
+        remote_request_id = (
+            str(
+                payload_dict.get("remote_request_id")
+                or payload_dict.get("request_id")
+                or payload_dict.get("id")
+                or ""
+            ).strip()
+            or None
+        )
+
+        raw_out = str(
+            payload_dict.get("raw_out")
+            or payload_dict.get("raw_output")
+            or payload_dict.get("text")
+            or payload_dict.get("result")
+            or raw_body_text
+            or ""
+        ).strip()
+
+        metadata = payload_dict.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {"raw_metadata": metadata}
+        metadata["raw_out"] = raw_out
+
+        return raw_out, metadata, remote_request_id
 
     def _compose_remote_url(self) -> str:
         return (
@@ -44,7 +75,9 @@ class ASROrchestrator:
                 f"上传文件过大，最大允许 {settings.ASR_MAX_UPLOAD_MB}MB",
                 413,
             )
-        suffix = (filename.rsplit(".", 1)[-1].lower() if "." in filename else "").strip()
+        suffix = (
+            filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        ).strip()
         if suffix not in self.allowed_extensions:
             allowed = ", ".join(sorted(self.allowed_extensions))
             raise ErrorResponse(f"不支持的文件类型，允许: {allowed}", 400)
@@ -165,17 +198,20 @@ class ASROrchestrator:
                 )
                 return
 
-            payload = resp.json()
-            remote_request_id = str(payload.get("remote_request_id") or "") or None
-            text = str(payload.get("text") or "").strip()
-            segments = payload.get("segments") or []
-            metadata = payload.get("metadata") or {}
-            if not isinstance(segments, list):
-                segments = []
-            if not isinstance(metadata, dict):
-                metadata = {}
+            raw_body_text = (resp.text or "").strip()
+            try:
+                payload = resp.json()
+            except Exception:
+                payload = {"raw_output": raw_body_text}
+            raw_out, metadata, payload_request_id = (
+                self._normalize_remote_transcribe_payload(
+                    payload=payload,
+                    raw_body_text=raw_body_text,
+                )
+            )
+            remote_request_id = remote_request_id or payload_request_id
 
-            if not text:
+            if not raw_out:
                 db_service.fail_transcription_session(
                     session_id=session_id,
                     attempt_no=attempt_no,
@@ -189,8 +225,8 @@ class ASROrchestrator:
             db_service.complete_transcription_session(
                 session_id=session_id,
                 attempt_no=attempt_no,
-                transcript_text=text,
-                transcript_segments=segments,
+                transcript_text=raw_out,
+                transcript_segments=[],
                 transcript_metadata=metadata,
                 remote_request_id=remote_request_id,
             )
@@ -199,7 +235,7 @@ class ASROrchestrator:
                 session_id,
                 attempt_no,
                 remote_request_id,
-                len(text),
+                len(raw_out),
                 time.time() - started_at,
             )
         except httpx.TimeoutException as exc:
