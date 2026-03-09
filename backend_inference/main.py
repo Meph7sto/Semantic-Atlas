@@ -12,7 +12,6 @@ if current_dir not in sys.path:
 from core.model_container import classification_engine, model_engine
 from core.config import settings
 from routers import (
-    asr,
     conflict,
     traceability,
     classification,
@@ -23,7 +22,6 @@ from routers import kb, l4_generation, l4_validation
 
 # KB Service 导入
 from services.kb_service import get_kb_service
-from services.asr_service import asr_service
 
 
 @asynccontextmanager
@@ -80,14 +78,6 @@ async def lifespan(app: FastAPI):
         print(f"WARNING: Failed to load KB indexes: {e}")
         # KB 加载失败不阻止启动，L4 生成时会重试
 
-    if settings.ASR_AUTO_WARMUP:
-        print("Warming up ASR model...")
-        try:
-            asr_service.warmup()
-            print("ASR model warmup completed.")
-        except Exception as e:
-            print(f"WARNING: ASR warmup failed: {e}")
-
     yield
     # 如果需要，可以在此处添加关闭时的逻辑 (Shutdown logic)
 
@@ -117,7 +107,6 @@ app.include_router(traceability.router)
 app.include_router(classification.router)
 app.include_router(requirements_acquisition.router)
 app.include_router(chat.router)
-app.include_router(asr.router)
 
 # L4 需求生成相关路由
 app.include_router(kb.router)
@@ -137,7 +126,6 @@ def health_check():
         "status": "ok",
         "model_loaded": model_engine.model is not None,
         "classifier_loaded": classification_engine.is_ready,
-        "asr": asr_service.health(),
     }
 
 
