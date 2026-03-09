@@ -17,6 +17,7 @@ import FileReceive from '../views/alpha/FileReceive.vue'
 import ExecutionTopologyTemplate from '../views/alpha/ExecutionTopologyTemplate.vue'
 import ActorVisualTester from '../views/alpha/ActorVisualTester.vue'
 import RequirementReplay from '../views/alpha/RequirementReplay.vue'
+import ImageCaptionPreview from '../views/alpha/ImageCaptionPreview.vue'
 
 // Main views (migrated from frontend_ref)
 import LoginView from '../views/beta/LoginView.vue'
@@ -33,6 +34,7 @@ import UserManageView from '../views/beta/UserManageView.vue'
 
 // Guide view
 import GuideView from '../views/GuideView.vue'
+import RequirementsAcquisitionView from '../views/beta/RequirementsAcquisitionView.vue'
 
 const router = createRouter({
     history: createWebHistory(import.meta.env.BASE_URL),
@@ -218,6 +220,12 @@ const router = createRouter({
                     path: 'requirement-replay',
                     name: 'requirement-replay',
                     component: RequirementReplay
+                },
+                {
+                    path: 'image-caption',
+                    name: 'image-caption',
+                    component: ImageCaptionPreview,
+                    meta: { keepAlive: true }
                 }
             ]
         },
