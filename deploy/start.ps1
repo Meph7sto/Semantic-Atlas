@@ -627,7 +627,9 @@ if ($doNginx -and $doFrontend) {
   if ($NginxExe) {
     # Ensure temp dir exists for Nginx
     $TempDir = Join-Path $BASE_DIR "deploy/temp"
+    $LogDir = Join-Path $BASE_DIR "deploy/logs"
     if (-not (Test-Path $TempDir)) { New-Item -ItemType Directory -Force -Path $TempDir | Out-Null }
+    if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Force -Path $LogDir | Out-Null }
 
     $NginxPrefix = Join-Path $BASE_DIR "deploy"
     # Start-Process 在 Windows 上会拆分带空格的参数；这里使用单字符串并显式加引号，

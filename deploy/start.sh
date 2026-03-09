@@ -1037,7 +1037,9 @@ if [[ "$do_nginx" -eq 1 && "$do_frontend" -eq 1 ]]; then
   if command -v nginx >/dev/null 2>&1; then
     # Ensure temp dir exists for Nginx
     TEMP_DIR="${BASE_DIR}/deploy/temp"
+    LOG_DIR="${BASE_DIR}/deploy/logs"
     mkdir -p "$TEMP_DIR"
+    mkdir -p "$LOG_DIR"
 
     echo "[start] Starting/reloading Nginx..."
     nginx -c "${BASE_DIR}/deploy/nginx.generated.conf" -p "${BASE_DIR}/deploy" -g "pid logs/nginx.pid;" -s reload 2>/dev/null || \
