@@ -14,7 +14,7 @@
         <!-- 页面头部 -->
         <section class="page-header nav-style" data-animate style="--delay: 0.05s">
           <div class="nav-left">
-            <span class="nav-title">项目管理 · 需求</span>
+            <span class="nav-title">项目管理 · 需求管理</span>
           </div>
           <div class="nav-center" style="gap: 8px; background: rgba(47, 143, 137, 0.06); padding: 6px 16px; border-radius: 4px; border: 1px solid rgba(47, 143, 137, 0.15);">
             <div class="session-indicator">
