@@ -80,6 +80,16 @@ class RequirementsManageService:
     def _connect(self) -> psycopg2.extensions.connection:
         return psycopg2.connect(self.dsn)
 
+    @staticmethod
+    def _normalize_window_args(start_index: int, count: int) -> Tuple[int, int]:
+        normalized_start = int(start_index)
+        normalized_count = int(count)
+        if normalized_start < 1:
+            raise ValueError("start_index 必须大于等于 1")
+        if normalized_count < 1:
+            raise ValueError("count 必须大于等于 1")
+        return normalized_start, normalized_count
+
     # ----------------------
     # Projects
     # ----------------------
@@ -319,6 +329,120 @@ class RequirementsManageService:
                     (project_id,),
                 )
                 return [dict(row) for row in cur.fetchall()]
+
+    def list_requirements_window(
+        self,
+        project_id: str,
+        start_index: int,
+        count: int,
+        include_deleted: bool = False,
+    ) -> Dict[str, Any]:
+        normalized_start, normalized_count = self._normalize_window_args(
+            start_index, count
+        )
+        offset = normalized_start - 1
+        where_clause = "" if include_deleted else "AND deleted = FALSE"
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) AS total
+                    FROM manage_requirements
+                    WHERE project_id = %s {where_clause}
+                    """,
+                    (project_id,),
+                )
+                total = int((cur.fetchone() or {}).get("total") or 0)
+
+                cur.execute(
+                    f"""
+                    SELECT req_id, project_id, requirement_type, status, title, description,
+                           priority, assignee, tags, due_date, parent_id, order_index,
+                           source_req_id, source_level, custom_fields, created_by,
+                           created_at::text AS created_at, updated_by, updated_at::text AS updated_at, deleted, is_planned
+                    FROM manage_requirements
+                    WHERE project_id = %s {where_clause}
+                    ORDER BY order_index ASC, created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (project_id, normalized_count, offset),
+                )
+                items = [dict(row) for row in cur.fetchall()]
+
+        return {
+            "total": total,
+            "start_index": normalized_start,
+            "count": len(items),
+            "has_more": offset + len(items) < total,
+            "items": items,
+        }
+
+    def search_requirements(
+        self,
+        project_id: str,
+        keyword: str,
+        start_index: int,
+        count: int,
+        include_deleted: bool = False,
+    ) -> Dict[str, Any]:
+        normalized_start, normalized_count = self._normalize_window_args(
+            start_index, count
+        )
+        normalized_keyword = str(keyword or "").strip()
+        if not normalized_keyword:
+            raise ValueError("keyword 不能为空")
+
+        offset = normalized_start - 1
+        like_pattern = f"%{normalized_keyword}%"
+        where_clause = "" if include_deleted else "AND deleted = FALSE"
+        search_clause = """
+            AND (
+                COALESCE(req_id, '') ILIKE %s
+                OR COALESCE(title, '') ILIKE %s
+                OR COALESCE(description, '') ILIKE %s
+            )
+        """
+        params = (project_id, like_pattern, like_pattern, like_pattern)
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) AS total
+                    FROM manage_requirements
+                    WHERE project_id = %s
+                      {where_clause}
+                      {search_clause}
+                    """,
+                    params,
+                )
+                total = int((cur.fetchone() or {}).get("total") or 0)
+
+                cur.execute(
+                    f"""
+                    SELECT req_id, project_id, requirement_type, status, title, description,
+                           priority, assignee, tags, due_date, parent_id, order_index,
+                           source_req_id, source_level, custom_fields, created_by,
+                           created_at::text AS created_at, updated_by, updated_at::text AS updated_at, deleted, is_planned
+                    FROM manage_requirements
+                    WHERE project_id = %s
+                      {where_clause}
+                      {search_clause}
+                    ORDER BY order_index ASC, created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (*params, normalized_count, offset),
+                )
+                items = [dict(row) for row in cur.fetchall()]
+
+        return {
+            "total": total,
+            "start_index": normalized_start,
+            "count": len(items),
+            "has_more": offset + len(items) < total,
+            "items": items,
+        }
 
     def get_requirement(self, req_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:

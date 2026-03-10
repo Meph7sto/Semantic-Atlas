@@ -17,6 +17,7 @@ import FileReceive from '../views/alpha/FileReceive.vue'
 import ExecutionTopologyTemplate from '../views/alpha/ExecutionTopologyTemplate.vue'
 import ActorVisualTester from '../views/alpha/ActorVisualTester.vue'
 import RequirementReplay from '../views/alpha/RequirementReplay.vue'
+import RequirementAgentChat from '../views/alpha/RequirementAgentChat.vue'
 
 // Main views (migrated from frontend_ref)
 import LoginView from '../views/beta/LoginView.vue'
@@ -186,6 +187,11 @@ const router = createRouter({
                     path: 'chat',
                     name: 'chat',
                     component: GeneralChat
+                },
+                {
+                    path: 'requirement-agent',
+                    name: 'requirement-agent',
+                    component: RequirementAgentChat
                 },
                 {
                     path: 'message-push',

@@ -8,6 +8,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   MessageSquare,
+  BrainCircuit,
   Folder,
   ChevronDown,
   ChevronRight,
@@ -193,6 +194,15 @@ const toggleSidebar = (open) => {
       >
         <Network class="w-4 h-4" />
         <span class="whitespace-nowrap">Acquisition + Trace</span>
+      </RouterLink>
+
+      <RouterLink
+        to="/alpha/requirement-agent"
+        active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
+        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+      >
+        <BrainCircuit class="w-4 h-4" />
+        <span class="whitespace-nowrap">Requirement Agent</span>
       </RouterLink>
 
       <RouterLink

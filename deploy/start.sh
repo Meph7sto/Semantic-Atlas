@@ -8,6 +8,7 @@ cd "$BASE_DIR"
 MODE=""
 PROVIDER=""
 ENTRY=""
+FRONTEND_RUNTIME=""
 BUSINESS_BACKEND=""
 FRP_MODE=""
 FRP_SERVER_ADDR=""
@@ -38,6 +39,14 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       ENTRY="$2"
+      shift 2
+      ;;
+    -r|--frontend-runtime)
+      if [[ -z "${2:-}" ]]; then
+        echo "[start] Missing value for --frontend-runtime"
+        exit 1
+      fi
+      FRONTEND_RUNTIME="$2"
       shift 2
       ;;
     --enable-fastapi-business)
@@ -114,7 +123,7 @@ fi
 
 # 启动模式选择
 if [[ -z "$MODE" ]]; then
-  echo "请选择启动模式: 1=all(前端构建+nginx+全部后端) 2=backend(两个后端) 3=inference 4=business 5=frontend"
+  echo "请选择启动模式: 1=all(前端+nginx+全部后端) 2=backend(两个后端) 3=inference 4=business 5=frontend"
   read -r -p "输入编号或模式名 (默认 all): " choice
   case "$choice" in
     2|backend) MODE="backend" ;;
@@ -160,6 +169,22 @@ case "$MODE" in
     do_business=1
     ;;
 esac
+
+if [[ "$do_frontend" -eq 1 && -z "$FRONTEND_RUNTIME" ]]; then
+  default_frontend_runtime="${FRONTEND_RUNTIME:-dev}"
+  echo "请选择前端运行方式: 1=static(构建产物+Nginx) 2=dev(Nginx代理Vite热更新)"
+  read -r -p "输入编号或模式名 (默认 ${default_frontend_runtime}): " choice
+  case "$choice" in
+    2|dev) FRONTEND_RUNTIME="dev" ;;
+    1|static|"") FRONTEND_RUNTIME="${default_frontend_runtime}" ;;
+    *) FRONTEND_RUNTIME="${default_frontend_runtime}" ;;
+  esac
+fi
+
+if [[ -z "$FRONTEND_RUNTIME" ]]; then
+  FRONTEND_RUNTIME="${FRONTEND_RUNTIME:-dev}"
+fi
+export FRONTEND_RUNTIME
 
 # 模型提供方选择
 if [[ -z "$PROVIDER" ]]; then
@@ -684,8 +709,10 @@ fi
 
 # 前端产物目录，可通过环境变量 FRONTEND_ROOT 覆盖
 FRONTEND_ROOT="${FRONTEND_ROOT:-${BASE_DIR}/frontend/dist}"
+FRONTEND_DEV_PORT="${FRONTEND_DEV_PORT:-5173}"
 # envsubst 只读取导出的环境变量，不导出会导致 ${FRONTEND_ROOT} 被替换为空
 export FRONTEND_ROOT
+export FRONTEND_DEV_PORT
 
 # 0) 先执行停止脚本清理环境
 stop_script="${BASE_DIR}/deploy/stop_services.sh"
@@ -696,6 +723,9 @@ fi
 
 echo "[start] Mode: $MODE; Model provider: $PROVIDER"
 if [[ "$do_frontend" -eq 1 ]]; then
+  echo "[start] Frontend runtime: $FRONTEND_RUNTIME"
+fi
+if [[ "$do_frontend" -eq 1 && "$FRONTEND_RUNTIME" == "static" ]]; then
   echo "[start] Using frontend directory: $FRONTEND_ROOT"
 fi
 
@@ -734,12 +764,6 @@ if [[ "$do_frontend" -eq 1 ]]; then
     echo "[start] pnpm not found. Installing via npm..."
     npm install -g pnpm
     echo "[start] pnpm installed: $(pnpm --version)"
-  fi
-
-  # 1) 前端构建
-  echo "[start] Building frontend (${FRONTEND_PM} install + build)..."
-  if [[ -d "$FRONTEND_ROOT" ]]; then
-    rm -rf "$FRONTEND_ROOT"
   fi
 
   # 根据入口选择修改路由默认重定向
@@ -910,6 +934,15 @@ EOF
         run_npm_ci
       fi
 
+      if [[ "$FRONTEND_RUNTIME" != "static" ]]; then
+        exit 0
+      fi
+
+      echo "[start] Building frontend (${FRONTEND_PM} install + build)..."
+      if [[ -d "$FRONTEND_ROOT" ]]; then
+        rm -rf "$FRONTEND_ROOT"
+      fi
+
       build_ok=0
       if run_with_node_options "$build_node_opts" node -e "process.exit(0)" >/dev/null 2>&1; then
         if run_npm_build_with_opts "$build_node_opts"; then
@@ -947,6 +980,15 @@ EOF
         run_with_node_options "$node_runtime_opts" pnpm install
       fi
 
+      if [[ "$FRONTEND_RUNTIME" != "static" ]]; then
+        exit 0
+      fi
+
+      echo "[start] Building frontend (${FRONTEND_PM} install + build)..."
+      if [[ -d "$FRONTEND_ROOT" ]]; then
+        rm -rf "$FRONTEND_ROOT"
+      fi
+
       build_ok=0
       if run_with_node_options "$build_node_opts" node -e "process.exit(0)" >/dev/null 2>&1; then
         if run_with_node_options "$build_node_opts" pnpm run build; then
@@ -979,11 +1021,15 @@ EOF
 
   # 2) 生成 Nginx 配置
   MIME_PATH="${BASE_DIR}/deploy/mime.types"
-  NGINX_TEMPLATE="${BASE_DIR}/deploy/nginx_linux.conf"
+  if [[ "$FRONTEND_RUNTIME" == "dev" ]]; then
+    NGINX_TEMPLATE="${BASE_DIR}/deploy/nginx_linux.dev.conf"
+  else
+    NGINX_TEMPLATE="${BASE_DIR}/deploy/nginx_linux.conf"
+  fi
   NGINX_GENERATED_PATH="${BASE_DIR}/deploy/nginx.generated.conf"
 
   if command -v envsubst >/dev/null 2>&1; then
-    envsubst '$FRONTEND_ROOT' < "$NGINX_TEMPLATE" | tr -d '\r' > "$NGINX_GENERATED_PATH"
+    envsubst '$FRONTEND_ROOT $FRONTEND_DEV_PORT' < "$NGINX_TEMPLATE" | tr -d '\r' > "$NGINX_GENERATED_PATH"
   else
     # fallback: only replace known placeholders to avoid touching nginx variables like $uri
     python - <<PY
@@ -991,22 +1037,37 @@ import os
 
 BASE_DIR = "${BASE_DIR}"
 FRONTEND_ROOT = "${FRONTEND_ROOT}"
+FRONTEND_DEV_PORT = "${FRONTEND_DEV_PORT}"
 
-src = os.path.join(BASE_DIR, "deploy", "nginx_linux.conf")
+src = "${NGINX_TEMPLATE}"
 dst = os.path.join(BASE_DIR, "deploy", "nginx.generated.conf")
 with open(src, "r", encoding="utf-8") as f:
     data = f.read()
 data = data.replace("\r\n", "\n").replace("\r", "\n")
 data = data.replace("\${FRONTEND_ROOT}", FRONTEND_ROOT)
+data = data.replace("\${FRONTEND_DEV_PORT}", FRONTEND_DEV_PORT)
 with open(dst, "w", encoding="utf-8", newline="\n") as f:
     f.write(data)
 PY
   fi
-  if grep -qE '^[[:space:]]*root[[:space:]]*;' "$NGINX_GENERATED_PATH"; then
+  if [[ "$FRONTEND_RUNTIME" == "static" ]] && grep -qE '^[[:space:]]*root[[:space:]]*;' "$NGINX_GENERATED_PATH"; then
     echo "[start] Invalid nginx root generated (empty FRONTEND_ROOT)."
     exit 1
   fi
   echo "[start] Nginx config generated at $NGINX_GENERATED_PATH"
+fi
+
+if [[ "$do_frontend" -eq 1 && "$FRONTEND_RUNTIME" == "dev" ]]; then
+  export VITE_DEV_SERVER_HOST="127.0.0.1"
+  export VITE_DEV_SERVER_PORT="$FRONTEND_DEV_PORT"
+  export VITE_PUBLIC_PORT="8008"
+  export VITE_USE_POLLING="1"
+  export VITE_POLL_INTERVAL="300"
+  echo "[start] Starting Vite dev server (${FRONTEND_DEV_PORT}) behind Nginx 8008..."
+  (
+    cd "${BASE_DIR}/frontend"
+    nohup npm run dev > "${LOGS_DIR}/vite-dev.log" 2>&1 &
+  )
 fi
 
 if [[ "$do_nginx" -eq 1 && "$do_frontend" -eq 1 ]]; then
@@ -1105,8 +1166,12 @@ fi
 
 backend_info="FastAPI 5002"
 
-echo "[start] Done. Mode=$MODE; Model provider=$PROVIDER; Entry=$ENTRY"
-echo "[start] Nginx 8008 (if enabled), FastAPI 8000 (if enabled), Business: $backend_info."
+echo "[start] Done. Mode=$MODE; Model provider=$PROVIDER; Entry=$ENTRY; FrontendRuntime=$FRONTEND_RUNTIME"
+if [[ "$do_frontend" -eq 1 && "$FRONTEND_RUNTIME" == "dev" ]]; then
+  echo "[start] Nginx 8008 -> Vite ${FRONTEND_DEV_PORT} (if enabled), FastAPI 8000 (if enabled), Business: $backend_info."
+else
+  echo "[start] Nginx 8008 (if enabled), FastAPI 8000 (if enabled), Business: $backend_info."
+fi
 echo "[start] Logs located in $LOGS_DIR"
 
 # 6) 启动 FRP 客户端（如果启用）

@@ -108,6 +108,7 @@ else:
 # - mobile_chat 走 /api/v2/mobile，移动端消息模块
 # - file 走 /api/v2/*，文件上传下载模块
 from backend_business.api.routers import (
+    agent_chat,
     analysis,
     auth,
     classification,
@@ -123,6 +124,7 @@ from backend_business.api.routers import (
     requirement_actor,
     requirements,
 )
+app.include_router(agent_chat.router)
 app.include_router(deduplication.router)
 app.include_router(auth.router)
 app.include_router(permission.router)
