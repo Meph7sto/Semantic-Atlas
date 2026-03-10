@@ -7,10 +7,10 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-_ALLOWED_NODE_TYPES = {"start", "node", "decision", "handoff", "end"}
+_ALLOWED_NODE_TYPES = {"start", "node", "decision", "handoff", "end", "llm", "invoke"}
 _ALLOWED_EDGE_TYPES = {"call", "return", "retry"}
 _ALLOWED_ROLE_TYPES = {"human", "agent", "system"}
-_ALLOWED_GRAPH_STATUSES = {"draft", "active"}
+_ALLOWED_GRAPH_STATUSES = {"draft", "active", "running", "succeeded", "failed", "suspended"}
 
 
 def normalize_node_type(node_type: Any) -> str:
@@ -68,7 +68,7 @@ class UpdateGraphRequest(BaseModel):
     """更新执行拓扑图请求"""
     name: Optional[str] = Field(None, min_length=1, description="图名称")
     description: Optional[str] = Field(None, description="图描述")
-    status: Optional[str] = Field(None, description="图状态: draft|active")
+    status: Optional[str] = Field(None, description="图状态: draft|active|running|succeeded|failed|suspended")
     layout_json: Optional[Dict[str, Any]] = Field(None, description="画布布局JSON（缩放、平移等）")
     meta_json: Optional[Dict[str, Any]] = Field(None, description="元数据JSON")
 
@@ -124,7 +124,7 @@ class CreateNodeRequest(BaseModel):
     container_id: Optional[str] = Field(default=None, description="所属容器ID（可选）")
     node_key: str = Field(..., min_length=1, description="节点唯一标识（图内唯一）")
     label: str = Field(..., min_length=1, description="节点显示标签")
-    node_type: str = Field(..., description="节点类型: start|node|decision|handoff|end")
+    node_type: str = Field(..., description="节点类型: start|node|decision|handoff|end|llm|invoke")
     role_type: str = Field(..., description="角色类型: human|agent|system")
     config_json: Optional[Dict[str, Any]] = Field(
         default_factory=dict, description="配置JSON"
@@ -152,7 +152,7 @@ class UpdateNodeRequest(BaseModel):
     """更新节点请求（支持部分字段）"""
     container_id: Optional[str] = Field(None, description="所属容器ID（可选）")
     label: Optional[str] = Field(None, min_length=1, description="节点显示标签")
-    node_type: Optional[str] = Field(None, description="节点类型: start|node|decision|handoff|end")
+    node_type: Optional[str] = Field(None, description="节点类型: start|node|decision|handoff|end|llm|invoke")
     role_type: Optional[str] = Field(None, description="角色类型: human|agent|system")
     config_json: Optional[Dict[str, Any]] = Field(None, description="配置JSON")
     input_schema_json: Optional[List[str]] = Field(None, description="输入模式JSON")

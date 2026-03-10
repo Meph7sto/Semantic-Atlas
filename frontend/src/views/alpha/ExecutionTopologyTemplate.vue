@@ -75,7 +75,9 @@ const nodeTypeOptions = [
   { value: 'node', label: 'Node' },
   { value: 'decision', label: 'Decision' },
   { value: 'handoff', label: 'Handoff' },
-  { value: 'end', label: 'End' }
+  { value: 'end', label: 'End' },
+  { value: 'llm', label: 'LLM' },
+  { value: 'invoke', label: 'Invoke' }
 ]
 
 // 角色类型选项

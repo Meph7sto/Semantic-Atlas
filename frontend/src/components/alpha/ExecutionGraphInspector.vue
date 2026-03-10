@@ -32,7 +32,11 @@ watch(() => props.selectedObject, (newObj) => {
 // 图状态选项
 const graphStatusOptions = [
   { value: 'draft', label: '草稿' },
-  { value: 'active', label: '激活' }
+  { value: 'active', label: '激活' },
+  { value: 'running', label: '运行中' },
+  { value: 'succeeded', label: '已成功' },
+  { value: 'failed', label: '已失败' },
+  { value: 'suspended', label: '已挂起' }
 ]
 
 // 节点类型选项
@@ -41,7 +45,9 @@ const nodeTypeOptions = [
   { value: 'node', label: 'Node (节点)' },
   { value: 'decision', label: 'Decision (决策)' },
   { value: 'handoff', label: 'Handoff (交接)' },
-  { value: 'end', label: 'End (结束)' }
+  { value: 'end', label: 'End (结束)' },
+  { value: 'llm', label: 'LLM (模型)' },
+  { value: 'invoke', label: 'Invoke (工具调用)' }
 ]
 
 // 角色类型选项

@@ -1,4 +1,4 @@
-﻿#requires -Version 5.1
+#requires -Version 5.1
 [CmdletBinding()]
 param(
   [ValidateSet("all", "backend", "inference", "business", "frontend")]
@@ -11,6 +11,10 @@ param(
   # 前端入口：alpha=测试页面，main=正式页面，all=全部模式(引导页)
   [ValidateSet("alpha", "main", "all")]
   [string]$Entry,
+
+  # 前端运行方式：static=构建产物走 Nginx，dev=Nginx 反代 Vite 开发服务器
+  [ValidateSet("static", "dev")]
+  [string]$FrontendRuntime,
 
   # 兼容旧参数：已废弃，业务后端固定使用 FastAPI 5002
   [switch]$EnableFastAPIBusiness,
@@ -98,7 +102,7 @@ if ($FrpMode) {
 
 # 启动模式选择
 if (-not $Mode) {
-  Write-Host "请选择启动模式: 1=all(前端构建+nginx+全部后端) 2=backend(两个后端) 3=inference 4=business 5=frontend" -ForegroundColor Cyan
+  Write-Host "请选择启动模式: 1=all(前端+nginx+全部后端) 2=backend(两个后端) 3=inference 4=business 5=frontend" -ForegroundColor Cyan
   $choice = Read-Host "输入编号或模式名 (默认 all)"
   switch ($choice) {
     "2" { $Mode = "backend" }
@@ -117,6 +121,23 @@ $doFrontend = $Mode -in @("all", "frontend")
 $doNginx = $Mode -in @("all", "frontend")
 $doInference = $Mode -in @("all", "backend", "inference")
 $doBusiness = $Mode -in @("all", "backend", "business")
+
+if ($doFrontend -and -not $FrontendRuntime) {
+  $defaultFrontendRuntime = if ($env:FRONTEND_RUNTIME) { $env:FRONTEND_RUNTIME } else { "dev" }
+  Write-Host "请选择前端运行方式: 1=static(构建产物+Nginx) 2=dev(Nginx代理Vite热更新)" -ForegroundColor Cyan
+  $choice = Read-Host "输入编号或模式名 (默认 $defaultFrontendRuntime)"
+  switch ($choice) {
+    "2" { $FrontendRuntime = "dev" }
+    "dev" { $FrontendRuntime = "dev" }
+    "1" { $FrontendRuntime = "static" }
+    "static" { $FrontendRuntime = "static" }
+    default { $FrontendRuntime = $defaultFrontendRuntime }
+  }
+}
+elseif (-not $FrontendRuntime) {
+  $FrontendRuntime = if ($env:FRONTEND_RUNTIME) { $env:FRONTEND_RUNTIME } else { "dev" }
+}
+$env:FRONTEND_RUNTIME = $FrontendRuntime
 
 # 模型提供方选择
 if (-not $Provider) {
@@ -146,6 +167,18 @@ if ($loadChoice -eq "2" -or $loadChoice -eq "yes") {
 else {
   $env:SKIP_MODEL_LOAD = "true"
   Write-Host "[start] Model loading skipped (default)." -ForegroundColor Yellow
+}
+
+# 是否加载知识库（KB）索引，默认跳过（避免连接 HuggingFace 下载嵌入模型）
+Write-Host "是否加载知识库(KB)索引? 1=no(跳过, 默认) 2=yes(需联网下载嵌入模型)" -ForegroundColor Cyan
+$kbChoice = Read-Host "输入编号 (默认 1/no)"
+if ($kbChoice -eq "2" -or $kbChoice -eq "yes") {
+  $env:SKIP_KB_LOAD = "false"
+  Write-Host "[start] KB index loading enabled." -ForegroundColor Yellow
+}
+else {
+  $env:SKIP_KB_LOAD = "true"
+  Write-Host "[start] KB index loading skipped (default)." -ForegroundColor Yellow
 }
 
 # 前端入口选择
@@ -506,6 +539,7 @@ if ($doBusiness) {
 
 # 前端产物目录，可通过环境变量 FRONTEND_ROOT 覆盖
 $FRONTEND_ROOT = if ($env:FRONTEND_ROOT) { $env:FRONTEND_ROOT } else { Join-Path $BASE_DIR "frontend/dist" }
+$FRONTEND_DEV_PORT = if ($env:FRONTEND_DEV_PORT) { [int]$env:FRONTEND_DEV_PORT } else { 5173 }
 
 # 日志目录与 PID 路径
 $LogsDir = Join-Path $BASE_DIR "deploy/logs"
@@ -519,13 +553,10 @@ if (Test-Path $stopScript) {
 }
 
 Write-Host "[start] Mode: $Mode; Model provider: $Provider"
-if ($doFrontend) { Write-Host "[start] Using frontend directory: $FRONTEND_ROOT" }
+if ($doFrontend) { Write-Host "[start] Frontend runtime: $FrontendRuntime" }
+if ($doFrontend -and $FrontendRuntime -eq "static") { Write-Host "[start] Using frontend directory: $FRONTEND_ROOT" }
 
 if ($doFrontend) {
-  # 1) 前端构建
-  Write-Host "[start] Building frontend (npm install & npm run build)..."
-  if (Test-Path $FRONTEND_ROOT) { Remove-Item -Recurse -Force $FRONTEND_ROOT }
-
   # 根据入口选择修改路由默认重定向
   $routerPath = Join-Path $BASE_DIR "frontend/src/router/index.js"
   if (Test-Path $routerPath) {
@@ -575,7 +606,11 @@ module.exports = {
   Push-Location (Join-Path $BASE_DIR "frontend")
   try {
     npm install
-    npm run build
+    if ($FrontendRuntime -eq "static") {
+      Write-Host "[start] Building frontend (npm install & npm run build)..."
+      if (Test-Path $FRONTEND_ROOT) { Remove-Item -Recurse -Force $FRONTEND_ROOT }
+      npm run build
+    }
   }
   finally {
     Pop-Location
@@ -583,14 +618,38 @@ module.exports = {
 
   # 2) 生成 Nginx 配置
   $MimePath = Join-Path $BASE_DIR "deploy/mime.types"
-  $NginxTemplate = Get-Content (Join-Path $BASE_DIR "deploy/nginx_windows.conf") -Raw
+  $NginxTemplatePath = if ($FrontendRuntime -eq "dev") {
+    Join-Path $BASE_DIR "deploy/nginx_windows.dev.conf"
+  }
+  else {
+    Join-Path $BASE_DIR "deploy/nginx_windows.conf"
+  }
+  $NginxTemplate = Get-Content $NginxTemplatePath -Raw
   $NginxGeneratedPath = Join-Path $BASE_DIR "deploy/nginx.generated.conf"
   $FrontForNginx = ($FRONTEND_ROOT -replace '\\', '/')
   $MimeForNginx = ($MimePath -replace '\\', '/')
   $NginxConfig = $NginxTemplate -replace '\${FRONTEND_ROOT}', $FrontForNginx
+  $NginxConfig = $NginxConfig -replace '\${FRONTEND_DEV_PORT}', "$FRONTEND_DEV_PORT"
   $NginxConfig = $NginxConfig -replace '\${MIME_TYPES_PATH}', $MimeForNginx
   Set-Content -Path $NginxGeneratedPath -Value $NginxConfig -Encoding UTF8
   Write-Host "[start] Nginx config generated at $NginxGeneratedPath"
+}
+
+if ($doFrontend -and $FrontendRuntime -eq "dev") {
+  $env:VITE_DEV_SERVER_HOST = "127.0.0.1"
+  $env:VITE_DEV_SERVER_PORT = "$FRONTEND_DEV_PORT"
+  $env:VITE_PUBLIC_PORT = "8008"
+  $env:VITE_USE_POLLING = "1"
+  $env:VITE_POLL_INTERVAL = "300"
+  $NpmCmd = Get-Command npm.cmd -ErrorAction SilentlyContinue
+  if (-not $NpmCmd) {
+    $NpmCmd = Get-Command npm -ErrorAction SilentlyContinue
+  }
+  if (-not $NpmCmd) {
+    throw "[start] npm not found."
+  }
+  Write-Host "[start] Starting Vite dev server ($FRONTEND_DEV_PORT) behind Nginx 8008..."
+  Start-Process -FilePath $NpmCmd.Source -ArgumentList @("run", "dev") -WorkingDirectory (Join-Path $BASE_DIR "frontend")
 }
 
 if ($doNginx -and $doFrontend) {
@@ -627,7 +686,9 @@ if ($doNginx -and $doFrontend) {
   if ($NginxExe) {
     # Ensure temp dir exists for Nginx
     $TempDir = Join-Path $BASE_DIR "deploy/temp"
+    $LogDir = Join-Path $BASE_DIR "deploy/logs"
     if (-not (Test-Path $TempDir)) { New-Item -ItemType Directory -Force -Path $TempDir | Out-Null }
+    if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Force -Path $LogDir | Out-Null }
 
     $NginxPrefix = Join-Path $BASE_DIR "deploy"
     # Start-Process 在 Windows 上会拆分带空格的参数；这里使用单字符串并显式加引号，
@@ -707,9 +768,14 @@ if ($doBusiness) {
 }
 
 
-Write-Host "[start] Done. Mode=$Mode; Model provider=$Provider; Entry=$Entry"
+Write-Host "[start] Done. Mode=$Mode; Model provider=$Provider; Entry=$Entry; FrontendRuntime=$FrontendRuntime"
 $backendInfo = "FastAPI 5002"
-Write-Host "[start] Nginx 8008 (if enabled), FastAPI 8000 (if enabled), Business: $backendInfo."
+if ($doFrontend -and $FrontendRuntime -eq "dev") {
+  Write-Host "[start] Nginx 8008 -> Vite $FRONTEND_DEV_PORT (if enabled), FastAPI 8000 (if enabled), Business: $backendInfo."
+}
+else {
+  Write-Host "[start] Nginx 8008 (if enabled), FastAPI 8000 (if enabled), Business: $backendInfo."
+}
 Write-Host "[start] Logs located in $LogsDir"
 
 # 6) 启动 FRP 客户端（如果启用）

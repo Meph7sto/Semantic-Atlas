@@ -13,6 +13,8 @@ class NodeType(str, Enum):
     DECISION = "decision"
     HANDOFF = "handoff"
     END = "end"
+    LLM = "llm"
+    INVOKE = "invoke"
 
 
 class RoleType(str, Enum):
