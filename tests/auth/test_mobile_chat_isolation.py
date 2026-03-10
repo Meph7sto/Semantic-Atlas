@@ -130,22 +130,22 @@ def mobile_client(monkeypatch):
 def test_list_sessions_user_id_falls_back_to_header_then_anonymous(mobile_client):
     client, stub = mobile_client
 
-    resp = client.get("/api/mobile/sessions?user_id=query-user", headers={"X-Actor": "actor-user"})
+    resp = client.get("/api/v2/mobile/sessions?user_id=query-user", headers={"X-Actor": "actor-user"})
     assert resp.status_code == 200
     assert stub.last_sessions["user_id"] == "query-user"
 
-    resp = client.get("/api/mobile/sessions", headers={"X-Actor": "actor-user"})
+    resp = client.get("/api/v2/mobile/sessions", headers={"X-Actor": "actor-user"})
     assert resp.status_code == 200
     assert stub.last_sessions["user_id"] == "actor-user"
 
-    resp = client.get("/api/mobile/sessions")
+    resp = client.get("/api/v2/mobile/sessions")
     assert resp.status_code == 200
     assert stub.last_sessions["user_id"] == "anonymous"
 
 
 def test_list_messages_uses_query_user_id(mobile_client):
     client, stub = mobile_client
-    resp = client.get("/api/mobile/messages?session_id=s1&user_id=u-query&limit=20")
+    resp = client.get("/api/v2/mobile/messages?session_id=s1&user_id=u-query&limit=20")
     assert resp.status_code == 200
     assert stub.last_messages == {
         "user_id": "u-query",
@@ -158,7 +158,7 @@ def test_list_messages_uses_query_user_id(mobile_client):
 def test_create_message_user_id_priority_payload_over_header(mobile_client):
     client, stub = mobile_client
     resp = client.post(
-        "/api/mobile/messages",
+        "/api/v2/mobile/messages",
         json={
             "user_id": "u-payload",
             "session_id": "s1",
@@ -173,7 +173,7 @@ def test_create_message_user_id_priority_payload_over_header(mobile_client):
 
 def test_stream_uses_user_id_for_subscription(mobile_client):
     client, stub = mobile_client
-    resp = client.get("/api/mobile/stream?session_id=s-stream&user_id=u-stream")
+    resp = client.get("/api/v2/mobile/stream?session_id=s-stream&user_id=u-stream")
     _ = resp.text
     assert resp.status_code == 200
     assert stub.last_subscribe == {"user_id": "u-stream", "session_id": "s-stream"}
@@ -222,3 +222,4 @@ def test_service_broadcast_is_scoped_by_user_and_session():
     assert not q_u1_s1.empty()
     assert q_u2_s1.empty()
     assert q_u1_s2.empty()
+

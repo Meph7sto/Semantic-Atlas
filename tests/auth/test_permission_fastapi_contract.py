@@ -78,7 +78,7 @@ def fastapi_client(monkeypatch):
 
 def test_missing_token_uses_fastapi_error_shape(fastapi_client):
     client, _ = fastapi_client
-    response = client.get("/api/permission/projects/p1/members")
+    response = client.get("/api/v2/permission/projects/p1/members")
     assert response.status_code == 401
     assert response.json()["detail"] == "未提供认证 Token"
 
@@ -86,7 +86,7 @@ def test_missing_token_uses_fastapi_error_shape(fastapi_client):
 def test_invalid_token_uses_fastapi_error_shape(fastapi_client):
     client, _ = fastapi_client
     response = client.get(
-        "/api/permission/projects/p1/members",
+        "/api/v2/permission/projects/p1/members",
         headers={"Authorization": "Bearer invalid_token"},
     )
     assert response.status_code == 401
@@ -96,12 +96,12 @@ def test_invalid_token_uses_fastapi_error_shape(fastapi_client):
 @pytest.mark.parametrize(
     ("method", "path", "payload", "field"),
     [
-        ("post", "/api/permission/projects/p1/members", None, "body"),
-        ("post", "/api/permission/projects/p1/members", {"user_id": ""}, "user_id"),
-        ("put", "/api/permission/projects/p1/members/u1/roles", None, "body"),
-        ("put", "/api/permission/projects/p1/members/u1/roles", {"roles": "PO"}, "roles"),
-        ("post", "/api/permission/requirements/r1/reviews", None, "body"),
-        ("post", "/api/permission/requirements/r1/reviews", {"seq": 1}, "reviewer_id"),
+        ("post", "/api/v2/permission/projects/p1/members", None, "body"),
+        ("post", "/api/v2/permission/projects/p1/members", {"user_id": ""}, "user_id"),
+        ("put", "/api/v2/permission/projects/p1/members/u1/roles", None, "body"),
+        ("put", "/api/v2/permission/projects/p1/members/u1/roles", {"roles": "PO"}, "roles"),
+        ("post", "/api/v2/permission/requirements/r1/reviews", None, "body"),
+        ("post", "/api/v2/permission/requirements/r1/reviews", {"seq": 1}, "reviewer_id"),
     ],
 )
 def test_validation_errors_follow_fastapi_422(fastapi_client, method, path, payload, field):
@@ -127,7 +127,7 @@ def test_validation_errors_follow_fastapi_422(fastapi_client, method, path, payl
 def test_invalid_include_roles_is_rejected_instead_of_legacy_coercion(fastapi_client):
     client, stub = fastapi_client
     response = client.get(
-        "/api/permission/projects/p1/members?include_roles=abc",
+        "/api/v2/permission/projects/p1/members?include_roles=abc",
         headers=_auth_headers(),
     )
     _assert_validation_error(response, "include_roles", scope="query")
@@ -137,7 +137,7 @@ def test_invalid_include_roles_is_rejected_instead_of_legacy_coercion(fastapi_cl
 def test_invalid_include_locked_is_rejected_instead_of_legacy_coercion(fastapi_client):
     client, stub = fastapi_client
     response = client.get(
-        "/api/permission/projects/p1/baselines?include_locked=abc",
+        "/api/v2/permission/projects/p1/baselines?include_locked=abc",
         headers=_auth_headers(),
     )
     _assert_validation_error(response, "include_locked", scope="query")
@@ -149,11 +149,11 @@ def test_valid_bool_query_values_are_forwarded(fastapi_client):
     headers = _auth_headers()
 
     members_resp = client.get(
-        "/api/permission/projects/p1/members?include_roles=true",
+        "/api/v2/permission/projects/p1/members?include_roles=true",
         headers=headers,
     )
     baselines_resp = client.get(
-        "/api/permission/projects/p1/baselines?include_locked=false",
+        "/api/v2/permission/projects/p1/baselines?include_locked=false",
         headers=headers,
     )
 
@@ -161,3 +161,4 @@ def test_valid_bool_query_values_are_forwarded(fastapi_client):
     assert baselines_resp.status_code == 200
     assert stub.last_include_roles is True
     assert stub.last_include_locked is False
+
