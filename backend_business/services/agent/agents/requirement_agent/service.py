@@ -565,10 +565,10 @@ class RequirementAgentChatService:
             }
         except Exception as exc:
             error_text = str(exc)
-            if recorder._last_node_key:
+            if recorder.last_node_key:
                 try:
                     recorder.complete_stage(
-                        recorder._last_node_key,
+                        recorder.last_node_key,
                         created_by=user_id,
                         output_summary={"error": error_text},
                         success=False,
