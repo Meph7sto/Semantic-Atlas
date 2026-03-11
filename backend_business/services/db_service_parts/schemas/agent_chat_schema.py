@@ -1,5 +1,46 @@
 def init_agent_chat_schema(cur):
     # ========================
+    # AI Chat Sessions / Messages
+    # ========================
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ai_chat_sessions (
+            session_id TEXT PRIMARY KEY,
+            project_id TEXT REFERENCES manage_projects(project_id) ON DELETE SET NULL,
+            user_id TEXT NOT NULL,
+            title TEXT,
+            active_graph_id TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    cur.execute(
+        "ALTER TABLE ai_chat_sessions ADD COLUMN IF NOT EXISTS active_graph_id TEXT"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_user_project ON ai_chat_sessions(user_id, project_id, updated_at DESC)"
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ai_chat_messages (
+            message_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES ai_chat_sessions(session_id) ON DELETE CASCADE,
+            user_id TEXT,
+            role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+            content TEXT NOT NULL,
+            metadata JSONB,
+            is_read BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_session_created ON ai_chat_messages(session_id, created_at)"
+    )
+
+    # ========================
     # Push Messages Table (实时消息推送)
     # ========================
     cur.execute(

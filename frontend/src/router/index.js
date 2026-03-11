@@ -17,6 +17,7 @@ import FileReceive from '../views/alpha/FileReceive.vue'
 import ExecutionTopologyTemplate from '../views/alpha/ExecutionTopologyTemplate.vue'
 import ActorVisualTester from '../views/alpha/ActorVisualTester.vue'
 import RequirementReplay from '../views/alpha/RequirementReplay.vue'
+import RequirementAgentChat from '../views/alpha/RequirementAgentChat.vue'
 import ImageCaptionPreview from '../views/alpha/ImageCaptionPreview.vue'
 
 // Main views (migrated from frontend_ref)
@@ -42,7 +43,7 @@ const router = createRouter({
         {
             path: '/',
             name: 'home',
-            redirect: '/guide'
+            redirect: '/alpha/conflict'
         },
         {
             path: '/guide',
@@ -53,7 +54,7 @@ const router = createRouter({
         {
             path: '/beta',
             name: 'beta',
-            redirect: '/guide',
+            redirect: '/alpha/conflict',
             children: [
                 {
                     path: 'login',
@@ -190,6 +191,11 @@ const router = createRouter({
                     component: GeneralChat
                 },
                 {
+                    path: 'requirement-agent',
+                    name: 'requirement-agent',
+                    component: RequirementAgentChat
+                },
+                {
                     path: 'message-push',
                     name: 'message-push',
                     component: MessagePush
@@ -232,7 +238,7 @@ const router = createRouter({
         // Fallback: keep layout predictable on bad URLs
         {
             path: '/:pathMatch(.*)*',
-            redirect: '/guide'
+            redirect: '/alpha/conflict'
         }
     ]
 })

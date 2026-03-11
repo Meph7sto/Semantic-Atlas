@@ -30,6 +30,11 @@ class Settings:
     # 当设置为 "true" 时，lifespan 会跳过本地模型加载
     SKIP_MODEL_LOAD = os.getenv("SKIP_MODEL_LOAD", "false").lower() == "true"
 
+    # 是否跳过知识库（KB）索引加载（默认为 True，即跳过）
+    # KB 依赖 HuggingFace 嵌入模型，跳过可避免任何联网尝试
+    # 当设置为 "false" 时，lifespan 会在启动时预加载 KB 索引
+    SKIP_KB_LOAD = os.getenv("SKIP_KB_LOAD", "true").lower() == "true"
+
     # 生成式模型（冲突/追溯等）路径配置
     MODEL_RELATIVE_PATH = os.getenv(
         "LLM_MODEL_RELATIVE_PATH",

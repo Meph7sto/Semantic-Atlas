@@ -48,8 +48,16 @@ class _StubHTTPClient(httpx.AsyncClient):
             "transcript_text": "[00:00] vision_agent: 一张测试图片",
         }
 
-    async def post(self, url: str, data=None, files=None, timeout=None):
-        self.calls.append({"url": url, "data": data, "files": files, "timeout": timeout})
+    async def post(self, url: str, data=None, files=None, headers=None, timeout=None):
+        self.calls.append(
+            {
+                "url": url,
+                "data": data,
+                "files": files,
+                "headers": headers,
+                "timeout": timeout,
+            }
+        )
         return _FakeUpstreamResponse(200, self.payload)
 
 

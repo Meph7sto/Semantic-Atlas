@@ -47,7 +47,7 @@ class AiChatService:
                 cur.execute(
                     """
                     SELECT
-                        session_id, project_id, user_id, title,
+                        session_id, project_id, user_id, title, active_graph_id,
                         to_char(created_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
                         to_char(updated_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
                     FROM ai_chat_sessions
@@ -79,11 +79,11 @@ class AiChatService:
                 cur.execute(
                     """
                     INSERT INTO ai_chat_sessions (
-                        session_id, project_id, user_id, title, created_at, updated_at
+                        session_id, project_id, user_id, title, active_graph_id, created_at, updated_at
                     )
-                    VALUES (%s, %s, %s, %s, %s::timestamptz, %s::timestamptz)
+                    VALUES (%s, %s, %s, %s, %s, %s::timestamptz, %s::timestamptz)
                     """,
-                    (session_id, project_id, user_id, title, now, now),
+                    (session_id, project_id, user_id, title, None, now, now),
                 )
 
         return {
@@ -91,6 +91,7 @@ class AiChatService:
             "project_id": project_id,
             "user_id": user_id,
             "title": title,
+            "active_graph_id": None,
             "created_at": now,
             "updated_at": now,
         }
@@ -102,7 +103,7 @@ class AiChatService:
                 cur.execute(
                     """
                     SELECT
-                        session_id, project_id, user_id, title,
+                        session_id, project_id, user_id, title, active_graph_id,
                         to_char(created_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
                         to_char(updated_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
                     FROM ai_chat_sessions
@@ -126,7 +127,7 @@ class AiChatService:
                     cur.execute(
                         """
                         SELECT
-                            session_id, project_id, user_id, title,
+                            session_id, project_id, user_id, title, active_graph_id,
                             to_char(created_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
                             to_char(updated_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
                         FROM ai_chat_sessions
@@ -140,7 +141,7 @@ class AiChatService:
                     cur.execute(
                         """
                         SELECT
-                            session_id, project_id, user_id, title,
+                            session_id, project_id, user_id, title, active_graph_id,
                             to_char(created_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
                             to_char(updated_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
                         FROM ai_chat_sessions
@@ -176,7 +177,7 @@ class AiChatService:
                 cur.execute(
                     f"""
                     SELECT
-                        s.session_id, s.project_id, s.user_id, s.title,
+                        s.session_id, s.project_id, s.user_id, s.title, s.active_graph_id,
                         to_char(s.created_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
                         to_char(s.updated_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at,
                         (SELECT COUNT(*) FROM ai_chat_messages m WHERE m.session_id = s.session_id) AS message_count,
@@ -196,29 +197,31 @@ class AiChatService:
         self,
         session_id: str,
         title: Optional[str] = None,
+        active_graph_id: Any = ...,
     ) -> bool:
         """Update session title and updated_at timestamp."""
         now = _utc_now_iso(timespec="milliseconds")
+        fields: List[str] = ["updated_at = %s::timestamptz"]
+        params: List[Any] = [now]
+
+        if title is not None:
+            fields.append("title = %s")
+            params.append(title)
+
+        if active_graph_id is not ...:
+            fields.append("active_graph_id = %s")
+            params.append(active_graph_id)
+
         with db_service._connect() as conn:
             with conn.cursor() as cur:
-                if title is not None:
-                    cur.execute(
-                        """
-                        UPDATE ai_chat_sessions
-                        SET title = %s, updated_at = %s::timestamptz
-                        WHERE session_id = %s
-                        """,
-                        (title, now, session_id),
-                    )
-                else:
-                    cur.execute(
-                        """
-                        UPDATE ai_chat_sessions
-                        SET updated_at = %s::timestamptz
-                        WHERE session_id = %s
-                        """,
-                        (now, session_id),
-                    )
+                cur.execute(
+                    f"""
+                    UPDATE ai_chat_sessions
+                    SET {', '.join(fields)}
+                    WHERE session_id = %s
+                    """,
+                    params + [session_id],
+                )
                 return cur.rowcount > 0
 
     def delete_session(self, session_id: str) -> bool:

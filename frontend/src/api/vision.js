@@ -7,7 +7,6 @@ export const visionApi = {
             prompt = '请详细描述图片内容，并总结关键信息。',
             speaker = 'vision_agent',
             maxNewTokens = null,
-            autodlConfig = null,
         } = {}
     ) {
         if (!file) {
@@ -19,9 +18,6 @@ export const visionApi = {
         formData.append('speaker', String(speaker || '').trim())
         if (maxNewTokens != null && Number(maxNewTokens) > 0) {
             formData.append('max_new_tokens', String(Number(maxNewTokens)))
-        }
-        if (autodlConfig) {
-            formData.append('autodl_config', JSON.stringify(autodlConfig))
         }
         const resp = await api.post('/vision/caption', formData, {
             headers: { 'Content-Type': 'multipart/form-data' },

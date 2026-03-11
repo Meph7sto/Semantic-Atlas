@@ -41,7 +41,12 @@ const AUTO_LAYOUT_BASE_Y = 98
 const AUTO_LAYOUT_COLUMN_GAP = 320
 const AUTO_LAYOUT_ROW_GAP = 112
 
+const wrapperRef = ref(null)
 const canvasRef = ref(null)
+const zoom = ref(1)
+const panX = ref(0)
+const panY = ref(0)
+const canvasDragState = ref(null)
 const movedByDrag = ref(false)
 const nodePositions = ref({})
 const edgeOffsets = ref({})
@@ -54,14 +59,18 @@ const containerDragState = ref(null)
 const nodeTypeRank = {
   start: 0,
   node: 1,
-  decision: 2,
-  handoff: 3,
-  end: 4
+  llm: 2,
+  invoke: 3,
+  decision: 4,
+  handoff: 5,
+  end: 6
 }
 
 const nodeColors = {
   start: 'bg-emerald-100 border-emerald-500 text-emerald-900',
   node: 'bg-blue-100 border-blue-500 text-blue-900',
+  llm: 'bg-indigo-100 border-indigo-500 text-indigo-900',
+  invoke: 'bg-fuchsia-100 border-fuchsia-500 text-fuchsia-900',
   decision: 'bg-amber-100 border-amber-500 text-amber-900',
   handoff: 'bg-sky-100 border-sky-500 text-sky-900',
   end: 'bg-rose-100 border-rose-500 text-rose-900'
@@ -70,6 +79,8 @@ const nodeColors = {
 const nodeLabels = {
   start: 'START',
   node: 'NODE',
+  llm: 'LLM',
+  invoke: 'INVOKE',
   decision: 'DECISION',
   handoff: 'HANDOFF',
   end: 'END'
@@ -321,12 +332,81 @@ const emitLayoutChange = () => {
   })
 }
 
+const zoomIn = () => {
+  const newZoom = Math.min(zoom.value + 0.2, 3)
+  applyZoomCenter(newZoom)
+}
+const zoomOut = () => {
+  const newZoom = Math.max(zoom.value - 0.2, 0.2)
+  applyZoomCenter(newZoom)
+}
+const resetZoom = () => {
+  zoom.value = 1
+  panX.value = 0
+  panY.value = 0
+}
+
+const applyZoomCenter = (newZoom) => {
+  if (!wrapperRef.value) return
+  const wrapperRect = wrapperRef.value.getBoundingClientRect()
+  const centerX = wrapperRect.width / 2
+  const centerY = wrapperRect.height / 2
+
+  const localX = (centerX - panX.value) / zoom.value
+  const localY = (centerY - panY.value) / zoom.value
+
+  zoom.value = newZoom
+  panX.value = centerX - localX * newZoom
+  panY.value = centerY - localY * newZoom
+}
+
+const handleWheel = (event) => {
+  if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+    panX.value -= event.deltaX
+    panY.value -= event.deltaY
+    return
+  }
+  
+  event.preventDefault()
+  
+  const delta = event.deltaY > 0 ? -0.1 : 0.1
+  const newZoom = Math.min(Math.max(0.2, zoom.value + delta), 3)
+  
+  if (!wrapperRef.value) return
+  const wrapperRect = wrapperRef.value.getBoundingClientRect()
+  
+  const screenX = event.clientX - wrapperRect.left
+  const screenY = event.clientY - wrapperRect.top
+
+  const localX = (screenX - panX.value) / zoom.value
+  const localY = (screenY - panY.value) / zoom.value
+
+  zoom.value = newZoom
+  panX.value = screenX - localX * newZoom
+  panY.value = screenY - localY * newZoom
+}
+
+const handleCanvasPointerDown = (event) => {
+  if (event.button !== undefined && event.button !== 0 && event.button !== 1) return
+  movedByDrag.value = false
+  canvasDragState.value = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    originPanX: panX.value,
+    originPanY: panY.value
+  }
+  if (wrapperRef.value) {
+    wrapperRef.value.setPointerCapture(event.pointerId)
+  }
+}
+
 const toCanvasPoint = (event) => {
   const rect = canvasRef.value?.getBoundingClientRect()
   if (!rect) return { x: 0, y: 0 }
   return {
-    x: event.clientX - rect.left,
-    y: event.clientY - rect.top
+    x: (event.clientX - rect.left) / zoom.value,
+    y: (event.clientY - rect.top) / zoom.value
   }
 }
 
@@ -406,6 +486,15 @@ const handleContainerPointerDown = (box, event) => {
 }
 
 const handleGlobalPointerMove = (event) => {
+  if (canvasDragState.value && canvasDragState.value.pointerId === event.pointerId) {
+    const deltaX = event.clientX - canvasDragState.value.startX
+    const deltaY = event.clientY - canvasDragState.value.startY
+    panX.value = canvasDragState.value.originPanX + deltaX
+    panY.value = canvasDragState.value.originPanY + deltaY
+    movedByDrag.value = true
+    return
+  }
+
   if (nodeDragState.value && nodeDragState.value.pointerId === event.pointerId) {
     const pointer = toCanvasPoint(event)
     const deltaX = pointer.x - nodeDragState.value.startX
@@ -470,6 +559,11 @@ const handleGlobalPointerMove = (event) => {
 }
 
 const finishDragging = (event) => {
+  if (canvasDragState.value && canvasDragState.value.pointerId === event.pointerId) {
+    canvasDragState.value = null
+    return
+  }
+
   if (nodeDragState.value && nodeDragState.value.pointerId === event.pointerId) {
     nodeDragState.value = null
     emitLayoutChange()
@@ -642,11 +736,32 @@ onBeforeUnmount(() => {
 
 <template>
   <div
-    ref="canvasRef"
-    class="relative bg-white border border-zinc-300 rounded-xl overflow-hidden"
-    style="min-height: 560px; background-image: linear-gradient(0deg, rgba(15,23,42,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(15,23,42,0.04) 1px, transparent 1px); background-size: 24px 24px;"
+    ref="wrapperRef"
+    class="relative bg-white rounded-xl overflow-hidden select-none touch-none w-full h-full cursor-grab active:cursor-grabbing border border-zinc-300"
+    style="min-height: 560px;"
+    @pointerdown="handleCanvasPointerDown"
+    @wheel.prevent="handleWheel"
   >
-    <div class="absolute inset-0" style="z-index: 1;">
+    <!-- Background grid -->
+    <div
+      class="absolute inset-0 pointer-events-none"
+      :style="{
+        backgroundImage: 'linear-gradient(0deg, rgba(15,23,42,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(15,23,42,0.04) 1px, transparent 1px)',
+        backgroundSize: `${24 * zoom}px ${24 * zoom}px`,
+        backgroundPosition: `${panX}px ${panY}px`
+      }"
+    ></div>
+
+    <div
+      ref="canvasRef"
+      class="absolute origin-top-left"
+      :style="{
+        transform: `translate(${panX}px, ${panY}px) scale(${zoom})`,
+        width: '1px',
+        height: '1px'
+      }"
+    >
+      <div class="absolute" style="z-index: 1;">
       <div
         v-for="box in containerBoxes"
         :key="box.id"
@@ -675,7 +790,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <svg class="absolute inset-0 w-full h-full pointer-events-none" style="z-index: 2;">
+    <svg class="absolute pointer-events-none" style="z-index: 2; width: 1px; height: 1px; overflow: visible;">
       <defs>
         <marker id="execution-graph-arrow-intra" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
           <polygon points="0 0, 10 3.5, 0 7" fill="#475569" />
@@ -750,7 +865,7 @@ onBeforeUnmount(() => {
         height: `${NODE_HEIGHT}px`,
         zIndex: selectedId === node.node_id ? 16 : 10
       }"
-      @pointerdown="handleNodePointerDown(node, $event)"
+      @pointerdown.stop="handleNodePointerDown(node, $event)"
       @click.stop="handleNodeClick(node)"
     >
       <div class="flex flex-col items-center justify-center h-full px-2">
@@ -777,14 +892,28 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div class="absolute right-4 top-3 px-2 py-1 text-[11px] text-zinc-500 bg-white/90 rounded border border-zinc-200">
+    </div> <!-- close canvasRef -->
+
+    <div class="absolute bottom-4 right-4 flex shadow-[0_2px_10px_rgba(0,0,0,0.08)] border border-zinc-200 rounded-lg overflow-hidden z-20 bg-white/95 backdrop-blur pointer-events-auto">
+      <button class="px-2.5 py-1.5 hover:bg-zinc-100 text-zinc-600 transition-colors cursor-pointer" @pointerdown.stop @click.stop="zoomIn" title="放大">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+      </button>
+      <button class="px-3 py-1.5 border-l border-r border-zinc-200 hover:bg-zinc-100 text-zinc-700 transition-colors cursor-pointer" @pointerdown.stop @click.stop="resetZoom" title="重置视角">
+        <span class="text-xs font-medium w-[42px] inline-block text-center">{{ Math.round(zoom * 100) }}%</span>
+      </button>
+      <button class="px-2.5 py-1.5 hover:bg-zinc-100 text-zinc-600 transition-colors cursor-pointer" @pointerdown.stop @click.stop="zoomOut" title="缩小">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+      </button>
+    </div>
+
+    <div class="absolute right-4 top-3 px-2 py-1 text-[11px] text-zinc-500 bg-white/90 rounded border border-zinc-200 pointer-events-none" style="z-index: 18;">
       拖动容器标题可整体移动；拖动节点可微调；拖动边中点可调整连线路径
     </div>
 
-    <div v-if="nodes.length === 0" class="absolute inset-0 flex items-center justify-center text-zinc-400">
-      <div class="text-center">
-        <p class="text-sm">暂无节点</p>
-        <p class="text-xs mt-1">请从左侧面板添加节点</p>
+    <div v-if="nodes.length === 0" class="absolute inset-0 flex items-center justify-center text-zinc-400 pointer-events-none" style="z-index: 10;">
+      <div class="text-center bg-white/60 px-4 py-2 rounded-xl backdrop-blur-sm">
+        <p class="text-sm font-medium">暂无节点</p>
+        <p class="text-xs mt-1">等待模型生成或配置连接</p>
       </div>
     </div>
   </div>

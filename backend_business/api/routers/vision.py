@@ -14,17 +14,12 @@ from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Reque
 from backend_business.api.deps.auth import get_current_user
 from backend_business.api.http.errors import ErrorResponse
 from backend_business.api.routers.schemas.vision_schemas import (
-    VisionAutoDLConfig,
     VisionCallbackPayload,
     VisionPreviewConfirmRequest,
 )
 from backend_business.config import settings
 from backend_business.services.db_service import db_service
 from backend_business.services.transcript_parser import parse_transcript_to_spans
-from backend_business.services.vision_autodl_service import (
-    VisionAutoDLError,
-    run_caption as run_autodl_caption,
-)
 
 
 router = APIRouter(prefix="/api/v2/vision", tags=["vision"])
@@ -140,7 +135,6 @@ async def caption_image_via_autodl(
     prompt: str = Form("请详细描述图片内容，并总结关键信息。"),
     speaker: str = Form("vision_agent"),
     max_new_tokens: int | None = Form(default=None),
-    autodl_config: str | None = Form(default=None),
     current_user: dict = Depends(get_current_user),
 ):
     _ = current_user
@@ -172,69 +166,50 @@ async def caption_image_via_autodl(
             raise ErrorResponse("max_new_tokens 必须大于 0", 400)
         upstream_data["max_new_tokens"] = str(max_new_tokens)
 
-    runtime_config: VisionAutoDLConfig | None = None
-    if autodl_config and autodl_config.strip():
-        try:
-            runtime_config = VisionAutoDLConfig.from_json(autodl_config)
-        except ValueError as exc:
-            raise ErrorResponse(str(exc), 400)
+    client = getattr(request.app.state, "http_client", None)
+    if not isinstance(client, httpx.AsyncClient):
+        raise ErrorResponse("HTTP 客户端未初始化", 500)
 
-    if runtime_config is not None:
-        try:
-            upstream_json = run_autodl_caption(
-                runtime_config,
-                filename=file.filename or "upload.jpg",
-                content_type=file.content_type or "application/octet-stream",
-                image_bytes=file_bytes,
-                prompt=prompt.strip(),
-                speaker=speaker.strip(),
-                max_new_tokens=max_new_tokens,
-                timeout_seconds=int(settings.VISION_CAPTION_TIMEOUT_SECONDS),
-            )
-        except VisionAutoDLError as exc:
-            raise ErrorResponse(f"AutoDL 远端推理失败: {str(exc)}", 502)
-        except Exception as exc:
-            raise ErrorResponse(f"AutoDL 远端推理异常: {str(exc)}", 500)
-    else:
-        client = getattr(request.app.state, "http_client", None)
-        if not isinstance(client, httpx.AsyncClient):
-            raise ErrorResponse("HTTP 客户端未初始化", 500)
+    request_headers: Dict[str, str] = {}
+    if settings.VISION_SERVICE_TOKEN:
+        request_headers["Authorization"] = f"Bearer {settings.VISION_SERVICE_TOKEN}"
 
-        try:
-            upstream_resp = await client.post(
-                settings.VISION_CAPTION_URL,
-                data=upstream_data,
-                files=upstream_files,
-                timeout=settings.VISION_CAPTION_TIMEOUT_SECONDS,
-            )
-        except httpx.ConnectError:
-            raise ErrorResponse(
-                f"无法连接 AutoDL 图生文服务: {settings.VISION_CAPTION_URL}",
-                503,
-            )
-        except httpx.TimeoutException:
-            raise ErrorResponse("AutoDL 图生文服务超时", 504)
-        except Exception as exc:
-            raise ErrorResponse(f"调用 AutoDL 图生文服务失败: {str(exc)}", 500)
+    try:
+        upstream_resp = await client.post(
+            settings.VISION_CAPTION_URL,
+            data=upstream_data,
+            files=upstream_files,
+            headers=request_headers or None,
+            timeout=settings.VISION_CAPTION_TIMEOUT_SECONDS,
+        )
+    except httpx.ConnectError:
+        raise ErrorResponse(
+            f"无法连接 AutoDL 图生文服务: {settings.VISION_CAPTION_URL}",
+            503,
+        )
+    except httpx.TimeoutException:
+        raise ErrorResponse("AutoDL 图生文服务超时", 504)
+    except Exception as exc:
+        raise ErrorResponse(f"调用 AutoDL 图生文服务失败: {str(exc)}", 500)
 
-        try:
-            upstream_json = upstream_resp.json()
-        except ValueError:
-            raise ErrorResponse(
-                f"AutoDL 返回非 JSON 响应: {upstream_resp.text[:500]}",
-                502,
-            )
+    try:
+        upstream_json = upstream_resp.json()
+    except ValueError:
+        raise ErrorResponse(
+            f"AutoDL 返回非 JSON 响应: {upstream_resp.text[:500]}",
+            502,
+        )
 
-        if upstream_resp.status_code >= 400:
-            detail = (
-                upstream_json.get("detail")
-                if isinstance(upstream_json, dict)
-                else str(upstream_json)
-            )
-            raise ErrorResponse(
-                f"AutoDL 图生文失败({upstream_resp.status_code}): {detail}",
-                502,
-            )
+    if upstream_resp.status_code >= 400:
+        detail = (
+            upstream_json.get("detail")
+            if isinstance(upstream_json, dict)
+            else str(upstream_json)
+        )
+        raise ErrorResponse(
+            f"AutoDL 图生文失败({upstream_resp.status_code}): {detail}",
+            502,
+        )
 
     try:
         payload = VisionCallbackPayload(
