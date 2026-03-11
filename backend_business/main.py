@@ -60,13 +60,17 @@ async def lifespan(app: FastAPI):
     print(f"[lifespan] Inference URL: {settings.INFERENCE_BASE_URL}")
     print(f"[lifespan] Database: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}")
     app.state.classification_http_client = httpx.AsyncClient()
+    app.state.http_client = httpx.AsyncClient()
 
     yield
 
     # 关闭时的逻辑
-    client = getattr(app.state, "classification_http_client", None)
-    if isinstance(client, httpx.AsyncClient):
-        await client.aclose()
+    classification_client = getattr(app.state, "classification_http_client", None)
+    if isinstance(classification_client, httpx.AsyncClient):
+        await classification_client.aclose()
+    http_client = getattr(app.state, "http_client", None)
+    if isinstance(http_client, httpx.AsyncClient):
+        await http_client.aclose()
     print("[lifespan] FastAPI business backend shutting down...")
 
 
@@ -123,6 +127,7 @@ from backend_business.api.routers import (
     push,
     requirement_actor,
     requirements,
+    vision,
 )
 app.include_router(agent_chat.router)
 app.include_router(deduplication.router)
@@ -140,6 +145,7 @@ app.include_router(push.router)
 app.include_router(mobile_chat.router)
 app.include_router(file.router)
 app.include_router(execution_graph.router)
+app.include_router(vision.router)
 
 # 注册业务异常处理器（保留 FastAPI 原生 HTTPException / validation 语义）
 app.add_exception_handler(ErrorResponse, error_response_handler)

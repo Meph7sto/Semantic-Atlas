@@ -129,6 +129,7 @@ bash deploy/stop_services.sh
 - `deploy/start.sh` 与 `deploy/start.ps1` 会执行前端构建并生成 `deploy/nginx.generated.conf`
 - Windows 脚本会尝试下载 `deploy/nginx-1.26.1`（若本地不存在）
 - 日志默认输出在 `deploy/logs/`
+- 图生文（AutoDL）在 Alpha 图生文页面内填写连接信息并点击生成即可，无需单独启动脚本
 
 ## 前端路由
 
@@ -168,6 +169,9 @@ bash deploy/stop_services.sh
 | `/alpha/message-push` | MessagePush | 消息推送 |
 | `/alpha/mobile-bridge` | MobileBridge | 移动端桥接 |
 | `/alpha/file-receive` | FileReceive | 文件接收 |
+<<<<<<< HEAD
+| `/alpha/image-caption` | ImageCaptionPreview | 图生文（AutoDL 配置与生成） |
+=======
 | `/alpha/execution-topology` | ExecutionTopologyTemplate | 执行拓扑可视化 |
 | `/alpha/actor-visual-tester` | ActorVisualTester | Actor 可视化测试 |
 
@@ -176,6 +180,7 @@ bash deploy/stop_services.sh
 | 路由 | 说明 |
 |------|------|
 | `/guide` | 引导页/入口点 |
+>>>>>>> 4354358c367e1a209ceed55747e38c6d53d51b2f
 
 ## 配置说明
 
