@@ -19,6 +19,8 @@ from backend_business.config import settings
 from backend_business.services.db_service import db_service
 from backend_business.services.db_service_parts.utils import _utc_now_iso
 
+DEFAULT_PROMPT_PAYLOAD_FORMAT = "json"
+
 
 class SessionAccessError(Exception):
     """Raised when a session is missing or not accessible by the actor."""
@@ -32,6 +34,26 @@ class AiChatService:
     def __init__(self) -> None:
         self._subscribers: List[Tuple[str, queue.Queue]] = []
         self._lock = threading.Lock()
+        self._ensure_session_prompt_payload_format_column()
+
+    def _ensure_session_prompt_payload_format_column(self) -> None:
+        try:
+            with db_service._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "ALTER TABLE ai_chat_sessions ADD COLUMN IF NOT EXISTS prompt_payload_format TEXT"
+                    )
+                    cur.execute(
+                        "UPDATE ai_chat_sessions SET prompt_payload_format = %s WHERE prompt_payload_format IS NULL OR prompt_payload_format = ''",
+                        (DEFAULT_PROMPT_PAYLOAD_FORMAT,),
+                    )
+                    cur.execute(
+                        "ALTER TABLE ai_chat_sessions ALTER COLUMN prompt_payload_format SET DEFAULT %s",
+                        (DEFAULT_PROMPT_PAYLOAD_FORMAT,),
+                    )
+        except Exception:
+            # Schema can be unavailable in isolated test stubs; runtime access paths will still validate.
+            return
 
     # ========================
     # Session Management
@@ -47,7 +69,7 @@ class AiChatService:
                 cur.execute(
                     """
                     SELECT
-                        session_id, project_id, user_id, title, active_graph_id,
+                        session_id, project_id, user_id, title, active_graph_id, prompt_payload_format,
                         to_char(created_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
                         to_char(updated_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
                     FROM ai_chat_sessions
@@ -66,6 +88,7 @@ class AiChatService:
         user_id: str,
         project_id: Optional[str] = None,
         title: Optional[str] = None,
+        prompt_payload_format: str = DEFAULT_PROMPT_PAYLOAD_FORMAT,
     ) -> Dict[str, Any]:
         """Create a new chat session."""
         if not user_id:
@@ -79,11 +102,20 @@ class AiChatService:
                 cur.execute(
                     """
                     INSERT INTO ai_chat_sessions (
-                        session_id, project_id, user_id, title, active_graph_id, created_at, updated_at
+                        session_id, project_id, user_id, title, active_graph_id, prompt_payload_format, created_at, updated_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s::timestamptz, %s::timestamptz)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s::timestamptz, %s::timestamptz)
                     """,
-                    (session_id, project_id, user_id, title, None, now, now),
+                    (
+                        session_id,
+                        project_id,
+                        user_id,
+                        title,
+                        None,
+                        prompt_payload_format or DEFAULT_PROMPT_PAYLOAD_FORMAT,
+                        now,
+                        now,
+                    ),
                 )
 
         return {
@@ -92,6 +124,7 @@ class AiChatService:
             "user_id": user_id,
             "title": title,
             "active_graph_id": None,
+            "prompt_payload_format": prompt_payload_format or DEFAULT_PROMPT_PAYLOAD_FORMAT,
             "created_at": now,
             "updated_at": now,
         }
@@ -103,7 +136,7 @@ class AiChatService:
                 cur.execute(
                     """
                     SELECT
-                        session_id, project_id, user_id, title, active_graph_id,
+                        session_id, project_id, user_id, title, active_graph_id, prompt_payload_format,
                         to_char(created_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
                         to_char(updated_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
                     FROM ai_chat_sessions
@@ -127,7 +160,7 @@ class AiChatService:
                     cur.execute(
                         """
                         SELECT
-                            session_id, project_id, user_id, title, active_graph_id,
+                            session_id, project_id, user_id, title, active_graph_id, prompt_payload_format,
                             to_char(created_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
                             to_char(updated_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
                         FROM ai_chat_sessions
@@ -141,7 +174,7 @@ class AiChatService:
                     cur.execute(
                         """
                         SELECT
-                            session_id, project_id, user_id, title, active_graph_id,
+                            session_id, project_id, user_id, title, active_graph_id, prompt_payload_format,
                             to_char(created_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
                             to_char(updated_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
                         FROM ai_chat_sessions
@@ -177,7 +210,7 @@ class AiChatService:
                 cur.execute(
                     f"""
                     SELECT
-                        s.session_id, s.project_id, s.user_id, s.title, s.active_graph_id,
+                        s.session_id, s.project_id, s.user_id, s.title, s.active_graph_id, s.prompt_payload_format,
                         to_char(s.created_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
                         to_char(s.updated_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at,
                         (SELECT COUNT(*) FROM ai_chat_messages m WHERE m.session_id = s.session_id) AS message_count,
@@ -198,6 +231,7 @@ class AiChatService:
         session_id: str,
         title: Optional[str] = None,
         active_graph_id: Any = ...,
+        prompt_payload_format: Any = ...,
     ) -> bool:
         """Update session title and updated_at timestamp."""
         now = _utc_now_iso(timespec="milliseconds")
@@ -211,6 +245,10 @@ class AiChatService:
         if active_graph_id is not ...:
             fields.append("active_graph_id = %s")
             params.append(active_graph_id)
+
+        if prompt_payload_format is not ...:
+            fields.append("prompt_payload_format = %s")
+            params.append(prompt_payload_format or DEFAULT_PROMPT_PAYLOAD_FORMAT)
 
         with db_service._connect() as conn:
             with conn.cursor() as cur:

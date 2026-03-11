@@ -361,29 +361,8 @@ const applyZoomCenter = (newZoom) => {
 }
 
 const handleWheel = (event) => {
-  if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
-    panX.value -= event.deltaX
-    panY.value -= event.deltaY
-    return
-  }
-  
+  // 禁用滚轮缩放和滚动，仅允许手动拖拽
   event.preventDefault()
-  
-  const delta = event.deltaY > 0 ? -0.1 : 0.1
-  const newZoom = Math.min(Math.max(0.2, zoom.value + delta), 3)
-  
-  if (!wrapperRef.value) return
-  const wrapperRect = wrapperRef.value.getBoundingClientRect()
-  
-  const screenX = event.clientX - wrapperRect.left
-  const screenY = event.clientY - wrapperRect.top
-
-  const localX = (screenX - panX.value) / zoom.value
-  const localY = (screenY - panY.value) / zoom.value
-
-  zoom.value = newZoom
-  panX.value = screenX - localX * newZoom
-  panY.value = screenY - localY * newZoom
 }
 
 const handleCanvasPointerDown = (event) => {

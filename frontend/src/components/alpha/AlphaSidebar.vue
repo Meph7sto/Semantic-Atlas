@@ -56,7 +56,7 @@ const toggleSidebar = (open) => {
 
     <!-- Sidebar -->
     <aside
-      class="flex flex-col border-r border-zinc-200 bg-zinc-50 transition-[width,opacity,transform] duration-300 ease-in-out overflow-hidden"
+      class="flex flex-col h-full border-r border-zinc-200 bg-zinc-50 transition-[width,opacity,transform] duration-300 ease-in-out overflow-hidden"
       :class="isOpen ? 'w-64 opacity-100 translate-x-0' : 'w-0 opacity-0 -translate-x-4'"
     >
       <!-- Header -->
@@ -213,15 +213,6 @@ const toggleSidebar = (open) => {
         >
           <Network class="w-4 h-4" />
           <span class="whitespace-nowrap">Acquisition + Trace</span>
-        </RouterLink>
-
-        <RouterLink
-          to="/alpha/chat"
-          active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
-          class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
-        >
-          <MessageSquare class="w-4 h-4" />
-          <span class="whitespace-nowrap">General Q&amp;A</span>
         </RouterLink>
 
         <!-- Collapsible group: 移动端管理 -->

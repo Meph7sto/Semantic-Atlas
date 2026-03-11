@@ -15,7 +15,7 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from backend_business.services.agent.requirement_agent_chat_service import (  # noqa: E402
+from backend_business.services.agent.agents.requirement_agent import (  # noqa: E402
     RequirementAgentChatService,
     _RuntimeGraphRecorder,
 )

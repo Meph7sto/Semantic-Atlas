@@ -8,14 +8,22 @@ import {
   Send,
   Sparkles,
   Trash2,
-  Workflow
+  Workflow,
+  X
 } from 'lucide-vue-next'
 
 import { manageApi } from '@/api/project'
 import { agentChatApi } from '@/api/agentChat'
+import { api } from '@/api/request'
 import ExecutionGraphCanvas from '@/components/alpha/ExecutionGraphCanvas.vue'
 
 const createEmptyGraphDetail = () => ({ graph: null, containers: [], nodes: [], edges: [] })
+const PROMPT_FORMAT_OPTIONS = [
+  { value: 'json', label: 'JSON' },
+  { value: 'yaml', label: 'YAML' },
+  { value: 'markdown', label: 'Markdown' }
+]
+const DEFAULT_PROMPT_FORMAT = 'json'
 
 const projects = ref([])
 const requirements = ref([])
@@ -29,12 +37,15 @@ const isLoadingProjects = ref(false)
 const isLoadingRequirements = ref(false)
 const isLoadingSessions = ref(false)
 const isCreatingSession = ref(false)
+const isUpdatingSessionFormat = ref(false)
 const errorMessage = ref('')
 const activeGraphId = ref('')
 const graphDetail = ref(createEmptyGraphDetail())
 const stageTimeline = ref([])
 const selectedCanvasId = ref(null)
 const draftAssistantId = ref(null)
+const promptPayloadFormatDraft = ref('markdown')
+const isAssistantOpen = ref(false)
 
 const currentSession = computed(() => {
   return sessions.value.find((item) => item.session_id === sessionId.value) || null
@@ -134,6 +145,18 @@ const formatTime = (value) => {
     hour: '2-digit',
     minute: '2-digit'
   })
+}
+
+const normalizePromptPayloadFormat = (value) => {
+  const normalized = String(value || '').trim().toLowerCase()
+  return PROMPT_FORMAT_OPTIONS.some((item) => item.value === normalized)
+    ? normalized
+    : DEFAULT_PROMPT_FORMAT
+}
+
+const promptPayloadFormatLabel = (value) => {
+  const normalized = normalizePromptPayloadFormat(value)
+  return PROMPT_FORMAT_OPTIONS.find((item) => item.value === normalized)?.label || normalized
 }
 
 const sessionTitle = (session, index = 0) => {
@@ -262,6 +285,7 @@ const loadSessionContent = async (session) => {
   }
 
   sessionId.value = session.session_id
+  promptPayloadFormatDraft.value = normalizePromptPayloadFormat(session.prompt_payload_format)
   errorMessage.value = ''
   resetSessionView()
 
@@ -285,10 +309,18 @@ const loadSessions = async ({ preferredSessionId = sessionId.value } = {}) => {
   isLoadingSessions.value = true
   try {
     const data = await agentChatApi.listSessions(selectedProjectId.value)
-    sessions.value = data
+    sessions.value = (data || []).map((item) => ({
+      ...item,
+      prompt_payload_format: normalizePromptPayloadFormat(item.prompt_payload_format)
+    }))
+    const existingCurrent = sessions.value.find((item) => item.session_id === sessionId.value)
+    if (existingCurrent) {
+      promptPayloadFormatDraft.value = normalizePromptPayloadFormat(existingCurrent.prompt_payload_format)
+    }
 
     if (!sessions.value.length) {
       sessionId.value = ''
+      promptPayloadFormatDraft.value = 'markdown'
       resetSessionView()
       return
     }
@@ -316,13 +348,51 @@ const createSession = async () => {
   isCreatingSession.value = true
   errorMessage.value = ''
   try {
-    const session = await agentChatApi.createSession(selectedProjectId.value, generateSessionTitle())
+    const preferredFormat = normalizePromptPayloadFormat(promptPayloadFormatDraft.value || 'markdown')
+    let session = await agentChatApi.createSession(selectedProjectId.value, generateSessionTitle())
+    if (session?.session_id && normalizePromptPayloadFormat(session.prompt_payload_format) !== preferredFormat) {
+      const resp = await api.patch(`/agent-chat/sessions/${encodeURIComponent(session.session_id)}`, {
+        prompt_payload_format: preferredFormat
+      })
+      session = { ...session, ...(resp.data || {}) }
+    }
+    session = {
+      ...session,
+      prompt_payload_format: normalizePromptPayloadFormat(session.prompt_payload_format)
+    }
     sessions.value = [session, ...sessions.value.filter((item) => item.session_id !== session.session_id)]
     await loadSessionContent(session)
   } catch (err) {
     errorMessage.value = err?.message || '新建会话失败'
   } finally {
     isCreatingSession.value = false
+  }
+}
+
+const updateCurrentSessionPromptFormat = async () => {
+  if (!sessionId.value || isSending.value || isUpdatingSessionFormat.value) return
+  const nextFormat = normalizePromptPayloadFormat(promptPayloadFormatDraft.value)
+  const currentFormat = normalizePromptPayloadFormat(currentSession.value?.prompt_payload_format)
+  if (nextFormat === currentFormat) return
+
+  isUpdatingSessionFormat.value = true
+  errorMessage.value = ''
+  try {
+    const resp = await api.patch(`/agent-chat/sessions/${encodeURIComponent(sessionId.value)}`, {
+      prompt_payload_format: nextFormat
+    })
+    const updated = resp.data || {}
+    const normalized = normalizePromptPayloadFormat(updated.prompt_payload_format || nextFormat)
+    upsertSessionPatch(sessionId.value, {
+      ...updated,
+      prompt_payload_format: normalized
+    })
+    promptPayloadFormatDraft.value = normalized
+  } catch (err) {
+    promptPayloadFormatDraft.value = currentFormat
+    errorMessage.value = err?.message || '更新 Prompt 结构失败'
+  } finally {
+    isUpdatingSessionFormat.value = false
   }
 }
 
@@ -483,6 +553,7 @@ const handleCanvasSelectEdge = (edgeId) => {
 watch(selectedProjectId, async (projectId) => {
   sessionId.value = ''
   sessions.value = []
+  promptPayloadFormatDraft.value = 'markdown'
   resetSessionView()
   if (!projectId) {
     requirements.value = []
@@ -499,199 +570,159 @@ onMounted(async () => {
 
 <template>
   <div class="h-full overflow-y-auto bg-[linear-gradient(180deg,#f7f4ec_0%,#f5f7fb_60%,#ffffff_100%)]">
-    <div class="min-h-full p-6 md:p-8">
-      <div class="flex flex-col gap-6">
-        <section class="flex shrink-0 flex-col overflow-hidden rounded-[28px] border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)]">
-          <header class="border-b border-stone-200 bg-stone-50/80 px-6 py-5">
-            <div class="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <p class="text-xs font-semibold uppercase tracking-[0.28em] text-stone-500">Alpha Workspace</p>
-                <h1 class="mt-2 flex items-center gap-2 text-2xl font-semibold text-stone-900">
-                  <MessageSquare class="h-6 w-6" />
-                  Requirement Agent Chat
-                </h1>
-              </div>
+
+    <!-- 悬浮球按钮 -->
+    <button
+      v-if="!isAssistantOpen"
+      @click="isAssistantOpen = true"
+      class="fixed bottom-8 right-8 z-40 flex h-16 w-16 items-center justify-center bg-stone-900 text-white shadow-[0_12px_32px_rgba(15,23,42,0.24)] transition-transform hover:scale-105"
+    >
+      <MessageSquare class="h-7 w-7" />
+    </button>
+
+    <!-- 悬浮对话面板 -->
+    <Transition
+      enter-active-class="transition duration-300 ease-out"
+      enter-from-class="translate-y-10 scale-95 opacity-0"
+      enter-to-class="translate-y-0 scale-100 opacity-100"
+      leave-active-class="transition duration-200 ease-in"
+      leave-from-class="translate-y-0 scale-100 opacity-100"
+      leave-to-class="translate-y-10 scale-95 opacity-0"
+    >
+      <section
+        v-if="isAssistantOpen"
+        class="fixed bottom-8 right-8 z-50 flex w-[500px] max-w-[calc(100vw-2rem)] h-[85vh] max-h-[900px] shrink-0 flex-col overflow-hidden border border-stone-200 bg-white/95 shadow-[0_24px_80px_rgba(15,23,42,0.12)] backdrop-blur-xl"
+      >
+        <header class="border-b border-stone-200 bg-stone-50/80 px-5 py-4 shrink-0">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <MessageSquare class="h-5 w-5 text-stone-700" />
+              <h1 class="text-base font-semibold text-stone-900">Requirement Agent</h1>
+            </div>
+            <div class="flex items-center gap-1">
               <button
-                class="inline-flex items-center gap-2 rounded-full border border-stone-300 px-4 py-2 text-sm text-stone-700 transition hover:border-stone-400 hover:bg-stone-100"
-                :disabled="isLoadingProjects || isLoadingSessions"
+                class="p-2 text-stone-500 hover:bg-stone-200 transition"
                 @click="refreshWorkspace"
+                title="刷新"
               >
                 <RefreshCw class="h-4 w-4" :class="isLoadingProjects || isLoadingSessions ? 'animate-spin' : ''" />
-                刷新
+              </button>
+              <button
+                class="p-2 text-stone-500 hover:bg-stone-200 transition"
+                @click="isAssistantOpen = false"
+                title="收起助手"
+              >
+                <X class="h-4 w-4" />
               </button>
             </div>
+          </div>
 
-            <div class="mt-5 grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
-              <label class="space-y-2">
-                <span class="text-xs font-medium text-stone-500">项目</span>
-                <select
-                  v-model="selectedProjectId"
-                  class="w-full rounded-2xl border border-stone-300 bg-white px-4 py-3 text-sm text-stone-800 outline-none transition focus:border-stone-500"
-                >
-                  <option value="">请选择项目</option>
-                  <option v-for="project in projects" :key="project.project_id" :value="project.project_id">
-                    {{ project.name }}
-                  </option>
-                </select>
-              </label>
-
-              <div class="rounded-[24px] border border-stone-300 bg-stone-50 px-4 py-4">
-                <div class="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p class="text-xs font-medium text-stone-500">定位方式</p>
-                    <p class="mt-2 text-sm leading-6 text-stone-800">
-                      每个会话独立管理消息与执行图。切换会话时，聊天记录和当前执行图一起切换。
-                    </p>
-                  </div>
-                  <button
-                    class="inline-flex items-center gap-2 rounded-full bg-stone-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
-                    :disabled="!selectedProjectId || isCreatingSession"
-                    @click="createSession"
-                  >
-                    <Plus class="h-4 w-4" />
-                    {{ isCreatingSession ? '创建中...' : '新建会话' }}
-                  </button>
-                </div>
-                <p class="mt-3 text-xs text-stone-500">
-                  当前项目需求数: {{ isLoadingRequirements ? '加载中...' : requirements.length }}
-                </p>
-              </div>
-            </div>
-
-            <div class="mt-5 rounded-[24px] border border-stone-200 bg-white px-4 py-4">
-              <div class="flex items-center justify-between gap-3">
-                <div>
-                  <p class="text-xs font-semibold uppercase tracking-[0.24em] text-stone-500">Sessions</p>
-                  <p class="mt-1 text-sm text-stone-600">选择会话后，会同步切换消息列表和执行图。</p>
-                </div>
-                <span class="rounded-full bg-stone-100 px-3 py-1 text-xs text-stone-600">
-                  {{ sessions.length }} 个会话
-                </span>
-              </div>
-
-              <div v-if="sessions.length" class="mt-4 flex gap-3 overflow-x-auto pb-2">
-                <article
-                  v-for="(session, index) in sessions"
-                  :key="session.session_id"
-                  class="relative min-w-[280px] rounded-[24px] border p-4 transition"
-                  :class="sessionId === session.session_id
-                    ? 'border-stone-900 bg-stone-900 text-white shadow-[0_16px_40px_rgba(15,23,42,0.18)]'
-                    : 'border-stone-200 bg-stone-50 text-stone-800 hover:border-stone-300'"
-                >
-                  <button
-                    class="absolute right-3 top-3 rounded-full p-2 transition"
-                    :class="sessionId === session.session_id ? 'text-white/80 hover:bg-white/10 hover:text-white' : 'text-stone-400 hover:bg-stone-200 hover:text-stone-700'"
-                    :disabled="isSending"
-                    @click.stop="handleDeleteSession(session)"
-                  >
-                    <Trash2 class="h-4 w-4" />
-                  </button>
-
-                  <button class="w-full text-left" @click="handleSelectSession(session)">
-                    <p class="pr-10 text-sm font-semibold">{{ sessionTitle(session, index) }}</p>
-                    <p
-                      class="mt-2 text-xs uppercase tracking-[0.18em]"
-                      :class="sessionId === session.session_id ? 'text-white/60' : 'text-stone-400'"
-                    >
-                      {{ session.session_id }}
-                    </p>
-                    <div class="mt-4 flex flex-wrap gap-2 text-xs">
-                      <span
-                        class="rounded-full px-2.5 py-1"
-                        :class="sessionId === session.session_id ? 'bg-white/10 text-white' : 'bg-white text-stone-600'"
-                      >
-                        {{ session.message_count || 0 }} 条消息
-                      </span>
-                      <span
-                        class="rounded-full px-2.5 py-1"
-                        :class="sessionId === session.session_id ? 'bg-emerald-400/15 text-emerald-100' : 'bg-emerald-50 text-emerald-700'"
-                      >
-                        {{ session.active_graph_id ? '已绑定执行图' : '暂无执行图' }}
-                      </span>
-                    </div>
-                    <p
-                      class="mt-4 text-xs"
-                      :class="sessionId === session.session_id ? 'text-white/70' : 'text-stone-500'"
-                    >
-                      更新于 {{ formatTime(session.updated_at) }}
-                    </p>
-                  </button>
-                </article>
-              </div>
-
-              <div v-else class="mt-4 rounded-[20px] border border-dashed border-stone-300 bg-stone-50 px-4 py-6 text-center text-sm text-stone-500">
-                当前项目还没有会话。点击右上角“新建会话”开始。
-              </div>
-            </div>
-
-            <div class="mt-4 flex flex-wrap items-center gap-3 text-sm text-stone-600">
-              <span class="rounded-full bg-stone-100 px-3 py-1">Session: {{ currentSession ? sessionTitle(currentSession) : '未选择' }}</span>
-              <span class="rounded-full bg-stone-100 px-3 py-1">ID: {{ sessionId || '未建立' }}</span>
-              <span class="rounded-full bg-amber-100 px-3 py-1 text-amber-800">Graph: {{ activeGraphId || '等待运行' }}</span>
-              <span class="rounded-full bg-emerald-100 px-3 py-1 text-emerald-800">状态: {{ latestGraphStatus }}</span>
-            </div>
-          </header>
-
-          <div class="flex h-[1800px] flex-col">
-            <div v-if="sessionId" class="flex-1 space-y-4 overflow-y-auto px-6 py-5">
-              <article
-                v-for="message in messages"
-                :key="message.message_id"
-                class="max-w-[92%] rounded-3xl border px-4 py-3 shadow-sm"
-                :class="message.role === 'user'
-                  ? 'ml-auto border-stone-900 bg-stone-900 text-white'
-                  : 'border-stone-200 bg-stone-50 text-stone-800'"
+          <div class="mt-4 space-y-3">
+            <div class="flex items-center gap-2">
+              <select
+                v-model="selectedProjectId"
+                class="flex-1 border border-stone-300 bg-white px-3 py-2 text-sm text-stone-800 outline-none transition focus:border-stone-500"
               >
-                <div class="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.2em] opacity-70">
-                  <Bot v-if="message.role !== 'user'" class="h-3.5 w-3.5" />
-                  <Sparkles v-else class="h-3.5 w-3.5" />
-                  {{ message.role === 'user' ? 'User' : 'Agent' }}
-                </div>
-                <div class="whitespace-pre-wrap text-sm leading-6">{{ message.content }}</div>
-              </article>
+                <option value="">选择项目 ({{ projects.length }})</option>
+                <option v-for="project in projects" :key="project.project_id" :value="project.project_id">
+                  {{ project.name }}
+                </option>
+              </select>
+              <button
+                class="inline-flex shrink-0 items-center justify-center gap-1 bg-stone-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-stone-700 disabled:opacity-50"
+                :disabled="!selectedProjectId || isCreatingSession"
+                @click="createSession"
+              >
+                <Plus class="h-4 w-4" />
+                新建会话
+              </button>
             </div>
+            
+            <div class="flex gap-2">
+              <select
+                v-model="sessionId"
+                class="flex-1 border border-stone-300 bg-white px-3 py-2 text-sm text-stone-800 outline-none transition focus:border-stone-500"
+                @change="(e) => handleSelectSession(sessions.find(s => s.session_id === e.target.value))"
+              >
+                <option value="">未选择会话</option>
+                <option v-for="(session, index) in sessions" :key="session.session_id" :value="session.session_id">
+                  {{ sessionTitle(session, index) }} ({{ session.message_count || 0 }}条)
+                </option>
+              </select>
+            </div>
+          </div>
+          
+          <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-stone-500">
+            <span v-if="sessionId" class="flex items-center gap-1 bg-stone-200/50 px-1.5 py-0.5">
+              Graph: <span class="font-medium text-stone-700">{{ activeGraphId ? '已绑定' : '无' }}</span>
+            </span>
+            <span v-if="sessionId" class="flex items-center gap-1 bg-stone-200/50 px-1.5 py-0.5">
+              Status: <span class="font-medium text-stone-700">{{ latestGraphStatus }}</span>
+            </span>
+          </div>
+        </header>
 
-            <div v-else class="flex flex-1 items-center justify-center px-6 py-10">
-              <div class="max-w-md rounded-[28px] border border-dashed border-stone-300 bg-stone-50 px-6 py-8 text-center text-stone-600">
-                <p class="text-lg font-semibold text-stone-900">先选择或新建一个会话</p>
-                <p class="mt-2 text-sm leading-6">
-                  会话建立后，这里展示对话记录；下方执行图区会同步显示该会话对应的执行图。
+        <div class="flex flex-1 flex-col min-h-0 bg-white backdrop-blur-md">
+          <div v-if="sessionId" class="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+            <article
+              v-for="message in messages"
+              :key="message.message_id"
+              class="max-w-[92%] border px-4 py-3 shadow-sm"
+              :class="message.role === 'user'
+                ? 'ml-auto border-stone-900 bg-stone-900 text-white'
+                : 'border-stone-200 bg-stone-50 text-stone-800'"
+            >
+              <div class="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.2em] opacity-70">
+                <Bot v-if="message.role !== 'user'" class="h-3.5 w-3.5" />
+                <Sparkles v-else class="h-3.5 w-3.5" />
+                {{ message.role === 'user' ? 'User' : 'Agent' }}
+              </div>
+              <div class="whitespace-pre-wrap text-sm leading-6">{{ message.content }}</div>
+            </article>
+            <div v-if="messages.length === 0" class="py-10 text-center text-sm text-stone-400">暂无消息记录</div>
+          </div>
+
+          <div v-else class="flex flex-1 items-center justify-center px-6 py-10">
+            <div class="text-center text-stone-500">
+              <p class="text-sm">先选择或新建一个项目会话</p>
+            </div>
+          </div>
+
+          <div class="shrink-0 border-t border-stone-200 bg-stone-50/50 px-5 py-4 backdrop-blur-md">
+            <div v-if="errorMessage" class="mb-3 border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+              {{ errorMessage }}
+            </div>
+            <div class="border border-stone-300 bg-white p-2">
+              <textarea
+                v-model="inputMessage"
+                class="h-24 w-full resize-none bg-transparent px-2 py-1 text-sm leading-6 text-stone-800 outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                :disabled="!sessionId || isSending"
+                placeholder="发送消息给 Requirement Agent..."
+              />
+              <div class="flex items-center justify-between gap-3 border-t border-stone-100 px-2 pt-2">
+                <p class="truncate text-[11px] text-stone-400 max-w-[200px]" :title="resolvedRequirement?.title || resolvedRequirementId || '待模型定位'">
+                  定位: {{ resolvedRequirement?.title || resolvedRequirementId || '待定位' }}
                 </p>
-              </div>
-            </div>
-
-            <div class="border-t border-stone-200 bg-white px-6 py-5">
-              <div v-if="errorMessage" class="mb-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                {{ errorMessage }}
-              </div>
-
-              <div class="rounded-[24px] border border-stone-300 bg-stone-50 p-3">
-                <textarea
-                  v-model="inputMessage"
-                  class="h-28 w-full resize-none bg-transparent px-2 py-2 text-sm leading-6 text-stone-800 outline-none disabled:cursor-not-allowed disabled:opacity-60"
-                  :disabled="!sessionId || isSending"
-                  placeholder="例如：把登录性能那条需求的验收标准改成“用户在 3 秒内完成登录并看到首页”"
-                />
-                <div class="flex items-center justify-between gap-3 border-t border-stone-200 px-2 pt-3">
-                  <p class="text-xs text-stone-500">
-                    当前定位: {{ resolvedRequirement?.title || resolvedRequirementId || '待模型定位' }}
-                  </p>
-                  <button
-                    class="inline-flex items-center gap-2 rounded-full bg-stone-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
-                    :disabled="isSending || !inputMessage.trim() || !sessionId"
-                    @click="sendMessage"
-                  >
-                    <Send class="h-4 w-4" />
-                    {{ isSending ? '处理中...' : '发送' }}
-                  </button>
-                </div>
+                <button
+                  class="inline-flex items-center justify-center gap-2 bg-stone-900 px-4 py-2 text-xs font-medium text-white transition hover:bg-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  :disabled="isSending || !inputMessage.trim() || !sessionId"
+                  @click="sendMessage"
+                >
+                  <Send class="h-3.5 w-3.5" />
+                  {{ isSending ? '发送中' : '发送' }}
+                </button>
               </div>
             </div>
           </div>
-        </section>
+        </div>
+      </section>
+    </Transition>
+
+    <div class="min-h-full p-6 md:p-8">
+      <div class="flex flex-col gap-6">
 
         <section class="flex flex-col gap-6 shrink-0 pb-8">
-          <div class="flex flex-col overflow-hidden rounded-[28px] border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)] h-[1200px]">
+          <div class="flex flex-col overflow-hidden border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)] h-[1200px]">
             <div class="shrink-0 flex items-center justify-between border-b border-stone-200 px-5 py-4">
               <h2 class="flex items-center gap-2 text-lg font-semibold text-stone-900">
                 <Workflow class="h-5 w-5" />
@@ -712,7 +743,7 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div class="flex flex-col overflow-hidden rounded-[28px] border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)] max-h-[600px]">
+          <div class="flex flex-col overflow-hidden border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)] max-h-[600px]">
             <div class="shrink-0 border-b border-stone-200 px-5 py-4">
               <h2 class="text-lg font-semibold text-stone-900">节点详情</h2>
             </div>
@@ -731,7 +762,7 @@ onMounted(async () => {
                 </div>
                 <div>
                   <p class="text-xs uppercase tracking-[0.2em] text-stone-500">状态摘要</p>
-                  <pre class="mt-2 overflow-x-auto rounded-2xl bg-stone-900 p-4 text-xs leading-6 text-stone-100">{{ formatJson(selectedNode.config_json) }}</pre>
+                  <pre class="mt-2 overflow-x-auto bg-stone-900 p-4 text-xs leading-6 text-stone-100">{{ formatJson(selectedNode.config_json) }}</pre>
                 </div>
               </div>
 
@@ -742,11 +773,11 @@ onMounted(async () => {
                 </div>
                 <div>
                   <p class="text-xs uppercase tracking-[0.2em] text-stone-500">配置</p>
-                  <pre class="mt-2 overflow-x-auto rounded-2xl bg-stone-900 p-4 text-xs leading-6 text-stone-100">{{ formatJson(selectedEdge.config_json) }}</pre>
+                  <pre class="mt-2 overflow-x-auto bg-stone-900 p-4 text-xs leading-6 text-stone-100">{{ formatJson(selectedEdge.config_json) }}</pre>
                 </div>
               </div>
 
-              <div class="space-y-3 rounded-[24px] bg-stone-50 p-4">
+              <div class="space-y-3 bg-stone-50 p-4">
                 <p class="text-xs uppercase tracking-[0.2em] text-stone-500">最新写入结果</p>
                 <pre class="overflow-x-auto text-xs leading-6 text-stone-700">{{ formatJson(latestWriteSummary) }}</pre>
               </div>
@@ -754,7 +785,7 @@ onMounted(async () => {
           </div>
 
           <div class="grid grid-cols-1 gap-6 lg:grid-cols-[0.9fr_1.1fr] h-[450px]">
-            <div class="flex flex-col overflow-hidden rounded-[28px] border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)]">
+            <div class="flex flex-col overflow-hidden border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)]">
               <div class="shrink-0 border-b border-stone-200 px-5 py-4">
                 <h2 class="text-lg font-semibold text-stone-900">运行时间线</h2>
               </div>
@@ -762,7 +793,7 @@ onMounted(async () => {
                 <div
                   v-for="item in stageTimeline"
                   :key="item.id"
-                  class="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3"
+                  class="border border-stone-200 bg-stone-50 px-4 py-3"
                 >
                   <p class="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">{{ item.event }}</p>
                   <pre class="mt-2 overflow-x-auto text-xs leading-6 text-stone-700">{{ formatJson(item.data) }}</pre>
@@ -770,38 +801,38 @@ onMounted(async () => {
               </div>
             </div>
 
-            <div class="flex flex-col overflow-hidden rounded-[28px] border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)]">
+            <div class="flex flex-col overflow-hidden border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)]">
               <div class="shrink-0 border-b border-stone-200 px-5 py-4">
                 <h2 class="text-lg font-semibold text-stone-900">模型定位结果</h2>
               </div>
               <div class="flex-1 min-h-0 space-y-4 overflow-y-auto px-5 py-4 text-sm text-stone-700">
-                <div class="rounded-[24px] bg-stone-50 p-4">
+                <div class="bg-stone-50 p-4">
                   <p class="text-xs uppercase tracking-[0.2em] text-stone-500">目标需求</p>
                   <p class="mt-2 text-base font-medium text-stone-900">
                     {{ resolvedRequirement?.title || resolvedRequirementId || '本轮尚未定位到唯一需求' }}
                   </p>
                 </div>
                 <div class="grid gap-4 md:grid-cols-2">
-                  <div class="rounded-[24px] bg-stone-50 p-4">
+                  <div class="bg-stone-50 p-4">
                     <p class="text-xs uppercase tracking-[0.2em] text-stone-500">优先级</p>
                     <p class="mt-2">{{ resolvedRequirement?.priority || '未设置' }}</p>
                   </div>
-                  <div class="rounded-[24px] bg-stone-50 p-4">
+                  <div class="bg-stone-50 p-4">
                     <p class="text-xs uppercase tracking-[0.2em] text-stone-500">状态</p>
                     <p class="mt-2">{{ resolvedRequirement?.status || '未知' }}</p>
                   </div>
                 </div>
-                <div class="rounded-[24px] bg-stone-50 p-4">
+                <div class="bg-stone-50 p-4">
                   <p class="text-xs uppercase tracking-[0.2em] text-stone-500">描述</p>
                   <p class="mt-2 whitespace-pre-wrap leading-6">{{ resolvedRequirement?.description || '暂无描述' }}</p>
                 </div>
-                <div class="rounded-[24px] bg-stone-50 p-4">
+                <div class="bg-stone-50 p-4">
                   <p class="text-xs uppercase tracking-[0.2em] text-stone-500">候选窗口</p>
                   <div class="mt-3 space-y-3">
                     <div
                       v-for="item in candidateRequirements"
                       :key="item.requirement_id"
-                      class="rounded-2xl border border-stone-200 bg-white px-3 py-3"
+                      class="border border-stone-200 bg-white px-3 py-3"
                     >
                       <div class="flex items-center justify-between gap-3">
                         <p class="text-sm font-medium text-stone-900">

@@ -13,9 +13,10 @@ from backend_business.api.http.sse import sse_response_raw
 from backend_business.api.routers.schemas.agent_chat_schemas import (
     AgentChatMessageRequest,
     AgentChatSessionRequest,
+    AgentChatSessionUpdateRequest,
 )
 from backend_business.services.db_service import db_service
-from backend_business.services.agent.requirement_agent_chat_service import (
+from backend_business.services.agent.agents.requirement_agent import (
     requirement_agent_chat_service,
 )
 
@@ -45,10 +46,13 @@ def create_or_get_session(
     if payload.project_id:
         _require_project_access(payload.project_id, current_user)
     try:
-        return requirement_agent_chat_service.create_or_get_session(
-            user_id=current_user["user_id"],
-            project_id=payload.project_id,
-        )
+        kwargs = {
+            "user_id": current_user["user_id"],
+            "project_id": payload.project_id,
+        }
+        if payload.prompt_payload_format is not None:
+            kwargs["prompt_payload_format"] = payload.prompt_payload_format
+        return requirement_agent_chat_service.create_or_get_session(**kwargs)
     except Exception as exc:
         raise ErrorResponse(str(exc), 500)
 
@@ -80,10 +84,32 @@ def create_session(
     if payload.project_id:
         _require_project_access(payload.project_id, current_user)
     try:
-        return requirement_agent_chat_service.create_session(
+        kwargs = {
+            "user_id": current_user["user_id"],
+            "project_id": payload.project_id,
+            "title": payload.title,
+        }
+        if payload.prompt_payload_format is not None:
+            kwargs["prompt_payload_format"] = payload.prompt_payload_format
+        return requirement_agent_chat_service.create_session(**kwargs)
+    except Exception as exc:
+        raise ErrorResponse(str(exc), 500)
+
+
+@router.patch("/sessions/{session_id}")
+def update_session(
+    session_id: str,
+    payload: AgentChatSessionUpdateRequest,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    if payload.title is None and payload.prompt_payload_format is None:
+        raise ErrorResponse("至少提供一个可更新字段", 400)
+    try:
+        return requirement_agent_chat_service.update_session(
+            session_id=session_id,
             user_id=current_user["user_id"],
-            project_id=payload.project_id,
             title=payload.title,
+            prompt_payload_format=payload.prompt_payload_format,
         )
     except Exception as exc:
         raise ErrorResponse(str(exc), 500)
