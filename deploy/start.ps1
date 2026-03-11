@@ -8,10 +8,6 @@ param(
   [ValidateSet("local", "chutes", "deepseek")]
   [string]$Provider,
 
-  # 前端入口：alpha=测试页面，main=正式页面，all=全部模式(引导页)
-  [ValidateSet("alpha", "main", "all")]
-  [string]$Entry,
-
   # 前端运行方式：static=构建产物走 Nginx，dev=Nginx 反代 Vite 开发服务器
   [ValidateSet("static", "dev")]
   [string]$FrontendRuntime,
@@ -181,22 +177,8 @@ else {
   Write-Host "[start] KB index loading skipped (default)." -ForegroundColor Yellow
 }
 
-# 前端入口选择
-if (-not $Entry) {
-  $defaultEntry = if ($env:FRONTEND_ENTRY) { $env:FRONTEND_ENTRY } else { "all" }
-  Write-Host "请选择前端入口: 1=main(正式页面) 2=alpha(测试页面) 3=all(全部模式+引导页)" -ForegroundColor Cyan
-  $choice = Read-Host "输入编号或模式名 (默认 $defaultEntry)"
-  switch ($choice) {
-    "1" { $Entry = "main" }
-    "2" { $Entry = "alpha" }
-    "3" { $Entry = "all" }
-    "main" { $Entry = "main" }
-    "alpha" { $Entry = "alpha" }
-    "all" { $Entry = "all" }
-    default { $Entry = $defaultEntry }
-  }
-}
-
+# 前端入口固定为全部模式（引导页）
+$Entry = "all"
 $env:FRONTEND_ENTRY = $Entry
 
 if ($Provider -eq "chutes" -and -not $env:CHUTES_API_TOKEN) {

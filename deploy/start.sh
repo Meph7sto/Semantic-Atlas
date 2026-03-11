@@ -7,7 +7,7 @@ cd "$BASE_DIR"
 
 MODE=""
 PROVIDER=""
-ENTRY=""
+ENTRY="all"
 FRONTEND_RUNTIME=""
 BUSINESS_BACKEND=""
 FRP_MODE=""
@@ -33,14 +33,6 @@ while [[ $# -gt 0 ]]; do
       PROVIDER="$2"
       shift 2
       ;;
-    -e|--entry)
-      if [[ -z "${2:-}" ]]; then
-        echo "[start] Missing value for --entry"
-        exit 1
-      fi
-      ENTRY="$2"
-      shift 2
-      ;;
     -r|--frontend-runtime)
       if [[ -z "${2:-}" ]]; then
         echo "[start] Missing value for --frontend-runtime"
@@ -62,8 +54,6 @@ while [[ $# -gt 0 ]]; do
         MODE="$1"
       elif [[ -z "$PROVIDER" ]]; then
         PROVIDER="$1"
-      elif [[ -z "$ENTRY" ]]; then
-        ENTRY="$1"
       else
         echo "[start] Unknown argument: $1"
         exit 1
@@ -213,20 +203,7 @@ else
   echo "[start] Model loading skipped (default)."
 fi
 
-# 前端入口选择
-if [[ -z "$ENTRY" ]]; then
-  default_entry="${FRONTEND_ENTRY:-all}"
-  echo "请选择前端入口: 1=main(正式页面) 2=alpha(测试页面) 3=all(全部模式+引导页)"
-  read -r -p "输入编号或模式名 (默认 ${default_entry}): " choice
-  case "$choice" in
-    1|main) ENTRY="main" ;;
-    2|alpha) ENTRY="alpha" ;;
-    3|all) ENTRY="all" ;;
-    "") ENTRY="${default_entry}" ;;
-    *) ENTRY="${default_entry}" ;;
-  esac
-fi
-
+# 前端入口固定为全部模式（引导页）
 export FRONTEND_ENTRY="$ENTRY"
 
 # Chutes API Token 检查
@@ -769,22 +746,10 @@ if [[ "$do_frontend" -eq 1 ]]; then
   # 根据入口选择修改路由默认重定向
   ROUTER_PATH="${BASE_DIR}/frontend/src/router/index.js"
   if [[ -f "$ROUTER_PATH" ]]; then
-    if [[ "$ENTRY" == "alpha" ]]; then
-      sed -i.bak "s|redirect: '/main/login'|redirect: '/alpha/conflict'|g" "$ROUTER_PATH"
-      sed -i.bak "s|redirect: '/guide'|redirect: '/alpha/conflict'|g" "$ROUTER_PATH"
-      rm -f "${ROUTER_PATH}.bak"
-      echo "[start] Frontend entry set to: alpha (测试页面)"
-    elif [[ "$ENTRY" == "all" ]]; then
-      sed -i.bak "s|redirect: '/main/login'|redirect: '/guide'|g" "$ROUTER_PATH"
-      sed -i.bak "s|redirect: '/alpha/conflict'|redirect: '/guide'|g" "$ROUTER_PATH"
-      rm -f "${ROUTER_PATH}.bak"
-      echo "[start] Frontend entry set to: all (全部模式+引导页)"
-    else
-      sed -i.bak "s|redirect: '/alpha/conflict'|redirect: '/main/login'|g" "$ROUTER_PATH"
-      sed -i.bak "s|redirect: '/guide'|redirect: '/main/login'|g" "$ROUTER_PATH"
-      rm -f "${ROUTER_PATH}.bak"
-      echo "[start] Frontend entry set to: main (正式页面)"
-    fi
+    sed -i.bak "s|redirect: '/main/login'|redirect: '/guide'|g" "$ROUTER_PATH"
+    sed -i.bak "s|redirect: '/alpha/conflict'|redirect: '/guide'|g" "$ROUTER_PATH"
+    rm -f "${ROUTER_PATH}.bak"
+    echo "[start] Frontend entry set to: all (全部模式+引导页)"
   fi
 
   # 生成前端配置文件（保持与 Windows 脚本一致）
