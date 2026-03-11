@@ -43,7 +43,7 @@ const router = createRouter({
         {
             path: '/',
             name: 'home',
-            redirect: '/alpha/conflict'
+            redirect: '/guide'
         },
         {
             path: '/guide',
@@ -54,7 +54,7 @@ const router = createRouter({
         {
             path: '/beta',
             name: 'beta',
-            redirect: '/alpha/conflict',
+            redirect: '/guide',
             children: [
                 {
                     path: 'login',
@@ -238,7 +238,7 @@ const router = createRouter({
         // Fallback: keep layout predictable on bad URLs
         {
             path: '/:pathMatch(.*)*',
-            redirect: '/alpha/conflict'
+            redirect: '/guide'
         }
     ]
 })
