@@ -28,6 +28,7 @@ class ModelTarget:
     label: str
     model_name: str
     source_hint: str
+    destination_dir: Path | None = None
 
 
 def _resolve_kb_embedding_model() -> str:
@@ -44,6 +45,25 @@ def _resolve_requirement_graph_embedding_model() -> str:
     )
 
 
+def _resolve_model_data_dir() -> Path:
+    raw_value = os.environ.get("MODEL_DATA_DIR") or "data/model"
+    candidate = Path(raw_value)
+    if not candidate.is_absolute():
+        candidate = ROOT_DIR / candidate
+    return candidate.resolve()
+
+
+def _resolve_requirement_graph_embedding_dir() -> Path:
+    raw_value = (
+        os.environ.get("REQUIREMENT_GRAPH_EMBEDDING_DIR")
+        or str(_resolve_model_data_dir() / "requirement_graph_embedding")
+    )
+    candidate = Path(raw_value)
+    if not candidate.is_absolute():
+        candidate = ROOT_DIR / candidate
+    return candidate.resolve()
+
+
 def _build_targets() -> list[ModelTarget]:
     return [
         ModelTarget(
@@ -56,7 +76,8 @@ def _build_targets() -> list[ModelTarget]:
             key="requirement-graph",
             label="需求图谱相似关系 embedding",
             model_name=_resolve_requirement_graph_embedding_model(),
-            source_hint="backend_business/services/requirement_graph_service",
+            source_hint="backend_business/services/requirement_graph",
+            destination_dir=_resolve_requirement_graph_embedding_dir(),
         ),
     ]
 
@@ -103,14 +124,42 @@ def _configure_cache_dir(cache_dir: Path | None) -> Path | None:
     return resolved
 
 
+def _resolve_model_source(
+    model_name: str,
+    *,
+    destination_dir: Path | None,
+) -> str:
+    candidate = Path(model_name)
+    if candidate.exists():
+        return str(candidate.resolve())
+
+    if destination_dir is None:
+        return model_name
+
+    from huggingface_hub import snapshot_download
+
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_download(
+        repo_id=model_name,
+        local_dir=str(destination_dir),
+    )
+    return str(destination_dir)
+
+
 def _download_target(target: ModelTarget, cache_dir: Path | None) -> None:
     from sentence_transformers import SentenceTransformer
 
     print(f"[download] {target.label}")
     print(f"           model={target.model_name}")
     print(f"           source={target.source_hint}")
-    model = SentenceTransformer(
+    if target.destination_dir:
+        print(f"           destination={target.destination_dir}")
+    model_source = _resolve_model_source(
         target.model_name,
+        destination_dir=target.destination_dir,
+    )
+    model = SentenceTransformer(
+        model_source,
         cache_folder=str(cache_dir) if cache_dir else None,
     )
     # 通过一次最小编码确保模型、tokenizer 与配置都已经落到本地缓存。
@@ -130,6 +179,8 @@ def main() -> int:
     print("Semantic-Atlas 模型预下载清单:")
     for target in targets:
         print(f"- {target.key}: {target.model_name} ({target.source_hint})")
+        if target.destination_dir:
+            print(f"  destination: {target.destination_dir}")
     if cache_dir:
         print(f"- cache_dir: {cache_dir}")
     print("")

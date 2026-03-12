@@ -1,5 +1,13 @@
 import aiohttp
+import importlib
+import json
+from pathlib import Path
+import shutil
+import uuid
 
+import pytest
+
+from backend_business.services.requirement_graph import helpers as graph_helpers
 from backend_business.services.requirement_graph_service import (
     RequirementGraphService,
     _GraphBuilder,
@@ -9,8 +17,9 @@ from backend_business.services.requirement_graph_service import (
 
 
 class _FakeCursor:
-    def __init__(self, requirements):
-        self.requirements = requirements
+    def __init__(self, db):
+        self.db = db
+        self.requirements = db.requirements
         self._rows = []
         self._row = None
 
@@ -26,7 +35,16 @@ class _FakeCursor:
             self._row = None
             return
         if "FROM manage_projects" in query:
-            self._row = None
+            if "SELECT current_session_id" in query:
+                project_id = params[0]
+                session_id = self.db.project_sessions.get(project_id)
+                self._row = (session_id,) if session_id else None
+            elif "SELECT project_id" in query:
+                session_id = params[0]
+                project_id = self.db.session_projects.get(session_id)
+                self._row = (project_id,) if project_id else None
+            else:
+                self._row = None
             self._rows = []
             return
         raise AssertionError(f"Unexpected query: {query}")
@@ -39,8 +57,8 @@ class _FakeCursor:
 
 
 class _FakeConnection:
-    def __init__(self, requirements):
-        self.requirements = requirements
+    def __init__(self, db):
+        self.db = db
 
     def __enter__(self):
         return self
@@ -49,15 +67,121 @@ class _FakeConnection:
         return False
 
     def cursor(self, cursor_factory=None):
-        return _FakeCursor(self.requirements)
+        return _FakeCursor(self.db)
 
 
 class _FakeDB:
-    def __init__(self, requirements=None):
+    def __init__(
+        self,
+        requirements=None,
+        *,
+        latest_trace_batch=None,
+        latest_conflict_batch=None,
+        latest_classification=None,
+        project_sessions=None,
+        session_projects=None,
+    ):
         self.requirements = requirements or []
+        self.latest_trace_batch = latest_trace_batch
+        self.latest_conflict_batch = latest_conflict_batch
+        self.latest_classification = latest_classification
+        self.project_sessions = project_sessions or {}
+        self.session_projects = session_projects or {}
+        self.saved_relation_snapshots = []
+        self.snapshot_details = {}
 
     def get_connection(self):
-        return _FakeConnection(self.requirements)
+        return _FakeConnection(self)
+
+    def get_latest_trace_batch(self, session_id):
+        return self.latest_trace_batch if session_id else None
+
+    def get_latest_conflict_batch(self, session_id):
+        return self.latest_conflict_batch if session_id else None
+
+    def get_latest_classification(self, session_id):
+        return self.latest_classification if session_id else None
+
+    def save_requirement_graph_snapshot(self, **kwargs):
+        snapshot = dict(kwargs)
+        snapshot["snapshot_id"] = f"snap-{len(self.saved_relation_snapshots) + 1}"
+        snapshot["edge_count"] = len(snapshot.get("edges") or [])
+        snapshot["created_at"] = snapshot.get("created_at") or "2026-04-20T06:00:00+00:00"
+        snapshot["invalidated_at"] = snapshot.get("invalidated_at")
+        snapshot["is_active"] = snapshot.get("is_active", True)
+        self.saved_relation_snapshots.append(snapshot)
+        self.snapshot_details[snapshot["snapshot_id"]] = {
+            "snapshot_id": snapshot["snapshot_id"],
+            "project_id": snapshot.get("project_id"),
+            "session_id": snapshot.get("session_id"),
+            "relation_mode": snapshot.get("relation_mode"),
+            "created_at": snapshot["created_at"],
+            "invalidated_at": snapshot["invalidated_at"],
+            "is_active": snapshot["is_active"],
+            "edge_count": snapshot["edge_count"],
+            "edges": [
+                {
+                    "source_node_id": edge["source"],
+                    "target_node_id": edge["target"],
+                    "source_req_id": str(edge["source"]).removeprefix("req:"),
+                    "target_req_id": str(edge["target"]).removeprefix("req:"),
+                    "relation_type": edge["type"],
+                    "source_kind": (edge.get("properties") or {}).get("source_kind"),
+                    "source_detail": (edge.get("properties") or {}).get("source_detail"),
+                    "weight": edge.get("weight"),
+                    "confidence": (edge.get("properties") or {}).get("confidence"),
+                    "reason": (edge.get("properties") or {}).get("reason"),
+                    "evidence": (edge.get("properties") or {}).get("evidence") or [],
+                    "model": (edge.get("properties") or {}).get("model"),
+                    "review_action": (edge.get("properties") or {}).get("review_action"),
+                    "review_package_id": (edge.get("properties") or {}).get("review_package_id"),
+                    "properties": dict(edge.get("properties") or {}),
+                    "created_at": snapshot["created_at"],
+                }
+                for edge in snapshot.get("edges") or []
+            ],
+        }
+        return {
+            "snapshot_id": snapshot["snapshot_id"],
+            "relation_mode": snapshot.get("relation_mode"),
+            "edge_count": snapshot["edge_count"],
+        }
+
+    def get_latest_requirement_graph_snapshot(self, *, project_id=None, session_id=None, relation_mode=None):
+        matches = [
+            snapshot for snapshot in self.snapshot_details.values()
+            if (not project_id or snapshot.get("project_id") == project_id)
+            and (not session_id or snapshot.get("session_id") == session_id)
+            and (not relation_mode or snapshot.get("relation_mode") == relation_mode)
+            and snapshot.get("is_active", False)
+        ]
+        if not matches:
+            return None
+        matches.sort(key=lambda item: (item.get("created_at") or "", item.get("snapshot_id") or ""))
+        return matches[-1]
+
+    def list_requirement_graph_snapshots(self, *, project_id=None, session_id=None, relation_mode=None, limit=20):
+        matches = [
+            {
+                "snapshot_id": snapshot.get("snapshot_id"),
+                "project_id": snapshot.get("project_id"),
+                "session_id": snapshot.get("session_id"),
+                "relation_mode": snapshot.get("relation_mode"),
+                "created_at": snapshot.get("created_at"),
+                "invalidated_at": snapshot.get("invalidated_at"),
+                "is_active": snapshot.get("is_active", False),
+                "edge_count": snapshot.get("edge_count", 0),
+            }
+            for snapshot in self.snapshot_details.values()
+            if (not project_id or snapshot.get("project_id") == project_id)
+            and (not session_id or snapshot.get("session_id") == session_id)
+            and (not relation_mode or snapshot.get("relation_mode") == relation_mode)
+        ]
+        matches.sort(key=lambda item: (item.get("created_at") or "", item.get("snapshot_id") or ""), reverse=True)
+        return matches[:limit]
+
+    def get_requirement_graph_snapshot_by_id(self, snapshot_id):
+        return self.snapshot_details.get(snapshot_id)
 
 
 def _make_requirement(
@@ -184,6 +308,182 @@ def test_parent_id_and_source_req_id_emit_refines_edges():
     edge_keys = {(edge["source"], edge["target"], edge["type"]) for edge in graph["edges"]}
     assert ("req:ROOT", "req:MID", "REFINES") in edge_keys
     assert ("req:MID", "req:LEAF", "REFINES") in edge_keys
+
+
+def test_build_graph_uses_existing_analysis_results_as_authoritative_sources():
+    requirements = [
+        _make_requirement("ROOT", title="根需求", description="统一身份认证", source_level="L1"),
+        _make_requirement("MID", title="登录流程", description="系统需要登录流程", source_level="L2", parent_id="ROOT"),
+        _make_requirement("LEAF", title="登录校验", description="登录时校验凭证", source_level="L3", source_req_id="SRC-LEAF"),
+        _make_requirement("OTHER", title="游客访问", description="允许游客访问部分页面", source_level="L3"),
+    ]
+    db = _FakeDB(
+        requirements,
+        latest_trace_batch={
+            "record_id": 101,
+            "data": {
+                "relations": [
+                    {
+                        "high_req_id": "ROOT",
+                        "low_req_id": "MID",
+                        "relation_type": "refine",
+                        "confidence": 0.91,
+                    },
+                    {
+                        "source_id": "SRC-LEAF",
+                        "target_id": "ROOT",
+                        "relation_type": "depends_on",
+                        "confidence": 0.86,
+                    },
+                ]
+            },
+        },
+        latest_conflict_batch={
+            "batch_id": "conf-batch-1",
+            "items": [
+                {
+                    "requirement_a": "登录流程",
+                    "requirement_b": "游客访问",
+                    "is_conflict": True,
+                    "result_json": {"reason": "认证与匿名访问冲突"},
+                }
+            ],
+        },
+        latest_classification={
+            "id": 55,
+            "requirements": ["登录流程", "登录校验", "游客访问"],
+            "predictions": [
+                {"label": "安全", "requirement": "登录流程"},
+                {"label": "安全", "requirement": "登录校验"},
+                {"label": "体验", "requirement": "游客访问"},
+            ],
+            "label_distribution": {"安全": 2, "体验": 1},
+            "total": 3,
+        },
+    )
+
+    graph = RequirementGraphService(db, ai_client=None).build_graph(
+        project_id="P-1",
+        session_id="S-1",
+        infer_relations=False,
+    )
+
+    nodes = {node["id"]: node for node in graph["nodes"]}
+    edges = {(edge["source"], edge["target"], edge["type"]): edge for edge in graph["edges"]}
+
+    assert nodes["req:MID"]["properties"]["category"] == "安全"
+    assert nodes["req:LEAF"]["properties"]["category"] == "安全"
+    assert graph["stats"]["classification_label_distribution"] == {"安全": 2, "体验": 1}
+    assert graph["stats"]["analysis_edge_count"] >= 3
+    assert graph["stats"]["supplemental_edge_count"] == 0
+
+    assert ("req:ROOT", "req:MID", "REFINES") in edges
+    assert "trace_analysis" in edges[("req:ROOT", "req:MID", "REFINES")]["properties"]["source_kinds"]
+    assert ("req:LEAF", "req:ROOT", "DEPENDS_ON") in edges
+    assert edges[("req:LEAF", "req:ROOT", "DEPENDS_ON")]["properties"]["source_kind"] == "trace_analysis"
+    assert ("req:MID", "req:OTHER", "CONFLICTS_WITH") in edges or ("req:OTHER", "req:MID", "CONFLICTS_WITH") in edges
+    similar_edge = edges.get(("req:LEAF", "req:MID", "SIMILAR_TO")) or edges.get(("req:MID", "req:LEAF", "SIMILAR_TO"))
+    assert similar_edge is not None
+    assert similar_edge["properties"]["source_kind"] == "classification_analysis"
+
+
+def test_build_graph_infer_false_skips_authoritative_rule_duplication():
+    requirements = [
+        _make_requirement(
+            "A",
+            title="支付编排",
+            description="订单服务依赖支付模块接口返回结果后再继续处理",
+            source_level="L3",
+            tags=["order", "payment"],
+            custom_fields={"module": "order"},
+        ),
+        _make_requirement(
+            "B",
+            title="支付模块",
+            description="提供支付模块接口",
+            source_level="L4",
+            tags=["payment"],
+            custom_fields={"module": "payment"},
+        ),
+    ]
+
+    graph = RequirementGraphService(_FakeDB(requirements), ai_client=None).build_graph(
+        project_id="P-1",
+        session_id="S-1",
+        infer_relations=False,
+    )
+
+    edge_keys = {(edge["source"], edge["target"], edge["type"]) for edge in graph["edges"]}
+    assert ("req:A", "req:B", "DEPENDS_ON") not in edge_keys
+    assert graph["stats"]["supplemental_edge_count"] == 0
+
+
+def test_build_graph_infer_true_only_adds_extra_relations():
+    class FakeAI:
+        async def chat_completion_with_tools_async(self, **kwargs):
+            return {
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "submit_relation_mutations",
+                            "arguments": {
+                                "mutations": [
+                                    {
+                                        "candidate_id": "pair:req:A|req:B",
+                                        "action": "add",
+                                        "target_edge": {
+                                            "source": "req:A",
+                                            "target": "req:B",
+                                            "type": "IMPACTS",
+                                        },
+                                        "replacement_edge": {
+                                            "source": "req:A",
+                                            "target": "req:B",
+                                            "type": "IMPACTS",
+                                        },
+                                        "confidence": 0.83,
+                                        "reason": "认证策略会影响游客访问路径",
+                                        "evidence": ["shared_term:访问"],
+                                    }
+                                ]
+                            },
+                        },
+                    }
+                ]
+            }
+
+    requirements = [
+        _make_requirement(
+            "A",
+            title="认证策略",
+            description="认证策略影响游客访问流程，并要求回归校验",
+            source_level="L3",
+            tags=["访问", "认证"],
+            custom_fields={"validation_rules": ["回归校验"]},
+        ),
+        _make_requirement(
+            "B",
+            title="游客访问",
+            description="游客访问部分页面时需要被策略约束",
+            source_level="L3",
+            tags=["访问"],
+        ),
+    ]
+
+    graph = RequirementGraphService(_FakeDB(requirements), ai_client=FakeAI()).build_graph(
+        project_id="P-1",
+        session_id="S-1",
+        infer_relations=True,
+        inference_limit=12,
+    )
+
+    edge_keys = {(edge["source"], edge["target"], edge["type"]): edge for edge in graph["edges"]}
+    assert ("req:A", "req:B", "IMPACTS") in edge_keys
+    assert edge_keys[("req:A", "req:B", "IMPACTS")]["properties"]["source_kind"] == "llm"
+    assert graph["stats"]["supplemental_edge_count"] >= 1
+    assert ("req:A", "req:B", "DEPENDS_ON") not in edge_keys
+    assert ("req:A", "req:B", "CONFLICTS_WITH") not in edge_keys
 
 
 def test_dependency_rule_produces_depends_on():
@@ -395,6 +695,63 @@ def test_dependency_tool_audit_falls_back_on_service_unavailable():
     assert ("req:A", "req:B", "DEPENDS_ON") in builder.edges
 
 
+def test_dependency_audit_uses_json_when_tool_calls_are_not_supported():
+    class FakeAI:
+        def __init__(self):
+            self.json_calls = 0
+
+        def supports_tool_calls(self, model=None):
+            return False
+
+        def chat_completion(self, **kwargs):
+            self.json_calls += 1
+            return {
+                "content": json.dumps(
+                    {
+                        "decisions": [
+                            {
+                                "candidate_id": "dep:A->B",
+                                "action": "confirm",
+                                "confidence": 0.89,
+                                "reason": "订单编排明确消费支付网关返回的支付状态。",
+                                "evidence": ["shared_interface:payment-status"],
+                                "dependency_kind": "data",
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            }
+
+    fake_ai = FakeAI()
+    service = RequirementGraphService(_FakeDB(), ai_client=fake_ai)
+    builder = _GraphBuilder(limit=10)
+    stats = service._apply_dependency_candidates(
+        builder,
+        [
+            {
+                "candidate_id": "dep:A->B",
+                "source": "req:A",
+                "target": "req:B",
+                "score": 15,
+                "rule_confidence": 0.89,
+                "detail": "rule_dependency_signal_match",
+                "reason": "订单编排消费支付网关返回的支付状态",
+                "evidence": ["shared_interface:payment-status"],
+                "signals": ["mentioned_module:payment-gateway", "shared_interface:payment-status"],
+                "source_requirement": {"id": "req:A", "title": "订单编排"},
+                "target_requirement": {"id": "req:B", "title": "支付网关"},
+            }
+        ],
+        model="local-json-model",
+        review_limit=12,
+    )
+
+    assert fake_ai.json_calls == 1
+    assert stats["fallback_used"] is False
+    assert ("req:A", "req:B", "DEPENDS_ON") in builder.edges
+
+
 def test_conflict_rule_produces_conflicts_with():
     service = RequirementGraphService(_FakeDB(), ai_client=None)
     builder = _GraphBuilder(limit=10)
@@ -581,32 +938,641 @@ def test_candidate_recall_limits_pair_scale():
     assert len(pairs) < 91
 
 
-def test_llm_output_accepts_depends_on_and_conflicts_with():
-    class FakeAI:
-        def chat_completion(self, **kwargs):
-            return {
-                "content": """
+def test_build_graph_local_relation_mode_surfaces_local_vector_edges(monkeypatch):
+    requirements = [
+        _make_requirement(
+            "A",
+            title="订单侧支付编排",
+            description="订单服务需要调用 payment 接口完成扣款",
+            source_level="L3",
+            custom_fields={"module": "payment"},
+        ),
+        _make_requirement(
+            "B",
+            title="支付核心服务",
+            description="支付服务提供扣款与退款能力",
+            source_level="L4",
+            custom_fields={"module": "payment"},
+        ),
+    ]
+    service = RequirementGraphService(_FakeDB(requirements), ai_client=None)
+
+    monkeypatch.setattr(
+        service,
+        "_collect_candidate_pairs",
+        lambda _features: (
+            [
                 {
-                  "edges": [
-                    {
-                      "source": "req:A",
-                      "target": "req:B",
-                      "type": "DEPENDS_ON",
-                      "confidence": 0.84,
-                      "reason": "订单服务调用支付模块",
-                      "evidence": ["shared_module:payment", "shared_interface:/payments"]
-                    },
-                    {
-                      "source": "req:A",
-                      "target": "req:B",
-                      "type": "CONFLICTS_WITH",
-                      "confidence": 0.66,
-                      "reason": "这条不会被接纳，因为同一候选对没有冲突证据限制",
-                      "evidence": ["manual"]
-                    }
-                  ]
+                    "source": "req:A",
+                    "target": "req:B",
+                    "score": 12,
+                    "signals": ["semantic_match:0.913", "shared_module:payment"],
                 }
-                """
+            ],
+            {
+                "pair_count": 1,
+                "per_requirement_limit": 10,
+                "per_requirement_counts": {"req:A": 1, "req:B": 1},
+                "requirement_count": 2,
+                "max_term_document_frequency": 1,
+            },
+        ),
+    )
+
+    graph = service.build_graph(
+        project_id="P-1",
+        session_id="S-1",
+        relation_mode="local",
+        inference_limit=24,
+    )
+
+    local_edges = [
+        edge for edge in graph["edges"] if (edge.get("properties") or {}).get("source_kind") == "local_vector"
+    ]
+    assert local_edges
+    local_edge = local_edges[0]
+    assert local_edge["properties"]["source_kind"] == "local_vector"
+    assert str(local_edge["properties"]["source_detail"]).startswith("local_vector.")
+    assert local_edge["properties"]["model"]
+    assert graph["stats"]["local_vector"]["enabled"] is True
+    assert graph["stats"]["local_vector"]["added_count"] >= 1
+    assert graph["stats"]["supplemental_edge_count"] >= 1
+    assert graph["meta"]["relation_mode"] == "local"
+
+
+def test_build_graph_local_relation_mode_persists_requirement_relation_snapshot(monkeypatch):
+    requirements = [
+        _make_requirement(
+            "A",
+            title="订单侧支付编排",
+            description="订单服务需要调用 payment 接口完成扣款",
+            source_level="L3",
+            custom_fields={"module": "payment"},
+        ),
+        _make_requirement(
+            "B",
+            title="支付核心服务",
+            description="支付服务提供扣款与退款能力",
+            source_level="L4",
+            custom_fields={"module": "payment"},
+        ),
+    ]
+    db = _FakeDB(requirements)
+    service = RequirementGraphService(db, ai_client=None)
+
+    monkeypatch.setattr(
+        service,
+        "_collect_candidate_pairs",
+        lambda _features: (
+            [
+                {
+                    "source": "req:A",
+                    "target": "req:B",
+                    "score": 12,
+                    "signals": ["semantic_match:0.913", "shared_module:payment"],
+                }
+            ],
+            {
+                "pair_count": 1,
+                "per_requirement_limit": 10,
+                "per_requirement_counts": {"req:A": 1, "req:B": 1},
+                "requirement_count": 2,
+                "max_term_document_frequency": 1,
+            },
+        ),
+    )
+
+    graph = service.build_graph(
+        project_id="P-1",
+        session_id="S-1",
+        relation_mode="local",
+        inference_limit=24,
+    )
+
+    assert db.saved_relation_snapshots
+    saved_snapshot = db.saved_relation_snapshots[0]
+    assert saved_snapshot["project_id"] == "P-1"
+    assert saved_snapshot["session_id"] == "S-1"
+    assert saved_snapshot["relation_mode"] == "local"
+    assert any(
+        (edge.get("properties") or {}).get("source_kind") == "local_vector"
+        for edge in saved_snapshot["edges"]
+    )
+    assert graph["meta"]["relation_snapshot"]["snapshot_id"] == "snap-1"
+
+
+def test_get_snapshot_graph_rehydrates_saved_requirement_edges():
+    requirements = [
+        _make_requirement("A", title="订单侧支付编排", source_level="L3"),
+        _make_requirement("B", title="支付核心服务", source_level="L4"),
+    ]
+    db = _FakeDB(requirements)
+    db.snapshot_details["snap-history-1"] = {
+        "snapshot_id": "snap-history-1",
+        "project_id": "P-1",
+        "session_id": "S-1",
+        "relation_mode": "llm",
+        "created_at": "2026-04-20T06:00:00+00:00",
+        "invalidated_at": "2026-04-20T06:05:00+00:00",
+        "is_active": False,
+        "edge_count": 1,
+        "edges": [
+            {
+                "source_node_id": "req:A",
+                "target_node_id": "req:B",
+                "source_req_id": "A",
+                "target_req_id": "B",
+                "relation_type": "DEPENDS_ON",
+                "source_kind": "llm",
+                "source_detail": "llm_tool_review",
+                "weight": 0.91,
+                "confidence": 0.91,
+                "reason": "reviewed",
+                "evidence": ["shared_module:payment"],
+                "model": "deepseek-reasoner",
+                "review_action": "add",
+                "review_package_id": "pkg-1",
+                "properties": {
+                    "source_kind": "llm",
+                    "source_detail": "llm_tool_review",
+                    "confidence": 0.91,
+                    "reason": "reviewed",
+                    "evidence": ["shared_module:payment"],
+                    "model": "deepseek-reasoner",
+                    "review_action": "add",
+                    "review_package_id": "pkg-1",
+                },
+                "created_at": "2026-04-20T06:00:00+00:00",
+            }
+        ],
+    }
+    service = RequirementGraphService(db, ai_client=None)
+
+    graph = service.get_snapshot_graph("snap-history-1", limit=900)
+
+    edge = graph["edges"][0]
+    assert edge["source"] == "req:A"
+    assert edge["target"] == "req:B"
+    assert edge["type"] == "DEPENDS_ON"
+    assert edge["properties"]["source_kind"] == "llm"
+    assert graph["stats"]["supplemental_edge_count"] == 1
+    assert graph["meta"]["loaded_from_snapshot"] is True
+    assert graph["meta"]["relation_snapshot"]["snapshot_id"] == "snap-history-1"
+    assert graph["meta"]["relation_snapshot"]["is_active"] is False
+
+
+def test_list_snapshot_history_returns_filtered_snapshots_in_desc_order():
+    requirements = [_make_requirement("A", title="订单侧支付编排", source_level="L3")]
+    db = _FakeDB(requirements)
+    db.snapshot_details["snap-1"] = {
+        "snapshot_id": "snap-1",
+        "project_id": "P-1",
+        "session_id": "S-1",
+        "relation_mode": "local",
+        "created_at": "2026-04-20T06:00:00+00:00",
+        "invalidated_at": "2026-04-20T06:10:00+00:00",
+        "is_active": False,
+        "edge_count": 2,
+        "edges": [],
+    }
+    db.snapshot_details["snap-2"] = {
+        "snapshot_id": "snap-2",
+        "project_id": "P-1",
+        "session_id": "S-1",
+        "relation_mode": "llm",
+        "created_at": "2026-04-20T06:12:00+00:00",
+        "invalidated_at": None,
+        "is_active": True,
+        "edge_count": 3,
+        "edges": [],
+    }
+    service = RequirementGraphService(db, ai_client=None)
+
+    history = service.list_snapshot_history(project_id="P-1", session_id="S-1", limit=10)
+
+    assert [item["snapshot_id"] for item in history] == ["snap-2", "snap-1"]
+    assert history[0]["relation_mode"] == "llm"
+    assert history[0]["is_active"] is True
+    assert history[1]["invalidated_at"] == "2026-04-20T06:10:00+00:00"
+
+
+def test_build_graph_local_relation_mode_generates_semantic_relation_candidates(monkeypatch):
+    requirements = [
+        _make_requirement(
+            "A",
+            title="支付能力扩展编排",
+            description="订单流程需要调用支付模块接口，并扩展退款校验。变更时会联动支付能力。",
+            source_level="L3",
+            custom_fields={"module": "支付模块"},
+        ),
+        _make_requirement(
+            "B",
+            title="支付核心服务",
+            description="支付模块接口负责扣款、退款与退款校验能力。",
+            source_level="L4",
+            custom_fields={"module": "支付模块"},
+        ),
+    ]
+    service = RequirementGraphService(_FakeDB(requirements), ai_client=None)
+
+    monkeypatch.setattr(
+        service,
+        "_collect_candidate_pairs",
+        lambda _features: (
+            [
+                {
+                    "source": "req:A",
+                    "target": "req:B",
+                    "score": 14,
+                    "signals": [
+                        "semantic_match:0.884",
+                        "shared_module:支付模块",
+                        "shared_validation:退款校验",
+                    ],
+                }
+            ],
+            {
+                "pair_count": 1,
+                "per_requirement_limit": 10,
+                "per_requirement_counts": {"req:A": 1, "req:B": 1},
+                "requirement_count": 2,
+                "max_term_document_frequency": 1,
+            },
+        ),
+    )
+
+    graph = service.build_graph(
+        project_id="P-1",
+        session_id="S-1",
+        relation_mode="local",
+        inference_limit=24,
+    )
+
+    edge_keys = {(edge["source"], edge["target"], edge["type"]): edge for edge in graph["edges"]}
+    assert ("req:A", "req:B", "DEPENDS_ON") in edge_keys
+    assert edge_keys[("req:A", "req:B", "DEPENDS_ON")]["properties"]["source_kind"] == "local_vector"
+    assert ("req:A", "req:B", "EXTENDS") in edge_keys
+    assert ("req:A", "req:B", "IMPACTS") in edge_keys
+    assert graph["stats"]["local_vector"]["edge_counts"]["DEPENDS_ON"] >= 1
+    assert graph["stats"]["local_vector"]["edge_counts"]["EXTENDS"] >= 1
+    assert graph["stats"]["local_vector"]["reviewed_pair_count"] == 1
+
+
+def test_build_graph_llm_relation_mode_reviews_local_vector_edges(monkeypatch):
+    class FakeAI:
+        def __init__(self):
+            self.seen_existing_relations = []
+
+        async def chat_completion_with_tools_async(self, **kwargs):
+            payload = kwargs["messages"][-1]["content"]
+            json_payload = json.loads(payload[payload.index("{") :])
+            candidate = json_payload["candidates"][0]
+            self.seen_existing_relations.append(candidate["existing_relations"])
+            return {"tool_calls": []}
+
+    requirements = [
+        _make_requirement(
+            "A",
+            title="支付能力扩展编排",
+            description="订单流程需要调用支付模块接口，并扩展退款校验。变更时会联动支付能力。",
+            source_level="L3",
+            custom_fields={"module": "支付模块"},
+        ),
+        _make_requirement(
+            "B",
+            title="支付核心服务",
+            description="支付模块接口负责扣款、退款与退款校验能力。",
+            source_level="L4",
+            custom_fields={"module": "支付模块"},
+        ),
+    ]
+    fake_ai = FakeAI()
+    service = RequirementGraphService(_FakeDB(requirements), ai_client=fake_ai)
+
+    monkeypatch.setattr(
+        service,
+        "_collect_candidate_pairs",
+        lambda _features: (
+            [
+                {
+                    "source": "req:A",
+                    "target": "req:B",
+                    "score": 14,
+                    "signals": [
+                        "semantic_match:0.884",
+                        "shared_module:支付模块",
+                        "shared_validation:退款校验",
+                    ],
+                }
+            ],
+            {
+                "pair_count": 1,
+                "per_requirement_limit": 10,
+                "per_requirement_counts": {"req:A": 1, "req:B": 1},
+                "requirement_count": 2,
+                "max_term_document_frequency": 1,
+            },
+        ),
+    )
+
+    graph = service.build_graph(
+        project_id="P-1",
+        session_id="S-1",
+        relation_mode="llm",
+        inference_limit=24,
+    )
+
+    assert fake_ai.seen_existing_relations
+    existing_relations = fake_ai.seen_existing_relations[0]
+    assert any(
+        relation["type"] == "DEPENDS_ON" and relation["source_kind"] == "local_vector"
+        for relation in existing_relations
+    )
+    assert graph["stats"]["local_vector"]["added_count"] >= 1
+    assert graph["stats"]["relation_review"]["reviewed_pair_count"] == 1
+    assert graph["meta"]["relation_mode"] == "llm"
+
+
+def test_build_graph_llm_relation_mode_persists_reviewed_requirement_relation_snapshot():
+    class FakeAI:
+        async def chat_completion_with_tools_async(self, **kwargs):
+            return {
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "submit_relation_mutations",
+                            "arguments": {
+                                "mutations": [
+                                    {
+                                        "candidate_id": "pair:req:A|req:B",
+                                        "action": "update",
+                                        "target_edge": {
+                                            "source": "req:A",
+                                            "target": "req:B",
+                                            "type": "DEPENDS_ON",
+                                        },
+                                        "replacement_edge": {
+                                            "source": "req:A",
+                                            "target": "req:B",
+                                            "type": "IMPACTS",
+                                        },
+                                        "confidence": 0.93,
+                                        "reason": "支付能力变更会联动订单侧能力",
+                                        "evidence": ["shared_module:payment"],
+                                    }
+                                ]
+                            },
+                        },
+                    }
+                ]
+            }
+
+    requirements = [
+        _make_requirement(
+            "A",
+            title="订单侧支付编排",
+            description="订单服务需要调用 payment 接口完成扣款，支付能力调整会影响订单流程",
+            source_level="L3",
+            custom_fields={"module": "payment"},
+        ),
+        _make_requirement(
+            "B",
+            title="支付核心服务",
+            description="支付服务提供扣款与退款能力",
+            source_level="L4",
+            custom_fields={"module": "payment"},
+        ),
+    ]
+    review_edges = [
+        {
+            "source": "req:A",
+            "target": "req:B",
+            "type": "DEPENDS_ON",
+            "weight": 0.81,
+            "properties": {
+                "source_kind": "local_vector",
+                "source_detail": "local_vector.semantic_dependency",
+                "confidence": 0.81,
+                "reason": "candidate",
+                "evidence": ["shared_module:payment"],
+                "model": "local-model",
+            },
+        }
+    ]
+    db = _FakeDB(requirements)
+    service = RequirementGraphService(db, ai_client=FakeAI())
+
+    graph = service.build_graph(
+        project_id="P-1",
+        session_id="S-1",
+        relation_mode="llm",
+        inference_limit=24,
+        review_edges=review_edges,
+    )
+
+    assert db.saved_relation_snapshots
+    saved_snapshot = db.saved_relation_snapshots[0]
+    assert saved_snapshot["relation_mode"] == "llm"
+    assert any(
+        edge["type"] == "IMPACTS" and (edge.get("properties") or {}).get("source_kind") == "llm"
+        for edge in saved_snapshot["edges"]
+    )
+    assert graph["meta"]["relation_snapshot"]["edge_count"] == len(saved_snapshot["edges"])
+
+
+def test_build_graph_llm_relation_mode_prefers_supplied_local_review_edges(monkeypatch):
+    class FakeAI:
+        def __init__(self):
+            self.packages = []
+
+        async def chat_completion_with_tools_async(self, **kwargs):
+            payload = kwargs["messages"][-1]["content"]
+            json_payload = json.loads(payload[payload.index("{") :])
+            self.packages.append(json_payload)
+            return {
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "submit_relation_mutations",
+                            "arguments": {
+                                "mutations": [
+                                    {
+                                        "candidate_id": "pair:req:A|req:B",
+                                        "action": "update",
+                                        "target_edge": {
+                                            "source": "req:A",
+                                            "target": "req:B",
+                                            "type": "DEPENDS_ON",
+                                        },
+                                        "replacement_edge": {
+                                            "source": "req:A",
+                                            "target": "req:B",
+                                            "type": "IMPACTS",
+                                        },
+                                        "confidence": 0.91,
+                                        "reason": "reviewed",
+                                        "evidence": ["shared_module:支付模块"],
+                                    }
+                                ]
+                            },
+                        },
+                    }
+                ]
+            }
+
+    requirements = [
+        _make_requirement(
+            "A",
+            title="支付能力扩展编排",
+            description="订单流程需要调用支付模块接口。",
+            source_level="L3",
+            custom_fields={"module": "支付模块"},
+        ),
+        _make_requirement(
+            "B",
+            title="支付核心服务",
+            description="支付模块接口负责扣款与退款能力。",
+            source_level="L4",
+            custom_fields={"module": "支付模块"},
+        ),
+    ]
+    fake_ai = FakeAI()
+    service = RequirementGraphService(_FakeDB(requirements), ai_client=fake_ai)
+
+    def _unexpected_collect(_features):
+        raise AssertionError("should not recollect candidate pairs when review_edges are supplied")
+
+    monkeypatch.setattr(service, "_collect_candidate_pairs", _unexpected_collect)
+
+    graph = service.build_graph(
+        project_id="P-1",
+        session_id="S-1",
+        relation_mode="llm",
+        inference_limit=24,
+        review_edges=[
+            {
+                "source": "req:A",
+                "target": "req:B",
+                "type": "DEPENDS_ON",
+                "weight": 0.81,
+                "properties": {
+                    "source_kind": "local_vector",
+                    "source_detail": "local_vector.semantic_dependency",
+                    "confidence": 0.81,
+                    "reason": "candidate",
+                    "evidence": ["shared_module:支付模块"],
+                    "model": "local-model",
+                },
+            }
+        ],
+    )
+
+    assert fake_ai.packages
+    candidate = fake_ai.packages[0]["candidates"][0]
+    assert candidate["existing_relations"] == [
+        {
+            "source": "req:A",
+            "target": "req:B",
+            "type": "DEPENDS_ON",
+            "source_kind": "local_vector",
+            "source_detail": "local_vector.semantic_dependency",
+        }
+    ]
+    edge_keys = {(edge["source"], edge["target"], edge["type"]): edge for edge in graph["edges"]}
+    assert ("req:A", "req:B", "DEPENDS_ON") not in edge_keys
+    assert edge_keys[("req:A", "req:B", "IMPACTS")]["properties"]["source_kind"] == "llm"
+    assert graph["stats"]["review_seed_edge_count"] == 1
+    assert graph["stats"]["local_vector"]["seeded_from_frontend"] is True
+    assert graph["stats"]["relation_review"]["updated_count"] == 1
+    assert graph["stats"]["relation_review"]["reviewed_pair_count"] == 1
+
+
+def test_resolve_semantic_embedding_source_downloads_into_data_model_directory(monkeypatch):
+    model_dir = Path.cwd() / "data" / "model" / f"test_requirement_graph_embedding_download_{uuid.uuid4().hex}"
+    shutil.rmtree(model_dir, ignore_errors=True)
+    monkeypatch.setattr(graph_helpers, "_REQUIREMENT_GRAPH_EMBEDDING_DIR", model_dir)
+    monkeypatch.setattr(
+        graph_helpers,
+        "_SEMANTIC_EMBEDDING_MODEL",
+        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    )
+
+    captured = {}
+
+    def fake_snapshot_download(*, repo_id, local_dir, **kwargs):
+        captured["repo_id"] = repo_id
+        captured["local_dir"] = local_dir
+        local_path = Path(local_dir)
+        local_path.mkdir(parents=True, exist_ok=True)
+        (local_path / "modules.json").write_text("{}", encoding="utf-8")
+        return str(local_path)
+
+    huggingface_hub = importlib.import_module("huggingface_hub")
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot_download)
+
+    resolved = graph_helpers._resolve_semantic_embedding_source()
+
+    assert captured["repo_id"] == "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    assert Path(captured["local_dir"]) == model_dir
+    assert Path(resolved) == model_dir
+
+    shutil.rmtree(model_dir, ignore_errors=True)
+
+
+def test_resolve_semantic_embedding_source_prefers_existing_data_model_directory(monkeypatch):
+    model_dir = Path.cwd() / "data" / "model" / f"test_requirement_graph_embedding_existing_{uuid.uuid4().hex}"
+    shutil.rmtree(model_dir, ignore_errors=True)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    (model_dir / "modules.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(graph_helpers, "_REQUIREMENT_GRAPH_EMBEDDING_DIR", model_dir)
+    monkeypatch.setattr(
+        graph_helpers,
+        "_SEMANTIC_EMBEDDING_MODEL",
+        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    )
+
+    resolved = graph_helpers._resolve_semantic_embedding_source()
+
+    assert Path(resolved) == model_dir
+
+    shutil.rmtree(model_dir, ignore_errors=True)
+
+
+def test_relation_review_add_action_applies_llm_review_edge():
+    class FakeAI:
+        async def chat_completion_with_tools_async(self, **kwargs):
+            return {
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "submit_relation_mutations",
+                            "arguments": {
+                                "mutations": [
+                                    {
+                                        "candidate_id": "pair:req:A|req:B",
+                                        "action": "add",
+                                        "target_edge": {
+                                            "source": "req:A",
+                                            "target": "req:B",
+                                            "type": "DEPENDS_ON",
+                                        },
+                                        "replacement_edge": {
+                                            "source": "req:A",
+                                            "target": "req:B",
+                                            "type": "DEPENDS_ON",
+                                        },
+                                        "confidence": 0.84,
+                                        "reason": "订单服务调用支付模块",
+                                        "evidence": ["shared_module:payment", "shared_interface:/payments"],
+                                    }
+                                ]
+                            },
+                        },
+                    }
+                ]
             }
 
     service = RequirementGraphService(_FakeDB(), ai_client=FakeAI())
@@ -621,7 +1587,7 @@ def test_llm_output_accepts_depends_on_and_conflicts_with():
     }
     candidate_pairs = [{"source": "req:A", "target": "req:B", "score": 10, "signals": ["shared_module:payment"]}]
 
-    stats = service._apply_llm_inference(
+    stats = service._apply_llm_relation_review(
         builder,
         project_id="P-1",
         session_id="S-1",
@@ -633,46 +1599,78 @@ def test_llm_output_accepts_depends_on_and_conflicts_with():
     )
 
     edge = builder.edges[("req:A", "req:B", "DEPENDS_ON")]
-    assert stats["inferred_edge_count"] >= 1
+    assert stats["added_count"] == 1
+    assert stats["package_count"] == 1
+    assert stats["reviewed_pair_count"] == 1
     assert edge["properties"]["source_kind"] == "llm"
+    assert edge["properties"]["source_detail"] == "llm_tool_review"
+    assert edge["properties"]["review_action"] == "add"
+    assert edge["properties"]["review_package_id"] == "pkg-1"
     assert edge["properties"]["reason"] == "订单服务调用支付模块"
     assert edge["properties"]["evidence"] == ["shared_module:payment", "shared_interface:/payments"]
 
 
-def test_rule_and_llm_hits_merge_into_one_edge():
+def test_relation_review_update_action_replaces_edge_direction():
     class FakeAI:
-        def chat_completion(self, **kwargs):
+        async def chat_completion_with_tools_async(self, **kwargs):
             return {
-                "content": """
-                {
-                  "edges": [
+                "tool_calls": [
                     {
-                      "source": "req:A",
-                      "target": "req:B",
-                      "type": "DEPENDS_ON",
-                      "confidence": 0.88,
-                      "reason": "LLM 认为存在调用依赖",
-                      "evidence": ["llm:调用支付接口"]
+                        "type": "function",
+                        "function": {
+                            "name": "submit_relation_mutations",
+                            "arguments": {
+                                "mutations": [
+                                    {
+                                        "candidate_id": "pair:req:A|req:B",
+                                        "action": "update",
+                                        "target_edge": {
+                                            "source": "req:A",
+                                            "target": "req:B",
+                                            "type": "DEPENDS_ON",
+                                        },
+                                        "replacement_edge": {
+                                            "source": "req:B",
+                                            "target": "req:A",
+                                            "type": "DEPENDS_ON",
+                                        },
+                                        "confidence": 0.88,
+                                        "reason": "真实方向是配置加载器先提供输入，校验器依赖它",
+                                        "evidence": ["配置加载器输出配置内容", "校验器消费配置内容"],
+                                    }
+                                ]
+                            },
+                        },
                     }
-                  ]
-                }
-                """
+                ]
             }
 
     service = RequirementGraphService(_FakeDB(), ai_client=FakeAI())
     builder = _GraphBuilder(limit=10)
-    left = _make_requirement("A", title="订单服务", description="订单服务依赖 payment 模块接口", source_level="L3", custom_fields={"module": "order"})
-    right = _make_requirement("B", title="支付服务", description="payment 模块提供支付接口", source_level="L4", custom_fields={"module": "payment"})
+    left = _make_requirement("A", title="热加载校验器", description="校验器检查配置内容并在热加载时执行校验", source_level="L4", custom_fields={"module": "validator"})
+    right = _make_requirement("B", title="配置加载器", description="配置加载器输出配置内容并提供 /configs 接口", source_level="L4", custom_fields={"module": "loader"})
     for req, level in ((left, "L3"), (right, "L4")):
         _add_requirement_node(builder, req)
     features = {
         "req:A": service._build_requirement_feature(left, "L3"),
         "req:B": service._build_requirement_feature(right, "L4"),
     }
-    candidate_pairs = [{"source": "req:A", "target": "req:B", "score": 12, "signals": ["shared_module:payment"]}]
-    service._apply_rule_edges(builder, features, candidate_pairs)
+    builder.add_edge(
+        "req:A",
+        "req:B",
+        "DEPENDS_ON",
+        label="依赖",
+        weight=0.78,
+        properties={
+            "source_kind": "rule",
+            "source_detail": "rule_dependency_signal_match",
+            "reason": "规则误判方向",
+            "evidence": ["mentioned_module:loader"],
+        },
+    )
+    candidate_pairs = [{"source": "req:A", "target": "req:B", "score": 12, "signals": ["mentioned_module:loader"]}]
 
-    service._apply_llm_inference(
+    stats = service._apply_llm_relation_review(
         builder,
         project_id="P-1",
         session_id="S-1",
@@ -683,8 +1681,527 @@ def test_rule_and_llm_hits_merge_into_one_edge():
         candidate_pairs=candidate_pairs,
     )
 
-    edge = builder.edges[("req:A", "req:B", "DEPENDS_ON")]
-    assert edge["properties"]["source_kind"] == "rule"
-    assert "rule" in edge["properties"]["source_kinds"]
-    assert "llm" in edge["properties"]["source_kinds"]
-    assert "llm:调用支付接口" in edge["properties"]["evidence"]
+    assert stats["updated_count"] == 1
+    assert ("req:A", "req:B", "DEPENDS_ON") not in builder.edges
+    edge = builder.edges[("req:B", "req:A", "DEPENDS_ON")]
+    assert edge["properties"]["source_kind"] == "llm"
+    assert edge["properties"]["review_action"] == "update"
+    assert edge["properties"]["review_package_id"] == "pkg-1"
+
+
+def test_relation_review_delete_action_removes_non_structural_edge():
+    class FakeAI:
+        async def chat_completion_with_tools_async(self, **kwargs):
+            return {
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "submit_relation_mutations",
+                            "arguments": {
+                                "mutations": [
+                                    {
+                                        "candidate_id": "pair:req:A|req:B",
+                                        "action": "delete",
+                                        "target_edge": {
+                                            "source": "req:A",
+                                            "target": "req:B",
+                                            "type": "CONFLICTS_WITH",
+                                        },
+                                        "confidence": 0.91,
+                                        "reason": "两者只是同主题，不构成真实冲突",
+                                        "evidence": ["same_topic_only"],
+                                    }
+                                ]
+                            },
+                        },
+                    }
+                ]
+            }
+
+    service = RequirementGraphService(_FakeDB(), ai_client=FakeAI())
+    builder = _GraphBuilder(limit=10)
+    left = _make_requirement("A", title="任务面板", description="展示任务摘要", source_level="L4")
+    right = _make_requirement("B", title="任务列表", description="支持任务查询", source_level="L4")
+    for req, level in ((left, "L4"), (right, "L4")):
+        _add_requirement_node(builder, req)
+    builder.add_edge(
+        "req:A",
+        "req:B",
+        "CONFLICTS_WITH",
+        label="冲突",
+        weight=0.76,
+        properties={
+            "source_kind": "rule",
+            "source_detail": "rule_conflict_signal_match",
+            "reason": "规则误判冲突",
+            "evidence": ["explicit_conflict_marker"],
+        },
+    )
+    features = {
+        "req:A": service._build_requirement_feature(left, "L4"),
+        "req:B": service._build_requirement_feature(right, "L4"),
+    }
+    candidate_pairs = [{"source": "req:A", "target": "req:B", "score": 11, "signals": ["shared_term:任务"]}]
+
+    stats = service._apply_llm_relation_review(
+        builder,
+        project_id="P-1",
+        session_id="S-1",
+        enabled=True,
+        model="fake-model",
+        inference_limit=12,
+        requirement_features=features,
+        candidate_pairs=candidate_pairs,
+    )
+
+    assert stats["deleted_count"] == 1
+    assert ("req:A", "req:B", "CONFLICTS_WITH") not in builder.edges
+
+
+def test_relation_review_ignores_out_of_scope_and_invalid_mutations():
+    class FakeAI:
+        async def chat_completion_with_tools_async(self, **kwargs):
+            return {
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "submit_relation_mutations",
+                            "arguments": {
+                                "mutations": [
+                                    {
+                                        "candidate_id": "pair:req:OUT|req:SIDE",
+                                        "action": "add",
+                                        "target_edge": {
+                                            "source": "req:A",
+                                            "target": "req:B",
+                                            "type": "DEPENDS_ON",
+                                        },
+                                        "replacement_edge": {
+                                            "source": "req:A",
+                                            "target": "req:B",
+                                            "type": "DEPENDS_ON",
+                                        },
+                                        "confidence": 0.9,
+                                        "reason": "越界 candidate",
+                                        "evidence": ["invalid"],
+                                    },
+                                    {
+                                        "candidate_id": "pair:req:A|req:B",
+                                        "action": "add",
+                                        "target_edge": {
+                                            "source": "req:A",
+                                            "target": "req:B",
+                                            "type": "DEPENDS_ON",
+                                        },
+                                        "replacement_edge": {
+                                            "source": "req:A",
+                                            "target": "req:C",
+                                            "type": "DEPENDS_ON",
+                                        },
+                                        "confidence": 0.9,
+                                        "reason": "跨 pair 引用",
+                                        "evidence": ["invalid"],
+                                    },
+                                    {
+                                        "candidate_id": "pair:req:A|req:B",
+                                        "action": "add",
+                                        "target_edge": {
+                                            "source": "req:A",
+                                            "target": "req:B",
+                                            "type": "DEPENDS_ON",
+                                        },
+                                        "replacement_edge": {
+                                            "source": "req:A",
+                                            "target": "req:B",
+                                            "type": "SIMILAR_TO",
+                                        },
+                                        "confidence": 0.9,
+                                        "reason": "非法类型",
+                                        "evidence": ["invalid"],
+                                    },
+                                ]
+                            },
+                        },
+                    }
+                ]
+            }
+
+    service = RequirementGraphService(_FakeDB(), ai_client=FakeAI())
+    builder = _GraphBuilder(limit=10)
+    requirements = [
+        _make_requirement("A", title="A", description="A", source_level="L4"),
+        _make_requirement("B", title="B", description="B", source_level="L4"),
+        _make_requirement("C", title="C", description="C", source_level="L4"),
+    ]
+    for req in requirements:
+        _add_requirement_node(builder, req)
+    features = {
+        _req_node_id(req["req_id"]): service._build_requirement_feature(req, "L4")
+        for req in requirements
+    }
+    candidate_pairs = [{"source": "req:A", "target": "req:B", "score": 9, "signals": ["shared_term:a"]}]
+
+    stats = service._apply_llm_relation_review(
+        builder,
+        project_id="P-1",
+        session_id="S-1",
+        enabled=True,
+        model="fake-model",
+        inference_limit=12,
+        requirement_features=features,
+        candidate_pairs=candidate_pairs,
+    )
+
+    assert stats["added_count"] == 0
+    assert stats["updated_count"] == 0
+    assert stats["deleted_count"] == 0
+    assert builder.edges == {}
+
+
+def test_relation_review_does_not_delete_structural_refines_edge():
+    class FakeAI:
+        async def chat_completion_with_tools_async(self, **kwargs):
+            return {
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "submit_relation_mutations",
+                            "arguments": {
+                                "mutations": [
+                                    {
+                                        "candidate_id": "pair:req:A|req:B",
+                                        "action": "delete",
+                                        "target_edge": {
+                                            "source": "req:A",
+                                            "target": "req:B",
+                                            "type": "REFINES",
+                                        },
+                                        "confidence": 0.95,
+                                        "reason": "不应保留",
+                                        "evidence": ["invalid_delete"],
+                                    }
+                                ]
+                            },
+                        },
+                    }
+                ]
+            }
+
+    service = RequirementGraphService(_FakeDB(), ai_client=FakeAI())
+    builder = _GraphBuilder(limit=10)
+    left = _make_requirement("A", title="父需求", description="父", source_level="L1")
+    right = _make_requirement("B", title="子需求", description="子", source_level="L2")
+    for req, level in ((left, "L1"), (right, "L2")):
+        _add_requirement_node(builder, req)
+    builder.add_edge(
+        "req:A",
+        "req:B",
+        "REFINES",
+        label="细化",
+        weight=1.0,
+        properties={
+            "source_kind": "structural",
+            "source_detail": "manage_requirements.parent_id",
+            "reason": "结构边",
+        },
+    )
+    features = {
+        "req:A": service._build_requirement_feature(left, "L1"),
+        "req:B": service._build_requirement_feature(right, "L2"),
+    }
+    candidate_pairs = [{"source": "req:A", "target": "req:B", "score": 8, "signals": ["structural"]}]
+
+    stats = service._apply_llm_relation_review(
+        builder,
+        project_id="P-1",
+        session_id="S-1",
+        enabled=True,
+        model="fake-model",
+        inference_limit=12,
+        requirement_features=features,
+        candidate_pairs=candidate_pairs,
+    )
+
+    assert stats["deleted_count"] == 0
+    assert ("req:A", "req:B", "REFINES") in builder.edges
+
+
+def test_relation_review_splits_48_pairs_into_three_packages():
+    class FakeAI:
+        def __init__(self):
+            self.package_sizes = []
+
+        async def chat_completion_with_tools_async(self, **kwargs):
+            payload = kwargs["messages"][-1]["content"]
+            self.package_sizes.append(payload.count('"candidate_id"'))
+            return {"tool_calls": []}
+
+    fake_ai = FakeAI()
+    service = RequirementGraphService(_FakeDB(), ai_client=fake_ai)
+    builder = _GraphBuilder(limit=200)
+    features = {}
+    for index in range(49):
+        req = _make_requirement(
+            f"R-{index}",
+            title=f"需求{index}",
+            description=f"描述{index}",
+            source_level="L4",
+        )
+        node_id = _req_node_id(req["req_id"])
+        _add_requirement_node(builder, req)
+        features[node_id] = service._build_requirement_feature(req, "L4")
+    candidate_pairs = [
+        {
+            "source": _req_node_id(f"R-{index}"),
+            "target": _req_node_id(f"R-{index + 1}"),
+            "score": 10 + index,
+            "signals": [f"signal:{index}"],
+        }
+        for index in range(48)
+    ]
+
+    stats = service._apply_llm_relation_review(
+        builder,
+        project_id="P-1",
+        session_id="S-1",
+        enabled=True,
+        model="fake-model",
+        inference_limit=48,
+        requirement_features=features,
+        candidate_pairs=candidate_pairs,
+    )
+
+    assert stats["package_count"] == 3
+    assert stats["reviewed_pair_count"] == 48
+    assert fake_ai.package_sizes == [16, 16, 16]
+
+
+def test_relation_review_respects_requested_concurrency_for_package_split():
+    class FakeAI:
+        def __init__(self):
+            self.package_sizes = []
+
+        async def chat_completion_with_tools_async(self, **kwargs):
+            payload = kwargs["messages"][-1]["content"]
+            self.package_sizes.append(payload.count('"candidate_id"'))
+            return {"tool_calls": []}
+
+    fake_ai = FakeAI()
+    service = RequirementGraphService(_FakeDB(), ai_client=fake_ai)
+    builder = _GraphBuilder(limit=200)
+    features = {}
+    for index in range(17):
+        req = _make_requirement(
+            f"Q-{index}",
+            title=f"需求{index}",
+            description=f"描述{index}",
+            source_level="L4",
+        )
+        node_id = _req_node_id(req["req_id"])
+        _add_requirement_node(builder, req)
+        features[node_id] = service._build_requirement_feature(req, "L4")
+    candidate_pairs = [
+        {
+            "source": _req_node_id(f"Q-{index}"),
+            "target": _req_node_id(f"Q-{index + 1}"),
+            "score": 10 + index,
+            "signals": [f"signal:{index}"],
+        }
+        for index in range(16)
+    ]
+
+    stats = service._apply_llm_relation_review(
+        builder,
+        project_id="P-1",
+        session_id="S-1",
+        enabled=True,
+        model="fake-model",
+        inference_limit=16,
+        review_concurrency=4,
+        requirement_features=features,
+        candidate_pairs=candidate_pairs,
+    )
+
+    assert stats["package_count"] == 4
+    assert stats["requested_concurrency"] == 4
+    assert stats["applied_concurrency"] == 4
+    assert stats["reviewed_pair_count"] == 16
+    assert fake_ai.package_sizes == [4, 4, 4, 4]
+
+
+def test_relation_review_falls_back_per_failed_package_and_keeps_other_results():
+    class FakeAI:
+        def __init__(self):
+            self.tool_calls = 0
+            self.json_calls = 0
+
+        async def chat_completion_with_tools_async(self, **kwargs):
+            self.tool_calls += 1
+            if self.tool_calls == 1:
+                raise aiohttp.ClientResponseError(
+                    request_info=None,
+                    history=(),
+                    status=503,
+                    message="Service Unavailable",
+                    headers=None,
+                )
+            payload = kwargs["messages"][-1]["content"]
+            candidate_id = json.loads(payload.split("\n", 1)[1])["candidates"][0]["candidate_id"]
+            _, pair_payload = candidate_id.split(":", 1)
+            _, target = pair_payload.split("|", 1)
+            return {
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "submit_relation_mutations",
+                            "arguments": {
+                                "mutations": [
+                                    {
+                                        "candidate_id": candidate_id,
+                                        "action": "add",
+                                        "target_edge": {
+                                            "source": "req:A",
+                                            "target": target,
+                                            "type": "DEPENDS_ON",
+                                        },
+                                        "replacement_edge": {
+                                            "source": "req:A",
+                                            "target": target,
+                                            "type": "DEPENDS_ON",
+                                        },
+                                        "confidence": 0.81,
+                                        "reason": f"A depends on {target}",
+                                        "evidence": [f"tool:{target}"],
+                                    }
+                                ]
+                            },
+                        },
+                    }
+                ]
+            }
+
+        def chat_completion(self, **kwargs):
+            self.json_calls += 1
+            return {"content": '{"edges":[]}'}
+
+    fake_ai = FakeAI()
+    service = RequirementGraphService(_FakeDB(), ai_client=fake_ai)
+    builder = _GraphBuilder(limit=20)
+    requirements = [
+        _make_requirement("A", title="A", description="A", source_level="L4"),
+        _make_requirement("B", title="B", description="B", source_level="L4"),
+        _make_requirement("C", title="C", description="C", source_level="L4"),
+        _make_requirement("D", title="D", description="D", source_level="L4"),
+    ]
+    features = {}
+    for req in requirements:
+        node_id = _req_node_id(req["req_id"])
+        _add_requirement_node(builder, req)
+        features[node_id] = service._build_requirement_feature(req, "L4")
+    candidate_pairs = [
+        {"source": "req:A", "target": "req:B", "score": 12, "signals": ["s1"]},
+        {"source": "req:A", "target": "req:C", "score": 11, "signals": ["s2"]},
+        {"source": "req:A", "target": "req:D", "score": 10, "signals": ["s3"]},
+    ]
+
+    stats = service._apply_llm_relation_review(
+        builder,
+        project_id="P-1",
+        session_id="S-1",
+        enabled=True,
+        model="fake-model",
+        inference_limit=3,
+        requirement_features=features,
+        candidate_pairs=candidate_pairs,
+    )
+
+    assert stats["package_count"] == 3
+    assert stats["fallback_used"] is True
+    assert fake_ai.json_calls == 1
+    assert ("req:A", "req:C", "DEPENDS_ON") in builder.edges
+    assert ("req:A", "req:D", "DEPENDS_ON") in builder.edges
+
+
+def test_relation_review_uses_json_when_tool_calls_are_not_supported():
+    class FakeAI:
+        def __init__(self):
+            self.json_calls = 0
+
+        def supports_tool_calls(self, model=None):
+            return False
+
+        def chat_completion(self, **kwargs):
+            self.json_calls += 1
+            return {
+                "content": json.dumps(
+                    {
+                        "mutations": [
+                            {
+                                "candidate_id": "pair:req:A|req:B",
+                                "action": "update",
+                                "target_edge": {
+                                    "source": "req:A",
+                                    "target": "req:B",
+                                    "type": "DEPENDS_ON",
+                                },
+                                "replacement_edge": {
+                                    "source": "req:B",
+                                    "target": "req:A",
+                                    "type": "DEPENDS_ON",
+                                },
+                                "confidence": 0.84,
+                                "reason": "真正依赖方向是配置加载器向校验器提供输入。",
+                                "evidence": ["shared_interface:configs"],
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            }
+
+    fake_ai = FakeAI()
+    service = RequirementGraphService(_FakeDB(), ai_client=fake_ai)
+    builder = _GraphBuilder(limit=10)
+    left = _make_requirement("A", title="热加载校验器", description="校验器消费配置内容执行校验", source_level="L4", custom_fields={"module": "validator"})
+    right = _make_requirement("B", title="配置加载器", description="加载器输出配置内容并暴露 /configs 接口", source_level="L4", custom_fields={"module": "loader"})
+    for req in (left, right):
+        _add_requirement_node(builder, req)
+    builder.add_edge(
+        "req:A",
+        "req:B",
+        "DEPENDS_ON",
+        label="依赖",
+        weight=0.78,
+        properties={
+            "source_kind": "rule",
+            "source_detail": "rule_dependency_signal_match",
+            "reason": "规则误判方向",
+            "evidence": ["mentioned_module:loader"],
+        },
+    )
+    features = {
+        "req:A": service._build_requirement_feature(left, "L4"),
+        "req:B": service._build_requirement_feature(right, "L4"),
+    }
+    candidate_pairs = [{"source": "req:A", "target": "req:B", "score": 12, "signals": ["mentioned_module:loader"]}]
+
+    stats = service._apply_llm_relation_review(
+        builder,
+        project_id="P-1",
+        session_id="S-1",
+        enabled=True,
+        model="local-json-model",
+        inference_limit=12,
+        requirement_features=features,
+        candidate_pairs=candidate_pairs,
+    )
+
+    assert fake_ai.json_calls == 1
+    assert stats["fallback_used"] is False
+    assert stats["updated_count"] == 1
+    assert ("req:A", "req:B", "DEPENDS_ON") not in builder.edges
+    assert ("req:B", "req:A", "DEPENDS_ON") in builder.edges

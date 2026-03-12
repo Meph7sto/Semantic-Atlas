@@ -7,6 +7,9 @@ from backend_business.services.db_service_parts.classification import (
     ClassificationAnalysisMixin,
 )
 from backend_business.services.db_service_parts.conflict import ConflictAnalysisMixin
+from backend_business.services.db_service_parts.requirement_graph_relations import (
+    RequirementGraphRelationsMixin,
+)
 from backend_business.services.db_service_parts.requirements import L4RequirementsMixin
 from backend_business.services.db_service_parts.transcription import (
     TranscriptionSessionMixin,
@@ -28,6 +31,7 @@ class DBService(
     TraceAnalysisMixin,
     ConflictAnalysisMixin,
     ClassificationAnalysisMixin,
+    RequirementGraphRelationsMixin,
     L4RequirementsMixin,
     SpansMixin,
     AuthMixin,

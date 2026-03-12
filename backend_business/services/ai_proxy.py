@@ -17,6 +17,25 @@ def _is_reasoning_model(model: Optional[str]) -> bool:
     return "reasoner" in str(model or "").strip().lower()
 
 
+def _resolve_model_provider() -> str:
+    explicit = os.environ.get("MODEL_PROVIDER", "").strip().lower()
+    if explicit:
+        return explicit
+
+    if os.environ.get("DEEPSEEK_API_KEY", "").strip():
+        return "deepseek"
+
+    chutes_token = (
+        os.environ.get("CHUTES_API_TOKEN")
+        or os.environ.get("CHUTES_API_KEY")
+        or ""
+    ).strip()
+    if chutes_token:
+        return "chutes"
+
+    return "local"
+
+
 def _normalize_tool_choice_for_model(
     model: Optional[str], tool_choice: Optional[str]
 ) -> Optional[str]:
@@ -72,6 +91,14 @@ class AIProxy:
 
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
+
+    @staticmethod
+    def provider_name() -> str:
+        return _resolve_model_provider()
+
+    def supports_tool_calls(self, model: Optional[str] = None) -> bool:
+        # 当前仅 DeepSeek provider 在推理后端实现了原生 tool-call 协议。
+        return self.provider_name() == "deepseek"
 
     @staticmethod
     def _optional_timeout_env(name: str, default: Optional[float]) -> Optional[float]:

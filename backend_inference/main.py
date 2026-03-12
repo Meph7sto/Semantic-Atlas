@@ -1,6 +1,9 @@
+import asyncio
+import logging
 import os
 import sys
 from contextlib import asynccontextmanager
+from typing import Callable, Optional
 from fastapi import FastAPI
 
 # 确保可以从本地模块导入
@@ -22,6 +25,50 @@ from routers import kb, l4_generation, l4_validation
 
 # KB Service 导入
 from services.kb_service import get_kb_service
+
+
+logger = logging.getLogger(__name__)
+
+
+def _is_windows_connection_reset_noise(context: dict) -> bool:
+    message = str(context.get("message") or "")
+    handle_repr = str(context.get("handle") or "")
+    exception = context.get("exception")
+
+    if not isinstance(exception, ConnectionResetError):
+        return False
+    if getattr(exception, "winerror", None) != 10054:
+        return False
+
+    target = "_ProactorBasePipeTransport._call_connection_lost"
+    return target in message or target in handle_repr
+
+
+def _install_windows_asyncio_noise_filter() -> Optional[Callable[[], None]]:
+    if sys.platform != "win32":
+        return None
+
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+
+    def _handler(active_loop, context):
+        if _is_windows_connection_reset_noise(context):
+            logger.debug(
+                "Suppressed Windows Proactor connection reset noise during transport cleanup: %s",
+                context.get("message") or context.get("exception"),
+            )
+            return
+        if previous_handler is not None:
+            previous_handler(active_loop, context)
+            return
+        active_loop.default_exception_handler(context)
+
+    loop.set_exception_handler(_handler)
+
+    def _restore() -> None:
+        loop.set_exception_handler(previous_handler)
+
+    return _restore
 
 
 def _should_skip_local_provider_load(provider: str) -> bool:
@@ -79,6 +126,8 @@ async def lifespan(app: FastAPI):
     """
     FastAPI 生命周期管理器
     """
+    restore_asyncio_handler = _install_windows_asyncio_noise_filter()
+
     # 启动时：加载/初始化模型
     _initialize_generation_model()
     _initialize_classification_model()
@@ -99,7 +148,11 @@ async def lifespan(app: FastAPI):
             print(f"WARNING: Failed to load KB indexes: {e}")
             # KB 加载失败不阻止启动，L4 生成时会重试
 
-    yield
+    try:
+        yield
+    finally:
+        if restore_asyncio_handler is not None:
+            restore_asyncio_handler()
     # 如果需要，可以在此处添加关闭时的逻辑 (Shutdown logic)
 
 

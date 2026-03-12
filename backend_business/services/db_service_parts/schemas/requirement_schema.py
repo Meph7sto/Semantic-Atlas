@@ -175,3 +175,52 @@ def init_requirement_schema(cur):
     cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_classification_analysis_created_at ON classification_analysis(created_at)"
     )
+
+    # ========================
+    # Requirement Graph Relations Snapshot Table
+    # ========================
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS requirement_graph_relations (
+            id BIGSERIAL PRIMARY KEY,
+            snapshot_id TEXT NOT NULL,
+            project_id TEXT,
+            session_id TEXT,
+            relation_mode TEXT NOT NULL,
+            source_node_id TEXT NOT NULL,
+            target_node_id TEXT NOT NULL,
+            source_req_id TEXT NOT NULL,
+            target_req_id TEXT NOT NULL,
+            relation_type TEXT NOT NULL,
+            source_kind TEXT NOT NULL,
+            source_detail TEXT,
+            weight REAL NOT NULL DEFAULT 0,
+            confidence REAL,
+            reason TEXT,
+            evidence JSONB,
+            model TEXT,
+            review_action TEXT,
+            review_package_id TEXT,
+            properties JSONB,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            invalidated_at TIMESTAMPTZ,
+            UNIQUE (snapshot_id, source_node_id, target_node_id, relation_type)
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_requirement_graph_relations_snapshot ON requirement_graph_relations(snapshot_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_requirement_graph_relations_lookup ON requirement_graph_relations(project_id, session_id, relation_mode, is_active)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_requirement_graph_relations_source_req ON requirement_graph_relations(source_req_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_requirement_graph_relations_target_req ON requirement_graph_relations(target_req_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_requirement_graph_relations_type ON requirement_graph_relations(relation_type)"
+    )

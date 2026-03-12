@@ -191,8 +191,8 @@ bash deploy/stop_services.sh
 | ------------------------------------- | ----------------- | ------------------------------- |
 | `MODEL_PROVIDER`                      | 模型提供方        | `local` / `chutes` / `deepseek` |
 | `SKIP_MODEL_LOAD`                     | 跳过本地模型加载  | `false`                         |
-| `LLM_MODEL_RELATIVE_PATH`             | 本地 LLM 权重路径 | `data/models/deepseek_conflict` |
-| `CLASSIFICATION_MODEL_RELATIVE_PATH`  | 分类模型路径      | `data/models/deberta-v3-large`  |
+| `LLM_MODEL_RELATIVE_PATH`             | 本地 LLM 权重路径 | `data/model/deepseek_conflict` |
+| `CLASSIFICATION_MODEL_RELATIVE_PATH`  | 分类模型路径      | `data/model/deberta-v3-large`  |
 | `DEEPSEEK_API_KEY`                    | DeepSeek 模式必填 | -                               |
 | `CHUTES_API_TOKEN` / `CHUTES_API_KEY` | Chutes 模式必填   | -                               |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL`  | OpenAI 兼容接口   | -                               |
@@ -431,7 +431,7 @@ deploy/                            # 部署脚本与 Nginx 配置
   stop_services.sh / stop_services.ps1  # 停止服务
   nginx.conf / nginx_windows.conf / nginx_linux.conf
 
-data/models/                       # 本地模型目录
+data/model/                        # 本地模型目录
 tests/                             # 测试用例与示例文本
 docker-compose.yml                 # PostgreSQL + Adminer
 ```
