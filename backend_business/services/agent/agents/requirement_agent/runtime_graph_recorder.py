@@ -34,6 +34,7 @@ class _RuntimeGraphRecorder(RuntimeGraphRecorder):
         session_id: str,
         user_message: str,
         graph_id: str | None = None,
+        prev_graph_id: str | None = None,
     ) -> None:
         super().__init__(
             execution_graph_service=execution_graph_service,
@@ -46,6 +47,7 @@ class _RuntimeGraphRecorder(RuntimeGraphRecorder):
             session_id=session_id,
             user_message=user_message,
             graph_id=graph_id,
+            prev_graph_id=prev_graph_id,
             graph_name=f"Requirement Agent Run {datetime.now(timezone.utc).strftime('%H:%M:%S')}",
             graph_description="需求管理 Agent 运行轨迹",
             initial_graph_meta={
@@ -57,4 +59,3 @@ class _RuntimeGraphRecorder(RuntimeGraphRecorder):
                 "requirement_id": requirement_id,
             },
         )
-

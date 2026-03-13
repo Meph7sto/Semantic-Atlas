@@ -86,6 +86,18 @@ class _FakeExecutionGraphService:
         graphs.sort(key=lambda item: item.get("graph_id"))
         return dict(graphs[-1]) if graphs else None
 
+    def list_runtime_graphs_by_session(self, session_id: str, project_id: str | None = None, include_deleted: bool = False):
+        graphs = [
+            graph
+            for graph in self.graphs.values()
+            if graph.get("meta_json", {}).get("session_id") == session_id
+            and (project_id is None or graph.get("project_id") == project_id)
+        ]
+        if not include_deleted:
+            graphs = [graph for graph in graphs if not graph.get("is_deleted")]
+        graphs.sort(key=lambda item: item.get("graph_id"), reverse=True)
+        return [dict(graph) for graph in graphs]
+
     def get_graph_detail(self, graph_id: str):
         return {
             "graph": self.get_execution_graph(graph_id),
@@ -661,7 +673,7 @@ def test_stream_requirement_agent_reply_fails_on_tool_round_limit(monkeypatch):
     assert graph_service.get_execution_graph("graph-1")["status"] == "failed"
 
 
-def test_stream_requirement_agent_reply_reuses_one_graph_per_session(monkeypatch):
+def test_stream_requirement_agent_reply_creates_graph_chain_per_session(monkeypatch):
     chat_storage = _FakeChatStorage()
     graph_service = _FakeExecutionGraphService()
     service = RequirementAgentChatService(
@@ -737,11 +749,54 @@ def test_stream_requirement_agent_reply_reuses_one_graph_per_session(monkeypatch
     )
 
     assert first_events[-1]["data"]["graph_id"] == "graph-1"
-    assert second_events[-1]["data"]["graph_id"] == "graph-1"
-    assert graph_service.graph_counter == 1
-    assert chat_storage.sessions["sess-1"]["active_graph_id"] == "graph-1"
+    assert second_events[-1]["data"]["graph_id"] == "graph-2"
+    assert graph_service.graph_counter == 2
+    assert chat_storage.sessions["sess-1"]["active_graph_id"] == "graph-2"
+    assert graph_service.get_execution_graph("graph-2")["meta_json"]["prev_graph_id"] == "graph-1"
     assert _find_node_by_key(graph_service, "turn_1__requirements_agent_tool_loop_round_1")
-    assert _find_node_by_key(graph_service, "turn_2__requirements_agent_tool_loop_round_1")
+    assert [
+        node
+        for node in graph_service.nodes.values()
+        if node["graph_id"] == "graph-2" and node["node_key"] == "turn_1__requirements_agent_tool_loop_round_1"
+    ]
     second_turn_user_payload = json.loads(service.ai_proxy.calls[2]["messages"][1]["content"])
     assert second_turn_user_payload["historical_node_context"]
     assert second_turn_user_payload["historical_node_context"][-1]["node_key"] == "turn_1__conductor_reply"
+
+
+def test_list_session_graph_chain_orders_by_prev_graph_id():
+    chat_storage = _FakeChatStorage()
+    graph_service = _FakeExecutionGraphService()
+    service = RequirementAgentChatService(
+        chat_storage=chat_storage,
+        execution_graph_service=graph_service,
+        tools=_FakeTools([]),
+        ai_proxy_client=_FakeAiProxy([]),
+    )
+
+    chat_storage.sessions["sess-1"] = {
+        "session_id": "sess-1",
+        "user_id": "u-1",
+        "project_id": "p-1",
+        "active_graph_id": "graph-2",
+    }
+
+    graph_service.create_runtime_graph(
+        project_id="p-1",
+        name="g1",
+        created_by="u-1",
+        meta_json={"session_id": "sess-1", "prev_graph_id": None},
+        status="succeeded",
+    )
+    graph_service.create_runtime_graph(
+        project_id="p-1",
+        name="g2",
+        created_by="u-1",
+        meta_json={"session_id": "sess-1", "prev_graph_id": "graph-1"},
+        status="succeeded",
+    )
+
+    chain = service.list_session_graph_chain(session_id="sess-1", user_id="u-1")
+
+    assert [item["graph"]["graph_id"] for item in chain["graphs"]] == ["graph-1", "graph-2"]
+    assert chain["active_graph_id"] == "graph-2"

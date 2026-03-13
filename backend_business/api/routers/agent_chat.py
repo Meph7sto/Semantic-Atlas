@@ -132,6 +132,20 @@ def list_messages(
         raise ErrorResponse(str(exc), 500)
 
 
+@router.get("/sessions/{session_id}/graph-chain")
+def get_session_graph_chain(
+    session_id: str,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    try:
+        return requirement_agent_chat_service.list_session_graph_chain(
+            session_id=session_id,
+            user_id=current_user["user_id"],
+        )
+    except Exception as exc:
+        raise ErrorResponse(str(exc), 500)
+
+
 @router.delete("/sessions/{session_id}")
 def delete_session(
     session_id: str,

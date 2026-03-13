@@ -34,7 +34,7 @@ class RequirementAgentPromptBuilder:
             "selected_requirement_id": requirement_id,
             "user_message": user_message,
             "historical_node_context": historical_node_context or [],
-            "scope": "当前轮对话，附带同一执行图的历史节点上下文摘要",
+            "scope": "当前轮对话，附带会话链上一轮执行图的历史节点上下文摘要",
         }
         return serialize_prompt_payload(
             payload,
@@ -95,4 +95,3 @@ class RequirementAgentPromptBuilder:
         if context.get("clarification_required"):
             return "clarification"
         return "chat"
-

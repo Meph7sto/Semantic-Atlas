@@ -40,6 +40,7 @@ const isCreatingSession = ref(false)
 const isUpdatingSessionFormat = ref(false)
 const errorMessage = ref('')
 const activeGraphId = ref('')
+const sessionGraphChain = ref([])
 const graphDetail = ref(createEmptyGraphDetail())
 const stageTimeline = ref([])
 const selectedCanvasId = ref(null)
@@ -60,6 +61,19 @@ const selectedEdge = computed(() => {
 })
 
 const latestGraphStatus = computed(() => graphDetail.value.graph?.status || 'idle')
+
+const sessionGraphSummaries = computed(() => {
+  return sessionGraphChain.value.map((detail, index) => {
+    const graph = detail?.graph || {}
+    return {
+      graphId: graph.graph_id || '',
+      index: index + 1,
+      status: graph.status || 'idle',
+      prevGraphId: graph.meta_json?.prev_graph_id || '',
+      active: graph.graph_id === activeGraphId.value
+    }
+  })
+})
 
 const flattenedToolResults = computed(() => {
   return graphDetail.value.nodes.flatMap((node) => {
@@ -178,6 +192,7 @@ const resetSessionView = () => {
   messages.value = []
   inputMessage.value = ''
   activeGraphId.value = ''
+  sessionGraphChain.value = []
   graphDetail.value = createEmptyGraphDetail()
   stageTimeline.value = []
   selectedCanvasId.value = null
@@ -231,16 +246,164 @@ const ensureDraftAssistant = () => {
   return draft
 }
 
-const refreshGraphDetail = async (graphId = activeGraphId.value) => {
-  if (!graphId) {
+const sortByOrder = (items = []) => {
+  return [...items].sort((a, b) => {
+    const orderDiff = Number(a?.order_index || 0) - Number(b?.order_index || 0)
+    if (orderDiff !== 0) return orderDiff
+    return String(a?.created_at || '').localeCompare(String(b?.created_at || ''))
+  })
+}
+
+const resolveBoundaryNode = (detail, type) => {
+  const nodes = sortByOrder(detail?.nodes || [])
+  if (!nodes.length) return null
+  if (type === 'start') {
+    return nodes.find((node) => node.node_type === 'start') || nodes[0]
+  }
+  return [...nodes].reverse().find((node) => node.node_type === 'end') || nodes[nodes.length - 1]
+}
+
+const buildMergedSessionGraphDetail = (chainPayload) => {
+  const details = chainPayload?.graphs || []
+  if (!details.length) return createEmptyGraphDetail()
+
+  const mergedContainers = []
+  const mergedNodes = []
+  const mergedEdges = []
+  const nodePositions = {}
+  const edgeOffsets = {}
+  const containerOffsets = {}
+
+  let baseX = 94
+  const baseY = 98
+  const columnGap = 320
+  const rowGap = 112
+  const graphGap = 260
+
+  details.forEach((detail, graphIndex) => {
+    const graph = detail?.graph || {}
+    const graphLabel = `第${graphIndex + 1}轮`
+    const containers = sortByOrder(detail?.containers || [])
+    const nodes = sortByOrder(detail?.nodes || [])
+    const containerOrder = containers.map((container) => container.container_id)
+    const nodesByContainer = new Map(containerOrder.map((containerId) => [containerId, []]))
+    const unassignedNodes = []
+
+    nodes.forEach((node) => {
+      if (node.container_id && nodesByContainer.has(node.container_id)) {
+        nodesByContainer.get(node.container_id).push(node)
+        return
+      }
+      unassignedNodes.push(node)
+    })
+
+    containers.forEach((container) => {
+      mergedContainers.push({
+        ...container,
+        label: `${graphLabel} · ${container.label || container.container_key || '未命名容器'}`,
+        graph_index: graphIndex + 1
+      })
+    })
+
+    nodes.forEach((node) => {
+      mergedNodes.push({
+        ...node,
+        graph_index: graphIndex + 1
+      })
+    })
+
+    ;(detail?.edges || []).forEach((edge) => {
+      mergedEdges.push({
+        ...edge,
+        graph_index: graphIndex + 1
+      })
+      edgeOffsets[edge.edge_id] = detail?.graph?.layout_json?.edge_offsets?.[edge.edge_id] || { dx: 0, dy: 0 }
+    })
+
+    const columns = [
+      ...containerOrder.map((containerId) => sortByOrder(nodesByContainer.get(containerId) || [])),
+      ...(unassignedNodes.length ? [sortByOrder(unassignedNodes)] : [])
+    ]
+
+    columns.forEach((columnNodes, columnIndex) => {
+      columnNodes.forEach((node, rowIndex) => {
+        nodePositions[node.node_id] = {
+          x: baseX + columnIndex * columnGap + (rowIndex % 2 === 0 ? 0 : 8),
+          y: baseY + rowIndex * rowGap
+        }
+      })
+    })
+
+    containers.forEach((container) => {
+      containerOffsets[container.container_id] = detail?.graph?.layout_json?.container_offsets?.[container.container_id] || { dx: 0, dy: 0 }
+    })
+
+    const columnCount = Math.max(columns.length, 1)
+    baseX += columnCount * columnGap + graphGap
+  })
+
+  for (let index = 1; index < details.length; index += 1) {
+    const previous = details[index - 1]
+    const current = details[index]
+    const sourceNode = resolveBoundaryNode(previous, 'end')
+    const targetNode = resolveBoundaryNode(current, 'start')
+    if (!sourceNode || !targetNode) continue
+
+    mergedEdges.push({
+      edge_id: `session-link-${previous.graph?.graph_id}-${current.graph?.graph_id}`,
+      graph_id: current.graph?.graph_id,
+      source_node_id: sourceNode.node_id,
+      target_node_id: targetNode.node_id,
+      edge_type: 'call',
+      label: `会话链 ${index} -> ${index + 1}`,
+      condition_expr: null,
+      config_json: {
+        session_chain: true,
+        prev_graph_id: current.graph?.meta_json?.prev_graph_id || null
+      },
+      order_index: 10_000 + index,
+      created_at: current.graph?.created_at || ''
+    })
+  }
+
+  const tailGraph = details[details.length - 1]?.graph || null
+  return {
+    graph: {
+      graph_id: chainPayload?.active_graph_id || tailGraph?.graph_id || '',
+      status: tailGraph?.status || 'idle',
+      project_id: tailGraph?.project_id || null,
+      layout_json: {
+        node_positions: nodePositions,
+        edge_offsets: edgeOffsets,
+        container_offsets: containerOffsets
+      },
+      meta_json: {
+        session_id: chainPayload?.session_id || '',
+        active_graph_id: chainPayload?.active_graph_id || '',
+        graph_count: details.length
+      }
+    },
+    containers: mergedContainers,
+    nodes: mergedNodes,
+    edges: mergedEdges
+  }
+}
+
+const refreshSessionGraphChain = async (targetSessionId = sessionId.value) => {
+  if (!targetSessionId) {
+    sessionGraphChain.value = []
     graphDetail.value = createEmptyGraphDetail()
     selectedCanvasId.value = null
     return
   }
   try {
-    graphDetail.value = await agentChatApi.getGraphDetail(graphId)
+    const chainPayload = await agentChatApi.getSessionGraphChain(targetSessionId)
+    sessionGraphChain.value = chainPayload?.graphs || []
+    activeGraphId.value = chainPayload?.active_graph_id || activeGraphId.value || ''
+    graphDetail.value = buildMergedSessionGraphDetail(chainPayload)
   } catch (err) {
-    console.error('加载执行图失败', err)
+    console.error('加载会话执行图链失败', err)
+    sessionGraphChain.value = []
     graphDetail.value = createEmptyGraphDetail()
   }
 }
@@ -292,7 +455,7 @@ const loadSessionContent = async (session) => {
   try {
     messages.value = await agentChatApi.listMessages(session.session_id)
     activeGraphId.value = session.active_graph_id || ''
-    await refreshGraphDetail(activeGraphId.value)
+    await refreshSessionGraphChain(session.session_id)
   } catch (err) {
     errorMessage.value = err?.message || '加载会话失败'
   }
@@ -477,7 +640,7 @@ const consumeSSEStream = async (stream) => {
           active_graph_id: payload.graph_id || '',
           updated_at: new Date().toISOString()
         })
-        await refreshGraphDetail(activeGraphId.value)
+        await refreshSessionGraphChain(sessionId.value)
       } else if (eventName === 'token') {
         const draft = ensureDraftAssistant()
         draft.content += payload.content || ''
@@ -494,7 +657,7 @@ const consumeSSEStream = async (stream) => {
             active_graph_id: payload.graph_id,
             updated_at: new Date().toISOString()
           })
-          await refreshGraphDetail(payload.graph_id)
+          await refreshSessionGraphChain(sessionId.value)
         }
       } else if (eventName === 'error') {
         errorMessage.value = payload.error || '处理失败'
@@ -504,7 +667,7 @@ const consumeSSEStream = async (stream) => {
             active_graph_id: payload.graph_id,
             updated_at: new Date().toISOString()
           })
-          await refreshGraphDetail(payload.graph_id)
+          await refreshSessionGraphChain(sessionId.value)
         }
       }
     }
@@ -654,10 +817,25 @@ onMounted(async () => {
           
           <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-stone-500">
             <span v-if="sessionId" class="flex items-center gap-1 bg-stone-200/50 px-1.5 py-0.5">
-              Graph: <span class="font-medium text-stone-700">{{ activeGraphId ? '已绑定' : '无' }}</span>
+              Current: <span class="font-medium text-stone-700">{{ activeGraphId || '无' }}</span>
+            </span>
+            <span v-if="sessionId" class="flex items-center gap-1 bg-stone-200/50 px-1.5 py-0.5">
+              Graphs: <span class="font-medium text-stone-700">{{ sessionGraphSummaries.length }}</span>
             </span>
             <span v-if="sessionId" class="flex items-center gap-1 bg-stone-200/50 px-1.5 py-0.5">
               Status: <span class="font-medium text-stone-700">{{ latestGraphStatus }}</span>
+            </span>
+          </div>
+          <div v-if="sessionId && sessionGraphSummaries.length" class="mt-3 flex flex-wrap gap-2">
+            <span
+              v-for="graph in sessionGraphSummaries"
+              :key="graph.graphId"
+              class="inline-flex items-center gap-1 border px-2 py-1 text-[11px]"
+              :class="graph.active ? 'border-stone-900 bg-stone-900 text-white' : 'border-stone-300 bg-white text-stone-700'"
+            >
+              <span>第{{ graph.index }}轮</span>
+              <span>{{ graph.status }}</span>
+              <span v-if="graph.prevGraphId" class="opacity-70">← {{ graph.prevGraphId }}</span>
             </span>
           </div>
         </header>

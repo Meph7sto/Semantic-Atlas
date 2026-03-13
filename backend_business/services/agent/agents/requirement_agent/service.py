@@ -57,8 +57,11 @@ class RequirementAgentChatService:
 
     def _hydrate_session_graph(self, session: dict[str, Any]) -> dict[str, Any]:
         hydrated = dict(session or {})
-        if hydrated.get("active_graph_id"):
-            return hydrated
+        active_graph_id = hydrated.get("active_graph_id")
+        if active_graph_id:
+            active_graph = self.execution_graph_service.get_execution_graph(active_graph_id)
+            if active_graph:
+                return hydrated
 
         latest_graph = self.execution_graph_service.get_latest_runtime_graph_by_session(
             hydrated.get("session_id") or "",
@@ -73,31 +76,35 @@ class RequirementAgentChatService:
                 )
         return hydrated
 
-    def _resolve_session_graph_id(
+    def _resolve_session_graph_target(
         self,
         *,
         session: dict[str, Any],
         project_id: str | None,
-    ) -> str | None:
+    ) -> dict[str, str | None]:
         graph_id = session.get("active_graph_id")
         if graph_id:
             graph = self.execution_graph_service.get_execution_graph(graph_id)
             if graph:
-                return graph_id
+                if graph.get("status") == "suspended":
+                    return {"graph_id": graph_id, "prev_graph_id": None}
+                return {"graph_id": None, "prev_graph_id": graph_id}
 
         latest_graph = self.execution_graph_service.get_latest_runtime_graph_by_session(
             session.get("session_id") or "",
             project_id=project_id,
         )
         if not latest_graph:
-            return None
+            return {"graph_id": None, "prev_graph_id": None}
 
         if self.chat_storage:
             self.chat_storage.update_session(
                 session_id=session["session_id"],
                 active_graph_id=latest_graph["graph_id"],
             )
-        return latest_graph["graph_id"]
+        if latest_graph.get("status") == "suspended":
+            return {"graph_id": latest_graph["graph_id"], "prev_graph_id": None}
+        return {"graph_id": None, "prev_graph_id": latest_graph["graph_id"]}
 
     def create_or_get_session(
         self,
@@ -174,6 +181,75 @@ class RequirementAgentChatService:
             limit=limit,
         )
         return [self._hydrate_session_graph(session) for session in sessions]
+
+    @staticmethod
+    def _sort_session_graphs_as_chain(graphs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if len(graphs) <= 1:
+            return list(graphs)
+
+        by_id = {graph["graph_id"]: graph for graph in graphs if graph.get("graph_id")}
+        children_by_prev: dict[str | None, list[dict[str, Any]]] = {}
+        for graph in graphs:
+            meta = graph.get("meta_json") or {}
+            prev_graph_id = meta.get("prev_graph_id")
+            if prev_graph_id not in by_id:
+                prev_graph_id = None
+            children_by_prev.setdefault(prev_graph_id, []).append(graph)
+
+        def _graph_sort_key(item: dict[str, Any]) -> tuple[str, str]:
+            return (
+                str(item.get("created_at") or ""),
+                str(item.get("graph_id") or ""),
+            )
+
+        for siblings in children_by_prev.values():
+            siblings.sort(key=_graph_sort_key)
+
+        ordered: list[dict[str, Any]] = []
+        visited: set[str] = set()
+
+        def _walk(graph: dict[str, Any]) -> None:
+            graph_id = graph.get("graph_id")
+            if not graph_id or graph_id in visited:
+                return
+            visited.add(graph_id)
+            ordered.append(graph)
+            for child in children_by_prev.get(graph_id, []):
+                _walk(child)
+
+        for root in children_by_prev.get(None, []):
+            _walk(root)
+
+        for graph in sorted(graphs, key=_graph_sort_key):
+            _walk(graph)
+
+        return ordered
+
+    def list_session_graph_chain(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+    ) -> dict[str, Any]:
+        if not self.chat_storage:
+            raise RuntimeError("AI chat storage not initialized")
+
+        session = self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
+        hydrated_session = self._hydrate_session_graph(session)
+        graphs = self.execution_graph_service.list_runtime_graphs_by_session(
+            session_id=session_id,
+            project_id=hydrated_session.get("project_id"),
+        )
+        ordered_graphs = self._sort_session_graphs_as_chain(graphs)
+        chain = [
+            self.execution_graph_service.get_graph_detail(graph["graph_id"])
+            for graph in ordered_graphs
+        ]
+        return {
+            "session_id": session_id,
+            "active_graph_id": hydrated_session.get("active_graph_id"),
+            "graphs": chain,
+        }
 
     def delete_session(self, *, session_id: str, user_id: str) -> bool:
         if not self.chat_storage:
@@ -374,6 +450,7 @@ class RequirementAgentChatService:
         self.chat_storage.update_session(session_id=session_id)
         yield {"event": "user_message", "data": user_record}
 
+        graph_target = self._resolve_session_graph_target(session=session, project_id=project_id)
         recorder = _RuntimeGraphRecorder(
             execution_graph_service=self.execution_graph_service,
             project_id=project_id,
@@ -381,7 +458,8 @@ class RequirementAgentChatService:
             requirement_id=requirement_id,
             session_id=session_id,
             user_message=user_message,
-            graph_id=self._resolve_session_graph_id(session=session, project_id=project_id),
+            graph_id=graph_target["graph_id"],
+            prev_graph_id=graph_target["prev_graph_id"],
         )
         self.chat_storage.update_session(
             session_id=session_id,

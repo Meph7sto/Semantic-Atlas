@@ -53,6 +53,7 @@ class RuntimeGraphRecorder:
         session_id: str,
         user_message: str,
         graph_id: str | None = None,
+        prev_graph_id: str | None = None,
         graph_name: str | None = None,
         graph_description: str = "Agent 运行轨迹",
         initial_graph_meta: dict[str, Any] | None = None,
@@ -74,6 +75,7 @@ class RuntimeGraphRecorder:
         self._edge_order = 0
         self._graph = self._load_or_create_graph(
             graph_id=graph_id,
+            prev_graph_id=prev_graph_id,
             project_id=project_id,
             user_id=user_id,
             session_id=session_id,
@@ -100,6 +102,7 @@ class RuntimeGraphRecorder:
         self,
         *,
         graph_id: str | None,
+        prev_graph_id: str | None,
         project_id: str,
         user_id: str,
         session_id: str,
@@ -116,8 +119,12 @@ class RuntimeGraphRecorder:
             self._hydrate_existing_graph(detail)
             return graph
 
+        if prev_graph_id:
+            self._hydrate_previous_graph(prev_graph_id)
+
         normalized_meta = {
             "session_id": session_id,
+            "prev_graph_id": prev_graph_id,
             "user_id": user_id,
             "project_id": project_id,
             "current_node_key": None,
@@ -137,6 +144,19 @@ class RuntimeGraphRecorder:
             meta_json=normalized_meta,
             status="running",
         )
+
+    def _hydrate_previous_graph(self, prev_graph_id: str) -> None:
+        detail = self._service.get_graph_detail(prev_graph_id)
+        graph = detail.get("graph")
+        if not graph:
+            raise ValueError("上一轮执行图不存在或已删除")
+
+        nodes = sorted(
+            detail.get("nodes") or [],
+            key=lambda item: (item.get("order_index") or 0, item.get("created_at") or ""),
+        )
+        self._historical_node_context = self._summarize_existing_nodes(nodes)
+        self._seed_context_entries = self._build_existing_context_entries(nodes)
 
     def _hydrate_existing_graph(self, detail: dict[str, Any]) -> None:
         containers = sorted(
@@ -490,4 +510,3 @@ class RuntimeGraphRecorder:
             status="suspended",
             updated_by=created_by,
         )
-

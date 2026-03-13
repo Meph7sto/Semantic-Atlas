@@ -56,6 +56,11 @@ export const agentChatApi = {
     return resp.data?.messages || []
   },
 
+  async getSessionGraphChain(sessionId) {
+    const resp = await api.get(`/agent-chat/sessions/${encodeURIComponent(sessionId)}/graph-chain`)
+    return resp.data
+  },
+
   async getGraphDetail(graphId) {
     const resp = await api.get(`/agent-chat/graphs/${encodeURIComponent(graphId)}/detail`)
     return resp.data
