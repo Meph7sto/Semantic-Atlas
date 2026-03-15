@@ -18,13 +18,17 @@ const props = defineProps({
     type: String,
     default: null
   },
+  selectedContainerId: {
+    type: String,
+    default: null
+  },
   layout: {
     type: Object,
     default: null
   }
 })
 
-const emit = defineEmits(['select-node', 'select-edge', 'layout-change'])
+const emit = defineEmits(['select-node', 'select-edge', 'select-container', 'layout-change'])
 
 const NODE_WIDTH = 136
 const NODE_HEIGHT = 64
@@ -40,6 +44,9 @@ const AUTO_LAYOUT_BASE_X = 94
 const AUTO_LAYOUT_BASE_Y = 98
 const AUTO_LAYOUT_COLUMN_GAP = 320
 const AUTO_LAYOUT_ROW_GAP = 112
+
+const CURVE_FACTOR = 0.4
+const CURVE_MIN = 50
 
 const wrapperRef = ref(null)
 const canvasRef = ref(null)
@@ -361,29 +368,8 @@ const applyZoomCenter = (newZoom) => {
 }
 
 const handleWheel = (event) => {
-  if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
-    panX.value -= event.deltaX
-    panY.value -= event.deltaY
-    return
-  }
-  
+  // 禁用滚轮缩放和滚动，仅允许手动拖拽
   event.preventDefault()
-  
-  const delta = event.deltaY > 0 ? -0.1 : 0.1
-  const newZoom = Math.min(Math.max(0.2, zoom.value + delta), 3)
-  
-  if (!wrapperRef.value) return
-  const wrapperRect = wrapperRef.value.getBoundingClientRect()
-  
-  const screenX = event.clientX - wrapperRect.left
-  const screenY = event.clientY - wrapperRect.top
-
-  const localX = (screenX - panX.value) / zoom.value
-  const localY = (screenY - panY.value) / zoom.value
-
-  zoom.value = newZoom
-  panX.value = screenX - localX * newZoom
-  panY.value = screenY - localY * newZoom
 }
 
 const handleCanvasPointerDown = (event) => {
@@ -434,11 +420,15 @@ const handleEdgePointerDown = (edgePath, event) => {
   const pointer = toCanvasPoint(event)
   const current = edgeOffsets.value[edgePath.id] || { dx: 0, dy: 0 }
 
+  const edge = props.edges.find(e => e.edge_id === edgePath.id)
+  const isSelfLoop = edge && edge.source_node_id === edge.target_node_id
+
   movedByDrag.value = false
   emit('select-edge', edgePath.id)
   edgeDragState.value = {
     pointerId: event.pointerId,
     edgeId: edgePath.id,
+    isSelfLoop,
     startX: pointer.x,
     startY: pointer.y,
     originDx: toNumber(current.dx, 0),
@@ -471,6 +461,7 @@ const handleContainerPointerDown = (box, event) => {
   const currentOffset = containerOffsets.value[targetContainerId] || { dx: 0, dy: 0 }
 
   movedByDrag.value = false
+  emit('select-container', targetContainerId)
   containerDragState.value = {
     pointerId: event.pointerId,
     containerId: targetContainerId,
@@ -483,6 +474,14 @@ const handleContainerPointerDown = (box, event) => {
   }
 
   event.preventDefault()
+}
+
+const handleContainerClick = (containerId) => {
+  if (movedByDrag.value) {
+    movedByDrag.value = false
+    return
+  }
+  emit('select-container', containerId)
 }
 
 const handleGlobalPointerMove = (event) => {
@@ -541,16 +540,19 @@ const handleGlobalPointerMove = (event) => {
     return
   }
 
-  if (edgeDragState.value && edgeDragState.value.pointerId === event.pointerId) {
+    if (edgeDragState.value && edgeDragState.value.pointerId === event.pointerId) {
     const pointer = toCanvasPoint(event)
     const deltaX = pointer.x - edgeDragState.value.startX
     const deltaY = pointer.y - edgeDragState.value.startY
 
+    // normal cubic bezier midpoint moves by 0.75, self-loops move by 1.0.
+    const DRAG_SCALE = edgeDragState.value.isSelfLoop ? 1.0 : 0.75
+
     edgeOffsets.value = {
       ...edgeOffsets.value,
       [edgeDragState.value.edgeId]: {
-        dx: edgeDragState.value.originDx + deltaX,
-        dy: edgeDragState.value.originDy + deltaY
+        dx: edgeDragState.value.originDx + deltaX / DRAG_SCALE,
+        dy: edgeDragState.value.originDy + deltaY / DRAG_SCALE
       }
     }
 
@@ -668,6 +670,35 @@ const resolveEdgeRelation = (sourceContainerId, targetContainerId) => {
   return 'cross'
 }
 
+// Returns the unit vector pointing outward from a port side
+const getSideVector = (side) => {
+  if (side === 'right')  return [1, 0]
+  if (side === 'left')   return [-1, 0]
+  if (side === 'bottom') return [0, 1]
+  if (side === 'top')    return [0, -1]
+  return [0, 0]
+}
+
+// Returns the absolute canvas coordinate of a port on a node
+const getPortXY = (pos, side) => {
+  switch (side) {
+    case 'right':  return { x: pos.x + NODE_WIDTH,      y: pos.y + NODE_HEIGHT / 2 }
+    case 'left':   return { x: pos.x,                   y: pos.y + NODE_HEIGHT / 2 }
+    case 'bottom': return { x: pos.x + NODE_WIDTH / 2,  y: pos.y + NODE_HEIGHT }
+    case 'top':    return { x: pos.x + NODE_WIDTH / 2,  y: pos.y }
+  }
+}
+
+// Picks source/target port sides based on the relative position of the two nodes
+const computeEdgeSides = (sourcePos, targetPos) => {
+  const dx = (targetPos.x + NODE_WIDTH / 2) - (sourcePos.x + NODE_WIDTH / 2)
+  const dy = (targetPos.y + NODE_HEIGHT / 2) - (sourcePos.y + NODE_HEIGHT / 2)
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0 ? ['right', 'left'] : ['left', 'right']
+  }
+  return dy >= 0 ? ['bottom', 'top'] : ['top', 'bottom']
+}
+
 const edgePaths = computed(() => {
   return props.edges
     .map((edge) => {
@@ -679,43 +710,64 @@ const edgePaths = computed(() => {
       const targetNode = nodeById.value[edge.target_node_id]
       const relation = resolveEdgeRelation(sourceNode?.container_id, targetNode?.container_id)
       const style = edgeStyleMap[relation] || edgeStyleMap.intra
-
-      const startX = sourcePos.x + NODE_WIDTH
-      const startY = sourcePos.y + NODE_HEIGHT / 2
-      const endX = targetPos.x
-      const endY = targetPos.y + NODE_HEIGHT / 2
-
-      const baseCenterX = (startX + endX) / 2
-      const baseCenterY = (startY + endY) / 2
       const offset = edgeOffsets.value[edge.edge_id] || { dx: 0, dy: 0 }
-      const controlX = baseCenterX + toNumber(offset.dx, 0)
-      const controlY = baseCenterY + toNumber(offset.dy, 0)
+      const odx = toNumber(offset.dx, 0)
+      const ody = toNumber(offset.dy, 0)
 
+      const displayLabel = edge.label
+        ? `${edge.label} · ${edgeRelationLabels[relation] || '连线'}`
+        : `${edgeTypeLabels[edge.edge_type] || edge.edge_type || '边'} · ${edgeRelationLabels[relation] || '连线'}`
+
+      // Self-loop: source and target are the same node
+      if (edge.source_node_id === edge.target_node_id) {
+        const sx = sourcePos.x + NODE_WIDTH
+        const sy = sourcePos.y + NODE_HEIGHT * 0.25
+        const ex = sourcePos.x + NODE_WIDTH
+        const ey = sourcePos.y + NODE_HEIGHT * 0.75
+        const loopR = 50 + odx
+        const c1x = sx + loopR
+        const c1y = sy - 20
+        const c2x = ex + loopR
+        const c2y = ey + 20
+        const controlX = sx + loopR
+        const controlY = sourcePos.y + NODE_HEIGHT / 2
+        return {
+          id: edge.edge_id, edgeType: edge.edge_type, label: edge.label, relation,
+          relationLabel: edgeRelationLabels[relation] || '连线', style, displayLabel,
+          path: `M ${sx} ${sy} C ${c1x} ${c1y} ${c2x} ${c2y} ${ex} ${ey}`,
+          controlX, controlY,
+          labelX: controlX + 12, labelY: controlY - 10
+        }
+      }
+
+      const [sourceSide, targetSide] = computeEdgeSides(sourcePos, targetPos)
+      const start = getPortXY(sourcePos, sourceSide)
+      const end   = getPortXY(targetPos, targetSide)
+      const [svx, svy] = getSideVector(sourceSide)
+      const [evx, evy] = getSideVector(targetSide)
+
+      const dist = Math.hypot(end.x - start.x, end.y - start.y)
+      const curve = Math.max(CURVE_MIN, dist * CURVE_FACTOR)
+
+      // Both control points shift by the same offset so the drag handle tracks 1:1
+      const c1x = start.x + svx * curve + odx
+      const c1y = start.y + svy * curve + ody
+      const c2x = end.x   + evx * curve + odx
+      const c2y = end.y   + evy * curve + ody
+
+      const controlX = (c1x + c2x) / 2
+      const controlY = (c1y + c2y) / 2
+
+      // Cubic bezier midpoint at t = 0.5
       const t = 0.5
-      const labelX =
-        (1 - t) * (1 - t) * startX +
-        2 * (1 - t) * t * controlX +
-        t * t * endX
-      const labelY =
-        (1 - t) * (1 - t) * startY +
-        2 * (1 - t) * t * controlY +
-        t * t * endY
+      const labelX = (1-t)**3*start.x + 3*(1-t)**2*t*c1x + 3*(1-t)*t**2*c2x + t**3*end.x
+      const labelY = (1-t)**3*start.y + 3*(1-t)**2*t*c1y + 3*(1-t)*t**2*c2y + t**3*end.y
 
       return {
-        id: edge.edge_id,
-        edgeType: edge.edge_type,
-        label: edge.label,
-        relation,
-        relationLabel: edgeRelationLabels[relation] || '连线',
-        style,
-        displayLabel: edge.label
-          ? `${edge.label} · ${edgeRelationLabels[relation] || '连线'}`
-          : `${edgeTypeLabels[edge.edge_type] || edge.edge_type || '边'} · ${edgeRelationLabels[relation] || '连线'}`,
-        path: `M ${startX} ${startY} Q ${controlX} ${controlY} ${endX} ${endY}`,
-        controlX,
-        controlY,
-        labelX,
-        labelY
+        id: edge.edge_id, edgeType: edge.edge_type, label: edge.label, relation,
+        relationLabel: edgeRelationLabels[relation] || '连线', style, displayLabel,
+        path: `M ${start.x} ${start.y} C ${c1x} ${c1y} ${c2x} ${c2y} ${end.x} ${end.y}`,
+        controlX: labelX, controlY: labelY, labelX, labelY
       }
     })
     .filter(Boolean)
@@ -765,7 +817,8 @@ onBeforeUnmount(() => {
       <div
         v-for="box in containerBoxes"
         :key="box.id"
-        class="absolute rounded-2xl border shadow-sm"
+        class="absolute rounded-2xl border shadow-sm transition-all"
+        :class="props.selectedContainerId === box.id ? 'ring-2 ring-blue-500 shadow-lg' : ''"
         :style="{
           left: `${box.left}px`,
           top: `${box.top}px`,
@@ -774,6 +827,7 @@ onBeforeUnmount(() => {
           borderColor: box.palette.stroke,
           background: box.palette.fill
         }"
+        @click.stop="handleContainerClick(box.id)"
       >
         <div
           class="h-8 px-3 flex items-center justify-between text-[11px] font-semibold border-b rounded-t-2xl cursor-move select-none touch-none"
@@ -783,6 +837,7 @@ onBeforeUnmount(() => {
             color: box.palette.text
           }"
           @pointerdown.stop="handleContainerPointerDown(box, $event)"
+          @click.stop="handleContainerClick(box.id)"
         >
           <span class="truncate">{{ box.label }}</span>
           <span>{{ box.nodeCount }} 节点</span>
@@ -874,6 +929,8 @@ onBeforeUnmount(() => {
       </div>
       <div class="absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 bg-white border border-zinc-400 rounded-full" />
       <div class="absolute -right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 bg-white border border-zinc-400 rounded-full" />
+      <div class="absolute left-1/2 -top-1.5 -translate-x-1/2 w-3 h-3 bg-white border border-zinc-400 rounded-full" />
+      <div class="absolute left-1/2 -bottom-1.5 -translate-x-1/2 w-3 h-3 bg-white border border-zinc-400 rounded-full" />
     </div>
 
     <div class="absolute left-4 top-3 px-3 py-2 text-[11px] text-zinc-600 bg-white/95 rounded-lg border border-zinc-200 leading-5" style="z-index: 18;">

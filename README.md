@@ -153,31 +153,31 @@ bash deploy/stop_services.sh
 
 ### Alpha（实验功能）`/alpha/*`
 
-| 路由                               | 页面                         | 说明               |
-| ---------------------------------- | ---------------------------- | ------------------ |
-| `/alpha/transcript-ingestion`      | TranscriptIngestion          | Phase 1 转写解析   |
-| `/alpha/context-builder`           | ContextBuilder               | Phase 2 上下文构建 |
-| `/alpha/requirements-extraction`   | RequirementsExtraction       | Phase 3 需求抽取   |
-| `/alpha/l4-testing`                | L4Testing                    | L4 需求测试        |
-| `/alpha/requirements-manage`       | RequirementsManage           | 需求管理（调试）   |
-| `/alpha/requirements-manage-table` | RequirementsManageTableDebug | 需求表格（调试）   |
-| `/alpha/conflict`                  | ConflictDetection            | 冲突检测           |
-| `/alpha/traceability`              | Traceability                 | 追溯分析           |
-| `/alpha/classification`            | Classification               | 需求分类           |
-| `/alpha/acquisition-trace`         | AcquisitionTraceability      | 获取 + 追溯        |
-| `/alpha/chat`                      | GeneralChat                  | 通用对话           |
-| `/alpha/message-push`              | MessagePush                  | 消息推送           |
-| `/alpha/mobile-bridge`             | MobileBridge                 | 移动端桥接         |
-| `/alpha/file-receive`              | FileReceive                  | 文件接收           |
-| `/alpha/execution-topology`        | ExecutionTopologyTemplate    | 执行拓扑可视化     |
-| `/alpha/actor-visual-tester`       | ActorVisualTester            | Actor 可视化测试   |
+| 路由 | 页面 | 说明 |
+|------|------|------|
+| `/alpha/transcript-ingestion` | TranscriptIngestion | Phase 1 转写解析 |
+| `/alpha/context-builder` | ContextBuilder | Phase 2 上下文构建 |
+| `/alpha/requirements-extraction` | RequirementsExtraction | Phase 3 需求抽取 |
+| `/alpha/l4-testing` | L4Testing | L4 需求测试 |
+| `/alpha/requirements-manage` | RequirementsManage | 需求管理（调试） |
+| `/alpha/requirements-manage-table` | RequirementsManageTableDebug | 需求表格（调试） |
+| `/alpha/conflict` | ConflictDetection | 冲突检测 |
+| `/alpha/traceability` | Traceability | 追溯分析 |
+| `/alpha/classification` | Classification | 需求分类 |
+| `/alpha/acquisition-trace` | AcquisitionTraceability | 获取 + 追溯 |
+| `/alpha/chat` | GeneralChat | 通用对话 |
+| `/alpha/message-push` | MessagePush | 消息推送 |
+| `/alpha/mobile-bridge` | MobileBridge | 移动端桥接 |
+| `/alpha/file-receive` | FileReceive | 文件接收 |
+| `/alpha/image-caption` | ImageCaptionPreview | 图生文（AutoDL 配置与生成） |
+| `/alpha/execution-topology` | ExecutionTopologyTemplate | 执行拓扑可视化 |
+| `/alpha/actor-visual-tester` | ActorVisualTester | Actor 可视化测试 |
 
 ### 引导页
 
 | 路由     | 说明          |
 | -------- | ------------- |
 | `/guide` | 引导页/入口点 |
->>>>>>> 4354358c367e1a209ceed55747e38c6d53d51b2f
 
 ## 配置说明
 

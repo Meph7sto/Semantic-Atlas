@@ -2,18 +2,36 @@
 
 from __future__ import annotations
 
+from typing import Literal
 from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
 
+PromptPayloadFormat = Literal["json", "yaml", "markdown"]
+
+
 class AgentChatSessionRequest(BaseModel):
     project_id: Optional[str] = Field(default=None)
     title: Optional[str] = Field(default=None, max_length=120)
+    prompt_payload_format: Optional[PromptPayloadFormat] = Field(default=None)
 
     @field_validator("project_id", "title")
     @classmethod
     def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        return text or None
+
+
+class AgentChatSessionUpdateRequest(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=120)
+    prompt_payload_format: Optional[PromptPayloadFormat] = Field(default=None)
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str | None) -> str | None:
         if value is None:
             return None
         text = value.strip()

@@ -1,34 +1,15 @@
-"""ConditionEvaluator - Parses and validates edge condition expressions.
-
-This class provides safe parsing and validation of condition expressions
-used for edge routing. It does not evaluate expressions - only
-parses and validates their structure.
-
-Note: This is for manual modeling and structure building only.
-No actual expression evaluation is performed at this stage.
-"""
+"""ConditionEvaluator - Parses, validates, and evaluates edge conditions safely."""
 
 import ast
+import builtins
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Set, Optional
+from typing import Any, Dict, List, Set
 
 
 @dataclass
 class ParsedCondition:
-    """Parsed condition expression structure.
-
-    This dataclass stores the parsed structure of a condition
-    expression without actual evaluation.
-
-    Attributes:
-        expression: Original expression string
-        variables: Set of variable names referenced in the expression
-        functions: Set of function names called in the expression
-        operators: Set of operators used in the expression
-        is_valid: Whether the expression syntax is valid
-        errors: List of syntax errors found
-    """
+    """Parsed condition expression structure."""
 
     expression: str
     variables: Set[str]
@@ -50,23 +31,8 @@ class ParsedCondition:
 
 
 class ConditionEvaluator:
-    """Evaluates and validates edge condition expressions safely.
+    """Evaluates and validates edge condition expressions safely."""
 
-    This class provides structure parsing and validation for condition
-    expressions used in edge routing.
-
-    Note: Does not actually evaluate expressions - only parses
-    and validates their structure for security and correctness.
-
-    Allowed functions (safe built-ins):
-        len, str, int, float, bool, dict, list, set, tuple,
-        any, all, min, max, sum, abs, round, sorted, reversed
-
-    Allowed operators:
-        ==, !=, <, <=, >, >=, and, or, not, in, not in, is, is not
-    """
-
-    # Allowed functions for safe evaluation
     ALLOWED_FUNCTIONS: Set[str] = {
         "len",
         "str",
@@ -88,26 +54,17 @@ class ConditionEvaluator:
         "reversed",
     }
 
-    # Forbidden patterns for security
     FORBIDDEN_PATTERNS: List[str] = [
-        r"\b__",  # No dunder attributes
-        r"\bimport\b",  # No import statements
-        r"\beval\b",  # No eval statements
-        r"\bexec\b",  # No exec statements
-        r"\bopen\b",  # No file operations
-        r"\b__import__\b",  # No __import__ calls
+        r"\b__",
+        r"\bimport\b",
+        r"\beval\b",
+        r"\bexec\b",
+        r"\bopen\b",
+        r"\b__import__\b",
     ]
 
     def parse(self, expression: str) -> ParsedCondition:
-        """Parse a condition expression and return its structure.
-
-        Args:
-            expression: The condition expression to parse
-
-        Returns:
-            ParsedCondition object with variables, functions, operators,
-            and validation status
-        """
+        """Parse a condition expression and return its structure."""
         if not expression or not expression.strip():
             return ParsedCondition(
                 expression=expression or "",
@@ -120,29 +77,21 @@ class ConditionEvaluator:
 
         errors = []
 
-        # Check for forbidden patterns
         for pattern in self.FORBIDDEN_PATTERNS:
             if re.search(pattern, expression):
-                errors.append(
-                    f"Expression contains forbidden pattern: {pattern}"
-                )
+                errors.append(f"Expression contains forbidden pattern: {pattern}")
 
-        # Try to parse the expression as AST
         try:
             tree = ast.parse(expression, mode="eval")
-
-            # Extract variables and functions
             variables = self._extract_variables(tree)
             functions = self._extract_functions(tree)
             operators = self._extract_operators(tree)
 
-            # Validate functions are allowed
             forbidden_functions = functions - self.ALLOWED_FUNCTIONS
             if forbidden_functions:
                 errors.append(
-                    f"Function(s) not allowed: {', '.join(forbidden_functions)}"
+                    f"Function(s) not allowed: {', '.join(sorted(forbidden_functions))}"
                 )
-
         except SyntaxError as e:
             errors.append(f"Syntax error: {e.msg}")
             return ParsedCondition(
@@ -173,28 +122,15 @@ class ConditionEvaluator:
             errors=errors,
         )
 
-    def validate(
-        self,
-        expression: str,
-        available_variables: Set[str],
-    ) -> List[str]:
-        """Validate expression against available variables.
-
-        Args:
-            expression: The condition expression to validate
-            available_variables: Set of variable names that are available
-
-        Returns:
-            List of validation errors (empty if valid)
-        """
+    def validate(self, expression: str, available_variables: Set[str]) -> List[str]:
+        """Validate expression against available variables."""
         parsed = self.parse(expression)
         errors = list(parsed.errors)
 
-        # Check if all referenced variables are available
-        undefined_vars = parsed.variables - available_variables
+        undefined_vars = parsed.variables - available_variables - parsed.functions
         if undefined_vars:
             errors.append(
-                f"Undefined variable(s): {', '.join(undefined_vars)}"
+                f"Undefined variable(s): {', '.join(sorted(undefined_vars))}"
             )
 
         return errors
@@ -218,6 +154,7 @@ class ConditionEvaluator:
             def visit_Call(self, node: ast.Call) -> None:
                 if isinstance(node.func, ast.Name):
                     functions.add(node.func.id)
+                self.generic_visit(node)
 
         FunctionVisitor().visit(tree)
         return functions
@@ -229,39 +166,43 @@ class ConditionEvaluator:
         class OperatorVisitor(ast.NodeVisitor):
             def visit_Compare(self, node: ast.Compare) -> None:
                 for op in node.ops:
-                    op_name = op.__class__.__name__
-                    operators.add(op_name)
+                    operators.add(op.__class__.__name__)
+                self.generic_visit(node)
 
             def visit_BoolOp(self, node: ast.BoolOp) -> None:
-                op_name = node.op.__class__.__name__
-                operators.add(op_name)
+                operators.add(node.op.__class__.__name__)
+                self.generic_visit(node)
 
             def visit_UnaryOp(self, node: ast.UnaryOp) -> None:
-                op_name = node.op.__class__.__name__
-                operators.add(op_name)
+                operators.add(node.op.__class__.__name__)
+                self.generic_visit(node)
 
         OperatorVisitor().visit(tree)
         return operators
 
-    # Future: Add evaluate() method when LLM integration is ready
-    #
-    # def evaluate(self, expression: str, state: Dict[str, Any]) -> bool:
-    #     """Evaluate condition expression against current state.
-    #
-    #     NOTE: This method will be implemented when LLM execution is added.
-    #     Currently, only parse and validate are used.
-    #     """
-    #     # Safe globals with only allowed functions
-    #     safe_globals = {
-    #         "__builtins__": {},
-    #         **{fn: __builtins__[fn] for fn in self.ALLOWED_FUNCTIONS},
-    #     }
-    #
-    #     try:
-    #         result = eval(expression, safe_globals, state)
-    #         return bool(result)
-    #     except Exception as e:
-    #         logger.warning(f"Condition evaluation failed: {expression}, error: {e}")
-    #         return False  # Fail closed for safety
-    #
-    #     # TODO: Implement when LLM execution phase is ready
+    def evaluate(self, expression: str, state: Dict[str, Any]) -> bool:
+        """Safely evaluate a validated condition expression against runtime state."""
+        if not expression or not expression.strip():
+            return True
+
+        parsed = self.parse(expression)
+        if parsed.errors:
+            raise ValueError("; ".join(parsed.errors))
+
+        available_variables = set((state or {}).keys())
+        undefined_vars = parsed.variables - available_variables - parsed.functions
+        if undefined_vars:
+            raise ValueError(
+                f"Undefined variable(s): {', '.join(sorted(undefined_vars))}"
+            )
+
+        safe_globals = {
+            "__builtins__": {},
+            **{fn: getattr(builtins, fn) for fn in self.ALLOWED_FUNCTIONS},
+        }
+        try:
+            compiled = compile(ast.parse(expression, mode="eval"), "<condition>", "eval")
+            result = eval(compiled, safe_globals, state)
+        except Exception as exc:
+            raise ValueError(f"Condition evaluation failed: {exc}") from exc
+        return bool(result)

@@ -1,0 +1,113 @@
+"""Requirement-agent adapter for generic tool-call loop execution."""
+
+from __future__ import annotations
+
+from collections.abc import Generator
+from typing import Any
+
+from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner
+from backend_business.services.agent.execution_graph_service import ExecutionGraphService
+from backend_business.services.agent.tools import RequirementAgentTools
+
+from .constants import DEFAULT_PROMPT_PAYLOAD_FORMAT
+from .prompt_builder import RequirementAgentPromptBuilder
+from .runtime_graph_recorder import _RuntimeGraphRecorder
+
+
+class _RequirementToolLoopPromptAdapter:
+    def __init__(self, prompt_builder: RequirementAgentPromptBuilder) -> None:
+        self._prompt_builder = prompt_builder
+
+    def build_system_prompt(self, *, context: dict[str, Any]) -> str:
+        return self._prompt_builder.build_tool_loop_system_prompt()
+
+    def build_user_message(self, *, user_message: str, context: dict[str, Any]) -> str:
+        return self._prompt_builder.build_tool_loop_user_message(
+            project_id=context["project_id"],
+            user_message=user_message,
+            requirement_id=context.get("selected_requirement_id"),
+            historical_node_context=context.get("historical_node_context"),
+            prompt_payload_format=context.get("prompt_payload_format", DEFAULT_PROMPT_PAYLOAD_FORMAT),
+        )
+
+    def build_round_input_summary(
+        self,
+        *,
+        round_index: int,
+        messages: list[dict[str, Any]],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._prompt_builder.build_tool_loop_input_summary(
+            round_index=round_index,
+            messages=messages,
+            context=context,
+        )
+
+
+class RequirementAgentToolLoopRunner:
+    def __init__(
+        self,
+        *,
+        ai_proxy_client: Any,
+        tools: RequirementAgentTools,
+        execution_graph_service: ExecutionGraphService,
+        actor_manager_getter: Any,
+        prompt_builder: RequirementAgentPromptBuilder,
+        max_tool_call_rounds: int,
+    ) -> None:
+        self._runner = ToolLoopRunner(
+            ai_proxy_client=ai_proxy_client,
+            tool_executor=tools,
+            prompt_builder=_RequirementToolLoopPromptAdapter(prompt_builder),
+            max_tool_call_rounds=max_tool_call_rounds,
+            stage_container_key="requirements_agent",
+            stage_node_key_builder=lambda round_index: f"requirements_agent_tool_loop_round_{round_index}",
+            stage_label_builder=lambda round_index: f"Tool Loop Round {round_index}",
+            actor_manager_getter=actor_manager_getter,
+            graph_meta_patcher=lambda graph_id, meta_patch, updated_by: execution_graph_service.patch_graph_meta(
+                graph_id,
+                meta_patch,
+                updated_by=updated_by,
+            ),
+            graph_meta_patch_builder=lambda context: {
+                "resolved_requirement_id": context.get("resolved_requirement_id"),
+            },
+        )
+
+    def run(
+        self,
+        *,
+        recorder: _RuntimeGraphRecorder,
+        user_id: str,
+        user_message: str,
+        project_id: str,
+        requirement_id: str | None,
+        session_id: str,
+        prompt_payload_format: str,
+    ) -> Generator[dict[str, Any], None, dict[str, Any]]:
+        context: dict[str, Any] = {
+            "project_id": project_id,
+            "user_id": user_id,
+            "session_id": session_id,
+            "graph_id": recorder.graph_id,
+            "selected_requirement_id": requirement_id,
+            "resolved_requirement_id": requirement_id,
+            "resolved_requirement_ids": {requirement_id} if requirement_id else set(),
+            "historical_node_context": recorder.historical_node_context,
+            "prompt_payload_format": prompt_payload_format,
+            "tool_results": [],
+            "write_performed": False,
+            "clarification_required": False,
+        }
+        result = yield from self._runner.run(
+            recorder=recorder,
+            user_id=user_id,
+            user_message=user_message,
+            context=context,
+        )
+        return {
+            "tool_loop_reply": result.tool_loop_reply,
+            "context": result.context,
+            "rounds": result.rounds,
+        }
+

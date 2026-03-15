@@ -24,6 +24,7 @@ class _StubAgentChatService:
     def __init__(self):
         self.last_session_args = None
         self.last_messages_args = None
+        self.last_graph_chain_args = None
         self.last_stream_args = None
         self.last_graph_id = None
 
@@ -34,6 +35,32 @@ class _StubAgentChatService:
     def list_messages(self, *, session_id: str, user_id: str, limit: int = 100):
         self.last_messages_args = (session_id, user_id, limit)
         return [{"message_id": "m-1", "role": "assistant", "content": "hello"}]
+
+    def list_session_graph_chain(self, *, session_id: str, user_id: str):
+        self.last_graph_chain_args = (session_id, user_id)
+        return {
+            "session_id": session_id,
+            "active_graph_id": "graph-2",
+            "graphs": [
+                {
+                    "graph": {"graph_id": "graph-1", "project_id": "p-1", "status": "succeeded"},
+                    "containers": [],
+                    "nodes": [],
+                    "edges": [],
+                },
+                {
+                    "graph": {
+                        "graph_id": "graph-2",
+                        "project_id": "p-1",
+                        "status": "running",
+                        "meta_json": {"prev_graph_id": "graph-1"},
+                    },
+                    "containers": [],
+                    "nodes": [],
+                    "edges": [],
+                },
+            ],
+        }
 
     def stream_requirement_agent_reply(self, **kwargs):
         self.last_stream_args = kwargs
@@ -88,6 +115,22 @@ def test_list_messages_returns_router_shape(monkeypatch):
     assert response.status_code == 200
     assert response.json()["messages"][0]["message_id"] == "m-1"
     assert stub.last_messages_args == ("sess-1", "u-1", 20)
+
+
+def test_get_session_graph_chain_returns_router_shape(monkeypatch):
+    stub = _StubAgentChatService()
+    monkeypatch.setattr(agent_chat, "requirement_agent_chat_service", stub)
+    monkeypatch.setattr(agent_chat, "_require_project_access", lambda project_id, current_user: None)
+
+    with _build_client() as client:
+        response = client.get("/api/v2/agent-chat/sessions/sess-1/graph-chain")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["session_id"] == "sess-1"
+    assert body["active_graph_id"] == "graph-2"
+    assert body["graphs"][1]["graph"]["meta_json"]["prev_graph_id"] == "graph-1"
+    assert stub.last_graph_chain_args == ("sess-1", "u-1")
 
 
 def test_stream_message_returns_sse_events(monkeypatch):

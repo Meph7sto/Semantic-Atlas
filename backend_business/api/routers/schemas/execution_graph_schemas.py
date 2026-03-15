@@ -211,3 +211,16 @@ class UpdateEdgeRequest(BaseModel):
         if v is not None:
             return normalize_edge_type(v)
         return v
+
+
+# ========================
+# Execution Runtime Schema
+# ========================
+
+
+class ExecuteTopologyRequest(BaseModel):
+    """Execute a topology template into a runtime graph."""
+    input_payload: Optional[Dict[str, Any]] = Field(default_factory=dict, description="输入 payload")
+    max_steps: int = Field(default=100, ge=1, le=1000, description="最大执行步数")
+    runtime_graph_name: Optional[str] = Field(None, min_length=1, description="运行时图名称")
+    runtime_graph_description: Optional[str] = Field(None, description="运行时图描述")

@@ -140,8 +140,18 @@ const router = createRouter({
                         requiresAuth: true,
                         requiredSystemIdentities: ['SYS_ADMIN']
                     }
+                },
+                {
+                    path: 'topology-editor',
+                    name: 'beta-topology-editor',
+                    component: TopologyEditorView,
+                    meta: { requiresAuth: true, keepAlive: true }
                 }
             ]
+        },
+        {
+            path: '/main/topology-editor',
+            redirect: { name: 'beta-topology-editor' }
         },
         {
             path: '/alpha',

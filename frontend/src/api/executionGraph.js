@@ -221,4 +221,14 @@ export const executionGraphApi = {
     const resp = await api.get(`/execution-topology/${encodeURIComponent(graphId)}/export${queryString ? '?' + queryString : ''}`)
     return resp.data
   },
+
+  /**
+   * 执行拓扑模板并创建运行时图
+   * @param {string} graphId - 图 ID
+   * @param {object} data - 执行参数 {input_payload, max_steps, runtime_graph_name, runtime_graph_description}
+   */
+  async executeTopology(graphId, data = {}) {
+    const resp = await api.post(`/execution-topology/${encodeURIComponent(graphId)}/execute`, data)
+    return resp.data
+  },
 }
