@@ -90,22 +90,22 @@ def fastapi_client(monkeypatch):
 def test_list_sessions_user_id_falls_back_to_header_then_anonymous(fastapi_client):
     client, stub = fastapi_client
 
-    resp = client.get("/api/mobile/sessions?user_id=query-user", headers={"X-Actor": "actor-user"})
+    resp = client.get("/api/v2/mobile/sessions?user_id=query-user", headers={"X-Actor": "actor-user"})
     assert resp.status_code == 200
     assert stub.last_sessions["user_id"] == "query-user"
 
-    resp = client.get("/api/mobile/sessions", headers={"X-Actor": "actor-user"})
+    resp = client.get("/api/v2/mobile/sessions", headers={"X-Actor": "actor-user"})
     assert resp.status_code == 200
     assert stub.last_sessions["user_id"] == "actor-user"
 
-    resp = client.get("/api/mobile/sessions")
+    resp = client.get("/api/v2/mobile/sessions")
     assert resp.status_code == 200
     assert stub.last_sessions["user_id"] == "anonymous"
 
 
 def test_list_messages_uses_query_user_id(fastapi_client):
     client, stub = fastapi_client
-    resp = client.get("/api/mobile/messages?session_id=s1&user_id=u-query&limit=20")
+    resp = client.get("/api/v2/mobile/messages?session_id=s1&user_id=u-query&limit=20")
     assert resp.status_code == 200
     assert stub.last_messages == {
         "user_id": "u-query",
@@ -117,7 +117,7 @@ def test_list_messages_uses_query_user_id(fastapi_client):
 
 def test_list_messages_missing_session_id_returns_422(fastapi_client):
     client, _ = fastapi_client
-    resp = client.get("/api/mobile/messages")
+    resp = client.get("/api/v2/mobile/messages")
     assert resp.status_code == 422
     detail = resp.json()["detail"]
     assert any(item.get("loc") == ["query", "session_id"] for item in detail)
@@ -126,7 +126,7 @@ def test_list_messages_missing_session_id_returns_422(fastapi_client):
 def test_create_message_user_id_priority_payload_over_header(fastapi_client):
     client, stub = fastapi_client
     resp = client.post(
-        "/api/mobile/messages",
+        "/api/v2/mobile/messages",
         json={
             "user_id": "u-payload",
             "session_id": "s1",
@@ -142,7 +142,7 @@ def test_create_message_user_id_priority_payload_over_header(fastapi_client):
 def test_create_message_invalid_sender_returns_400_detail(fastapi_client):
     client, _ = fastapi_client
     resp = client.post(
-        "/api/mobile/messages",
+        "/api/v2/mobile/messages",
         json={
             "session_id": "s1",
             "sender": "bad",
@@ -156,7 +156,7 @@ def test_create_message_invalid_sender_returns_400_detail(fastapi_client):
 def test_create_message_missing_content_returns_422(fastapi_client):
     client, _ = fastapi_client
     resp = client.post(
-        "/api/mobile/messages",
+        "/api/v2/mobile/messages",
         json={"session_id": "s1", "sender": "web"},
     )
     assert resp.status_code == 422
@@ -166,11 +166,12 @@ def test_create_message_missing_content_returns_422(fastapi_client):
 
 def test_stream_uses_user_id_for_subscription(fastapi_client):
     client, stub = fastapi_client
-    resp = client.get("/api/mobile/stream?session_id=s-stream&user_id=u-stream")
+    resp = client.get("/api/v2/mobile/stream?session_id=s-stream&user_id=u-stream")
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/event-stream")
     assert resp.headers["cache-control"] == "no-cache"
     assert resp.headers["x-accel-buffering"] == "no"
     assert stub.last_subscribe == {"user_id": "u-stream", "session_id": "s-stream"}
     assert stub.last_stream == {"user_id": "u-stream", "session_id": "s-stream"}
+
 

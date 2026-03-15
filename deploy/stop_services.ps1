@@ -98,8 +98,8 @@ else {
   Write-Host "Nginx 停止成功。"
 }
 
-Write-Host "[stop] 结束占用端口的进程: 8000 (FastAPI Inference), 5002 (FastAPI Business), 8008 (Nginx)"
-$ports = @(8000, 5002, 8008)
+Write-Host "[stop] 结束占用端口的进程: 8000 (FastAPI Inference), 5002 (FastAPI Business), 8008 (Nginx), 5173 (Vite Dev)"
+$ports = @(8000, 5002, 8008, 5173)
 foreach ($port in $ports) {
   $conns = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
   if ($conns) {
@@ -123,6 +123,17 @@ try {
   foreach ($proc in $pythonMatches) {
     Write-Host (" - python PID {0} -> stopping" -f $proc.ProcessId)
     Stop-ProcessTree -ProcessId $proc.ProcessId -Label "python"
+  }
+}
+catch {
+}
+
+try {
+  $nodeMatches = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+  Where-Object { $_.CommandLine -and $_.CommandLine -match "vite" }
+  foreach ($proc in $nodeMatches) {
+    Write-Host (" - node PID {0} -> stopping" -f $proc.ProcessId)
+    Stop-ProcessTree -ProcessId $proc.ProcessId -Label "node"
   }
 }
 catch {

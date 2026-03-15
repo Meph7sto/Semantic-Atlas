@@ -63,25 +63,25 @@ def auth_headers():
 @pytest.mark.parametrize(
     ("method", "path", "payload", "field"),
     [
-        ("POST", "/api/permission/projects/p1/members", {"user_id": ""}, "user_id"),
-        ("PUT", "/api/permission/projects/p1/members/u1/roles", {"roles": "PO"}, "roles"),
-        ("POST", "/api/permission/requirements/r1/reviews", {"seq": 1}, "reviewer_id"),
-        ("POST", "/api/permission/projects/p1/baselines", {"locked": False}, "version"),
+        ("POST", "/api/v2/permission/projects/p1/members", {"user_id": ""}, "user_id"),
+        ("PUT", "/api/v2/permission/projects/p1/members/u1/roles", {"roles": "PO"}, "roles"),
+        ("POST", "/api/v2/permission/requirements/r1/reviews", {"seq": 1}, "reviewer_id"),
+        ("POST", "/api/v2/permission/projects/p1/baselines", {"locked": False}, "version"),
         (
             "POST",
-            "/api/permission/requirements/r1/change-requests",
+            "/api/v2/permission/requirements/r1/change-requests",
             {"reason": "r", "change_summary": "s"},
             "baseline_id",
         ),
         (
             "POST",
-            "/api/permission/requirements/r1/change-requests",
+            "/api/v2/permission/requirements/r1/change-requests",
             {"baseline_id": 1, "change_summary": "s"},
             "reason",
         ),
         (
             "POST",
-            "/api/permission/requirements/r1/change-requests",
+            "/api/v2/permission/requirements/r1/change-requests",
             {"baseline_id": 1, "reason": "r"},
             "change_summary",
         ),
@@ -93,14 +93,14 @@ def test_request_validation_errors_are_422(client, auth_headers, method, path, p
 
 
 def test_unauthorized_without_token(client):
-    response = client.get("/api/permission/projects/p1/members")
+    response = client.get("/api/v2/permission/projects/p1/members")
     assert response.status_code == 401
     assert response.json()["detail"] == "未提供认证 Token"
 
 
 def test_invalid_token(client):
     response = client.get(
-        "/api/permission/projects/p1/members",
+        "/api/v2/permission/projects/p1/members",
         headers={"Authorization": "Bearer invalid_token"},
     )
     assert response.status_code == 401
@@ -109,7 +109,7 @@ def test_invalid_token(client):
 
 def test_valid_token_hits_business_error_when_db_is_uninitialized(client, auth_headers):
     response = client.get(
-        "/api/permission/projects/p1/members",
+        "/api/v2/permission/projects/p1/members",
         headers=auth_headers,
     )
     assert response.status_code == 500
@@ -125,30 +125,30 @@ def test_health_check(client):
 @pytest.mark.parametrize(
     ("method", "url", "payload"),
     [
-        ("POST", "/api/permission/projects/p1/members", {"user_id": "u1"}),
-        ("GET", "/api/permission/projects/p1/members", None),
-        ("DELETE", "/api/permission/projects/p1/members/u2", None),
-        ("PUT", "/api/permission/projects/p1/members/u1/roles", {"roles": ["PO"]}),
-        ("POST", "/api/permission/requirements/r1/reviews", {"reviewer_id": "u1", "seq": 1}),
-        ("GET", "/api/permission/requirements/r1/reviews", None),
-        ("POST", "/api/permission/reviews/1/approve", {"comment": "ok"}),
-        ("POST", "/api/permission/reviews/1/reject", {"comment": "no"}),
-        ("POST", "/api/permission/reviews/1/withdraw", None),
-        ("GET", "/api/permission/user/pending-reviews", None),
-        ("POST", "/api/permission/projects/p1/baselines", {"version": "1.0.0", "locked": False}),
-        ("GET", "/api/permission/projects/p1/baselines", None),
-        ("POST", "/api/permission/baselines/1/lock", None),
-        ("POST", "/api/permission/baselines/1/unlock", None),
+        ("POST", "/api/v2/permission/projects/p1/members", {"user_id": "u1"}),
+        ("GET", "/api/v2/permission/projects/p1/members", None),
+        ("DELETE", "/api/v2/permission/projects/p1/members/u2", None),
+        ("PUT", "/api/v2/permission/projects/p1/members/u1/roles", {"roles": ["PO"]}),
+        ("POST", "/api/v2/permission/requirements/r1/reviews", {"reviewer_id": "u1", "seq": 1}),
+        ("GET", "/api/v2/permission/requirements/r1/reviews", None),
+        ("POST", "/api/v2/permission/reviews/1/approve", {"comment": "ok"}),
+        ("POST", "/api/v2/permission/reviews/1/reject", {"comment": "no"}),
+        ("POST", "/api/v2/permission/reviews/1/withdraw", None),
+        ("GET", "/api/v2/permission/user/pending-reviews", None),
+        ("POST", "/api/v2/permission/projects/p1/baselines", {"version": "1.0.0", "locked": False}),
+        ("GET", "/api/v2/permission/projects/p1/baselines", None),
+        ("POST", "/api/v2/permission/baselines/1/lock", None),
+        ("POST", "/api/v2/permission/baselines/1/unlock", None),
         (
             "POST",
-            "/api/permission/requirements/r1/change-requests",
+            "/api/v2/permission/requirements/r1/change-requests",
             {"baseline_id": 1, "reason": "change", "change_summary": "summary"},
         ),
-        ("GET", "/api/permission/requirements/r1/change-requests", None),
-        ("POST", "/api/permission/change-requests/1/approve", {"review_comment": "ok"}),
-        ("POST", "/api/permission/change-requests/1/reject", {"review_comment": "no"}),
-        ("GET", "/api/permission/change-requests/pending", None),
-        ("GET", "/api/permission/projects/p1/context", None),
+        ("GET", "/api/v2/permission/requirements/r1/change-requests", None),
+        ("POST", "/api/v2/permission/change-requests/1/approve", {"review_comment": "ok"}),
+        ("POST", "/api/v2/permission/change-requests/1/reject", {"review_comment": "no"}),
+        ("GET", "/api/v2/permission/change-requests/pending", None),
+        ("GET", "/api/v2/permission/projects/p1/context", None),
     ],
 )
 def test_permission_endpoints_registered(client, auth_headers, method, url, payload):
@@ -159,7 +159,7 @@ def test_permission_endpoints_registered(client, auth_headers, method, url, payl
 
 def test_invalid_include_roles_query_fails_with_422(client, auth_headers):
     response = client.get(
-        "/api/permission/projects/p1/members?include_roles=abc",
+        "/api/v2/permission/projects/p1/members?include_roles=abc",
         headers=auth_headers,
     )
     _assert_validation_error(response, "include_roles", loc_scope="query")
@@ -167,7 +167,8 @@ def test_invalid_include_roles_query_fails_with_422(client, auth_headers):
 
 def test_invalid_include_locked_query_fails_with_422(client, auth_headers):
     response = client.get(
-        "/api/permission/projects/p1/baselines?include_locked=abc",
+        "/api/v2/permission/projects/p1/baselines?include_locked=abc",
         headers=auth_headers,
     )
     _assert_validation_error(response, "include_locked", loc_scope="query")
+

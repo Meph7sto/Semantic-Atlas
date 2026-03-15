@@ -43,7 +43,7 @@ class StartNodeHandler:
     This handler provides structure definitions for start nodes
     without actual execution.
 
-    Note: No actual AgentRunner or LLM execution is performed.
+    Note: No actual runtime execution is performed.
     Only structure building.
     """
 
@@ -57,10 +57,10 @@ class StartNodeHandler:
             StartNodeStructure definition
 
         Future Integration Point:
-            When LLM execution is added, this method will:
+            When runtime execution is added, this method will:
             1. Validate initial input against schema
             2. Prepare execution context
-            3. Call agent_runner.run_once() if needed
+            3. Hand off to the configured runtime entrypoint if needed
         """
         config = container.config or {}
 

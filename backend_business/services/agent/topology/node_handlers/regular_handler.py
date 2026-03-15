@@ -49,7 +49,7 @@ class RegularNodeHandler:
     This handler provides structure definitions for regular nodes
     without actual execution.
 
-    Note: No actual AgentRunner or LLM execution is performed.
+    Note: No actual runtime execution is performed.
     Only structure building.
     """
 
@@ -63,8 +63,8 @@ class RegularNodeHandler:
             RegularNodeStructure definition
 
         Future Integration Point:
-            When LLM execution is added, this method will:
-            1. For role_type='agent': Call agent_runner.run_once(agent_id)
+            When runtime execution is added, this method will:
+            1. For role_type='agent': Dispatch to the configured container entrypoint
             2. For role_type='system': Execute system task
             3. For role_type='human': Wait for human input
             4. Apply input/output mappings
