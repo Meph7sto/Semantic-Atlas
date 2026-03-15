@@ -1,0 +1,25 @@
+# Normalize line endings to LF on checkout
+* text=auto eol=lf
+
+# Explicitly set binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.eot binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.jar binary
+*.class binary
+*.pyc binary
+*.pyo binary
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
