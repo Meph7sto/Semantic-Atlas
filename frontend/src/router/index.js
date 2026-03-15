@@ -32,6 +32,7 @@ import RequirementsCollectionView from '../views/beta/RequirementsCollectionView
 import ProductManageView from '../views/beta/ProductManageView.vue'
 import AccountView from '../views/beta/AccountView.vue'
 import UserManageView from '../views/beta/UserManageView.vue'
+import TopologyEditorView from '../views/beta/TopologyEditorView.vue'
 
 // Guide view
 import GuideView from '../views/GuideView.vue'
@@ -124,8 +125,18 @@ const router = createRouter({
                         requiresAuth: true,
                         requiredSystemIdentities: ['SYS_ADMIN']
                     }
+                },
+                {
+                    path: 'topology-editor',
+                    name: 'beta-topology-editor',
+                    component: TopologyEditorView,
+                    meta: { requiresAuth: true, keepAlive: true }
                 }
             ]
+        },
+        {
+            path: '/main/topology-editor',
+            redirect: { name: 'beta-topology-editor' }
         },
         {
             path: '/alpha',

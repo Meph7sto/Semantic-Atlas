@@ -1,5 +1,10 @@
 <script setup>
-import { ref, watch, computed } from 'vue'
+import { computed, ref, watch } from 'vue'
+import {
+  isBlank,
+  normalizeInspectorPayload,
+  stringifyJsonForEditor
+} from '@/utils/topologyEditor'
 
 const props = defineProps({
   selectedObject: {
@@ -8,28 +13,15 @@ const props = defineProps({
   },
   objectType: {
     type: String,
-    default: 'graph' // 'graph' | 'node' | 'edge'
+    default: 'graph'
   }
 })
 
 const emit = defineEmits(['update'])
 
-// 表单数据
 const formData = ref({})
 const errors = ref({})
 
-// 监听选中对象变化
-watch(() => props.selectedObject, (newObj) => {
-  if (newObj) {
-    // 深拷贝数据以避免直接修改
-    formData.value = JSON.parse(JSON.stringify(newObj))
-  } else {
-    formData.value = {}
-  }
-  errors.value = {}
-}, { immediate: true })
-
-// 图状态选项
 const graphStatusOptions = [
   { value: 'draft', label: '草稿' },
   { value: 'active', label: '激活' },
@@ -39,7 +31,6 @@ const graphStatusOptions = [
   { value: 'suspended', label: '已挂起' }
 ]
 
-// 节点类型选项
 const nodeTypeOptions = [
   { value: 'start', label: 'Start (开始)' },
   { value: 'node', label: 'Node (节点)' },
@@ -50,93 +41,132 @@ const nodeTypeOptions = [
   { value: 'invoke', label: 'Invoke (工具调用)' }
 ]
 
-// 角色类型选项
 const roleTypeOptions = [
   { value: 'human', label: 'Human (人工)' },
   { value: 'agent', label: 'Agent (智能体)' },
   { value: 'system', label: 'System (系统)' }
 ]
 
-// 边类型选项
 const edgeTypeOptions = [
   { value: 'call', label: 'Call (调用)' },
   { value: 'return', label: 'Return (返回)' },
   { value: 'retry', label: 'Retry (重试)' }
 ]
 
-// 验证 JSON 字段
-const validateJson = (value) => {
-  if (!value || value.trim() === '') return true
-  try {
-    JSON.parse(value)
-    return true
-  } catch {
-    return false
+const hydrateFormData = (selectedObject, objectType) => {
+  if (!selectedObject) {
+    return {}
   }
+
+  const cloned = JSON.parse(JSON.stringify(selectedObject))
+
+  if (objectType === 'container') {
+    cloned.config_json = stringifyJsonForEditor(cloned.config_json, '{}')
+  }
+
+  if (objectType === 'node') {
+    cloned.config_json = stringifyJsonForEditor(cloned.config_json, '{}')
+    cloned.input_schema_json = stringifyJsonForEditor(cloned.input_schema_json, '[]')
+    cloned.output_schema_json = stringifyJsonForEditor(cloned.output_schema_json, '[]')
+  }
+
+  if (objectType === 'edge') {
+    cloned.config_json = stringifyJsonForEditor(cloned.config_json, '{}')
+  }
+
+  return cloned
 }
 
-// 保存更改
+watch(
+  [() => props.selectedObject, () => props.objectType],
+  ([selectedObject, objectType]) => {
+    formData.value = hydrateFormData(selectedObject, objectType)
+    errors.value = {}
+  },
+  { immediate: true }
+)
+
+const metadataFields = computed(() => {
+  if (!props.selectedObject) return []
+
+  if (props.objectType === 'graph') {
+    return [
+      { label: 'Graph ID', value: props.selectedObject.graph_id || '-' },
+      { label: '类型', value: props.selectedObject.graph_type || '-' },
+      { label: '版本', value: props.selectedObject.version ?? '-' },
+      { label: '创建时间', value: props.selectedObject.created_at || '-' }
+    ]
+  }
+
+  if (props.objectType === 'container') {
+    return [
+      { label: 'Container ID', value: props.selectedObject.container_id || '-' },
+      { label: 'Container Key', value: props.selectedObject.container_key || '-' },
+      { label: '创建时间', value: props.selectedObject.created_at || '-' }
+    ]
+  }
+
+  if (props.objectType === 'node') {
+    return [
+      { label: 'Node ID', value: props.selectedObject.node_id || '-' },
+      { label: 'Node Key', value: props.selectedObject.node_key || '-' },
+      { label: '容器 ID', value: props.selectedObject.container_id || '未分配' },
+      { label: '创建时间', value: props.selectedObject.created_at || '-' }
+    ]
+  }
+
+  if (props.objectType === 'edge') {
+    return [
+      { label: 'Edge ID', value: props.selectedObject.edge_id || '-' },
+      { label: '源节点', value: props.selectedObject.source_node_id || '-' },
+      { label: '目标节点', value: props.selectedObject.target_node_id || '-' },
+      { label: '创建时间', value: props.selectedObject.created_at || '-' }
+    ]
+  }
+
+  return []
+})
+
 const handleSave = () => {
   errors.value = {}
 
-  // 验证必填字段
-  if (!formData.value.label && props.objectType !== 'edge') {
-    errors.value.label = '标签不能为空'
+  if (props.objectType === 'graph' && isBlank(formData.value.name)) {
+    errors.value.name = '名称不能为空'
   }
 
-  // 验证 JSON 字段
-  if (props.objectType === 'node') {
-    if (formData.value.config_json && !validateJson(formData.value.config_json)) {
-      errors.value.config_json = '无效的 JSON 格式'
-    }
-    if (formData.value.input_schema_json && !validateJson(formData.value.input_schema_json)) {
-      errors.value.input_schema_json = '无效的 JSON 格式'
-    }
-    if (formData.value.output_schema_json && !validateJson(formData.value.output_schema_json)) {
-      errors.value.output_schema_json = '无效的 JSON 格式'
-    }
-  } else if (props.objectType === 'edge') {
-    if (formData.value.config_json && !validateJson(formData.value.config_json)) {
-      errors.value.config_json = '无效的 JSON 格式'
-    }
+  if (props.objectType === 'container' && isBlank(formData.value.label)) {
+    errors.value.label = '容器名称不能为空'
   }
 
-  // 如果有错误，不保存
+  if (props.objectType === 'node' && isBlank(formData.value.label)) {
+    errors.value.label = '节点标签不能为空'
+  }
+
+  const normalized = normalizeInspectorPayload(props.objectType, formData.value)
+  if (!normalized.ok) {
+    errors.value.form = normalized.error
+    return
+  }
+
+  if (props.objectType === 'container' && isBlank(normalized.value.label)) {
+    errors.value.label = '容器名称不能为空'
+  }
+
+  if (props.objectType === 'node' && isBlank(normalized.value.label)) {
+    errors.value.label = '节点标签不能为空'
+  }
+
   if (Object.keys(errors.value).length > 0) {
     return
   }
 
-  // 转换 JSON 字符串为对象
-  const updateData = { ...formData.value }
-  if (updateData.config_json && typeof updateData.config_json === 'string') {
-    try {
-      updateData.config_json = JSON.parse(updateData.config_json)
-    } catch {
-      // 保持原样
-    }
-  }
-  if (updateData.input_schema_json && typeof updateData.input_schema_json === 'string') {
-    try {
-      updateData.input_schema_json = JSON.parse(updateData.input_schema_json)
-    } catch {
-      // 保持原样
-    }
-  }
-  if (updateData.output_schema_json && typeof updateData.output_schema_json === 'string') {
-    try {
-      updateData.output_schema_json = JSON.parse(updateData.output_schema_json)
-    } catch {
-      // 保持原样
-    }
-  }
-
-  emit('update', updateData)
+  emit('update', normalized.value)
 }
 
-// 当前对象类型标题
 const objectTypeTitle = computed(() => {
   const titles = {
     graph: '图属性',
+    container: '容器属性',
     node: '节点属性',
     edge: '边属性'
   }
@@ -146,12 +176,10 @@ const objectTypeTitle = computed(() => {
 
 <template>
   <div class="h-full flex flex-col bg-zinc-50 border-l border-zinc-200">
-    <!-- 标题 -->
     <div class="px-4 py-3 border-b border-zinc-200 bg-white">
       <h2 class="text-sm font-semibold text-zinc-900">{{ objectTypeTitle }}</h2>
     </div>
 
-    <!-- 未选中状态 -->
     <div v-if="!selectedObject" class="flex-1 flex items-center justify-center text-zinc-400">
       <div class="text-center">
         <svg class="w-12 h-12 mx-auto mb-2 text-zinc-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -161,10 +189,8 @@ const objectTypeTitle = computed(() => {
       </div>
     </div>
 
-    <!-- 表单区域 -->
     <div v-else class="flex-1 overflow-y-auto p-4">
       <form @submit.prevent="handleSave" class="space-y-4">
-        <!-- 图属性 -->
         <div v-if="objectType === 'graph'" class="space-y-3">
           <div>
             <label class="block text-xs font-medium text-zinc-700 mb-1">名称 *</label>
@@ -199,19 +225,54 @@ const objectTypeTitle = computed(() => {
               </option>
             </select>
           </div>
+        </div>
+
+        <div v-if="objectType === 'container'" class="space-y-3">
+          <div>
+            <label class="block text-xs font-medium text-zinc-700 mb-1">容器名称 *</label>
+            <input
+              v-model="formData.label"
+              type="text"
+              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              :class="errors.label ? 'border-red-500' : ''"
+              placeholder="输入容器名称"
+            />
+            <p v-if="errors.label" class="mt-1 text-xs text-red-500">{{ errors.label }}</p>
+          </div>
 
           <div>
-            <label class="block text-xs font-medium text-zinc-700 mb-1">版本</label>
+            <label class="block text-xs font-medium text-zinc-700 mb-1">角色类型</label>
+            <select
+              v-model="formData.role_type"
+              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option v-for="opt in roleTypeOptions" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-zinc-700 mb-1">排序</label>
             <input
-              v-model="formData.version"
+              v-model.number="formData.order_index"
               type="number"
-              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm bg-zinc-100"
-              disabled
+              min="0"
+              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-zinc-700 mb-1">配置 JSON</label>
+            <textarea
+              v-model="formData.config_json"
+              rows="5"
+              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              placeholder='{"parallelism": 1}'
             />
           </div>
         </div>
 
-        <!-- 节点属性 -->
         <div v-if="objectType === 'node'" class="space-y-3">
           <div>
             <label class="block text-xs font-medium text-zinc-700 mb-1">标签 *</label>
@@ -223,16 +284,6 @@ const objectTypeTitle = computed(() => {
               placeholder="输入节点标签"
             />
             <p v-if="errors.label" class="mt-1 text-xs text-red-500">{{ errors.label }}</p>
-          </div>
-
-          <div>
-            <label class="block text-xs font-medium text-zinc-700 mb-1">节点 Key</label>
-            <input
-              v-model="formData.node_key"
-              type="text"
-              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm bg-zinc-100"
-              disabled
-            />
           </div>
 
           <div>
@@ -259,23 +310,14 @@ const objectTypeTitle = computed(() => {
             </select>
           </div>
 
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="block text-xs font-medium text-zinc-700 mb-1">X 坐标</label>
-              <input
-                v-model.number="formData.x"
-                type="number"
-                class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label class="block text-xs font-medium text-zinc-700 mb-1">Y 坐标</label>
-              <input
-                v-model.number="formData.y"
-                type="number"
-                class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+          <div>
+            <label class="block text-xs font-medium text-zinc-700 mb-1">排序</label>
+            <input
+              v-model.number="formData.order_index"
+              type="number"
+              min="0"
+              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
           </div>
 
           <div>
@@ -284,38 +326,31 @@ const objectTypeTitle = computed(() => {
               v-model="formData.config_json"
               rows="4"
               class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-              :class="errors.config_json ? 'border-red-500' : ''"
-              placeholder='{"timeout": 60, "retryable": true}'
+              placeholder='{"timeout": 60}'
             />
-            <p v-if="errors.config_json" class="mt-1 text-xs text-red-500">{{ errors.config_json }}</p>
           </div>
 
           <div>
-            <label class="block text-xs font-medium text-zinc-700 mb-1">输入模式 JSON</label>
+            <label class="block text-xs font-medium text-zinc-700 mb-1">输入 Schema JSON</label>
             <textarea
               v-model="formData.input_schema_json"
-              rows="3"
+              rows="4"
               class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-              :class="errors.input_schema_json ? 'border-red-500' : ''"
-              placeholder='["requirement_id", "change_request_text"]'
+              placeholder='["input_a", "input_b"]'
             />
-            <p v-if="errors.input_schema_json" class="mt-1 text-xs text-red-500">{{ errors.input_schema_json }}</p>
           </div>
 
           <div>
-            <label class="block text-xs font-medium text-zinc-700 mb-1">输出模式 JSON</label>
+            <label class="block text-xs font-medium text-zinc-700 mb-1">输出 Schema JSON</label>
             <textarea
               v-model="formData.output_schema_json"
-              rows="3"
+              rows="4"
               class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-              :class="errors.output_schema_json ? 'border-red-500' : ''"
-              placeholder='["review_result", "next_action"]'
+              placeholder='["result"]'
             />
-            <p v-if="errors.output_schema_json" class="mt-1 text-xs text-red-500">{{ errors.output_schema_json }}</p>
           </div>
         </div>
 
-        <!-- 边属性 -->
         <div v-if="objectType === 'edge'" class="space-y-3">
           <div>
             <label class="block text-xs font-medium text-zinc-700 mb-1">标签</label>
@@ -350,19 +385,42 @@ const objectTypeTitle = computed(() => {
           </div>
 
           <div>
+            <label class="block text-xs font-medium text-zinc-700 mb-1">排序</label>
+            <input
+              v-model.number="formData.order_index"
+              type="number"
+              min="0"
+              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
             <label class="block text-xs font-medium text-zinc-700 mb-1">配置 JSON</label>
             <textarea
               v-model="formData.config_json"
               rows="4"
               class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-              :class="errors.config_json ? 'border-red-500' : ''"
               placeholder='{"priority": 1}'
             />
-            <p v-if="errors.config_json" class="mt-1 text-xs text-red-500">{{ errors.config_json }}</p>
           </div>
         </div>
 
-        <!-- 保存按钮 -->
+        <div v-if="errors.form" class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+          {{ errors.form }}
+        </div>
+
+        <div class="space-y-2 rounded-lg border border-zinc-200 bg-white p-3">
+          <div class="text-xs font-semibold text-zinc-700">只读信息</div>
+          <div
+            v-for="field in metadataFields"
+            :key="field.label"
+            class="rounded border border-zinc-100 bg-zinc-50 px-3 py-2"
+          >
+            <div class="text-[11px] text-zinc-500">{{ field.label }}</div>
+            <div class="break-all text-xs text-zinc-800">{{ field.value }}</div>
+          </div>
+        </div>
+
         <div class="pt-4 border-t border-zinc-200">
           <button
             type="submit"

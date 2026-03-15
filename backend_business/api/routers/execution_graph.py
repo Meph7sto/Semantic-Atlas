@@ -18,11 +18,15 @@ from backend_business.api.routers.schemas.execution_graph_schemas import (
     UpdateNodeRequest,
     CreateEdgeRequest,
     UpdateEdgeRequest,
+    ExecuteTopologyRequest,
 )
 from backend_business.services.agent.execution_graph_service import (
     ExecutionGraphService,
 )
 from backend_business.services.db_service import db_service
+from backend_business.services.agent.execution.topology_execution_service import (
+    TopologyExecutionService,
+)
 from backend_business.services.agent.topology import (
     GraphStructureBuilder,
     StructureValidator,
@@ -33,6 +37,7 @@ router = APIRouter(prefix="/api/v2/execution-topology", tags=["execution-topolog
 
 # 初始化服务
 _service = ExecutionGraphService(dsn=settings.POSTGRES_DSN)
+_topology_execution_service = TopologyExecutionService(execution_graph_service=_service)
 
 
 # ========================
@@ -396,6 +401,28 @@ async def get_graph_detail(
         if not detail["graph"]:
             raise ErrorResponse("图不存在或已删除", 404)
         return detail
+    except ValueError as e:
+        raise ErrorResponse(str(e), 400)
+
+
+@router.post("/{graph_id}/execute")
+async def execute_topology_template(
+    graph_id: str,
+    req: ExecuteTopologyRequest,
+    request: Request,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    """从拓扑模板创建运行时图并执行。"""
+    actor = _get_actor(request, current_user)
+    try:
+        return _topology_execution_service.execute_template(
+            template_graph_id=graph_id,
+            input_payload=req.input_payload,
+            actor=actor,
+            max_steps=req.max_steps,
+            runtime_graph_name=req.runtime_graph_name,
+            runtime_graph_description=req.runtime_graph_description,
+        )
     except ValueError as e:
         raise ErrorResponse(str(e), 400)
 

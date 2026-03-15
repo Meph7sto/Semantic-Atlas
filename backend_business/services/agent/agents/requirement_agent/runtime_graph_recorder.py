@@ -21,7 +21,6 @@ class _RuntimeGraphRecorder(RuntimeGraphRecorder):
         ("human_input", "Human Input", "human"),
         ("conductor", "Conductor", "agent"),
         ("requirements_agent", "Requirements Agent", "agent"),
-        ("requirements_tools", "Requirement Tools", "system"),
     )
 
     def __init__(

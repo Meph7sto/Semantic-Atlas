@@ -169,9 +169,7 @@ bash deploy/stop_services.sh
 | `/alpha/message-push` | MessagePush | 消息推送 |
 | `/alpha/mobile-bridge` | MobileBridge | 移动端桥接 |
 | `/alpha/file-receive` | FileReceive | 文件接收 |
-<<<<<<< HEAD
 | `/alpha/image-caption` | ImageCaptionPreview | 图生文（AutoDL 配置与生成） |
-=======
 | `/alpha/execution-topology` | ExecutionTopologyTemplate | 执行拓扑可视化 |
 | `/alpha/actor-visual-tester` | ActorVisualTester | Actor 可视化测试 |
 
@@ -180,7 +178,6 @@ bash deploy/stop_services.sh
 | 路由 | 说明 |
 |------|------|
 | `/guide` | 引导页/入口点 |
->>>>>>> 4354358c367e1a209ceed55747e38c6d53d51b2f
 
 ## 配置说明
 
