@@ -179,6 +179,8 @@ const routeNameToPageKey = {
   'beta-requirements-session': 'requirements-session',
   'beta-requirements-analysis': 'requirements-analysis',
   'beta-requirements-collection': 'requirements-collection',
+
+  'beta-asr': 'asr-transcription',
   'beta-user-manage': 'user-management',
 }
 
