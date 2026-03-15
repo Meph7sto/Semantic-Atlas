@@ -33,6 +33,7 @@ import RequirementsCollectionView from '../views/beta/RequirementsCollectionView
 import ProductManageView from '../views/beta/ProductManageView.vue'
 import AccountView from '../views/beta/AccountView.vue'
 import UserManageView from '../views/beta/UserManageView.vue'
+import TopologyEditorView from '../views/beta/TopologyEditorView.vue'
 import AsrTranscription from '../views/alpha/AsrTranscription.vue'
 import AsrTranscriptionView from '../views/beta/AsrTranscriptionView.vue'
 
@@ -51,7 +52,8 @@ const router = createRouter({
         {
             path: '/guide',
             name: 'guide',
-            component: GuideView
+            component: GuideView,
+            meta: { requiresAuth: false }
         },
         // Main routes (migrated from frontend_ref)
         {

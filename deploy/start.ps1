@@ -356,6 +356,55 @@ function Test-LocalPortOpen {
   }
 }
 
+function Invoke-RequiredNativeCommand {
+  param(
+    [string]$FilePath,
+    [string[]]$ArgumentList,
+    [string]$WorkingDirectory,
+    [string]$StepName
+  )
+
+  Push-Location $WorkingDirectory
+  try {
+    & $FilePath @ArgumentList
+    if ($LASTEXITCODE -ne 0) {
+      throw "[start] $StepName failed with exit code $LASTEXITCODE."
+    }
+  }
+  finally {
+    Pop-Location
+  }
+}
+
+function Invoke-RequiredProcess {
+  param(
+    [string]$FilePath,
+    [string[]]$ArgumentList,
+    [string]$WorkingDirectory,
+    [string]$StepName,
+    [switch]$NoNewWindow
+  )
+
+  $processArgs = @{
+    FilePath         = $FilePath
+    ArgumentList     = $ArgumentList
+    WorkingDirectory = $WorkingDirectory
+    Wait             = $true
+    PassThru         = $true
+  }
+
+  if ($NoNewWindow) {
+    $processArgs.NoNewWindow = $true
+  }
+
+  $process = Start-Process @processArgs
+  if ($process.ExitCode -ne 0) {
+    throw "[start] $StepName failed with exit code $($process.ExitCode)."
+  }
+
+  return $process
+}
+
 function Test-PostgresPortConflict {
   param([int]$Port)
   if (-not (Test-LocalPortOpen -Port $Port)) {
@@ -587,11 +636,15 @@ module.exports = {
 
   Push-Location (Join-Path $BASE_DIR "frontend")
   try {
-    npm install
+    Invoke-RequiredNativeCommand -FilePath "npm" -ArgumentList @("install") -WorkingDirectory (Get-Location).Path -StepName "npm install"
     if ($FrontendRuntime -eq "static") {
       Write-Host "[start] Building frontend (npm install & npm run build)..."
       if (Test-Path $FRONTEND_ROOT) { Remove-Item -Recurse -Force $FRONTEND_ROOT }
-      npm run build
+      Invoke-RequiredNativeCommand -FilePath "npm" -ArgumentList @("run", "build") -WorkingDirectory (Get-Location).Path -StepName "npm run build"
+      $builtIndexPath = Join-Path $FRONTEND_ROOT "index.html"
+      if (-not (Test-Path $builtIndexPath)) {
+        throw "[start] Frontend build did not produce $builtIndexPath."
+      }
     }
   }
   finally {
@@ -631,7 +684,14 @@ if ($doFrontend -and $FrontendRuntime -eq "dev") {
     throw "[start] npm not found."
   }
   Write-Host "[start] Starting Vite dev server ($FRONTEND_DEV_PORT) behind Nginx 8008..."
-  Start-Process -FilePath $NpmCmd.Source -ArgumentList @("run", "dev") -WorkingDirectory (Join-Path $BASE_DIR "frontend")
+  $viteProcess = Start-Process -FilePath $NpmCmd.Source -ArgumentList @("run", "dev") -WorkingDirectory (Join-Path $BASE_DIR "frontend") -PassThru
+  Start-Sleep -Seconds 3
+  if ($viteProcess.HasExited) {
+    throw "[start] Vite dev server exited immediately with code $($viteProcess.ExitCode)."
+  }
+  if (-not (Test-LocalPortOpen -Port $FRONTEND_DEV_PORT)) {
+    throw "[start] Vite dev server did not open port $FRONTEND_DEV_PORT."
+  }
 }
 
 if ($doNginx -and $doFrontend) {
@@ -707,7 +767,7 @@ catch {
 if ($doInference -or $doBusiness) {
   if (Test-Path "requirements.txt") {
     Write-Host "[start] Installing/Updating Python dependencies..."
-    Start-Process -FilePath $PythonExe -ArgumentList "-m pip install -r requirements.txt" -WorkingDirectory $BASE_DIR -NoNewWindow -Wait
+    Invoke-RequiredProcess -FilePath $PythonExe -ArgumentList @("-m", "pip", "install", "-r", "requirements.txt") -WorkingDirectory $BASE_DIR -StepName "pip install -r requirements.txt" -NoNewWindow
   }
 }
 
