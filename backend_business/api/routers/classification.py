@@ -124,7 +124,7 @@ async def predict_csv(request: Request, file: Optional[UploadFile] = File(defaul
             "connection",
             "content-length",
         }
-        headers = [(k, v) for k, v in resp.headers.items() if k.lower() not in excluded]
+        headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded}
         return StreamingResponse(
             iter([resp.content]),
             media_type=resp.headers.get("Content-Type", "text/csv"),

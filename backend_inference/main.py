@@ -69,14 +69,20 @@ async def lifespan(app: FastAPI):
             print(f"CRITICAL ERROR: Failed to load classification model files: {e}")
 
     # 加载 KB 索引
-    print("Initializing Knowledge Base indexes...")
-    try:
-        kb_service = get_kb_service()
-        kb_version = kb_service.ensure_loaded()
-        print(f"KB indexes loaded successfully, version: {kb_version}")
-    except Exception as e:
-        print(f"WARNING: Failed to load KB indexes: {e}")
-        # KB 加载失败不阻止启动，L4 生成时会重试
+    if settings.SKIP_KB_LOAD:
+        print("[lifespan] SKIP_KB_LOAD is true, skipping KB index loading.")
+        # 强制离线模式，防止 HuggingFace 库在后续调用时偷偷联网
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+    else:
+        print("Initializing Knowledge Base indexes...")
+        try:
+            kb_service = get_kb_service()
+            kb_version = kb_service.ensure_loaded()
+            print(f"KB indexes loaded successfully, version: {kb_version}")
+        except Exception as e:
+            print(f"WARNING: Failed to load KB indexes: {e}")
+            # KB 加载失败不阻止启动，L4 生成时会重试
 
     yield
     # 如果需要，可以在此处添加关闭时的逻辑 (Shutdown logic)

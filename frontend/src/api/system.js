@@ -83,6 +83,14 @@ export const fileApi = {
         return resp.data
     },
 
+    async listAll() {
+        const resp = await api.get('/admin/uploads')
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.message || 'Failed to list all files')
+        }
+        return resp.data
+    },
+
     download(filename) {
         // 直接打开下载链接
         window.open(`/api/v2/uploads/${encodeURIComponent(filename)}?download=true`, '_blank')

@@ -5,7 +5,9 @@ FastAPI 业务后端入口点
 
 import os
 import sys
+import logging
 from contextlib import asynccontextmanager
+from logging import Filter
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,6 +27,32 @@ from backend_business.api.http.errors import (
 )
 
 
+class InternalEndpointsFilter(Filter):
+    """过滤内部端点的访问日志"""
+
+    def filter(self, record):
+        # 过滤掉内部端点的 INFO 级别日志
+        if (
+            "/api/v2/_internals/" in record.getMessage()
+            and record.levelno == logging.INFO
+        ):
+            return False
+        return True
+
+
+def configure_uvicorn_access_log_filter() -> None:
+    """确保 uvicorn.access 仅安装一次内部端点过滤器。"""
+    uvicorn_access_logger = logging.getLogger("uvicorn.access")
+    for log_filter in uvicorn_access_logger.filters:
+        if isinstance(log_filter, InternalEndpointsFilter):
+            return
+    uvicorn_access_logger.addFilter(InternalEndpointsFilter())
+
+
+# 无论通过 uvicorn 模块路径还是 python 入口启动，均启用过滤器。
+configure_uvicorn_access_log_filter()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -33,15 +61,21 @@ async def lifespan(app: FastAPI):
     # 启动时的逻辑
     print("[lifespan] FastAPI business backend starting...")
     print(f"[lifespan] Inference URL: {settings.INFERENCE_BASE_URL}")
-    print(f"[lifespan] Database: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}")
+    print(
+        f"[lifespan] Database: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"
+    )
     app.state.classification_http_client = httpx.AsyncClient()
+    app.state.http_client = httpx.AsyncClient()
 
     yield
 
     # 关闭时的逻辑
-    client = getattr(app.state, "classification_http_client", None)
-    if isinstance(client, httpx.AsyncClient):
-        await client.aclose()
+    classification_client = getattr(app.state, "classification_http_client", None)
+    if isinstance(classification_client, httpx.AsyncClient):
+        await classification_client.aclose()
+    http_client = getattr(app.state, "http_client", None)
+    if isinstance(http_client, httpx.AsyncClient):
+        await http_client.aclose()
     print("[lifespan] FastAPI business backend shutting down...")
 
 
@@ -83,7 +117,9 @@ else:
 # - mobile_chat 走 /api/v2/mobile，移动端消息模块
 # - file 走 /api/v2/*，文件上传下载模块
 from backend_business.api.routers import (
+    agent_chat,
     analysis,
+    asr,
     auth,
     classification,
     conflict,
@@ -93,10 +129,14 @@ from backend_business.api.routers import (
     manage,
     mobile_chat,
     permission,
-    push,
     product,
+    push,
+    requirement_actor,
     requirements,
+    vision,
 )
+
+app.include_router(agent_chat.router)
 app.include_router(deduplication.router)
 app.include_router(auth.router)
 app.include_router(permission.router)
@@ -106,10 +146,14 @@ app.include_router(analysis.router)
 app.include_router(conflict.router)
 app.include_router(classification.router)
 app.include_router(requirements.router)
+app.include_router(requirement_actor.router)
+app.include_router(requirement_actor.internals_router)
 app.include_router(push.router)
 app.include_router(mobile_chat.router)
 app.include_router(file.router)
 app.include_router(execution_graph.router)
+app.include_router(vision.router)
+app.include_router(asr.router)
 
 # 注册业务异常处理器（保留 FastAPI 原生 HTTPException / validation 语义）
 app.add_exception_handler(ErrorResponse, error_response_handler)
@@ -136,6 +180,9 @@ def health_check():
 
 if __name__ == "__main__":
     import uvicorn
+
+    # 显式调用一次，确保直接脚本启动也覆盖到。
+    configure_uvicorn_access_log_filter()
 
     # 启动 uvicorn 服务器
     uvicorn.run(

@@ -61,8 +61,8 @@ if command -v pgrep >/dev/null 2>&1; then
   fi
 fi
 
-echo "[stop] 结束占用端口的进程: 8000 (FastAPI Inference), 5002 (FastAPI Business), 8008 (Nginx)"
-for port in 8000 5002 8008; do
+echo "[stop] 结束占用端口的进程: 8000 (FastAPI Inference), 5002 (FastAPI Business), 8008 (Nginx), 5173 (Vite Dev)"
+for port in 8000 5002 8008 5173; do
   if command -v lsof >/dev/null 2>&1; then
     PIDS=$(lsof -ti :"${port}" 2>/dev/null || true)
     if [[ -n "${PIDS}" ]]; then
@@ -81,6 +81,16 @@ for port in 8000 5002 8008; do
     fi
   fi
 done
+
+echo "[stop] 检查 Node/Vite 进程..."
+if command -v pgrep >/dev/null 2>&1; then
+  for pid in $(pgrep -f "vite" 2>/dev/null || true); do
+    if [[ -n "$pid" ]]; then
+      echo " - node PID ${pid} (vite) -> stopping"
+      stop_process_tree "$pid" "node"
+    fi
+  done
+fi
 
 # 匹配并停止 Python 进程（通过命令行参数）
 echo "[stop] 检查 Python 后端进程..."

@@ -1,168 +1,310 @@
-# Agent 架构实现 TODO
+# Agent 架构实现 TODO（对齐 `agent架构-Agent方案.md`）
 
-> 本文档对照 `agent架构-主方案.md`，根据项目当前实现状态，列出各阶段需要完成的工作项。  
+> 本文档以 `docs/agent架构-Agent方案.md` 为准，替换旧版以 Sidebar SDK / Worker 为中心的拆分方式。  
+> 新版目标是把工作拆成三条可并行推进的线路：`A. 模板与编排`、`B. Sidebar 与运行时`、`C. 领域读写与专项能力`。  
 > 状态标记：`[ ]` 待做 · `[~]` 进行中 · `[x]` 已完成
 
 ---
 
-## 一、Sidebar / 通信层
+## 一、对齐结论
 
-> 对应主方案 §1.2。当前有 `messaging/bus.py`（MessageBus）雏形，但与架构定义的 Sidebar 能力仍有差距。
-
-- [ ] **将 MessageBus 重新定位为 Sidebar SDK**：梳理现有 `bus.py / router.py / middleware.py / channel.py` 与"逻辑 Sidebar"概念的对应关系，补充缺口，确保调用方只需 `sidebar.send({role, payload})`。
-- [ ] **能力路由（Capability-Based Routing）**：Router 目前按 `agent_id` 直接寻址，需改为按 Worker/Agent 的"角色声明"路由，调度空闲且健康的实例。
-- [ ] **健康检查与心跳**：Sidebar 层实现 Worker 心跳上报与超时检测；心跳中断时自动将任务重新投递，对上层业务代码不透明。
-- [ ] **熔断 / 限流 / 重试**：目前 `middleware.py` 有 `RateLimitMiddleware` 骨架，需接入真正的熔断逻辑（最多重试 3 次，超限报 Suspended）。
-- [ ] **执行图 span 自动注入**：Sidebar 在转发/接收消息时自动生成 `span_id`，记录跨容器边（调用边、返回边、重试边），与执行图存储打通，业务代码零感知。
-
----
-
-## 二、会话层 Agent
-
-> 对应主方案 §一。`agents/conductor_agent.py` 已有初步实现，但功能尚不完整。
-
-- [~] **会话总控 Agent（Conductor）**：`conductor_agent.py` 已存在，但缺乏对无法匹配拓扑模板时的分支判断——需明确何时激活计划 Agent。
-- [ ] **计划 Agent（Planner）**：目前完全缺失。需实现：意图拆解为有依赖关系的步骤序列、中间结果驱动的路径动态调整、重试/降级/澄清三条出口。
-- [ ] **拓扑模板自动注入**：框架层在创建 AgentContainer 时，根据指令类型匹配计算拓扑图，将软建议注入第一个节点的 `injected_context`，无需 Agent 主动查询。
-- [ ] **Dispatching 状态（用户确认等待）**：Agent 对不可逆写操作（如修改需求条目）需进入 `Dispatching` 状态，等待用户显式确认后继续执行，结果作为新节点增量输入。
+- [x] **已具备的基础能力**：执行拓扑图基础 CRUD、结构构建/校验、`MessageBus`、`RequirementActor`、事件溯源、快照、基础 Agent 定义均已存在。
+- [ ] **当前最大差距不是“有没有 Agent”**，而是**图模型和运行时语义还没完全对齐 Agent 方案**：
+  - 当前 `ExecutionGraphService` 仍是 `graph + container + node + edge` 扁平模型。
+  - 当前节点类型仍偏旧（如 `start / node / decision / handoff / end`），尚未对齐方案中的 `start / llm / handoff / invoke / end`。
+  - 当前还没有把 `subgraph`、`seq`、`Waiting/Suspended`、`Checkpoint`、`tool-call → call/return/retry` 这些运行时语义完整打通。
+- [ ] **旧版 TODO 中的部分项需要降级为“兼容层事项”而非主线目标**：
+  - `capability-based routing`
+  - Worker 健康检查 / 负载均衡
+  - Worker 心跳
+  - 通用 Worker 扩张
+  - 这些能力可保留，但不再作为 Agent 主架构的完成标准。
 
 ---
 
-## 三、领域层（RequirementActor）
+## 二、三条并行线路总览
 
-> 对应主方案 §二。现有代码以 Service 形式操作 DB，缺乏 Actor 语义封装。
+| 线路 | 核心目标 | 主要输出 | 对其他线路的接口 |
+| ---- | -------- | -------- | ---------------- |
+| A. 模板与编排 | 把 Agent 方案沉淀为可执行的静态模板 | 容器边界、subgraph、模板一/二/三、会话总控编排 | 向 B 提供容器入口和边语义；向 C 提供委托 payload 结构 |
+| B. Sidebar 与运行时 | 把 tool call、执行图追踪、挂起恢复和并发汇合跑通 | 工具名到容器入口映射、call/return/retry 自动写边、Checkpoint、状态推进 | 消费 A 的模板定义；消费 C 的 Actor/Agent 结果 |
+| C. 领域读写与专项能力 | 落实 RequirementActor 唯一写入口和两个只读专项 Agent | Requirements Agent、QA Agent、Conflict Agent、Version Fencing、约束闭环 | 消费 A 的模板与委托协议；通过 B 完成路由与追踪 |
 
-- [ ] **RequirementActor 类**：新建 `services/actor/requirement_actor.py`，封装单条需求的所有状态变更，外部只能通过 Command 交互，内部执行前置条件校验。
-- [ ] **事件溯源（Event Sourcing）**：Actor 处理 Command 时追加不可变 Event 至事件流（Event Store），当前状态通过重放重建。需设计 Event 表结构与重放逻辑。
-- [ ] **快照机制**：周期性写入快照，将重建复杂度从 O(n) 压缩为 O(k)；快照触发策略（按事件数/时间）待定。
-- [ ] **虚拟 Actor 生命周期**：Command 到达时透明激活（重放事件流）；无消息时自动休眠释放内存；调用方始终以 `requirement_id` 寻址。
-- [ ] **ActorContainer 记录**：每次 Actor 处理 Command 对应一个 `ActorContainer`（命令接收→校验→Event 写入→返回），纳入执行图存储。
-- [ ] **Command Queue 可视化**：为每个 Actor 维护命令队列，排队等待的 Command 以"待处理"状态挂在执行图的 Actor 节点上。
+并行原则：
 
----
-
-## 四、Read-Your-Writes 强一致保障
-
-> 对应主方案 §2.5。属于 Actor + CQRS 联合工作项。
-
-- [ ] **Version Fencing**：Actor 每次成功处理 Command 后返回单调递增 `Version`；读模型查询接口支持 `min_version` 参数，未追平时阻塞等待。
-- [ ] **Actor Ask（强一致直读）**：Agent 可向 Actor 发 `QueryCommand`，Actor 直接返回内存中最新状态快照，绕过读库，仅对内部核心逻辑开放。
-- [ ] **增量上下文注入（injected_context）**：Worker 写回 Actor 后，在唤醒 Agent 的消息体中携带变更后的关键数据作为增量上下文，Agent 无需额外查询即可获得强一致数据。
+- A 先定义静态结构，不等待 B/C 完全落地。
+- B 优先打通最小运行链路，不等待所有专项 Agent 完成。
+- C 先补齐“修改需求 + 自动质检”闭环，再扩展冲突检测。
 
 ---
 
-## 五、执行层（Worker）
+## 三、线路 A：模板与编排层
 
-> 对应主方案 §三。`tasks/queue.py` 有任务队列雏形，各类 Worker 尚未完整实现。
+> 目标：先把“会话总控统一编排 + 专项 Agent 单一职责 + container/subgraph 分层”沉淀为标准模板。
 
-- [~] **任务队列（Task Queue）**：`tasks/queue.py` 已有基础实现，需验证"至少一次"投递语义和幂等性约束。
-- [ ] **LLM Worker**：封装 LLM 调用（构造 prompt → 调用 API → 解析结果 → 写回 Actor），各步骤作为 `WorkerStepNode` 记录在执行图中。
-- [ ] **向量检索 Worker**：RAG 检索封装，供冲突检测、追溯等场景使用。
-- [ ] **冲突矩阵计算 Worker**：跨需求语义相似度计算，支持并行多实例触发，汇合节点等待全部返回。
-- [ ] **Worker 幂等性**：对同一 `task_id` 的重复执行不产生额外副作用，需在各 Worker 实现中统一校验。
-- [ ] **Worker 心跳**：长耗时任务（LLM 调用等）定期发送心跳；心跳中断后对应 WorkerContainer 标记 `TimedOut`，重试上限 3 次，超限置执行图为 `Suspended`。
-- [ ] **Worker 直写 Actor**：Worker 完成计算后可绕过 Agent 直接向 Actor 发 Command（如 `UpdateL4ContentCommand`），无需 Agent 中转。
+### A1. 图结构与模板模型升级
 
----
+- [x] **执行图基础 CRUD 已完成**：`backend_business/services/execution_graph_service.py`
+- [x] **结构构建器与边校验已完成**：`backend_business/services/agent/topology/`
+- [ ] **图模型补齐 `subgraph` 层**：支持 `container -> subgraph -> node` 的三层结构，而不是只用扁平 node 表达所有语义。
+- [ ] **节点类型升级**：将当前节点模型对齐为 `start / llm / handoff / invoke / end`。
+- [ ] **边类型补齐**：在保留 container 级 `call / return / retry` 的同时，增加 subgraph 内部 `seq`。
+- [ ] **兼容迁移策略**：明确旧节点类型（如 `decision` / `node`）如何映射到新模型，避免现有图模板直接失效。
 
-## 六、专项业务 Agent
+### A2. 会话总控 Agent 对齐
 
-> 对应主方案 §5.1。目前只有 `conductor_agent.py` 和 `requirements_agent.py`，其余均缺失。
+- [~] **会话总控 Agent 已有定义**：`backend_business/services/agent/agents/conductor_agent.py`
+- [ ] **意图识别对齐方案**：明确输入属于修改、质检、冲突检测、复合意图还是需澄清。
+- [ ] **统一委托编排**：所有专项 Agent 协作都经由会话总控发起，不允许专项 Agent 之间直连。
+- [ ] **重试决策节点**：支持“质检不通过 → 带约束重试需求修改”，上限 3 次。
+- [ ] **挂起决策节点**：对 Actor 校验失败、信息不足、不可逆操作确认等场景进入 `handoff/Suspended`。
+- [ ] **结果聚合节点**：会话总控负责把多个专项 Agent 返回结果合并为最终自然语言回复。
 
-- [~] **需求细化 Agent**：`requirements_agent.py` 有雏形，需补充 L1→L4 逐层分解逻辑和各层质量评判标准。
-- [ ] **质检 Agent（QA Agent）**：在提交、评审、基线等关键节点执行质量门禁（可测试性、完整性、冲突、歧义），输出带问题定位的结构化结论。
-- [ ] **冲突检测 Agent**：跨需求语义分析，对 Worker 返回的候选冲突对做最终语义裁决。
-- [ ] **追溯 Agent**：需求上下游关联关系的语义理解与覆盖性推断。
-- [ ] **评审 Agent**：将自然语言评审反馈解析为结构化变更动作，处理意见合并/拆分决策。
+### A3. 专项 Agent 容器边界
 
----
+- [~] **需求管理 Agent 已有定义**：`backend_business/services/agent/agents/requirements_agent.py`
+- [ ] **需求管理 Agent 收敛为唯一写入口**：只负责创建/修改/补全需求，并通过 `RequirementActor` 落地。
+- [ ] **新增质检 Agent 容器**：只读、不写，只输出结构化质量结论与修改约束。
+- [ ] **新增冲突检测 Agent 容器**：只读、不写，只输出冲突报告与裁决依据。
+- [ ] **显式禁止专项 Agent 互调**：模板层不允许 Requirements Agent 直接连到 QA/Conflict Agent。
 
-## 七、执行图 / 图结构存储
+### A4. 标准模板沉淀
 
-> 对应主方案 §四.3 和 §六。`execution_graph_service.py` 已存在，但部分能力待补齐。
+- [ ] **模板一：修改需求 + 自动质检**
+  - 最优先，作为首条端到端闭环。
+- [ ] **模板二：修改需求 + 质检通过后检查冲突**
+  - 在模板层显式建模串联路径，不在代码里隐式拼接。
+- [ ] **模板三：需要用户澄清的挂起路径**
+  - 把 `handoff` 和 `Suspended` 路径提前固化到模板中。
+- [ ] **模板自动匹配与注入**
+  - 会话总控根据意图选择模板，而不是把全部编排硬编码在 Runner 中。
 
-- [~] **执行图基础 CRUD**：`execution_graph_service.py` 已有基础实现，需核对与主方案定义的数据结构是否对齐（`graph_id`、节点、边）。
-- [ ] **AgentNode 增量存储**：每个节点只持久化本节点**新增的增量信息**（delta messages + injected_context + output），不做全量快照；重建时按 `sequence_index` 顺序拼接。
-- [ ] **cross_container_call 边自动生成**：Agent output type 为 `cross_container_call` 时，自动创建调用边和对应的 WorkerContainer/AgentContainer；返回时生成返回边。
-- [ ] **重试边**：质检失败触发重试时，新建 WorkerContainer 并生成重试边，原容器保留并标注为重试源。
-- [ ] **并行调用汇合节点**：Agent 同时发起多个 Worker 调用时，所有返回边收敛至同一个 AgentNode（汇合节点），Agent 维护 pending task 计数器。
-- [ ] **执行图最终状态**：`Succeeded / Failed / Suspended` 三态流转，Suspended 时等待用户补充输入后从断点恢复。
-- [ ] **计算拓扑图存储与引用**：拓扑图存储于执行图存储中，与执行图通过关联关系双向引用；执行图沉淀后可归纳新拓扑候选。
+### A5. 可复用 subgraph 库
 
----
-
-## 八、Agent Checkpoint 机制
-
-> 对应主方案 §4.4 和 §7.3。
-
-- [ ] **Checkpoint 写入**：Agent 每次进入 `Waiting` 前写入 Checkpoint（Agent 标识、挂起时间点、等待的 `task_id` 列表、`graph_id`）。
-- [ ] **Checkpoint 恢复**：结果到达时，从执行图节点序列重建完整上下文，定位到挂起点后继续执行；Checkpoint 仅作"正在等待哪些 task"的查找入口。
-- [ ] **Suspended → 恢复**：用户补充输入后，将新输入作为新节点的增量 input 追加到原 AgentContainer 节点序列末尾，推理循环重建完整上下文继续执行。
-
----
-
-## 九、质检失败处理
-
-> 对应主方案 §1.3。
-
-- [ ] **自动重试（≤3 次）**：质检结论作为新约束重新触发 Worker，执行图产生重试边，原 WorkerContainer 标注为重试源。
-- [ ] **挂起澄清**：3 次重试后仍失败，执行图置 `Suspended`，会话总控向用户说明卡滞质检项、已重试次数，附当前最优结果。
-
----
-
-## 十、读模型（CQRS Read Model）
-
-> 对应主方案 §4.2。
-
-- [ ] **事件订阅投影**：订阅 Event Store 的事件流，异步更新各读模型（需求列表视图、详情视图、冲突视图、基线差异视图）。
-- [ ] **读模型独立重建**：读模型损坏时可从事件流从头重放重建，不影响写入侧。
-- [ ] **`min_version` 阻塞查询接口**：读接口支持传入 `min_version`，若投影未追平则阻塞等待或轮询，防止拉旧。
+- [ ] **需求管理 Agent subgraph**
+  - `build_change_command`
+  - `invoke_requirement_actor`
+  - `summarize_write_result`
+- [ ] **质检 Agent subgraph**
+  - `load_latest_requirement`
+  - `qa_dimension_review`
+  - `qa_pass_decision`
+- [ ] **冲突检测 Agent subgraph**
+  - `collect_requirement_set`
+  - `detect_conflicts`
+  - `compose_conflict_report`
 
 ---
 
-## 十一、RequirementActor 状态机
+## 四、线路 B：Sidebar 与运行时
 
-> 对应主方案 §7.1。
+> 目标：把“tool call 路由 + 执行图事实沉淀 + Waiting/Suspended/恢复 + 会话内并发汇合”跑通。
 
-- [ ] **五态状态机实现**：`Draft → PendingReview → UnderReview → Approved/Rejected → Baselined/ChangeRequested`，转换函数为偏函数（非法命令直接拒绝）。
-- [ ] **状态守卫**：所有状态迁移由 Actor 内部 Command 处理逻辑校验，外部无法绕过直接操作底层存储。
+### B1. Sidebar 职责收敛
+
+- [x] **已有可复用基础设施**：
+  - `backend_business/services/agent/messaging/`
+  - `backend_business/services/agent/sidebar/sidebar.py`
+- [ ] **Sidebar 从“能力路由”收敛为“静态工具路由”**
+  - 工具名 → container 入口在启动时静态确定。
+  - 会话总控只感知 `invoke_requirements_agent` / `invoke_qa_agent` / `invoke_conflict_agent` 这类工具语义。
+- [ ] **明确降级项**
+  - `capability_registry.py`
+  - `health.py`
+  - 负载均衡 / 健康检查 / 实例心跳
+  - 这些不再是新版 Agent 方案主链路上的必要前置。
+
+### B2. 跨容器消息协议
+
+- [ ] **定义跨容器消息信封**
+  - 至少包含 `session_id`、`graph_id`、调用方节点、目标容器、业务 payload、trace 元数据。
+- [ ] **业务 payload 与追踪元数据分层**
+  - 避免把路由字段混入 Agent 业务输入。
+- [ ] **超时与失败语义显式化**
+  - 通信级失败由 Sidebar 处理。
+  - 业务失败（如 Actor 校验失败、质检不通过）回到会话总控决策。
+
+### B3. 执行图事实自动写入
+
+- [ ] **tool call 发出时自动写 `call` 边**
+- [ ] **结果回流时自动写 `return` 边**
+- [ ] **通信级重试时自动写 `retry` 边**
+- [ ] **节点级 input/output 持久化**
+  - 至少记录每个节点实际收到的 `input_messages` 和产出的结构化结果。
+- [ ] **delta context 规则落地**
+  - 后继节点默认只取直接前驱输出。
+  - 按 tool 的 `context_mode` 控制结果是否向后传播。
+
+### B4. 运行时状态机
+
+- [ ] **执行图状态推进**
+  - `Running`
+  - `Waiting`
+  - `Suspended`
+  - `Succeeded`
+  - `Failed`
+- [ ] **Waiting 状态进入条件**
+  - 发出跨容器调用后，等待 `return`。
+- [ ] **Suspended 状态进入条件**
+  - `handoff`
+  - 重试耗尽
+  - Actor 校验失败后需用户决策
+
+### B5. Checkpoint 与恢复
+
+- [ ] **Checkpoint 轻量索引**
+  - 记录 `graph_id`、等待时间、pending task 列表。
+- [ ] **按 `graph_id` 重建上下文**
+  - 恢复时从执行图存储重建，而不是依赖内存态。
+- [ ] **会话内恢复不新建执行图**
+  - 用户补充输入后在原图上追加节点继续推进。
+- [ ] **挂起恢复闭环**
+  - `Suspended -> Running`
+  - `Waiting -> Running`
+
+### B6. 会话内并发汇合
+
+- [ ] **并行调用计数器**
+  - 一个节点内并发发起多个调用时维护 pending task 计数。
+- [ ] **汇合缓冲区**
+  - 所有结果回齐后统一注入下一节点输入。
+- [ ] **多返回边收敛到同一汇合节点**
+  - 不额外引入新的边类型。
+- [ ] **异常汇合策略**
+  - 明确是“立即中断整批”还是“等待剩余结果后统一上报”。
+
+### B7. 开关、回退与观测
+
+- [ ] **Sidebar 可开关**
+  - 支持按环境或链路灰度启用。
+- [ ] **执行图追踪可对账**
+  - 路由记录、节点执行记录、最终回复能串成完整链路。
+- [ ] **核心指标**
+  - 路由成功率
+  - 超时率
+  - 重试率
+  - 恢复成功率
 
 ---
 
-## 十二、前端（执行图可视化）
+## 五、线路 C：领域读写与专项能力
 
-> 对应 `frontend/src/components/alpha/` 下已有组件，需与后端新图结构对齐。
+> 目标：落实 RequirementActor 唯一写入口，先完成“修改需求 + 自动质检”，再补齐冲突检测。
 
-- [~] **ExecutionGraphCanvas.vue**：已有画布组件，需核对节点/边数据格式与主方案定义的 AgentContainer / WorkerContainer / ActorContainer 是否对齐。
-- [ ] **ActorContainer 可视化**：补充 Actor 节点的 Command Queue 排队状态展示。
-- [ ] **重试边 / 并行汇合可视化**：在画布上区分展示重试边（虚线？）和并行汇合节点（多入边汇聚）。
-- [ ] **Suspended 状态 UI**：执行图置为 Suspended 时，前端高亮挂起点，展示卡滞的质检项和当前最优结果，提供用户输入补充入口。
-- [ ] **计算拓扑图浏览器**：`TopologyStructureViewer.vue` 已有雏形，需支持查看拓扑图与执行图的双向引用关系。
-- [ ] **执行图与 Checkpoint 状态联动**：Waiting 中的 AgentContainer 在画布上实时展示等待中的 task_id 列表。
+### C1. RequirementActor 与事件源基座
+
+- [x] **RequirementActor 已实现**：`backend_business/services/actor/actors/requirement_actor.py`
+- [x] **事件溯源已实现**：`backend_business/services/event_store/event_store.py`
+- [x] **快照机制已实现**
+- [x] **虚拟 Actor 生命周期已实现**：`backend_business/services/actor/actor_manager.py`
+- [x] **状态机已实现**：`backend_business/services/actor/actors/state_machine.py`
+- [~] **Actor 操作追踪目前仍偏开发态**
+  - 已有 `backend_business/services/actor/dev_trace.py`
+  - 需要正式接入执行图存储，而不是只做调试痕迹。
+
+### C2. 读写边界收敛
+
+- [x] **Actor Ask（强一致直读）已具备**
+- [ ] **明确唯一写入口**
+  - 只有需求管理 Agent 可以对 `RequirementActor` 发写 Command。
+- [ ] **QA Agent / Conflict Agent 强制只读**
+  - 只能通过 Actor Ask 获取最新状态。
+- [ ] **禁止绕过 Actor 直写底层存储**
+  - 现有异步执行器、任务队列、服务封装都要逐步收敛到 Actor 命令入口。
+
+### C3. 强一致读取与版本栅栏
+
+- [ ] **Version Fencing**
+  - 读取时支持 `min_version` 栅栏。
+- [ ] **质检链路按写后版本读取**
+  - 需求修改成功后，把新版本作为 QA 读取下界。
+- [ ] **冲突检测链路按最新状态批量读取**
+  - 对一组需求做强一致读取和聚合。
+- [ ] **必要时再补 `injected_context`**
+  - 作为性能优化项，而不是第一阶段前置。
+
+### C4. 需求管理 Agent 闭环
+
+- [ ] **结构化变更命令生成**
+  - 从用户意图或 QA 约束生成标准写 Command。
+- [ ] **Actor 写入结果标准化**
+  - 返回 `requirement_id`、`version`、修改摘要、失败原因。
+- [ ] **Actor 业务约束失败显式化**
+  - 例如 `Baselined/Locked` 不允许直接修改。
+- [ ] **与会话总控重试闭环打通**
+  - QA 不通过时回到需求管理 Agent，而不是直接失败。
+
+### C5. 质检 Agent
+
+- [ ] **质检 Agent 实现**
+  - 输入：`requirement_id` + `min_version`
+  - 输出：通过/不通过、维度评分、修改约束
+- [ ] **高频 subgraph**
+  - `load_latest_requirement`
+  - `qa_dimension_review`
+  - `qa_pass_decision`
+- [ ] **重试约束标准化**
+  - 质检结论要能直接作为需求管理 Agent 的下一轮输入。
+
+### C6. 冲突检测 Agent
+
+- [ ] **冲突检测 Agent 实现**
+  - 输入：主需求 ID + 关联需求集合或检索条件
+  - 输出：冲突报告、冲突级别、裁决依据
+- [ ] **高频 subgraph**
+  - `collect_requirement_set`
+  - `detect_conflicts`
+  - `compose_conflict_report`
+- [ ] **明确不承担修复写入职责**
+  - 如需自动修复，后续新增独立 Agent，不让冲突检测 Agent 越权。
 
 ---
 
-## 十三、端到端可观测性
+## 六、跨线路对齐点
 
-> 对应主方案 §4.5 四类存储关联关系。
-
-- [ ] **全链路追踪**：从用户指令出发，经执行图 → Actor 调用节点 → 事件流，实现端到端完整追溯，任何业务操作都能找到对应的执行图节点。
-- [ ] **`call_node_id` 反向关联**：Actor 处理 Command 产生的 Event 反向携带触发它的执行图节点 ID（`call_node_id`）。
-- [ ] **执行图归纳为拓扑候选**：沉淀完成的执行图可提名为新的计算拓扑模板，或对现有模板进行修订，形成闭环优化。
+- [ ] **A → B**
+  - 固定 container key、工具名、模板入口节点命名。
+- [ ] **A → C**
+  - 固定委托 payload 和结构化返回 schema。
+- [ ] **B → C**
+  - 固定 Actor/专项 Agent 的调用信封、超时、失败语义。
+- [ ] **C → A**
+  - 固定“修改结果”“质检结论”“冲突报告”的结构化输出，供模板节点引用。
 
 ---
 
-## 优先级建议
+## 七、联合里程碑
 
-| 优先级 | 模块 | 理由 |
-|--------|------|------|
-| P0 | RequirementActor + Event Sourcing | 核心数据一致性保障，其他所有写操作的基础 |
-| P0 | Checkpoint 机制 | Agent 异步等待和断点恢复的核心 |
-| P1 | Worker 完整实现（LLM/RAG/冲突矩阵） | 执行层当前缺口最大 |
-| P1 | 质检 Agent + 自动重试 | 质量门禁是需求工程流程的核心 |
-| P1 | 执行图 AgentNode 增量存储对齐 | 当前存储方式与主方案存在偏差 |
-| P2 | Capability-Based Routing（Sidebar） | 通信解耦，扩容友好 |
-| P2 | 计划 Agent（Planner） | 非默认路径，优先级低于标准路径 |
-| P2 | Read Model + Version Fencing | CQRS 最终一致性保障 |
-| P3 | 前端执行图可视化补齐 | 可在功能稳定后持续迭代 |
-| P3 | 拓扑归纳→候选模板闭环 | 优化型功能，最后实现 |
+### M1：最小闭环可跑
+
+- [ ] A1 图模型升级方案定稿
+- [ ] A2 会话总控完成基础编排
+- [ ] A4 模板一落地
+- [ ] B1 静态工具路由跑通
+- [ ] B3 `call/return` 自动写边
+- [ ] C2 唯一写入口约束生效
+- [ ] C4 需求管理 Agent 写入闭环可跑
+
+### M2：修改需求 + 自动质检
+
+- [ ] B4/B5 `Waiting`、`Suspended`、Checkpoint 打通
+- [ ] C5 质检 Agent 落地
+- [ ] 会话总控支持最多 3 次 QA 失败重试
+
+### M3：复合意图与挂起恢复
+
+- [ ] A4 模板二、模板三落地
+- [ ] B6 会话内并发汇合
+- [ ] C6 冲突检测 Agent 落地
+- [ ] 原图恢复执行闭环打通
+
+---
+
+## 八、非主线但需处理的兼容事项
+
+- [~] **保留现有 `MessageBus` 和 Sidebar 代码作为底层能力**，但不再把“能力路由/实例治理”当成 Agent 架构主目标。
+- [ ] **评估旧 Worker/Task Queue 的定位**
+  - 能复用于底层执行器的保留。
+  - 会破坏“Agent 是静态图定义、RequirementActor 是唯一权威写入口”边界的部分，需要逐步收敛或下线。
+- [ ] **清理文档表述**
+  - 后续相关文档统一区分“执行拓扑模板”与“运行时执行图”，避免继续混用。

@@ -60,6 +60,19 @@ class _StubManageService:
         return []
 
 
+class _StubManageDBService:
+    def get_user_by_id(self, user_id):
+        return {"user_id": user_id, "role": "member"}
+
+    def can_access_project(self, project_id, user_id, user):
+        _ = project_id, user_id, user
+        return True
+
+    def can_edit_project(self, project_id, user_id, user):
+        _ = project_id, user_id, user
+        return True
+
+
 def _auth_headers() -> dict:
     token = get_auth_service().generate_token(
         user_id="manage-contract-user",
@@ -80,7 +93,9 @@ def _assert_validation_error(response, field: str, scope: str = "body"):
 @pytest.fixture
 def fastapi_client(monkeypatch):
     stub = _StubManageService()
+    stub_db = _StubManageDBService()
     monkeypatch.setattr(manage, "_service", stub)
+    monkeypatch.setattr(manage, "db_service", stub_db)
 
     app = FastAPI()
     app.include_router(manage.router)
@@ -95,7 +110,7 @@ def fastapi_client(monkeypatch):
 def test_update_project_current_session_id_uses_set_project_session(fastapi_client):
     client, stub = fastapi_client
     response = client.patch(
-        "/api/manage/projects/p1",
+        "/api/v2/manage/projects/p1",
         json={"current_session_id": "s-1"},
         headers=_auth_headers(),
     )
@@ -109,7 +124,7 @@ def test_update_project_current_session_id_uses_set_project_session(fastapi_clie
 def test_update_project_null_current_session_id_is_supported(fastapi_client):
     client, stub = fastapi_client
     response = client.patch(
-        "/api/manage/projects/p1",
+        "/api/v2/manage/projects/p1",
         json={"current_session_id": None},
         headers=_auth_headers(),
     )
@@ -122,7 +137,7 @@ def test_update_project_null_current_session_id_is_supported(fastapi_client):
 def test_update_project_name_uses_update_project_info(fastapi_client):
     client, stub = fastapi_client
     response = client.patch(
-        "/api/manage/projects/p1",
+        "/api/v2/manage/projects/p1",
         json={"name": "New Name"},
         headers=_auth_headers(),
     )
@@ -135,7 +150,7 @@ def test_update_project_name_uses_update_project_info(fastapi_client):
 def test_update_project_empty_payload_returns_400(fastapi_client):
     client, _ = fastapi_client
     response = client.patch(
-        "/api/manage/projects/p1",
+        "/api/v2/manage/projects/p1",
         json={},
         headers=_auth_headers(),
     )
@@ -146,7 +161,7 @@ def test_update_project_empty_payload_returns_400(fastapi_client):
 def test_create_project_missing_name_returns_422(fastapi_client):
     client, _ = fastapi_client
     response = client.post(
-        "/api/manage/projects",
+        "/api/v2/manage/projects",
         json={"description": "x"},
         headers=_auth_headers(),
     )
@@ -155,17 +170,18 @@ def test_create_project_missing_name_returns_422(fastapi_client):
 
 def test_list_requirements_invalid_tree_query_returns_422(fastapi_client):
     client, _ = fastapi_client
-    response = client.get("/api/manage/projects/p1/requirements?tree=abc", headers=_auth_headers())
+    response = client.get("/api/v2/manage/projects/p1/requirements?tree=abc", headers=_auth_headers())
     _assert_validation_error(response, "tree", scope="query")
 
 
 def test_list_requirements_tree_mode_calls_tree_service(fastapi_client):
     client, stub = fastapi_client
     response = client.get(
-        "/api/manage/projects/p1/requirements?tree=true&include_deleted=true",
+        "/api/v2/manage/projects/p1/requirements?tree=true&include_deleted=true",
         headers=_auth_headers(),
     )
 
     assert response.status_code == 200
     assert response.json() == {"tree": [], "orphans": []}
     assert stub.last_tree_args == ("p1", True)
+

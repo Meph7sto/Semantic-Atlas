@@ -19,7 +19,7 @@ from backend_business.api.routers.schemas.execution_graph_schemas import (
     CreateEdgeRequest,
     UpdateEdgeRequest,
 )
-from backend_business.services.execution_graph_service import (
+from backend_business.services.agent.execution_graph_service import (
     ExecutionGraphService,
 )
 from backend_business.services.db_service import db_service

@@ -3,7 +3,6 @@ import { useAuthStore } from '@/stores/auth.js'
 import Classification from '../views/alpha/Classification.vue'
 import ConflictDetection from '../views/alpha/ConflictDetection.vue'
 import Traceability from '../views/alpha/Traceability.vue'
-import RequirementsAcquisition from '../views/alpha/RequirementsAcquisition.vue'
 import AcquisitionTraceability from '../views/alpha/AcquisitionTraceability.vue'
 import GeneralChat from '../views/alpha/GeneralChat.vue'
 import TranscriptIngestion from '../views/alpha/TranscriptIngestion.vue'
@@ -16,6 +15,10 @@ import MessagePush from '../views/alpha/MessagePush.vue'
 import MobileBridge from '../views/alpha/MobileBridge.vue'
 import FileReceive from '../views/alpha/FileReceive.vue'
 import ExecutionTopologyTemplate from '../views/alpha/ExecutionTopologyTemplate.vue'
+import ActorVisualTester from '../views/alpha/ActorVisualTester.vue'
+import RequirementReplay from '../views/alpha/RequirementReplay.vue'
+import RequirementAgentChat from '../views/alpha/RequirementAgentChat.vue'
+import ImageCaptionPreview from '../views/alpha/ImageCaptionPreview.vue'
 
 // Main views (migrated from frontend_ref)
 import LoginView from '../views/beta/LoginView.vue'
@@ -30,9 +33,12 @@ import RequirementsCollectionView from '../views/beta/RequirementsCollectionView
 import ProductManageView from '../views/beta/ProductManageView.vue'
 import AccountView from '../views/beta/AccountView.vue'
 import UserManageView from '../views/beta/UserManageView.vue'
+import AsrTranscription from '../views/alpha/AsrTranscription.vue'
+import AsrTranscriptionView from '../views/beta/AsrTranscriptionView.vue'
 
 // Guide view
 import GuideView from '../views/GuideView.vue'
+import RequirementsAcquisitionView from '../views/beta/RequirementsAcquisitionView.vue'
 
 const router = createRouter({
     history: createWebHistory(import.meta.env.BASE_URL),
@@ -105,6 +111,13 @@ const router = createRouter({
                     path: 'requirements-collection',
                     name: 'beta-requirements-collection',
                     component: RequirementsCollectionView,
+                    meta: { requiresAuth: true }
+                },
+
+                {
+                    path: 'asr',
+                    name: 'beta-asr',
+                    component: AsrTranscriptionView,
                     meta: { requiresAuth: true }
                 },
                 {
@@ -184,11 +197,6 @@ const router = createRouter({
                     component: Classification
                 },
                 {
-                    path: 'acquisition',
-                    name: 'acquisition',
-                    component: RequirementsAcquisition
-                },
-                {
                     path: 'acquisition-trace',
                     name: 'acquisition-trace',
                     component: AcquisitionTraceability
@@ -197,6 +205,11 @@ const router = createRouter({
                     path: 'chat',
                     name: 'chat',
                     component: GeneralChat
+                },
+                {
+                    path: 'requirement-agent',
+                    name: 'requirement-agent',
+                    component: RequirementAgentChat
                 },
                 {
                     path: 'message-push',
@@ -209,6 +222,11 @@ const router = createRouter({
                     component: MobileBridge
                 },
                 {
+                    path: 'asr',
+                    name: 'alpha-asr',
+                    component: AsrTranscription
+                },
+                {
                     path: 'file-receive',
                     name: 'file-receive',
                     component: FileReceive,
@@ -218,6 +236,22 @@ const router = createRouter({
                     path: 'execution-topology',
                     name: 'execution-topology',
                     component: ExecutionTopologyTemplate,
+                    meta: { keepAlive: true }
+                },
+                {
+                    path: 'actor-visual-tester',
+                    name: 'actor-visual-tester',
+                    component: ActorVisualTester
+                },
+                {
+                    path: 'requirement-replay',
+                    name: 'requirement-replay',
+                    component: RequirementReplay
+                },
+                {
+                    path: 'image-caption',
+                    name: 'image-caption',
+                    component: ImageCaptionPreview,
                     meta: { keepAlive: true }
                 }
             ]
