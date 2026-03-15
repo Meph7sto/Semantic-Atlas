@@ -32,7 +32,7 @@ def test_health_check():
 
 def test_missing_auth_header():
     """测试缺少认证 header 时的错误响应"""
-    response = client.get("/api/auth/verify")
+    response = client.get("/api/v2/auth/verify")
     assert response.status_code == 401
     data = response.json()
     assert data["detail"] == "未提供认证 Token"
@@ -41,7 +41,7 @@ def test_missing_auth_header():
 def test_invalid_token():
     """测试无效 Token 时的错误响应"""
     response = client.get(
-        "/api/auth/verify",
+        "/api/v2/auth/verify",
         headers={"Authorization": "Bearer invalid_token"},
     )
     assert response.status_code == 401
@@ -105,3 +105,4 @@ def test_create_success_response():
 
     response_dict = create_success_response({"user_id": "123"})
     assert response_dict == {"user_id": "123"}
+

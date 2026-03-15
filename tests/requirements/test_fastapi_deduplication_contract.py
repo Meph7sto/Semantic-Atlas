@@ -102,20 +102,20 @@ def api_client(monkeypatch):
 
 def test_detect_missing_session_id(api_client):
     client, _ = api_client
-    response = client.post("/api/dedup/detect", json={})
+    response = client.post("/api/v2/dedup/detect", json={})
     _assert_validation_error(response, "session_id")
 
 
 def test_detect_empty_session_id(api_client):
     client, _ = api_client
-    response = client.post("/api/dedup/detect", json={"session_id": ""})
+    response = client.post("/api/v2/dedup/detect", json={"session_id": ""})
     _assert_validation_error(response, "session_id")
 
 
 def test_detect_invalid_bool_values_rejected(api_client):
     client, _ = api_client
     response = client.post(
-        "/api/dedup/detect",
+        "/api/v2/dedup/detect",
         json={
             "session_id": "s1",
             "with_llm_decision": "abc",
@@ -128,7 +128,7 @@ def test_detect_invalid_bool_values_rejected(api_client):
 def test_detect_null_bool_values_rejected(api_client):
     client, _ = api_client
     response = client.post(
-        "/api/dedup/detect",
+        "/api/v2/dedup/detect",
         json={
             "session_id": "s1",
             "with_llm_decision": None,
@@ -141,7 +141,7 @@ def test_detect_null_bool_values_rejected(api_client):
 def test_detect_valid_payload_calls_service(api_client):
     client, dummy = api_client
     response = client.post(
-        "/api/dedup/detect",
+        "/api/v2/dedup/detect",
         json={
             "session_id": "s1",
             "with_llm_decision": True,
@@ -156,7 +156,7 @@ def test_detect_valid_payload_calls_service(api_client):
 def test_merge_missing_primary_req_id(api_client):
     client, _ = api_client
     response = client.post(
-        "/api/dedup/merge",
+        "/api/v2/dedup/merge",
         json={
             "session_id": "s1",
             "primary_req_id": "",
@@ -171,7 +171,7 @@ def test_merge_missing_primary_req_id(api_client):
 def test_delete_missing_req_ids(api_client):
     client, _ = api_client
     response = client.post(
-        "/api/dedup/delete",
+        "/api/v2/dedup/delete",
         json={"session_id": "s1", "req_ids": []},
     )
     _assert_validation_error(response, "req_ids")
@@ -180,7 +180,7 @@ def test_delete_missing_req_ids(api_client):
 def test_update_missing_new_text(api_client):
     client, _ = api_client
     response = client.post(
-        "/api/dedup/update",
+        "/api/v2/dedup/update",
         json={"session_id": "s1", "req_id": "r1", "new_text": ""},
     )
     _assert_validation_error(response, "new_text")
@@ -189,7 +189,8 @@ def test_update_missing_new_text(api_client):
 def test_regenerate_requires_at_least_two_ids(api_client):
     client, _ = api_client
     response = client.post(
-        "/api/dedup/regenerate",
+        "/api/v2/dedup/regenerate",
         json={"session_id": "s1", "req_ids": ["r1"]},
     )
     _assert_validation_error(response, "req_ids")
+

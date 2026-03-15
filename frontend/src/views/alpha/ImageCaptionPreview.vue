@@ -1,7 +1,7 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import { visionApi } from '@/api'
-import { CheckCircle2, Database, ImageIcon, Lock, ServerCog, UploadCloud } from 'lucide-vue-next'
+import { CheckCircle2, Database, ImageIcon, UploadCloud } from 'lucide-vue-next'
 
 const prompt = ref('请详细描述图片内容，并总结关键信息。')
 const speaker = ref('vision_agent')
@@ -11,15 +11,6 @@ const defaultSpanMs = ref(8000)
 const maxSpansReturned = ref(200)
 const estimateTimestamps = ref(true)
 
-const autodlHost = ref('connect.westc.gpuhub.com')
-const autodlPort = ref(18142)
-const autodlUsername = ref('root')
-const autodlPassword = ref('')
-const autodlWorkdir = ref('/root/autodl-tmp/model')
-const autodlCondaEnv = ref('base')
-const autodlModelId = ref('/root/autodl-tmp/Qwen3-VL-8B-Instruct')
-const autodlServicePort = ref(9000)
-
 const selectedFile = ref(null)
 const selectedFileName = ref('')
 const isGenerating = ref(false)
@@ -27,17 +18,6 @@ const isConfirming = ref(false)
 const error = ref('')
 const generated = ref(null)
 const confirmResult = ref(null)
-
-const autodlConfig = computed(() => ({
-    host: String(autodlHost.value || '').trim(),
-    port: Number(autodlPort.value || 0),
-    username: String(autodlUsername.value || '').trim(),
-    password: String(autodlPassword.value || '').trim(),
-    workdir: String(autodlWorkdir.value || '').trim(),
-    conda_env: String(autodlCondaEnv.value || '').trim(),
-    model_id: String(autodlModelId.value || '').trim(),
-    service_port: Number(autodlServicePort.value || 0),
-}))
 
 function normalizeError(err, fallback = '请求失败') {
     if (!err) return fallback
@@ -51,27 +31,9 @@ function onFileChange(event) {
     selectedFileName.value = file?.name || ''
 }
 
-function validateAutoDLConfig() {
-    if (!autodlConfig.value.host) return '请填写 AutoDL 主机'
-    if (!autodlConfig.value.port) return '请填写 AutoDL SSH 端口'
-    if (!autodlConfig.value.username) return '请填写 AutoDL 用户名'
-    if (!autodlConfig.value.password) return '请填写 AutoDL 密码'
-    if (!autodlConfig.value.workdir) return '请填写 AutoDL 工作目录'
-    if (!autodlConfig.value.conda_env) return '请填写 conda 环境名'
-    if (!autodlConfig.value.model_id) return '请填写模型目录'
-    if (!autodlConfig.value.service_port) return '请填写远端服务端口'
-    return ''
-}
-
 async function generateCaption() {
     if (!selectedFile.value) {
         error.value = '请先选择图片'
-        return
-    }
-
-    const configError = validateAutoDLConfig()
-    if (configError) {
-        error.value = configError
         return
     }
 
@@ -83,7 +45,6 @@ async function generateCaption() {
             prompt: prompt.value,
             speaker: speaker.value,
             maxNewTokens: maxNewTokens.value,
-            autodlConfig: autodlConfig.value,
         })
         generated.value = data
     } catch (err) {
@@ -127,58 +88,9 @@ async function confirmIngest() {
                     Alpha 图生文上传与确认入库
                 </h2>
                 <p class="mt-1 text-sm text-zinc-500">
-                    页面内填写 AutoDL 配置后，点击生成即可自动连接远端、启动推理服务、生成文字预览，再手动确认写入 spans。
+                    本页面会调用后端已配置的AutoDL图生文服务，先生成文字预览，再由你手动确认写入spans。
                 </p>
             </header>
-
-            <section class="space-y-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-                <div class="flex items-center gap-2 text-sm font-semibold text-zinc-700">
-                    <ServerCog class="h-4 w-4" />
-                    AutoDL 连接配置
-                </div>
-
-                <div class="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                    当前页面不会把 AutoDL 密码写入启动脚本；密码仅随本次生成请求发送给后端使用。
-                </div>
-
-                <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-                    <label class="text-sm">
-                        <span class="mb-1 block text-zinc-600">主机</span>
-                        <input v-model="autodlHost" type="text" class="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm" />
-                    </label>
-                    <label class="text-sm">
-                        <span class="mb-1 block text-zinc-600">SSH 端口</span>
-                        <input v-model.number="autodlPort" type="number" min="1" class="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm" />
-                    </label>
-                    <label class="text-sm">
-                        <span class="mb-1 block text-zinc-600">用户名</span>
-                        <input v-model="autodlUsername" type="text" class="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm" />
-                    </label>
-                    <label class="text-sm">
-                        <span class="mb-1 flex items-center gap-1 text-zinc-600">
-                            <Lock class="h-3.5 w-3.5" />
-                            密码
-                        </span>
-                        <input v-model="autodlPassword" type="password" class="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm" />
-                    </label>
-                    <label class="text-sm md:col-span-2">
-                        <span class="mb-1 block text-zinc-600">工作目录</span>
-                        <input v-model="autodlWorkdir" type="text" class="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm" />
-                    </label>
-                    <label class="text-sm">
-                        <span class="mb-1 block text-zinc-600">conda 环境</span>
-                        <input v-model="autodlCondaEnv" type="text" class="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm" />
-                    </label>
-                    <label class="text-sm">
-                        <span class="mb-1 block text-zinc-600">远端服务端口</span>
-                        <input v-model.number="autodlServicePort" type="number" min="1" class="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm" />
-                    </label>
-                    <label class="text-sm md:col-span-2 xl:col-span-4">
-                        <span class="mb-1 block text-zinc-600">模型目录</span>
-                        <input v-model="autodlModelId" type="text" class="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm" />
-                    </label>
-                </div>
-            </section>
 
             <section class="space-y-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
                 <h3 class="text-sm font-semibold text-zinc-700">步骤 1：上传图片并生成图生文</h3>
@@ -208,7 +120,7 @@ async function confirmIngest() {
                     <label class="text-sm">
                         <span class="mb-1 block text-zinc-600">max_new_tokens</span>
                         <input v-model.number="maxNewTokens" type="number" min="1" class="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm" />
-                        <span class="mt-1 block text-xs text-zinc-500">首次生成会自动准备远端环境，耗时可能较长。</span>
+                        <span class="mt-1 block text-xs text-zinc-500">若AutoDL服务未预热，首次生成可能耗时较长。</span>
                     </label>
                 </div>
 
@@ -218,7 +130,7 @@ async function confirmIngest() {
                     @click="generateCaption"
                 >
                     <UploadCloud class="h-4 w-4" />
-                    {{ isGenerating ? '远端准备与推理中...' : '连接 AutoDL 并生成图生文' }}
+                    {{ isGenerating ? '图生文生成中...' : '调用 AutoDL 并生成图生文' }}
                 </button>
             </section>
 

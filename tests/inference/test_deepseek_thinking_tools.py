@@ -133,30 +133,30 @@ def execute_tool(name: str, arguments: dict) -> str:
     """根据工具名称调用对应的后端 API，返回 JSON 字符串结果"""
     try:
         if name == "health_check":
-            resp = requests.get(f"{BACKEND_BASE_URL}/api/health", timeout=10)
+            resp = requests.get(f"{BACKEND_BASE_URL}/api/v2/health", timeout=10)
             return json.dumps(resp.json(), ensure_ascii=False)
 
         elif name == "list_projects":
-            resp = requests.get(f"{BACKEND_BASE_URL}/api/manage/projects", timeout=10)
+            resp = requests.get(f"{BACKEND_BASE_URL}/api/v2/manage/projects", timeout=10)
             return json.dumps(resp.json(), ensure_ascii=False)
 
         elif name == "get_project_detail":
             pid = arguments["project_id"]
-            resp = requests.get(f"{BACKEND_BASE_URL}/api/manage/projects/{pid}", timeout=10)
+            resp = requests.get(f"{BACKEND_BASE_URL}/api/v2/manage/projects/{pid}", timeout=10)
             return json.dumps(resp.json(), ensure_ascii=False)
 
         elif name == "list_project_requirements":
             pid = arguments["project_id"]
             fmt = arguments.get("format", "flat")
             resp = requests.get(
-                f"{BACKEND_BASE_URL}/api/manage/projects/{pid}/requirements",
+                f"{BACKEND_BASE_URL}/api/v2/manage/projects/{pid}/requirements",
                 params={"format": fmt},
                 timeout=10,
             )
             return json.dumps(resp.json(), ensure_ascii=False)
 
         elif name == "list_products":
-            resp = requests.get(f"{BACKEND_BASE_URL}/api/product/products", timeout=10)
+            resp = requests.get(f"{BACKEND_BASE_URL}/api/v2/product/products", timeout=10)
             return json.dumps(resp.json(), ensure_ascii=False)
 
         elif name == "create_project":
@@ -164,7 +164,7 @@ def execute_tool(name: str, arguments: dict) -> str:
             if "description" in arguments:
                 payload["description"] = arguments["description"]
             resp = requests.post(
-                f"{BACKEND_BASE_URL}/api/manage/projects",
+                f"{BACKEND_BASE_URL}/api/v2/manage/projects",
                 json=payload,
                 timeout=10,
             )
@@ -344,3 +344,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

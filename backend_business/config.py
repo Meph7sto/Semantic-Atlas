@@ -87,6 +87,7 @@ class Settings:
     VISION_CAPTION_URL = os.environ.get(
         "VISION_CAPTION_URL", "http://127.0.0.1:9000/caption-image"
     )
+    VISION_SERVICE_TOKEN = os.environ.get("VISION_SERVICE_TOKEN", "").strip()
     VISION_CAPTION_TIMEOUT_SECONDS = float(
         os.environ.get("VISION_CAPTION_TIMEOUT_SECONDS", "120")
     )
