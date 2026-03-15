@@ -26,13 +26,15 @@ import RegisterView from '../views/beta/RegisterView.vue'
 import DashboardView from '../views/beta/DashboardView.vue'
 import ProjectManageView from '../views/beta/ProjectManageView.vue'
 import RequirementsView from '../views/beta/RequirementsView.vue'
+import RequirementsManageWorkbenchView from '../views/beta/RequirementsManageWorkbenchView.vue'
 import RequirementsSessionView from '../views/beta/RequirementsSessionView.vue'
 import RequirementsAnalysisView from '../views/beta/RequirementsAnalysisView.vue'
 import RequirementsCollectionView from '../views/beta/RequirementsCollectionView.vue'
 import ProductManageView from '../views/beta/ProductManageView.vue'
 import AccountView from '../views/beta/AccountView.vue'
 import UserManageView from '../views/beta/UserManageView.vue'
-import TopologyEditorView from '../views/beta/TopologyEditorView.vue'
+import AsrTranscription from '../views/alpha/AsrTranscription.vue'
+import AsrTranscriptionView from '../views/beta/AsrTranscriptionView.vue'
 
 // Guide view
 import GuideView from '../views/GuideView.vue'
@@ -84,6 +86,12 @@ const router = createRouter({
                 {
                     path: 'requirements',
                     name: 'beta-requirements',
+                    component: RequirementsManageWorkbenchView,
+                    meta: { requiresAuth: true }
+                },
+                {
+                    path: 'requirements-overview',
+                    name: 'beta-requirements-overview',
                     component: RequirementsView,
                     meta: { requiresAuth: true }
                 },
@@ -103,6 +111,13 @@ const router = createRouter({
                     path: 'requirements-collection',
                     name: 'beta-requirements-collection',
                     component: RequirementsCollectionView,
+                    meta: { requiresAuth: true }
+                },
+
+                {
+                    path: 'asr',
+                    name: 'beta-asr',
+                    component: AsrTranscriptionView,
                     meta: { requiresAuth: true }
                 },
                 {
@@ -215,6 +230,11 @@ const router = createRouter({
                     path: 'mobile-bridge',
                     name: 'mobile-bridge',
                     component: MobileBridge
+                },
+                {
+                    path: 'asr',
+                    name: 'alpha-asr',
+                    component: AsrTranscription
                 },
                 {
                     path: 'file-receive',

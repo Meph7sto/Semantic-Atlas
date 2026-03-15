@@ -8,6 +8,9 @@ from backend_business.services.db_service_parts.classification import (
 )
 from backend_business.services.db_service_parts.conflict import ConflictAnalysisMixin
 from backend_business.services.db_service_parts.requirements import L4RequirementsMixin
+from backend_business.services.db_service_parts.transcription import (
+    TranscriptionSessionMixin,
+)
 from backend_business.services.db_service_parts.spans import SpansMixin
 from backend_business.services.db_service_parts.trace import TraceAnalysisMixin
 from backend_business.services.db_service_parts.utils import _utc_now_iso
@@ -21,6 +24,7 @@ from backend_business.services.db_service_parts.permissions import PermissionsMi
 
 
 class DBService(
+    TranscriptionSessionMixin,
     TraceAnalysisMixin,
     ConflictAnalysisMixin,
     ClassificationAnalysisMixin,

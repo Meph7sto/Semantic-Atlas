@@ -30,6 +30,19 @@ _ALLOWED_REQUIREMENT_STATUSES = (
 )
 _ALLOWED_REQUIREMENT_STATUS_SET = set(_ALLOWED_REQUIREMENT_STATUSES)
 _REQUIREMENT_STATUS_ALIASES = {"backlog": "draft"}
+_REQUIREMENT_STATUS_TRANSITIONS = {
+    "draft": {"draft", "under_review", "confirmed", "in_progress", "archived"},
+    "under_review": {"under_review", "draft", "confirmed", "archived"},
+    "confirmed": {"confirmed", "in_progress", "under_review", "archived"},
+    "in_progress": {"in_progress", "under_review", "completed", "archived"},
+    "completed": {"completed", "archived"},
+    "archived": {"archived"},
+}
+_TYPE_SPECIFIC_STATUS_TRANSITIONS = {
+    "top_level": _REQUIREMENT_STATUS_TRANSITIONS,
+    "low_level": _REQUIREMENT_STATUS_TRANSITIONS,
+    "task": _REQUIREMENT_STATUS_TRANSITIONS,
+}
 
 
 def normalize_priority(priority: Any, allow_none: bool = True) -> Optional[str]:
@@ -223,6 +236,33 @@ class RequirementsManageService:
             "task": set(),
         }
         return child_type in rules.get(parent_type, set())
+
+    @staticmethod
+    def get_allowed_status_transitions(current_status: str) -> List[str]:
+        normalized = normalize_requirement_status(current_status, allow_none=False)
+        return sorted(_REQUIREMENT_STATUS_TRANSITIONS.get(normalized, {normalized}))
+
+    @staticmethod
+    def _validate_status_transition(
+        from_status: str,
+        to_status: str,
+        requirement_type: Optional[str] = None,
+    ) -> None:
+        current = normalize_requirement_status(from_status, allow_none=False)
+        target = normalize_requirement_status(to_status, allow_none=False)
+        transition_map = _REQUIREMENT_STATUS_TRANSITIONS
+        if requirement_type:
+            transition_map = _TYPE_SPECIFIC_STATUS_TRANSITIONS.get(
+                requirement_type, _REQUIREMENT_STATUS_TRANSITIONS
+            )
+        allowed = transition_map.get(current, {current})
+        if target in allowed:
+            return
+        req_type_text = f"（类型: {requirement_type}）" if requirement_type else ""
+        raise ValueError(
+            f"状态流转不允许: {current} -> {target}{req_type_text}。"
+            f"允许流转: {', '.join(sorted(allowed))}"
+        )
 
     def create_requirement(
         self,
@@ -482,31 +522,46 @@ class RequirementsManageService:
             updates["priority"] = normalize_priority(
                 updates.get("priority"), allow_none=True
             )
-        if "status" in updates:
-            updates["status"] = normalize_requirement_status(
-                updates.get("status"), allow_none=False
-            )
-
-        set_clauses = []
-        values = []
-        for key, value in updates.items():
-            if key in {"tags", "custom_fields"}:
-                set_clauses.append(f"{key} = %s::jsonb")
-                values.append(
-                    json.dumps(value or ({} if key == "custom_fields" else []))
-                )
-            else:
-                set_clauses.append(f"{key} = %s")
-                values.append(value)
-
-        set_clauses.append("updated_by = %s")
-        values.append(updated_by)
-        set_clauses.append("updated_at = NOW()")
-
-        values.append(req_id)
-
         with self._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                if "status" in updates:
+                    updates["status"] = normalize_requirement_status(
+                        updates.get("status"), allow_none=False
+                    )
+                    cur.execute(
+                        """
+                        SELECT status, requirement_type
+                        FROM manage_requirements
+                        WHERE req_id = %s AND deleted = FALSE
+                        """,
+                        (req_id,),
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        raise ValueError("需求不存在")
+                    self._validate_status_transition(
+                        row["status"],
+                        updates["status"],
+                        row.get("requirement_type"),
+                    )
+
+                set_clauses = []
+                values = []
+                for key, value in updates.items():
+                    if key in {"tags", "custom_fields"}:
+                        set_clauses.append(f"{key} = %s::jsonb")
+                        values.append(
+                            json.dumps(value or ({} if key == "custom_fields" else []))
+                        )
+                    else:
+                        set_clauses.append(f"{key} = %s")
+                        values.append(value)
+
+                set_clauses.append("updated_by = %s")
+                values.append(updated_by)
+                set_clauses.append("updated_at = NOW()")
+
+                values.append(req_id)
                 cur.execute(
                     f"""
                     UPDATE manage_requirements
@@ -535,7 +590,7 @@ class RequirementsManageService:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     """
-                    SELECT req_id, requirement_type
+                    SELECT req_id, requirement_type, status
                     FROM manage_requirements
                     WHERE req_id = ANY(%s)
                     """,
@@ -549,6 +604,12 @@ class RequirementsManageService:
 
                 if not low_level_ids:
                     return {"updated": 0, "skipped": skipped}
+
+                for row in rows:
+                    if row["req_id"] in low_level_ids:
+                        self._validate_status_transition(
+                            row["status"], status, row.get("requirement_type")
+                        )
 
                 cur.execute(
                     """
@@ -1172,46 +1233,76 @@ class RequirementsManageService:
                         (milestone_id, project_id, branch_name),
                     )
 
-                for req in requirements:
-                    snapshot_id = str(uuid.uuid4())
-                    snapshot_data = json.dumps(req)
-                    cur.execute(
-                        """
-                        INSERT INTO manage_milestone_nodes (
-                            snapshot_id, milestone_id, requirement_id, requirement_type,
-                            status, title, description, parent_id, order_index, snapshot_data, created_at
-                        )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
-                        """,
-                        (
-                            snapshot_id,
-                            milestone_id,
-                            req["req_id"],
-                            req["requirement_type"],
-                            req["status"],
-                            req["title"],
-                            req.get("description"),
-                            req.get("parent_id"),
-                            req.get("order_index", 0),
-                            snapshot_data,
-                        ),
-                    )
-
-                    if req.get("parent_id"):
-                        cur.execute(
-                            """
-                            INSERT INTO manage_milestone_relations (milestone_id, parent_id, child_id, order_index)
-                            VALUES (%s, %s, %s, %s)
-                            """,
-                            (
-                                milestone_id,
-                                req["parent_id"],
-                                req["req_id"],
-                                req.get("order_index", 0),
-                            ),
-                        )
+                snapshot_rows = [
+                    {
+                        "requirement_id": req["req_id"],
+                        "requirement_type": req["requirement_type"],
+                        "status": req["status"],
+                        "title": req["title"],
+                        "description": req.get("description"),
+                        "parent_id": req.get("parent_id"),
+                        "order_index": req.get("order_index", 0),
+                        "snapshot_data": req,
+                    }
+                    for req in requirements
+                ]
+                self._persist_milestone_snapshot(cur, milestone_id, snapshot_rows)
 
                 return milestone
+
+    @staticmethod
+    def _persist_milestone_snapshot(
+        cur: RealDictCursor,
+        milestone_id: str,
+        snapshot_rows: List[Dict[str, Any]],
+    ) -> None:
+        requirement_ids = {
+            row.get("requirement_id")
+            for row in snapshot_rows
+            if row.get("requirement_id")
+        }
+        for row in snapshot_rows:
+            cur.execute(
+                """
+                INSERT INTO manage_milestone_nodes (
+                    snapshot_id, milestone_id, requirement_id, requirement_type,
+                    status, title, description, parent_id, order_index, snapshot_data, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
+                """,
+                (
+                    str(uuid.uuid4()),
+                    milestone_id,
+                    row.get("requirement_id"),
+                    row.get("requirement_type"),
+                    row.get("status"),
+                    row.get("title"),
+                    row.get("description"),
+                    row.get("parent_id"),
+                    row.get("order_index", 0),
+                    json.dumps(
+                        row.get("snapshot_data")
+                        if row.get("snapshot_data") is not None
+                        else {}
+                    ),
+                ),
+            )
+
+            parent_id = row.get("parent_id")
+            child_id = row.get("requirement_id")
+            if parent_id and child_id and parent_id in requirement_ids:
+                cur.execute(
+                    """
+                    INSERT INTO manage_milestone_relations (milestone_id, parent_id, child_id, order_index)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (
+                        milestone_id,
+                        parent_id,
+                        child_id,
+                        row.get("order_index", 0),
+                    ),
+                )
 
     def list_milestones(self, project_id: str) -> List[Dict[str, Any]]:
         with self._connect() as conn:
@@ -1476,6 +1567,7 @@ class RequirementsManageService:
                 if not cur.fetchone():
                     raise ValueError("基准里程碑不存在")
 
+                ref_id = str(uuid.uuid4())
                 cur.execute(
                     """
                     INSERT INTO manage_branch_refs (ref_id, project_id, ref_name, ref_type, milestone_id, created_by, created_at, updated_at)
@@ -1484,7 +1576,7 @@ class RequirementsManageService:
                     RETURNING ref_id, project_id, ref_name, ref_type, milestone_id, created_by, created_at::text AS created_at
                     """,
                     (
-                        str(uuid.uuid4()),
+                        ref_id,
                         project_id,
                         name,
                         base_milestone_id,
@@ -1494,7 +1586,33 @@ class RequirementsManageService:
                 ref_row = cur.fetchone()
                 if not ref_row:
                     raise ValueError("分支名称已存在")
-                return dict(ref_row)
+                cur.execute(
+                    """
+                    INSERT INTO manage_branches (
+                        branch_id, project_id, base_milestone_id, name, status, created_by, created_at, updated_at, metadata
+                    )
+                    VALUES (%s, %s, %s, %s, 'active', %s, NOW(), NOW(), %s::jsonb)
+                    ON CONFLICT (branch_id) DO NOTHING
+                    """,
+                    (
+                        ref_id,
+                        project_id,
+                        base_milestone_id,
+                        name,
+                        created_by,
+                        json.dumps(
+                            {
+                                "source": "manage_branch_refs",
+                                "head_milestone_id": base_milestone_id,
+                            }
+                        ),
+                    ),
+                )
+                result = dict(ref_row)
+                result["base_milestone_id"] = base_milestone_id
+                result["head_milestone_id"] = result.get("milestone_id")
+                result["branch_name"] = result.get("ref_name")
+                return result
 
     def list_branches(self, project_id: str) -> List[Dict[str, Any]]:
         with self._connect() as conn:
@@ -1503,15 +1621,32 @@ class RequirementsManageService:
                     """
                     SELECT r.ref_id, r.project_id, r.ref_name, r.ref_type, r.milestone_id,
                            r.created_by, r.created_at::text AS created_at,
-                           m.name AS milestone_name, m.created_at::text AS milestone_created_at, m.is_baseline
+                           m.name AS milestone_name, m.created_at::text AS milestone_created_at, m.is_baseline,
+                           b.base_milestone_id
                     FROM manage_branch_refs r
                     LEFT JOIN manage_milestones m ON m.milestone_id = r.milestone_id
+                    LEFT JOIN LATERAL (
+                        SELECT base_milestone_id
+                        FROM manage_branches
+                        WHERE project_id = r.project_id AND name = r.ref_name
+                        ORDER BY created_at ASC
+                        LIMIT 1
+                    ) b ON TRUE
                     WHERE r.project_id = %s AND r.ref_type = 'branch'
                     ORDER BY r.created_at DESC
                     """,
                     (project_id,),
                 )
-                return [dict(row) for row in cur.fetchall()]
+                result = []
+                for row in cur.fetchall():
+                    item = dict(row)
+                    item["base_milestone_id"] = item.get("base_milestone_id") or item.get(
+                        "milestone_id"
+                    )
+                    item["head_milestone_id"] = item.get("milestone_id")
+                    item["branch_name"] = item.get("ref_name")
+                    result.append(item)
+                return result
 
     def update_branch_ref(
         self, project_id: str, ref_name: str, milestone_id: str
@@ -1528,6 +1663,19 @@ class RequirementsManageService:
                 )
                 if cur.rowcount == 0:
                     raise ValueError("分支不存在")
+                cur.execute(
+                    """
+                    UPDATE manage_branches
+                    SET updated_at = NOW(),
+                        metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
+                    WHERE project_id = %s AND name = %s
+                    """,
+                    (
+                        json.dumps({"head_milestone_id": milestone_id}),
+                        project_id,
+                        ref_name,
+                    ),
+                )
 
     def merge_branches(
         self,
@@ -1575,6 +1723,7 @@ class RequirementsManageService:
 
                 conflicts: List[Dict[str, Any]] = []
                 merged_nodes = dict(target_nodes)
+                added_ids: List[str] = []
                 for req_id, src_row in source_nodes.items():
                     if req_id in merged_nodes:
                         if merged_nodes[req_id].get("snapshot_data") != src_row.get(
@@ -1589,6 +1738,7 @@ class RequirementsManageService:
                             )
                         continue
                     merged_nodes[req_id] = src_row
+                    added_ids.append(req_id)
 
                 milestone_id = str(uuid.uuid4())
                 merge_name = f"Merge {source_branch} -> {target_branch}"
@@ -1657,49 +1807,21 @@ class RequirementsManageService:
                     ),
                 )
 
+                snapshot_rows = []
                 for req_id, node in merged_nodes.items():
-                    snapshot_data = node.get("snapshot_data")
-                    cur.execute(
-                        """
-                        INSERT INTO manage_milestone_nodes (
-                            snapshot_id, milestone_id, requirement_id, requirement_type,
-                            status, title, description, parent_id, order_index, snapshot_data, created_at
-                        )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
-                        """,
-                        (
-                            str(uuid.uuid4()),
-                            milestone_id,
-                            req_id,
-                            node.get("requirement_type"),
-                            node.get("status"),
-                            node.get("title"),
-                            node.get("description"),
-                            node.get("parent_id"),
-                            node.get("order_index", 0),
-                            (
-                                json.dumps(snapshot_data)
-                                if snapshot_data is not None
-                                else json.dumps({})
-                            ),
-                        ),
+                    snapshot_rows.append(
+                        {
+                            "requirement_id": req_id,
+                            "requirement_type": node.get("requirement_type"),
+                            "status": node.get("status"),
+                            "title": node.get("title"),
+                            "description": node.get("description"),
+                            "parent_id": node.get("parent_id"),
+                            "order_index": node.get("order_index", 0),
+                            "snapshot_data": node.get("snapshot_data"),
+                        }
                     )
-
-                for req_id, node in merged_nodes.items():
-                    parent_id = node.get("parent_id")
-                    if parent_id and parent_id in merged_nodes:
-                        cur.execute(
-                            """
-                            INSERT INTO manage_milestone_relations (milestone_id, parent_id, child_id, order_index)
-                            VALUES (%s, %s, %s, %s)
-                            """,
-                            (
-                                milestone_id,
-                                parent_id,
-                                req_id,
-                                node.get("order_index", 0),
-                            ),
-                        )
+                self._persist_milestone_snapshot(cur, milestone_id, snapshot_rows)
 
                 cur.execute(
                     """
@@ -1716,6 +1838,22 @@ class RequirementsManageService:
             "conflict_count": len(conflicts),
             "source_branch": source_branch,
             "target_branch": target_branch,
+            "change_set": {
+                "added_requirement_ids": sorted(added_ids),
+                "removed_requirement_ids": [],
+                "modified_requirement_ids": sorted(
+                    [c.get("requirement_id") for c in conflicts if c.get("requirement_id")]
+                ),
+                "conflict_requirement_ids": sorted(
+                    [c.get("requirement_id") for c in conflicts if c.get("requirement_id")]
+                ),
+                "merged_node_count": len(merged_nodes),
+            },
+            "traceability": {
+                "source_milestone_id": source_milestone_id,
+                "target_milestone_id": target_milestone_id,
+                "merged_milestone_id": milestone.get("milestone_id"),
+            },
         }
 
     @staticmethod

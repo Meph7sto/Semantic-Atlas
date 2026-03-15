@@ -516,13 +516,19 @@ def update_requirement(
     except ValueError as e:
         raise ErrorResponse(str(e))
 
+    audit_detail = dict(update_data)
+    if "status" in update_data:
+        audit_detail["status_transition"] = {
+            "from": req_before.get("status"),
+            "to": req_result.get("status"),
+        }
     _service.add_audit_log(
         project_id=req_result["project_id"],
         actor=actor,
         action="update",
         target_type="requirement",
         target_id=req_id,
-        detail=update_data,
+        detail=audit_detail,
     )
     return req_result
 
@@ -549,18 +555,38 @@ def bulk_update_requirement_status(
     }
     """
     actor = _get_actor(request, current_user)
+    req_items = []
     for req_id in req.req_ids:
         req_item = _service.get_requirement(req_id)
         if not req_item:
             raise ErrorResponse(f"需求不存在: {req_id}", 404)
         _require_project_edit(req_item["project_id"], current_user)
+        req_items.append(req_item)
     try:
         result = _service.bulk_update_requirement_status(
             req.req_ids, req.status, updated_by=actor
         )
     except ValueError as e:
         raise ErrorResponse(str(e))
-
+    transitions = []
+    for item in req_items:
+        transitions.append(
+            {
+                "req_id": item.get("req_id"),
+                "requirement_type": item.get("requirement_type"),
+                "from": item.get("status"),
+                "to": req.status,
+            }
+        )
+    sample_req = req_items[0] if req_items else None
+    _service.add_audit_log(
+        project_id=(sample_req or {}).get("project_id"),
+        actor=actor,
+        action="update",
+        target_type="requirement_status_bulk",
+        target_id=",".join(req.req_ids),
+        detail={"status": req.status, "transitions": transitions, **result},
+    )
     return result
 
 

@@ -2,7 +2,6 @@
 Vision API Pydantic 请求模型
 """
 
-import json
 from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -38,33 +37,3 @@ class VisionPreviewConfirmRequest(BaseModel):
             return None
         text = value.strip()
         return text or None
-
-
-class VisionAutoDLConfig(BaseModel):
-    host: str = Field(min_length=1)
-    port: int = Field(default=22, ge=1, le=65535)
-    username: str = Field(min_length=1)
-    password: str = Field(min_length=1)
-    workdir: str = Field(min_length=1)
-    conda_env: str = Field(default="base", min_length=1)
-    model_id: str = Field(min_length=1)
-    service_port: int = Field(default=9000, ge=1, le=65535)
-    startup_timeout_seconds: int = Field(default=600, ge=30, le=3600)
-
-    @field_validator("host", "username", "password", "workdir", "conda_env", "model_id")
-    @classmethod
-    def normalize_required_text(cls, value: str) -> str:
-        text = value.strip()
-        if not text:
-            raise ValueError("字段不能为空")
-        return text
-
-    @classmethod
-    def from_json(cls, raw_value: str) -> "VisionAutoDLConfig":
-        try:
-            payload = json.loads(raw_value)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"AutoDL 配置 JSON 解析失败: {exc.msg}") from exc
-        if not isinstance(payload, dict):
-            raise ValueError("AutoDL 配置必须是对象")
-        return cls(**payload)

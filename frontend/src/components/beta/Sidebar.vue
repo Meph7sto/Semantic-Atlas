@@ -231,7 +231,7 @@ const navItemsConfig = computed(() => {
       icon: FolderKanban,
       children: [
         { key: "requirements-collection", label: "需求采集", icon: Sparkles },
-        { key: "requirements", label: "需求管理", icon: FileText },
+        { key: "requirements", label: "需求工程管理", icon: FileText },
         { key: "requirements-session", label: "会话需求", icon: Layers },
         { key: "requirements-analysis", label: "需求分析", icon: BarChart3 },
       ]
@@ -252,7 +252,7 @@ const navItemsConfig = computed(() => {
       icon: FolderKanban,
       children: [
         { key: "requirements-collection", label: "需求采集", icon: Sparkles },
-        { key: "requirements", label: "需求管理", icon: FileText },
+        { key: "requirements", label: "需求工程管理", icon: FileText },
         { key: "requirements-session", label: "会话需求", icon: Layers },
         { key: "requirements-analysis", label: "需求分析", icon: BarChart3 },
       ]

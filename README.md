@@ -137,19 +137,19 @@ bash deploy/stop_services.sh
 
 ### Beta（正式功能）`/beta/*`
 
-| 路由 | 页面 | 说明 |
-|------|------|------|
-| `/beta/login` | LoginView | 登录 |
-| `/beta/register` | RegisterView | 注册 |
-| `/beta/dashboard` | DashboardView | 仪表盘 |
-| `/beta/project` | ProjectManageView | 项目管理 |
-| `/beta/products` | ProductManageView | 产品管理 |
-| `/beta/requirements-collection` | RequirementsCollectionView | Phase 1-3 流水线入口 |
-| `/beta/requirements-analysis` | RequirementsAnalysisView | 需求分析 |
-| `/beta/requirements` | RequirementsView | 需求展示 |
-| `/beta/requirements-session` | RequirementsSessionView | 会话级需求查看 |
-| `/beta/account` | AccountView | 账户设置 |
-| `/beta/user-manage` | UserManageView | 用户管理（仅系统管理员） |
+| 路由                            | 页面                       | 说明                     |
+| ------------------------------- | -------------------------- | ------------------------ |
+| `/beta/login`                   | LoginView                  | 登录                     |
+| `/beta/register`                | RegisterView               | 注册                     |
+| `/beta/dashboard`               | DashboardView              | 仪表盘                   |
+| `/beta/project`                 | ProjectManageView          | 项目管理                 |
+| `/beta/products`                | ProductManageView          | 产品管理                 |
+| `/beta/requirements-collection` | RequirementsCollectionView | Phase 1-3 流水线入口     |
+| `/beta/requirements-analysis`   | RequirementsAnalysisView   | 需求分析                 |
+| `/beta/requirements`            | RequirementsView           | 需求展示                 |
+| `/beta/requirements-session`    | RequirementsSessionView    | 会话级需求查看           |
+| `/beta/account`                 | AccountView                | 账户设置                 |
+| `/beta/user-manage`             | UserManageView             | 用户管理（仅系统管理员） |
 
 ### Alpha（实验功能）`/alpha/*`
 
@@ -175,8 +175,8 @@ bash deploy/stop_services.sh
 
 ### 引导页
 
-| 路由 | 说明 |
-|------|------|
+| 路由     | 说明          |
+| -------- | ------------- |
 | `/guide` | 引导页/入口点 |
 
 ## 配置说明
@@ -185,28 +185,28 @@ bash deploy/stop_services.sh
 
 ### 推理后端
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `MODEL_PROVIDER` | 模型提供方 | `local` / `chutes` / `deepseek` |
-| `SKIP_MODEL_LOAD` | 跳过本地模型加载 | `false` |
-| `LLM_MODEL_RELATIVE_PATH` | 本地 LLM 权重路径 | `data/models/deepseek_conflict` |
-| `CLASSIFICATION_MODEL_RELATIVE_PATH` | 分类模型路径 | `data/models/deberta-v3-large` |
-| `DEEPSEEK_API_KEY` | DeepSeek 模式必填 | - |
-| `CHUTES_API_TOKEN` / `CHUTES_API_KEY` | Chutes 模式必填 | - |
-| `OPENAI_API_KEY` / `OPENAI_BASE_URL` | OpenAI 兼容接口 | - |
-| `CLASSIFICATION_LABELS` | 分类标签 | JSON 数组或逗号分隔 |
+| 变量                                  | 说明              | 默认值                          |
+| ------------------------------------- | ----------------- | ------------------------------- |
+| `MODEL_PROVIDER`                      | 模型提供方        | `local` / `chutes` / `deepseek` |
+| `SKIP_MODEL_LOAD`                     | 跳过本地模型加载  | `false`                         |
+| `LLM_MODEL_RELATIVE_PATH`             | 本地 LLM 权重路径 | `data/models/deepseek_conflict` |
+| `CLASSIFICATION_MODEL_RELATIVE_PATH`  | 分类模型路径      | `data/models/deberta-v3-large`  |
+| `DEEPSEEK_API_KEY`                    | DeepSeek 模式必填 | -                               |
+| `CHUTES_API_TOKEN` / `CHUTES_API_KEY` | Chutes 模式必填   | -                               |
+| `OPENAI_API_KEY` / `OPENAI_BASE_URL`  | OpenAI 兼容接口   | -                               |
+| `CLASSIFICATION_LABELS`               | 分类标签          | JSON 数组或逗号分隔             |
 
 ### 业务后端
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `INFERENCE_URL` / `INFERENCE_BASE_URL` | 推理后端地址 | `http://localhost:8000` |
-| `CLASSIFICATION_URL` | 分类服务地址 | `http://localhost:8000` |
-| `DATABASE_URL` | PostgreSQL 连接串（优先） | - |
-| `POSTGRES_HOST` / `PORT` / `USER` / `PASSWORD` / `DB` | 数据库连接参数 | `127.0.0.1` / `5432` / `semantic` / `semantic_dev` / `semantic_atlas` |
-| `BUSINESS_HOST` / `BUSINESS_PORT` / `BUSINESS_DEBUG` | FastAPI 业务服务配置 | - |
-| `CORS_ORIGINS` | CORS 允许源 | `*` |
-| `JWT_SECRET_KEY` | JWT 签名密钥（生产环境需更改） | - |
+| 变量                                                  | 说明                           | 默认值                                                                |
+| ----------------------------------------------------- | ------------------------------ | --------------------------------------------------------------------- |
+| `INFERENCE_URL` / `INFERENCE_BASE_URL`                | 推理后端地址                   | `http://localhost:8000`                                               |
+| `CLASSIFICATION_URL`                                  | 分类服务地址                   | `http://localhost:8000`                                               |
+| `DATABASE_URL`                                        | PostgreSQL 连接串（优先）      | -                                                                     |
+| `POSTGRES_HOST` / `PORT` / `USER` / `PASSWORD` / `DB` | 数据库连接参数                 | `127.0.0.1` / `5432` / `semantic` / `semantic_dev` / `semantic_atlas` |
+| `BUSINESS_HOST` / `BUSINESS_PORT` / `BUSINESS_DEBUG`  | FastAPI 业务服务配置           | -                                                                     |
+| `CORS_ORIGINS`                                        | CORS 允许源                    | `*`                                                                   |
+| `JWT_SECRET_KEY`                                      | JWT 签名密钥（生产环境需更改） | -                                                                     |
 
 ### 示例 `.env`
 
@@ -226,38 +226,38 @@ JWT_SECRET_KEY=your_secret_key_here
 
 ### 业务后端（FastAPI, 前缀 `/api/v2`）
 
-| Router | 前缀 | 说明 |
-|--------|------|------|
-| `analysis` | `/api/v2` | Phase 1 & 2 流水线 |
-| `requirements` | `/api/v2` | Phase 3 & 需求 CRUD |
-| `manage` | `/api/v2/manage` | 项目/需求/里程碑管理 |
-| `product` | `/api/v2/product` | 产品管理 |
-| `conflict` | `/api/v2/conflict` | 冲突检测代理 |
-| `classification` | `/api/v2/classification` | 分类代理 |
-| `deduplication` | `/api/v2/dedup` | 需求去重 |
-| `push` | `/api/v2/push` | 推送通知（SSE） |
-| `mobile_chat` | `/api/v2/mobile` | 移动端消息 |
-| `file` | `/api/v2` | CSV 上传/下载 |
-| `auth` | `/api/v2` | 用户认证（JWT） |
-| `permission` | `/api/v2/permission` | 权限管理 |
-| `execution_graph` | `/api/v2/execution_graph` | 执行图管理 |
-| `execution_topology_structure` | `/api/v2/topology` | 执行拓扑结构 |
-| `requirement_actor` | `/api/v2/actor` | 需求 Actor 管理 |
+| Router                         | 前缀                      | 说明                 |
+| ------------------------------ | ------------------------- | -------------------- |
+| `analysis`                     | `/api/v2`                 | Phase 1 & 2 流水线   |
+| `requirements`                 | `/api/v2`                 | Phase 3 & 需求 CRUD  |
+| `manage`                       | `/api/v2/manage`          | 项目/需求/里程碑管理 |
+| `product`                      | `/api/v2/product`         | 产品管理             |
+| `conflict`                     | `/api/v2/conflict`        | 冲突检测代理         |
+| `classification`               | `/api/v2/classification`  | 分类代理             |
+| `deduplication`                | `/api/v2/dedup`           | 需求去重             |
+| `push`                         | `/api/v2/push`            | 推送通知（SSE）      |
+| `mobile_chat`                  | `/api/v2/mobile`          | 移动端消息           |
+| `file`                         | `/api/v2`                 | CSV 上传/下载        |
+| `auth`                         | `/api/v2`                 | 用户认证（JWT）      |
+| `permission`                   | `/api/v2/permission`      | 权限管理             |
+| `execution_graph`              | `/api/v2/execution_graph` | 执行图管理           |
+| `execution_topology_structure` | `/api/v2/topology`        | 执行拓扑结构         |
+| `requirement_actor`            | `/api/v2/actor`           | 需求 Actor 管理      |
 
 另有 `GET /health` 健康检查（非 `/api/v2` 前缀）。
 
 ### 推理后端（FastAPI）
 
-| Router | 说明 |
-|--------|------|
-| `conflict` | 冲突检测 (`/conflict/check`, `/conflict/stream_check`) |
-| `traceability` | 追溯分析 (`/traceability/relation`, `/traceability/batch-relation`) |
-| `classification` | 需求分类 (`/classification/predict-texts`, `/classification/predict-csv`) |
-| `requirements_acquisition` | 需求获取 (`/acquisition/extract`) |
-| `chat` | 对话服务 (`/chat/stream`, `/chat/completions`, `/chat/completions/tools`) |
-| `kb` | 知识库管理 |
-| `l4_generation` | L4 需求生成 |
-| `l4_validation` | L4 需求验证 |
+| Router                     | 说明                                                                      |
+| -------------------------- | ------------------------------------------------------------------------- |
+| `conflict`                 | 冲突检测 (`/conflict/check`, `/conflict/stream_check`)                    |
+| `traceability`             | 追溯分析 (`/traceability/relation`, `/traceability/batch-relation`)       |
+| `classification`           | 需求分类 (`/classification/predict-texts`, `/classification/predict-csv`) |
+| `requirements_acquisition` | 需求获取 (`/acquisition/extract`)                                         |
+| `chat`                     | 对话服务 (`/chat/stream`, `/chat/completions`, `/chat/completions/tools`) |
+| `kb`                       | 知识库管理                                                                |
+| `l4_generation`            | L4 需求生成                                                               |
+| `l4_validation`            | L4 需求验证                                                               |
 
 ## 数据库设计
 
@@ -265,51 +265,51 @@ JWT_SECRET_KEY=your_secret_key_here
 
 ### 流水线层（session_id 主键）
 
-| 表 | 说明 |
-|----|------|
-| `spans` | 转写片段（说话人、文本、时间戳） |
-| `context_runs` | Phase 2 执行记录 |
-| `bundles` | 上下文聚合单元 |
-| `span_links` | 片段间关系边（continuation, elaboration, dependency, same_topic, conflict） |
-| `requirements_l123` | L1/L2/L3 抽取结果 |
-| `low_level_requirements` | L4 低层需求 |
+| 表                       | 说明                                                                        |
+| ------------------------ | --------------------------------------------------------------------------- |
+| `spans`                  | 转写片段（说话人、文本、时间戳）                                            |
+| `context_runs`           | Phase 2 执行记录                                                            |
+| `bundles`                | 上下文聚合单元                                                              |
+| `span_links`             | 片段间关系边（continuation, elaboration, dependency, same_topic, conflict） |
+| `requirements_l123`      | L1/L2/L3 抽取结果                                                           |
+| `low_level_requirements` | L4 低层需求                                                                 |
 
 ### 管理层（project_id 主键）
 
-| 表 | 说明 |
-|----|------|
-| `manage_projects` | 项目记录，含 `current_session_id` 绑定 |
-| `manage_requirements` | 项目级需求树 |
-| `manage_products` | 产品管理 |
-| `manage_milestones` | 里程碑 |
-| `manage_branches` | 分支管理 |
+| 表                    | 说明                                   |
+| --------------------- | -------------------------------------- |
+| `manage_projects`     | 项目记录，含 `current_session_id` 绑定 |
+| `manage_requirements` | 项目级需求树                           |
+| `manage_products`     | 产品管理                               |
+| `manage_milestones`   | 里程碑                                 |
+| `manage_branches`     | 分支管理                               |
 
 ### Agent 通信层
 
-| 表 | 说明 |
-|----|------|
-| `mobile_chat_messages` | 移动端桥接消息（按 `user_id + session_id` 隔离） |
-| `agent_channels` | 通信通道（direct / group / broadcast） |
-| `agent_channel_members` | 通道成员 |
-| `agent_messages` | Agent 消息记录 |
-| `agent_pending_tasks` | Agent 待处理任务 |
-| `ai_chat_sessions` | AI 对话会话 |
+| 表                      | 说明                                             |
+| ----------------------- | ------------------------------------------------ |
+| `mobile_chat_messages`  | 移动端桥接消息（按 `user_id + session_id` 隔离） |
+| `agent_channels`        | 通信通道（direct / group / broadcast）           |
+| `agent_channel_members` | 通道成员                                         |
+| `agent_messages`        | Agent 消息记录                                   |
+| `agent_pending_tasks`   | Agent 待处理任务                                 |
+| `ai_chat_sessions`      | AI 对话会话                                      |
 
 ### 认证与权限层
 
-| 表 | 说明 |
-|----|------|
-| `auth_users` | 用户账户（JWT 认证） |
-| `permissions` | 权限定义 |
-| `member_roles` | 用户在项目中的角色 |
-| `project_members` | 项目成员分配 |
+| 表                | 说明                 |
+| ----------------- | -------------------- |
+| `auth_users`      | 用户账户（JWT 认证） |
+| `permissions`     | 权限定义             |
+| `member_roles`    | 用户在项目中的角色   |
+| `project_members` | 项目成员分配         |
 
 ### 执行与 Actor 层
 
-| 表 | 说明 |
-|----|------|
-| `execution_graphs` | 执行图记录 |
-| `execution_nodes` | 执行节点 |
+| 表                   | 说明           |
+| -------------------- | -------------- |
+| `execution_graphs`   | 执行图记录     |
+| `execution_nodes`    | 执行节点       |
 | `requirement_actors` | 需求执行者分配 |
 
 ## 多 Agent 架构
@@ -437,14 +437,14 @@ docker-compose.yml                 # PostgreSQL + Adminer
 
 ## 端口约定
 
-| 服务 | 端口 |
-|------|------|
+| 服务                   | 端口 |
+| ---------------------- | ---- |
 | 前端开发服务器（Vite） | 8008 |
-| 业务后端（FastAPI） | 5002 |
-| 推理后端（FastAPI） | 8000 |
-| PostgreSQL | 5432 |
-| Adminer | 8080 |
-| Nginx 统一入口 | 8008 |
+| 业务后端（FastAPI）    | 5002 |
+| 推理后端（FastAPI）    | 8000 |
+| PostgreSQL             | 5432 |
+| Adminer                | 8080 |
+| Nginx 统一入口         | 8008 |
 
 ## 前端开发代理
 

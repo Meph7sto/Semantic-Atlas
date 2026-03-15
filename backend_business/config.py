@@ -47,6 +47,21 @@ class Settings:
     INFERENCE_BASE_URL = os.environ.get("INFERENCE_URL") or os.environ.get(
         "INFERENCE_BASE_URL", "http://localhost:8000"
     )
+    ASR_REMOTE_BASE_URL = os.environ.get(
+        "ASR_REMOTE_BASE_URL", INFERENCE_BASE_URL
+    ).rstrip("/")
+    ASR_REMOTE_TRANSCRIBE_PATH = os.environ.get(
+        "ASR_REMOTE_TRANSCRIBE_PATH", "/asr/transcribe"
+    )
+    ASR_REMOTE_HEALTH_PATH = os.environ.get("ASR_REMOTE_HEALTH_PATH", "/asr/health")
+    ASR_REMOTE_AUTH_TOKEN = os.environ.get("ASR_REMOTE_AUTH_TOKEN", "")
+    ASR_REMOTE_TIMEOUT_SECONDS = float(
+        os.environ.get("ASR_REMOTE_TIMEOUT_SECONDS", "1800")
+    )
+    ASR_MAX_UPLOAD_MB = int(os.environ.get("ASR_MAX_UPLOAD_MB", "200"))
+    ASR_ALLOWED_EXTENSIONS = os.environ.get(
+        "ASR_ALLOWED_EXTENSIONS", "wav,mp3,m4a,mp4"
+    )
 
     # Storage (PostgreSQL)
     POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "127.0.0.1")
@@ -87,6 +102,7 @@ class Settings:
     VISION_CAPTION_URL = os.environ.get(
         "VISION_CAPTION_URL", "http://127.0.0.1:9000/caption-image"
     )
+    VISION_SERVICE_TOKEN = os.environ.get("VISION_SERVICE_TOKEN", "").strip()
     VISION_CAPTION_TIMEOUT_SECONDS = float(
         os.environ.get("VISION_CAPTION_TIMEOUT_SECONDS", "120")
     )

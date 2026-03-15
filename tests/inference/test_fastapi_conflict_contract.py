@@ -93,7 +93,7 @@ def test_check_conflict_success_and_db_save(fastapi_client):
     client, stub_ai, stub_db = fastapi_client
 
     response = client.post(
-        "/api/conflict/check",
+        "/api/v2/conflict/check",
         json={
             "requirement_a": " A ",
             "requirement_b": "B",
@@ -117,7 +117,7 @@ def test_check_conflict_validation_blank_text_returns_422(fastapi_client):
     client, _, _ = fastapi_client
 
     response = client.post(
-        "/api/conflict/check",
+        "/api/v2/conflict/check",
         json={"requirement_a": "   ", "requirement_b": "ok"},
     )
 
@@ -131,7 +131,7 @@ def test_check_conflict_ai_error_returns_500(fastapi_client):
     stub_ai.should_raise = True
 
     response = client.post(
-        "/api/conflict/check",
+        "/api/v2/conflict/check",
         json={"requirement_a": "a", "requirement_b": "b"},
     )
 
@@ -143,7 +143,7 @@ def test_check_conflict_batch_success(fastapi_client):
     client, stub_ai, stub_db = fastapi_client
 
     response = client.post(
-        "/api/conflict/check/batch",
+        "/api/v2/conflict/check/batch",
         json={
             "pairs": [
                 {"requirement_a": "a1", "requirement_b": "b1"},
@@ -168,7 +168,7 @@ def test_check_conflict_batch_requires_pairs(fastapi_client):
     client, _, _ = fastapi_client
 
     response = client.post(
-        "/api/conflict/check/batch",
+        "/api/v2/conflict/check/batch",
         json={"pairs": []},
     )
 
@@ -180,7 +180,7 @@ def test_check_conflict_batch_requires_pairs(fastapi_client):
 def test_get_latest_requires_session_id_query(fastapi_client):
     client, _, _ = fastapi_client
 
-    response = client.get("/api/conflict/latest")
+    response = client.get("/api/v2/conflict/latest")
     assert response.status_code == 422
     detail = response.json()["detail"]
     assert any(item.get("loc") == ["query", "session_id"] for item in detail)
@@ -189,7 +189,7 @@ def test_get_latest_requires_session_id_query(fastapi_client):
 def test_get_latest_blank_session_id_returns_400(fastapi_client):
     client, _, _ = fastapi_client
 
-    response = client.get("/api/conflict/latest", params={"session_id": "   "})
+    response = client.get("/api/v2/conflict/latest", params={"session_id": "   "})
     assert response.status_code == 400
     assert response.json()["detail"] == "session_id 不能为空"
 
@@ -198,7 +198,7 @@ def test_stream_check_conflict_success_with_thinking_mode(fastapi_client):
     client, stub_ai, _ = fastapi_client
 
     response = client.post(
-        "/api/conflict/stream_check",
+        "/api/v2/conflict/stream_check",
         json={
             "requirement_a": "a",
             "requirement_b": "b",
@@ -211,3 +211,4 @@ def test_stream_check_conflict_success_with_thinking_mode(fastapi_client):
     assert '{"type":"token","content":"hello"}' in response.text
     assert '{"type":"result","data":{"is_conflict":true,"raw_response":"hello"}}' in response.text
     assert stub_ai.calls == [("a", "b", True)]
+
