@@ -4,19 +4,12 @@ FastAPI contract tests for execution topology runtime execution endpoint.
 
 from __future__ import annotations
 
-import os
-import sys
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
 
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.http.errors import error_response_handler, validation_error_handler
 from backend_business.api.routers import execution_graph
@@ -69,24 +62,20 @@ def _auth_headers() -> dict:
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     stub = _StubTopologyExecutionService()
     monkeypatch.setattr(execution_graph, "_topology_execution_service", stub)
 
-    app = FastAPI()
-    app.include_router(execution_graph.router)
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
+    app = build_test_app(execution_graph.router)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, stub
 
 
-def test_execute_topology_returns_runtime_execution_result(fastapi_client):
+async def test_execute_topology_returns_runtime_execution_result(fastapi_client):
     client, stub = fastapi_client
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/execution-topology/template-1/execute",
         json={
             "input_payload": {"message": "run this topology"},
@@ -110,10 +99,10 @@ def test_execute_topology_returns_runtime_execution_result(fastapi_client):
     }
 
 
-def test_execute_topology_rejects_invalid_max_steps(fastapi_client):
+async def test_execute_topology_rejects_invalid_max_steps(fastapi_client):
     client, _ = fastapi_client
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/execution-topology/template-1/execute",
         json={"max_steps": 0},
         headers=_auth_headers(),

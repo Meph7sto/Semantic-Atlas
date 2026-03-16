@@ -2,21 +2,14 @@
 FastAPI file route contract tests.
 """
 
-import os
-import sys
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
 
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.http.errors import (
     error_response_handler,
@@ -113,7 +106,7 @@ class _StubDBService:
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch, tmp_path):
+async def fastapi_client(monkeypatch, tmp_path):
     sample = tmp_path / "sample.txt"
     sample.write_text("hello-download", encoding="utf-8")
 
@@ -125,8 +118,7 @@ def fastapi_client(monkeypatch, tmp_path):
     monkeypatch.setattr(file_router, "ai_proxy", stub_ai_proxy)
     monkeypatch.setattr(file_router, "db_service", stub_db)
 
-    app = FastAPI()
-    app.include_router(file_router.router)
+    app = build_test_app(file_router.router)
     app.dependency_overrides[file_router.get_current_user] = lambda: {
         "user_id": "u1",
         "role": "member",
@@ -135,18 +127,15 @@ def fastapi_client(monkeypatch, tmp_path):
         "user_id": "admin-1",
         "role": "admin",
     }
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, stub_file_service, stub_ai_proxy, stub_db
 
 
-def test_upload_and_list_contract(fastapi_client):
+async def test_upload_and_list_contract(fastapi_client):
     client, stub_file_service, _, _ = fastapi_client
 
-    upload_resp = client.post(
+    upload_resp = await client.post(
         "/api/v2/upload",
         data={"description": "demo file"},
         files={"file": ("demo.txt", b"abc", "text/plain")},
@@ -156,7 +145,7 @@ def test_upload_and_list_contract(fastapi_client):
     assert stub_file_service.save_calls[0]["user_id"] == "u1"
     assert stub_file_service.save_calls[0]["description"] == "demo file"
 
-    list_resp = client.get("/api/v2/uploads")
+    list_resp = await client.get("/api/v2/uploads")
     assert list_resp.status_code == 200
     body = list_resp.json()
     assert body["success"] is True
@@ -164,30 +153,30 @@ def test_upload_and_list_contract(fastapi_client):
     assert stub_file_service.list_calls == ["u1"]
 
 
-def test_download_delete_and_admin_list_contract(fastapi_client):
+async def test_download_delete_and_admin_list_contract(fastapi_client):
     client, stub_file_service, _, _ = fastapi_client
 
-    preview_resp = client.get("/api/v2/uploads/u1_file.txt")
+    preview_resp = await client.get("/api/v2/uploads/u1_file.txt")
     assert preview_resp.status_code == 200
     assert preview_resp.headers["content-type"].startswith("text/plain")
     assert preview_resp.text == "hello-download"
 
-    download_resp = client.get("/api/v2/uploads/u1_file.txt?download=true")
+    download_resp = await client.get("/api/v2/uploads/u1_file.txt?download=true")
     assert download_resp.status_code == 200
     assert "attachment" in download_resp.headers.get("content-disposition", "")
 
-    delete_resp = client.delete("/api/v2/uploads/u1_file.txt")
+    delete_resp = await client.delete("/api/v2/uploads/u1_file.txt")
     assert delete_resp.status_code == 200
     assert delete_resp.json()["success"] is True
     assert stub_file_service.delete_calls == [("u1", "u1_file.txt")]
 
-    admin_resp = client.get("/api/v2/admin/uploads")
+    admin_resp = await client.get("/api/v2/admin/uploads")
     assert admin_resp.status_code == 200
     assert admin_resp.json()["userCount"] == 2
     assert admin_resp.json()["total"] == 3
 
 
-def test_upload_csv_success_and_download_result_contract(fastapi_client):
+async def test_upload_csv_success_and_download_result_contract(fastapi_client):
     client, _, stub_ai_proxy, stub_db = fastapi_client
 
     csv_content = (
@@ -197,7 +186,7 @@ def test_upload_csv_success_and_download_result_contract(fastapi_client):
         "H2,L2\n"
     ).encode("utf-8")
 
-    upload_csv_resp = client.post(
+    upload_csv_resp = await client.post(
         "/api/v2/upload_csv",
         data={"save_to_db": "true", "max_new_tokens": "128"},
         files={"file": ("req.csv", csv_content, "text/csv")},
@@ -211,18 +200,18 @@ def test_upload_csv_success_and_download_result_contract(fastapi_client):
     assert stub_ai_proxy.calls[0]["max_new_tokens"] == 128
     assert len(stub_db.save_calls) == 1
 
-    download_result_resp = client.get("/api/v2/download_result?id=123")
+    download_result_resp = await client.get("/api/v2/download_result?id=123")
     assert download_result_resp.status_code == 200
     assert download_result_resp.headers["content-type"].startswith("application/json")
     assert "trace_result_123.json" in download_result_resp.headers.get("content-disposition", "")
     assert download_result_resp.json()["record_id"] == 123
 
 
-def test_upload_csv_missing_pairs_returns_400(fastapi_client):
+async def test_upload_csv_missing_pairs_returns_400(fastapi_client):
     client, _, _, _ = fastapi_client
 
     bad_csv = "x,y\n1,2\n".encode("utf-8")
-    response = client.post(
+    response = await client.post(
         "/api/v2/upload_csv",
         files={"file": ("bad.csv", bad_csv, "text/csv")},
     )
@@ -230,10 +219,10 @@ def test_upload_csv_missing_pairs_returns_400(fastapi_client):
     assert "CSV 中未解析到有效的 high/low 需求对" in response.json()["detail"]
 
 
-def test_download_result_not_found_returns_404(fastapi_client):
+async def test_download_result_not_found_returns_404(fastapi_client):
     client, _, _, stub_db = fastapi_client
     stub_db.found = False
 
-    response = client.get("/api/v2/download_result?id=999")
+    response = await client.get("/api/v2/download_result?id=999")
     assert response.status_code == 404
     assert response.json()["detail"] == "资源未找到"

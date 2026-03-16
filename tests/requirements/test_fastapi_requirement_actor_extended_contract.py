@@ -3,20 +3,13 @@ FastAPI requirement-actor extended contract tests.
 """
 
 import datetime as dt
-import os
-import sys
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
 
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.deps.auth import get_current_user
 from backend_business.api.http.errors import error_response_handler, validation_error_handler
@@ -68,7 +61,7 @@ class _FakeEventStore:
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     manager = _StubActorManager()
     monkeypatch.setattr(requirement_actor, "_get_actor_manager", lambda: manager)
 
@@ -114,22 +107,18 @@ def fastapi_client(monkeypatch):
         "r-1": {"requirement_id": "r-1", "current_version": 3, "title": "Title V2"}
     }
 
-    app = FastAPI()
-    app.include_router(requirement_actor.router)
+    app = build_test_app(requirement_actor.router)
     app.include_router(requirement_actor.internals_router)
     app.dependency_overrides[get_current_user] = lambda: {"user_id": "actor-user"}
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, manager
 
 
-def test_command_endpoints_attach_source_and_dispatch(fastapi_client):
+async def test_command_endpoints_attach_source_and_dispatch(fastapi_client):
     client, manager = fastapi_client
 
-    generic = client.post(
+    generic = await client.post(
         "/api/v2/requirement-actor/command",
         params={"requirement_id": "r-1"},
         json={"type": "UpdateRequirementContent", "updates": {"title": "X"}},
@@ -137,7 +126,7 @@ def test_command_endpoints_attach_source_and_dispatch(fastapi_client):
     assert generic.status_code == 200
     assert generic.json()["command"]["source"] == "actor-user"
 
-    create = client.post(
+    create = await client.post(
         "/api/v2/requirement-actor/command/create",
         params={"requirement_id": "r-2", "status": "Draft", "priority": "high"},
         json={"content": {"title": "new"}},
@@ -145,21 +134,21 @@ def test_command_endpoints_attach_source_and_dispatch(fastapi_client):
     assert create.status_code == 200
     assert create.json()["command"]["type"] == "CreateRequirement"
 
-    change_status = client.post(
+    change_status = await client.post(
         "/api/v2/requirement-actor/command/change-status",
         params={"requirement_id": "r-2", "new_status": "confirmed"},
     )
     assert change_status.status_code == 200
     assert change_status.json()["command"]["type"] == "ChangeStatus"
 
-    quality = client.post(
+    quality = await client.post(
         "/api/v2/requirement-actor/command/add-quality-marker",
         params={"requirement_id": "r-2", "marker_type": "consistency", "marker_value": "good"},
     )
     assert quality.status_code == 200
     assert quality.json()["command"]["type"] == "AddQualityMarker"
 
-    query_state = client.post(
+    query_state = await client.post(
         "/api/v2/requirement-actor/command/query-state",
         params={"requirement_id": "r-2"},
     )
@@ -169,24 +158,24 @@ def test_command_endpoints_attach_source_and_dispatch(fastapi_client):
     assert len(manager.command_calls) == 5
 
 
-def test_events_snapshot_versions_and_replay(fastapi_client):
+async def test_events_snapshot_versions_and_replay(fastapi_client):
     client, _ = fastapi_client
 
-    events = client.get("/api/v2/requirement-actor/events/r-1?limit=10&offset=0")
+    events = await client.get("/api/v2/requirement-actor/events/r-1?limit=10&offset=0")
     assert events.status_code == 200
     assert events.json()["requirement_id"] == "r-1"
     assert events.json()["total"] == 3
 
-    snapshot = client.get("/api/v2/requirement-actor/snapshot/r-1")
+    snapshot = await client.get("/api/v2/requirement-actor/snapshot/r-1")
     assert snapshot.status_code == 200
     assert snapshot.json()["current_version"] == 3
 
-    versions = client.get("/api/v2/requirement-actor/versions/r-1?limit=20")
+    versions = await client.get("/api/v2/requirement-actor/versions/r-1?limit=20")
     assert versions.status_code == 200
     assert len(versions.json()["versions"]) == 3
     assert versions.json()["versions"][0]["event_type"] == "RequirementCreated"
 
-    replay = client.get("/api/v2/requirement-actor/replay/r-1/3")
+    replay = await client.get("/api/v2/requirement-actor/replay/r-1/3")
     assert replay.status_code == 200
     state = replay.json()["state"]
     assert state["title"] == "Title V2"
@@ -194,20 +183,20 @@ def test_events_snapshot_versions_and_replay(fastapi_client):
     assert replay.json()["events_count"] == 3
 
 
-def test_snapshot_not_found_and_cleanup_and_transitions(fastapi_client):
+async def test_snapshot_not_found_and_cleanup_and_transitions(fastapi_client):
     client, manager = fastapi_client
 
     _FakeEventStore.SNAPSHOTS = {}
-    missing_snapshot = client.get("/api/v2/requirement-actor/snapshot/r-404")
+    missing_snapshot = await client.get("/api/v2/requirement-actor/snapshot/r-404")
     assert missing_snapshot.status_code == 404
     assert missing_snapshot.json()["detail"] == "快照不存在"
 
-    cleanup = client.post("/api/v2/requirement-actor/cleanup?idle_timeout=120")
+    cleanup = await client.post("/api/v2/requirement-actor/cleanup?idle_timeout=120")
     assert cleanup.status_code == 200
     assert cleanup.json()["status"] == "cleanup_complete"
     assert manager.cleanup_calls == [120]
 
-    transitions = client.get("/api/v2/requirement-actor/transitions")
+    transitions = await client.get("/api/v2/requirement-actor/transitions")
     assert transitions.status_code == 200
     body = transitions.json()
     assert "status_enum" in body

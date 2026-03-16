@@ -7,9 +7,23 @@ to be importable/collectable.
 
 from __future__ import annotations
 
+import contextlib
+import builtins
+import os
 import sys
 import types
 from typing import Any
+
+import httpx
+
+# ---------------------------------------------------------------------------
+# 1) 仓库根路径注入 -- 所有 test 文件不再自己维护 ROOT_DIR / sys.path
+# ---------------------------------------------------------------------------
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+os.environ.setdefault("SKIP_DB_INIT", "1")
 
 
 def _install_psycopg2_stub() -> None:
@@ -92,9 +106,6 @@ def pytest_ignore_collect(collection_path, config):  # type: ignore[no-untyped-d
     - fixtures/: Test data files and utility scripts
     """
 
-    if _HAS_TRANSFORMERS:
-        return False
-
     basename = None
     if hasattr(collection_path, "basename"):
         basename = getattr(collection_path, "basename")
@@ -102,21 +113,87 @@ def pytest_ignore_collect(collection_path, config):  # type: ignore[no-untyped-d
             basename = basename()
     if basename is None and hasattr(collection_path, "name"):
         basename = getattr(collection_path, "name")
+    basename = str(basename)
+
+    # Some tests require optional modules that may not exist in this checkout.
+    optional_modules_by_test = {
+        "test_api_provider.py": ["core.config"],
+        "test_asr_service_decode_helpers.py": ["backend_inference_ASR"],
+        "test_fastapi_asr_asr_contract.py": ["backend_inference_ASR"],
+        "test_fastapi_asr_contract.py": ["backend_inference.routers.asr"],
+    }
+    if basename in optional_modules_by_test:
+        import importlib
+
+        for module_name in optional_modules_by_test[basename]:
+            try:
+                importlib.import_module(module_name)
+            except (ImportError, ModuleNotFoundError):
+                return True
 
     # These tests pull in backend_inference local HF engine (now in tests/inference/).
-    if str(basename) in {
+    if basename in {
         "test_tool_calls.py",
         "test_async_engine.py",
         "test_api_provider.py",
         "test_conflict.py",
         "test_traceability.py",
         "test_deepseek_thinking_tools.py",  # Also requires transformers
+        "test_asr_service_decode_helpers.py",  # Requires backend_inference_ASR
     }:
-        return True
+        if not _HAS_TRANSFORMERS:
+            return True
 
     # Also skip the ad-hoc postgres script test when psycopg2 isn't available.
     # This is now in tests/fixtures/test_postgres.py
-    if str(basename) == "test_postgres.py":
+    if basename == "test_postgres.py":
         return True
 
     return False
+
+
+# ---------------------------------------------------------------------------
+# 2) 统一 FastAPI async test helper
+# ---------------------------------------------------------------------------
+
+def build_test_app(
+    *routers,
+    dependency_overrides: dict[Any, Any] | None = None,
+    include_error_handlers: bool = True,
+):
+    """Create a lightweight FastAPI app wired with the given router(s)."""
+    from fastapi import FastAPI, HTTPException
+    from fastapi.exceptions import RequestValidationError
+
+    from backend_business.api.http.errors import (
+        error_response_handler,
+        validation_error_handler,
+    )
+
+    app = FastAPI()
+    for router in routers:
+        app.include_router(router)
+
+    if dependency_overrides:
+        for dep, override in dependency_overrides.items():
+            app.dependency_overrides[dep] = override
+
+    if include_error_handlers:
+        app.add_exception_handler(RequestValidationError, validation_error_handler)
+        app.add_exception_handler(HTTPException, error_response_handler)
+        app.add_exception_handler(Exception, error_response_handler)
+
+    return app
+
+
+@contextlib.asynccontextmanager
+async def async_client(app):
+    """Yield an ``httpx.AsyncClient`` bound to the ASGI *app*."""
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+
+
+# Make helpers available to all tests without per-file imports.
+builtins.build_test_app = build_test_app  # type: ignore[attr-defined]
+builtins.async_client = async_client  # type: ignore[attr-defined]

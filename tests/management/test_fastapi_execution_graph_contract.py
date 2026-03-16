@@ -2,20 +2,13 @@
 FastAPI execution-topology route contract tests.
 """
 
-import os
-import sys
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
 
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.http.errors import (
     error_response_handler,
@@ -262,31 +255,27 @@ class _StubExecutionGraphService:
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     stub_service = _StubExecutionGraphService()
     monkeypatch.setattr(execution_graph, "_service", stub_service)
     monkeypatch.setattr(execution_graph, "GraphStructureBuilder", _FakeGraphStructureBuilder)
     monkeypatch.setattr(execution_graph, "StructureValidator", _FakeStructureValidator)
     monkeypatch.setattr(execution_graph, "TopologyStructureSerializer", _FakeTopologySerializer)
 
-    app = FastAPI()
-    app.include_router(execution_graph.router)
+    app = build_test_app(execution_graph.router)
     app.dependency_overrides[execution_graph.get_current_user] = lambda: {
         "user_id": "tester",
         "role": "admin",
     }
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, stub_service
 
 
-def test_graph_crud_contract(fastapi_client):
+async def test_graph_crud_contract(fastapi_client):
     client, stub_service = fastapi_client
 
-    create_resp = client.post(
+    create_resp = await client.post(
         "/api/v2/execution-topology/projects/p1",
         json={"name": "main-graph", "description": "desc"},
     )
@@ -295,18 +284,18 @@ def test_graph_crud_contract(fastapi_client):
     assert stub_service.last_create_graph == ("p1", "main-graph")
     assert stub_service.last_actor == "tester"
 
-    list_resp = client.get("/api/v2/execution-topology/projects/p1")
+    list_resp = await client.get("/api/v2/execution-topology/projects/p1")
     assert list_resp.status_code == 200
     assert list_resp.json()["graphs"][0]["project_id"] == "p1"
 
-    get_resp = client.get("/api/v2/execution-topology/g1")
+    get_resp = await client.get("/api/v2/execution-topology/g1")
     assert get_resp.status_code == 200
     assert get_resp.json()["graph_id"] == "g1"
 
-    get_missing_resp = client.get("/api/v2/execution-topology/missing-g")
+    get_missing_resp = await client.get("/api/v2/execution-topology/missing-g")
     assert get_missing_resp.status_code == 404
 
-    update_resp = client.patch(
+    update_resp = await client.patch(
         "/api/v2/execution-topology/g1",
         json={"name": "after", "status": "ACTIVE"},
     )
@@ -314,15 +303,15 @@ def test_graph_crud_contract(fastapi_client):
     assert update_resp.json()["status"] == "active"
     assert stub_service.last_update_status == "active"
 
-    delete_resp = client.delete("/api/v2/execution-topology/g1")
+    delete_resp = await client.delete("/api/v2/execution-topology/g1")
     assert delete_resp.status_code == 200
     assert delete_resp.json()["message"] == "删除成功"
 
 
-def test_container_crud_contract(fastapi_client):
+async def test_container_crud_contract(fastapi_client):
     client, _ = fastapi_client
 
-    create_resp = client.post(
+    create_resp = await client.post(
         "/api/v2/execution-topology/g1/containers",
         json={
             "container_key": "runtime",
@@ -334,27 +323,27 @@ def test_container_crud_contract(fastapi_client):
     assert create_resp.json()["container_id"] == "c-new"
     assert create_resp.json()["role_type"] == "agent"
 
-    update_resp = client.patch(
+    update_resp = await client.patch(
         "/api/v2/execution-topology/containers/c1",
         json={"label": "Runtime-2"},
     )
     assert update_resp.status_code == 200
     assert update_resp.json()["container_id"] == "c1"
 
-    update_missing_resp = client.patch(
+    update_missing_resp = await client.patch(
         "/api/v2/execution-topology/containers/missing-c",
         json={"label": "x"},
     )
     assert update_missing_resp.status_code == 404
 
-    delete_resp = client.delete("/api/v2/execution-topology/containers/c1")
+    delete_resp = await client.delete("/api/v2/execution-topology/containers/c1")
     assert delete_resp.status_code == 200
 
 
-def test_node_crud_and_validation_contract(fastapi_client):
+async def test_node_crud_and_validation_contract(fastapi_client):
     client, _ = fastapi_client
 
-    invalid_resp = client.post(
+    invalid_resp = await client.post(
         "/api/v2/execution-topology/g1/nodes",
         json={
             "label": "bad",
@@ -365,7 +354,7 @@ def test_node_crud_and_validation_contract(fastapi_client):
     )
     assert invalid_resp.status_code == 422
 
-    create_resp = client.post(
+    create_resp = await client.post(
         "/api/v2/execution-topology/g1/nodes",
         json={
             "node_key": "n1",
@@ -378,21 +367,21 @@ def test_node_crud_and_validation_contract(fastapi_client):
     assert create_resp.json()["node_type"] == "node"
     assert create_resp.json()["role_type"] == "human"
 
-    update_resp = client.patch(
+    update_resp = await client.patch(
         "/api/v2/execution-topology/nodes/n1",
         json={"node_type": "END"},
     )
     assert update_resp.status_code == 200
     assert update_resp.json()["node_type"] == "end"
 
-    delete_missing_resp = client.delete("/api/v2/execution-topology/nodes/missing-n")
+    delete_missing_resp = await client.delete("/api/v2/execution-topology/nodes/missing-n")
     assert delete_missing_resp.status_code == 404
 
 
-def test_edge_crud_contract(fastapi_client):
+async def test_edge_crud_contract(fastapi_client):
     client, _ = fastapi_client
 
-    create_resp = client.post(
+    create_resp = await client.post(
         "/api/v2/execution-topology/g1/edges",
         json={
             "source_node_id": "n1",
@@ -403,39 +392,39 @@ def test_edge_crud_contract(fastapi_client):
     assert create_resp.status_code == 200
     assert create_resp.json()["edge_type"] == "call"
 
-    update_resp = client.patch(
+    update_resp = await client.patch(
         "/api/v2/execution-topology/edges/e1",
         json={"edge_type": "RETRY", "label": "retry-edge"},
     )
     assert update_resp.status_code == 200
     assert update_resp.json()["edge_type"] == "retry"
 
-    delete_resp = client.delete("/api/v2/execution-topology/edges/e1")
+    delete_resp = await client.delete("/api/v2/execution-topology/edges/e1")
     assert delete_resp.status_code == 200
     assert delete_resp.json()["message"] == "删除成功"
 
 
-def test_detail_structure_validate_and_export_contract(fastapi_client):
+async def test_detail_structure_validate_and_export_contract(fastapi_client):
     client, stub_service = fastapi_client
 
-    detail_resp = client.get("/api/v2/execution-topology/g1/detail")
+    detail_resp = await client.get("/api/v2/execution-topology/g1/detail")
     assert detail_resp.status_code == 200
     assert detail_resp.json()["graph"]["graph_id"] == "g1"
 
-    structure_resp = client.get("/api/v2/execution-topology/g1/structure")
+    structure_resp = await client.get("/api/v2/execution-topology/g1/structure")
     assert structure_resp.status_code == 200
     structure = structure_resp.json()["structure"]
     assert structure["validation_status"] == "valid"
     assert structure["start_containers"] == ["c1"]
     assert structure["end_containers"] == ["c2"]
 
-    validate_resp = client.post("/api/v2/execution-topology/g1/validate")
+    validate_resp = await client.post("/api/v2/execution-topology/g1/validate")
     assert validate_resp.status_code == 200
     result = validate_resp.json()["result"]
     assert result["is_valid"] is True
     assert result["errors"] == []
 
-    container_filter_resp = client.get(
+    container_filter_resp = await client.get(
         "/api/v2/execution-topology/g1/containers?role_type=agent&node_type=end"
     )
     assert container_filter_resp.status_code == 200
@@ -444,10 +433,10 @@ def test_detail_structure_validate_and_export_contract(fastapi_client):
     assert containers[0]["container_id"] == "c2"
     assert stub_service.last_node_filter_graph == "g1"
 
-    export_resp = client.get("/api/v2/execution-topology/g1/export?format=json")
+    export_resp = await client.get("/api/v2/execution-topology/g1/export?format=json")
     assert export_resp.status_code == 200
     assert export_resp.json()["exported"]["graph_id"] == "g1"
 
-    export_bad_resp = client.get("/api/v2/execution-topology/g1/export?format=yaml")
+    export_bad_resp = await client.get("/api/v2/execution-topology/g1/export?format=yaml")
     assert export_bad_resp.status_code == 400
     assert "Only 'json' format is supported" in export_bad_resp.json()["detail"]

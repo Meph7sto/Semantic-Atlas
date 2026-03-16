@@ -2,20 +2,13 @@
 FastAPI manage core route contract tests.
 """
 
-import os
-import sys
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
 
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.http.errors import error_response_handler, validation_error_handler
 from backend_business.api.routers import manage
@@ -168,7 +161,7 @@ class _StubManageService:
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     stub_db = _StubManageDB()
     stub_service = _StubManageService()
     current_user = {"user_id": "admin-1", "role": "admin"}
@@ -176,21 +169,17 @@ def fastapi_client(monkeypatch):
     monkeypatch.setattr(manage, "_service", stub_service)
     monkeypatch.setattr(manage, "db_service", stub_db)
 
-    app = FastAPI()
-    app.include_router(manage.router)
+    app = build_test_app(manage.router)
     app.dependency_overrides[manage.get_current_user] = lambda: dict(current_user)
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, stub_db, stub_service, current_user
 
 
-def test_project_core_flow_with_role_gate(fastapi_client):
+async def test_project_core_flow_with_role_gate(fastapi_client):
     client, stub_db, _, current_user = fastapi_client
 
-    created = client.post(
+    created = await client.post(
         "/api/v2/manage/projects",
         json={"name": "Core Project", "description": "desc"},
     )
@@ -201,31 +190,31 @@ def test_project_core_flow_with_role_gate(fastapi_client):
 
     # non-admin cannot create project
     current_user["role"] = "member"
-    denied = client.post("/api/v2/manage/projects", json={"name": "Denied"})
+    denied = await client.post("/api/v2/manage/projects", json={"name": "Denied"})
     assert denied.status_code == 403
     assert denied.json()["detail"] == "Permission denied"
 
     # member can list/get
-    listed = client.get("/api/v2/manage/projects")
+    listed = await client.get("/api/v2/manage/projects")
     assert listed.status_code == 200
     ids = [p["project_id"] for p in listed.json()["projects"]]
     assert ids == ["p-1"]
 
-    detail = client.get("/api/v2/manage/projects/p-1")
+    detail = await client.get("/api/v2/manage/projects/p-1")
     assert detail.status_code == 200
     assert detail.json()["project_id"] == "p-1"
 
     # switch back to admin for delete
     current_user["role"] = "admin"
-    deleted = client.delete("/api/v2/manage/projects/p-1")
+    deleted = await client.delete("/api/v2/manage/projects/p-1")
     assert deleted.status_code == 200
     assert deleted.json() == {"success": True, "archived": 1}
 
 
-def test_requirement_core_crud_flow(fastapi_client):
+async def test_requirement_core_crud_flow(fastapi_client):
     client, _, stub_service, _ = fastapi_client
 
-    create_req = client.post(
+    create_req = await client.post(
         "/api/v2/manage/projects/p-1/requirements",
         json={
             "requirement_type": "top_level",
@@ -237,25 +226,25 @@ def test_requirement_core_crud_flow(fastapi_client):
     assert create_req.status_code == 200
     req_id = create_req.json()["req_id"]
 
-    list_req = client.get("/api/v2/manage/projects/p-1/requirements")
+    list_req = await client.get("/api/v2/manage/projects/p-1/requirements")
     assert list_req.status_code == 200
     assert any(item["req_id"] == req_id for item in list_req.json()["requirements"])
 
-    update_req = client.patch(
+    update_req = await client.patch(
         f"/api/v2/manage/requirements/{req_id}",
         json={"status": "confirmed", "title": "Need login v2"},
     )
     assert update_req.status_code == 200
     assert update_req.json()["status"] == "confirmed"
 
-    bulk = client.post(
+    bulk = await client.post(
         "/api/v2/manage/requirements/bulk-status",
         json={"req_ids": [req_id], "status": "completed"},
     )
     assert bulk.status_code == 200
     assert bulk.json()["updated"] == 1
 
-    moved = client.post(
+    moved = await client.post(
         f"/api/v2/manage/requirements/{req_id}/move",
         json={"parent_id": "r-1", "order_index": 3},
     )
@@ -264,16 +253,16 @@ def test_requirement_core_crud_flow(fastapi_client):
     assert stub_service.requirements[req_id]["parent_id"] == "r-1"
     assert stub_service.requirements[req_id]["order_index"] == 3
 
-    deleted = client.delete(f"/api/v2/manage/requirements/{req_id}?cascade=true")
+    deleted = await client.delete(f"/api/v2/manage/requirements/{req_id}?cascade=true")
     assert deleted.status_code == 200
     assert deleted.json()["deleted"] == 1
     assert stub_service.requirements[req_id]["deleted"] is True
 
 
-def test_requirement_missing_required_field_returns_422(fastapi_client):
+async def test_requirement_missing_required_field_returns_422(fastapi_client):
     client, _, _, _ = fastapi_client
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/manage/projects/p-1/requirements",
         json={
             "title": "bad status",

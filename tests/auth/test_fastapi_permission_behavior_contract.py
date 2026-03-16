@@ -2,20 +2,12 @@
 FastAPI permission behavior contract tests.
 """
 
-import os
-import sys
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
-
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.deps.auth import get_current_user
 from backend_business.api.http.errors import error_response_handler, validation_error_handler
@@ -115,25 +107,21 @@ class _StubPermissionDB:
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     stub = _StubPermissionDB()
     monkeypatch.setattr(permission, "db_service", stub)
 
-    app = FastAPI()
-    app.include_router(permission.router)
+    app = build_test_app(permission.router)
     app.dependency_overrides[get_current_user] = lambda: {"user_id": "u-op", "role": "member"}
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, stub
 
 
-def test_add_member_and_set_roles_flow(fastapi_client):
+async def test_add_member_and_set_roles_flow(fastapi_client):
     client, stub = fastapi_client
 
-    add_resp = client.post(
+    add_resp = await client.post(
         "/api/v2/permission/projects/p1/members",
         json={"user_id": "u-target", "member_roles": ["PO", "DEV"]},
     )
@@ -142,7 +130,7 @@ def test_add_member_and_set_roles_flow(fastapi_client):
     assert "PO" in add_resp.json()["roles"]
     assert len(stub.assigned_roles) == 2
 
-    set_roles = client.put(
+    set_roles = await client.put(
         "/api/v2/permission/projects/p1/members/u-target/roles",
         json={"roles": ["QA"]},
     )
@@ -150,18 +138,18 @@ def test_add_member_and_set_roles_flow(fastapi_client):
     assert set_roles.json()["roles"] == ["QA"]
 
 
-def test_remove_self_forbidden(fastapi_client):
+async def test_remove_self_forbidden(fastapi_client):
     client, _ = fastapi_client
 
-    response = client.delete("/api/v2/permission/projects/p1/members/u-op")
+    response = await client.delete("/api/v2/permission/projects/p1/members/u-op")
     assert response.status_code == 400
     assert response.json()["detail"] == "不能移除自己"
 
 
-def test_baseline_duplicate_version_returns_400(fastapi_client):
+async def test_baseline_duplicate_version_returns_400(fastapi_client):
     client, _ = fastapi_client
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/permission/projects/p1/baselines",
         json={"version": "1.0.0", "locked": False},
     )
@@ -169,10 +157,10 @@ def test_baseline_duplicate_version_returns_400(fastapi_client):
     assert response.json()["detail"] == "版本号已存在"
 
 
-def test_change_approve_permission_and_context_access(fastapi_client):
+async def test_change_approve_permission_and_context_access(fastapi_client):
     client, stub = fastapi_client
 
-    approve = client.post(
+    approve = await client.post(
         "/api/v2/permission/change-requests/c1/approve",
         json={"review_comment": "ok"},
     )
@@ -181,17 +169,17 @@ def test_change_approve_permission_and_context_access(fastapi_client):
 
     # revoke approve permission and check 403
     stub.permissions[("p1", "u-op")].remove("req:change_approve")
-    denied = client.post(
+    denied = await client.post(
         "/api/v2/permission/change-requests/c1/approve",
         json={"review_comment": "again"},
     )
     assert denied.status_code == 403
 
-    allowed_context = client.get("/api/v2/permission/projects/p1/context")
+    allowed_context = await client.get("/api/v2/permission/projects/p1/context")
     assert allowed_context.status_code == 200
     assert allowed_context.json()["project_id"] == "p1"
 
-    denied_context = client.get("/api/v2/permission/projects/p-block/context")
+    denied_context = await client.get("/api/v2/permission/projects/p-block/context")
     assert denied_context.status_code == 403
     assert denied_context.json()["detail"] == "无访问项目权限"
 

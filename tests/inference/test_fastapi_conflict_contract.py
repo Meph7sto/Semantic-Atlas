@@ -2,19 +2,12 @@
 FastAPI conflict route contract tests.
 """
 
-import os
-import sys
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
 
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.http.errors import error_response_handler, validation_error_handler
 from backend_business.api.routers import conflict
@@ -72,27 +65,23 @@ class _StubDBService:
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     stub_ai = _StubAIProxy()
     stub_db = _StubDBService()
 
     monkeypatch.setattr(conflict, "ai_proxy", stub_ai)
     monkeypatch.setattr(conflict, "db_service", stub_db)
 
-    app = FastAPI()
-    app.include_router(conflict.router)
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
+    app = build_test_app(conflict.router)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, stub_ai, stub_db
 
 
-def test_check_conflict_success_and_db_save(fastapi_client):
+async def test_check_conflict_success_and_db_save(fastapi_client):
     client, stub_ai, stub_db = fastapi_client
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/conflict/check",
         json={
             "requirement_a": " A ",
@@ -113,10 +102,10 @@ def test_check_conflict_success_and_db_save(fastapi_client):
     assert stub_db.saved[0]["conflicts"][0]["requirement_a"] == "A"
 
 
-def test_check_conflict_validation_blank_text_returns_422(fastapi_client):
+async def test_check_conflict_validation_blank_text_returns_422(fastapi_client):
     client, _, _ = fastapi_client
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/conflict/check",
         json={"requirement_a": "   ", "requirement_b": "ok"},
     )
@@ -126,11 +115,11 @@ def test_check_conflict_validation_blank_text_returns_422(fastapi_client):
     assert any(item.get("loc") == ["body", "requirement_a"] for item in detail)
 
 
-def test_check_conflict_ai_error_returns_500(fastapi_client):
+async def test_check_conflict_ai_error_returns_500(fastapi_client):
     client, stub_ai, _ = fastapi_client
     stub_ai.should_raise = True
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/conflict/check",
         json={"requirement_a": "a", "requirement_b": "b"},
     )
@@ -139,10 +128,10 @@ def test_check_conflict_ai_error_returns_500(fastapi_client):
     assert response.json()["detail"] == "mock ai error"
 
 
-def test_check_conflict_batch_success(fastapi_client):
+async def test_check_conflict_batch_success(fastapi_client):
     client, stub_ai, stub_db = fastapi_client
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/conflict/check/batch",
         json={
             "pairs": [
@@ -164,10 +153,10 @@ def test_check_conflict_batch_success(fastapi_client):
     assert len(stub_db.saved[0]["conflicts"]) == 2
 
 
-def test_check_conflict_batch_requires_pairs(fastapi_client):
+async def test_check_conflict_batch_requires_pairs(fastapi_client):
     client, _, _ = fastapi_client
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/conflict/check/batch",
         json={"pairs": []},
     )
@@ -177,27 +166,27 @@ def test_check_conflict_batch_requires_pairs(fastapi_client):
     assert any(item.get("loc") == ["body", "pairs"] for item in detail)
 
 
-def test_get_latest_requires_session_id_query(fastapi_client):
+async def test_get_latest_requires_session_id_query(fastapi_client):
     client, _, _ = fastapi_client
 
-    response = client.get("/api/v2/conflict/latest")
+    response = await client.get("/api/v2/conflict/latest")
     assert response.status_code == 422
     detail = response.json()["detail"]
     assert any(item.get("loc") == ["query", "session_id"] for item in detail)
 
 
-def test_get_latest_blank_session_id_returns_400(fastapi_client):
+async def test_get_latest_blank_session_id_returns_400(fastapi_client):
     client, _, _ = fastapi_client
 
-    response = client.get("/api/v2/conflict/latest", params={"session_id": "   "})
+    response = await client.get("/api/v2/conflict/latest", params={"session_id": "   "})
     assert response.status_code == 400
     assert response.json()["detail"] == "session_id 不能为空"
 
 
-def test_stream_check_conflict_success_with_thinking_mode(fastapi_client):
+async def test_stream_check_conflict_success_with_thinking_mode(fastapi_client):
     client, stub_ai, _ = fastapi_client
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/conflict/stream_check",
         json={
             "requirement_a": "a",

@@ -4,20 +4,13 @@ FastAPI analysis route contract tests.
 
 import asyncio
 import json
-import os
-import sys
 from typing import Any, Dict, List, Optional
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
 
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.http.errors import (
     error_response_handler,
@@ -251,7 +244,7 @@ def _parse_sse_payloads(body: str):
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     fake_db = _FakeDBService()
     fake_builder = _FakeContextBuilder()
 
@@ -275,19 +268,15 @@ def fastapi_client(monkeypatch):
 
     monkeypatch.setattr(analysis, "parse_transcript_to_spans", _fake_parse)
 
-    app = FastAPI()
-    app.include_router(analysis.router)
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
+    app = build_test_app(analysis.router)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, fake_db
 
 
-def test_ingest_transcript_success_shape(fastapi_client):
+async def test_ingest_transcript_success_shape(fastapi_client):
     client, _ = fastapi_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/analysis/ingest_transcript",
         json={"transcript_text": "hello"},
     )
@@ -299,17 +288,17 @@ def test_ingest_transcript_success_shape(fastapi_client):
     assert body["data"]["span_total"] == 1
 
 
-def test_ingest_transcript_missing_required_field_returns_422(fastapi_client):
+async def test_ingest_transcript_missing_required_field_returns_422(fastapi_client):
     client, _ = fastapi_client
-    response = client.post("/api/v2/analysis/ingest_transcript", json={})
+    response = await client.post("/api/v2/analysis/ingest_transcript", json={})
     assert response.status_code == 422
     detail = response.json()["detail"]
     assert any(item.get("loc") == ["body", "transcript_text"] for item in detail)
 
 
-def test_ingest_transcript_invalid_option_type_returns_422(fastapi_client):
+async def test_ingest_transcript_invalid_option_type_returns_422(fastapi_client):
     client, _ = fastapi_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/analysis/ingest_transcript",
         json={
             "transcript_text": "x",
@@ -319,9 +308,9 @@ def test_ingest_transcript_invalid_option_type_returns_422(fastapi_client):
     assert response.status_code == 422
 
 
-def test_ingest_stream_emits_expected_event_order(fastapi_client):
+async def test_ingest_stream_emits_expected_event_order(fastapi_client):
     client, _ = fastapi_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/analysis/ingest_transcript/stream",
         json={"transcript_text": "hello"},
     )
@@ -333,9 +322,9 @@ def test_ingest_stream_emits_expected_event_order(fastapi_client):
     assert events == ["init", "parsed", "db_upserted", "final"]
 
 
-def test_build_context_success_shape(fastapi_client):
+async def test_build_context_success_shape(fastapi_client):
     client, _ = fastapi_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/analysis/build_context",
         json={"session_id": "s-1"},
     )
@@ -345,17 +334,17 @@ def test_build_context_success_shape(fastapi_client):
     assert body["data"]["context_run_id"] == "run-ctx"
 
 
-def test_build_context_missing_session_id_returns_422(fastapi_client):
+async def test_build_context_missing_session_id_returns_422(fastapi_client):
     client, _ = fastapi_client
-    response = client.post("/api/v2/analysis/build_context", json={})
+    response = await client.post("/api/v2/analysis/build_context", json={})
     assert response.status_code == 422
     detail = response.json()["detail"]
     assert any(item.get("loc") == ["body", "session_id"] for item in detail)
 
 
-def test_build_context_stream_emits_final_event(fastapi_client):
+async def test_build_context_stream_emits_final_event(fastapi_client):
     client, _ = fastapi_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/analysis/build_context/stream",
         json={"session_id": "s-1"},
     )
@@ -366,7 +355,7 @@ def test_build_context_stream_emits_final_event(fastapi_client):
     assert payloads[-1]["event"] == "final"
 
 
-def test_build_context_stream_parallel_path_no_nested_loop_error(
+async def test_build_context_stream_parallel_path_no_nested_loop_error(
     fastapi_client, monkeypatch
 ):
     client, _ = fastapi_client
@@ -401,7 +390,7 @@ def test_build_context_stream_parallel_path_no_nested_loop_error(
 
     monkeypatch.setattr(analysis, "context_builder", _LoopInsideGeneratorBuilder())
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/analysis/build_context/stream",
         json={"session_id": "s-1", "options": {"enable_parallel_windows": True}},
     )
@@ -412,29 +401,29 @@ def test_build_context_stream_parallel_path_no_nested_loop_error(
     assert events[-1] == "final"
 
 
-def test_context_runs_success_and_filtering(fastapi_client):
+async def test_context_runs_success_and_filtering(fastapi_client):
     client, _ = fastapi_client
-    all_resp = client.get("/api/v2/analysis/context_runs")
+    all_resp = await client.get("/api/v2/analysis/context_runs")
     assert all_resp.status_code == 200
     assert all_resp.json()["success"] is True
     assert len(all_resp.json()["data"]) == 2
 
-    filtered_resp = client.get("/api/v2/analysis/context_runs?session_id=s-1")
+    filtered_resp = await client.get("/api/v2/analysis/context_runs?session_id=s-1")
     assert filtered_resp.status_code == 200
     assert len(filtered_resp.json()["data"]) == 1
 
 
-def test_bundles_not_found_returns_404_detail(fastapi_client):
+async def test_bundles_not_found_returns_404_detail(fastapi_client):
     client, _ = fastapi_client
-    response = client.get("/api/v2/analysis/bundles/not-found")
+    response = await client.get("/api/v2/analysis/bundles/not-found")
     assert response.status_code == 404
     assert response.json()["detail"] == "No bundles found"
 
 
-def test_span_links_and_spans_success(fastapi_client):
+async def test_span_links_and_spans_success(fastapi_client):
     client, _ = fastapi_client
-    links_response = client.get("/api/v2/analysis/span_links/run-1")
-    spans_response = client.get("/api/v2/analysis/spans/s-1")
+    links_response = await client.get("/api/v2/analysis/span_links/run-1")
+    spans_response = await client.get("/api/v2/analysis/spans/s-1")
 
     assert links_response.status_code == 200
     assert links_response.json()["success"] is True
@@ -447,9 +436,9 @@ def test_span_links_and_spans_success(fastapi_client):
     assert body["data"][1]["span_ref"] == "S2"
 
 
-def test_sample_transcript_success(fastapi_client):
+async def test_sample_transcript_success(fastapi_client):
     client, _ = fastapi_client
-    response = client.get("/api/v2/analysis/sample_transcript")
+    response = await client.get("/api/v2/analysis/sample_transcript")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
     assert response.text.strip() != ""

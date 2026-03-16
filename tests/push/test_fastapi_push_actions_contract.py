@@ -2,18 +2,11 @@
 FastAPI push action route contract tests.
 """
 
-import os
-import sys
 
+import httpx
 import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.routers import push
 
@@ -44,29 +37,28 @@ class _StubPushActionService:
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     stub = _StubPushActionService()
     monkeypatch.setattr(push, "push_service", stub)
 
-    app = FastAPI()
-    app.include_router(push.router)
+    app = build_test_app(push.router)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, stub
 
 
-def test_push_mark_read_delete_success(fastapi_client):
+async def test_push_mark_read_delete_success(fastapi_client):
     client, stub = fastapi_client
 
-    push_resp = client.post("/api/v2/push/messages/m1/push")
+    push_resp = await client.post("/api/v2/push/messages/m1/push")
     assert push_resp.status_code == 200
     assert push_resp.json()["message"] == "消息已推送"
 
-    read_resp = client.post("/api/v2/push/messages/m1/read")
+    read_resp = await client.post("/api/v2/push/messages/m1/read")
     assert read_resp.status_code == 200
     assert read_resp.json()["message"] == "已标记为已读"
 
-    delete_resp = client.delete("/api/v2/push/messages/m1")
+    delete_resp = await client.delete("/api/v2/push/messages/m1")
     assert delete_resp.status_code == 200
     assert delete_resp.json()["message"] == "消息已删除"
 
@@ -75,18 +67,18 @@ def test_push_mark_read_delete_success(fastapi_client):
     assert stub.deleted == ["m1"]
 
 
-def test_push_mark_read_delete_not_found(fastapi_client):
+async def test_push_mark_read_delete_not_found(fastapi_client):
     client, _ = fastapi_client
 
-    push_resp = client.post("/api/v2/push/messages/missing-1/push")
+    push_resp = await client.post("/api/v2/push/messages/missing-1/push")
     assert push_resp.status_code == 404
     assert push_resp.json()["error"] == "消息不存在"
 
-    read_resp = client.post("/api/v2/push/messages/missing-1/read")
+    read_resp = await client.post("/api/v2/push/messages/missing-1/read")
     assert read_resp.status_code == 404
     assert read_resp.json()["error"] == "消息不存在"
 
-    delete_resp = client.delete("/api/v2/push/messages/missing-1")
+    delete_resp = await client.delete("/api/v2/push/messages/missing-1")
     assert delete_resp.status_code == 404
     assert delete_resp.json()["error"] == "消息不存在"
 

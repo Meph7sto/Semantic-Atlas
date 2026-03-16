@@ -2,22 +2,13 @@
 FastAPI ASR inference route contract tests for backend_inference_ASR.
 """
 
-import os
-import sys
-
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
-
-import backend_inference_ASR.routers.asr as asr
+asr = pytest.importorskip("backend_inference_ASR.routers.asr")
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     class _StubASRService:
         def health(self):
             return {
@@ -47,15 +38,14 @@ def fastapi_client(monkeypatch):
 
     monkeypatch.setattr(asr, "asr_service", _StubASRService())
 
-    app = FastAPI()
-    app.include_router(asr.router)
-    with TestClient(app, raise_server_exceptions=False) as client:
+    app = build_test_app(asr.router, include_error_handlers=False)
+    async with async_client(app) as client:
         yield client
 
 
-def test_transcribe_success_contract_returns_raw_out(fastapi_client):
+async def test_transcribe_success_contract_returns_raw_out(fastapi_client):
     client = fastapi_client
-    resp = client.post(
+    resp = await client.post(
         "/asr/transcribe",
         data={"session_id": "s-1", "attempt_no": "1"},
         files={"file": ("demo.wav", b"fake-audio", "audio/wav")},

@@ -364,14 +364,6 @@ class TestExecuteBundle(unittest.TestCase):
 
         self.assertEqual(result["status"], "empty")
 
-    @patch.object(
-        sys.modules.get(
-            "backend_business.services.requirements_executor", MagicMock()
-        ).RequirementsExecutor
-        if sys.modules.get("backend_business.services.requirements_executor")
-        else MagicMock(),
-        "_connect",
-    )
     def test_execute_bundle_with_valid_toolcalls(self):
         """测试使用有效的 tool_calls 执行"""
         # 模拟数据库连接

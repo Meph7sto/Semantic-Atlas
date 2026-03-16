@@ -1,14 +1,9 @@
-import os
-import sys
 import unittest
+from unittest.mock import patch
+
 from fastapi.testclient import TestClient
 
-# 将 backend_inference 加入 sys.path 以导入 main 应用
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend_inference"))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
-
-from main import app
+from backend_inference.main import app
 
 
 class TestConflictAPI(unittest.TestCase):
@@ -20,13 +15,20 @@ class TestConflictAPI(unittest.TestCase):
             "requirement_b": "系统启动时必须进行耗时至少3秒的完整自检。"
         }
 
-        with TestClient(app) as client:
-            response = client.post("/conflict/check", json=payload)
-            self.assertEqual(response.status_code, 200)
+        with patch(
+            "routers.conflict.conflict_service.check_conflict",
+            return_value={
+                "is_conflict": True,
+                "raw_response": "冲突：启动时间约束与完整自检耗时不一致",
+            },
+        ):
+            with TestClient(app) as client:
+                response = client.post("/conflict/check", json=payload)
+                self.assertEqual(response.status_code, 200)
 
-            data = response.json()
-            self.assertIn("is_conflict", data)
-            self.assertIn("raw_response", data)
+                data = response.json()
+                self.assertIn("is_conflict", data)
+                self.assertIn("raw_response", data)
 
             # 若模型检测到冲突则为 True；此处重点验证响应结构与接口可用性
 

@@ -2,20 +2,12 @@
 FastAPI auth core route contract tests.
 """
 
-import os
-import sys
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
-
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.http.errors import error_response_handler, validation_error_handler
 from backend_business.api.routers import auth
@@ -224,15 +216,14 @@ class _StubAuthDBService:
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     db_stub = _StubAuthDBService()
     auth_stub = _StubAuthService()
 
     monkeypatch.setattr(auth, "db_service", db_stub)
     monkeypatch.setattr(auth, "get_auth_service", lambda: auth_stub)
 
-    app = FastAPI()
-    app.include_router(auth.router)
+    app = build_test_app(auth.router)
     app.dependency_overrides[auth.get_current_user] = lambda: {
         "user_id": "member-1",
         "role": "member",
@@ -241,18 +232,15 @@ def fastapi_client(monkeypatch):
         "user_id": "admin-1",
         "role": "admin",
     }
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, db_stub, auth_stub
 
 
-def test_login_and_pending_block(fastapi_client):
+async def test_login_and_pending_block(fastapi_client):
     client, _, auth_stub = fastapi_client
 
-    success = client.post(
+    success = await client.post(
         "/api/v2/auth/login",
         json={"username": "member", "password": "old123", "role": "member"},
     )
@@ -263,7 +251,7 @@ def test_login_and_pending_block(fastapi_client):
     assert data["token"] == "token-member-1-member"
     assert auth_stub.generated_token_for == [("member-1", "member")]
 
-    pending = client.post(
+    pending = await client.post(
         "/api/v2/auth/login",
         json={"username": "pending_user", "password": "pending123"},
     )
@@ -271,10 +259,10 @@ def test_login_and_pending_block(fastapi_client):
     assert "注册审核中" in pending.json()["detail"]
 
 
-def test_register_success_and_duplicate(fastapi_client):
+async def test_register_success_and_duplicate(fastapi_client):
     client, db_stub, _ = fastapi_client
 
-    first = client.post(
+    first = await client.post(
         "/api/v2/auth/register",
         json={"username": "new_user", "password": "new1234", "display_name": "新用户"},
     )
@@ -284,7 +272,7 @@ def test_register_success_and_duplicate(fastapi_client):
     assert body["username"] == "new_user"
     assert db_stub.get_user_by_username("new_user") is not None
 
-    duplicate = client.post(
+    duplicate = await client.post(
         "/api/v2/auth/register",
         json={"username": "new_user", "password": "new1234", "display_name": "重复"},
     )
@@ -292,30 +280,30 @@ def test_register_success_and_duplicate(fastapi_client):
     assert duplicate.json()["detail"] == "用户名已存在"
 
 
-def test_me_profile_and_change_password(fastapi_client):
+async def test_me_profile_and_change_password(fastapi_client):
     client, db_stub, _ = fastapi_client
 
-    me_resp = client.get("/api/v2/auth/me")
+    me_resp = await client.get("/api/v2/auth/me")
     assert me_resp.status_code == 200
     me_data = me_resp.json()["data"]
     assert me_data["user_id"] == "member-1"
     assert "password_hash" not in me_data
 
-    patch_resp = client.patch(
+    patch_resp = await client.patch(
         "/api/v2/auth/profile",
         json={"display_name": "Member New", "avatar_url": "https://example.com/a.png"},
     )
     assert patch_resp.status_code == 200
     assert patch_resp.json()["data"]["display_name"] == "Member New"
 
-    wrong_old = client.post(
+    wrong_old = await client.post(
         "/api/v2/auth/profile/change-password",
         json={"old_password": "bad", "new_password": "new_pass_1"},
     )
     assert wrong_old.status_code == 400
     assert wrong_old.json()["detail"] == "当前密码不正确"
 
-    ok = client.post(
+    ok = await client.post(
         "/api/v2/auth/profile/change-password",
         json={"old_password": "old123", "new_password": "new_pass_1"},
     )
@@ -324,10 +312,10 @@ def test_me_profile_and_change_password(fastapi_client):
     assert db_stub.users_by_id["member-1"]["password_hash"] == "hashed::new_pass_1"
 
 
-def test_admin_user_and_scope_and_registration_flow(fastapi_client):
+async def test_admin_user_and_scope_and_registration_flow(fastapi_client):
     client, db_stub, _ = fastapi_client
 
-    create_user = client.post(
+    create_user = await client.post(
         "/api/v2/auth/users",
         json={
             "username": "ops_member",
@@ -340,7 +328,7 @@ def test_admin_user_and_scope_and_registration_flow(fastapi_client):
     assert create_user.status_code == 200
     created_id = create_user.json()["data"]["user_id"]
 
-    scope_put = client.put(
+    scope_put = await client.put(
         f"/api/v2/auth/users/{created_id}/scopes",
         json={
             "product_scopes": [{"product_id": "prd-1", "can_edit": True}],
@@ -350,18 +338,17 @@ def test_admin_user_and_scope_and_registration_flow(fastapi_client):
     assert scope_put.status_code == 200
     assert scope_put.json()["data"]["product_scopes"][0]["product_id"] == "prd-1"
 
-    scope_get = client.get(f"/api/v2/auth/users/{created_id}/scopes")
+    scope_get = await client.get(f"/api/v2/auth/users/{created_id}/scopes")
     assert scope_get.status_code == 200
     assert scope_get.json()["data"]["project_scopes"][0]["project_id"] == "p-1"
 
-    approve = client.post(
+    approve = await client.post(
         "/api/v2/auth/registrations/pending-1/approve",
         json={"role": "viewer", "external_type": "CONTRACTOR"},
     )
     assert approve.status_code == 200
     assert approve.json()["data"]["registration_status"] == "approved"
 
-    # create a fresh pending user to verify reject flow
     user = db_stub.create_user(
         user_id="pending-2",
         username="pending2",
@@ -373,10 +360,9 @@ def test_admin_user_and_scope_and_registration_flow(fastapi_client):
     )
     assert user["user_id"] == "pending-2"
 
-    reject = client.post(
+    reject = await client.post(
         "/api/v2/auth/registrations/pending-2/reject",
         json={"reason": "资料不完整"},
     )
     assert reject.status_code == 200
     assert reject.json()["data"]["registration_status"] == "rejected"
-

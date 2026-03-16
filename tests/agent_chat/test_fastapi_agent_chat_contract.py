@@ -2,18 +2,11 @@
 FastAPI agent chat router contract tests.
 """
 
-import os
-import sys
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
 
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.deps.auth import get_current_user
 from backend_business.api.http.errors import error_response_handler, validation_error_handler
@@ -82,48 +75,44 @@ class _StubAgentChatService:
         }
 
 
-def _build_client():
-    app = FastAPI()
-    app.include_router(agent_chat.router)
+def _build_app():
+    app = build_test_app(agent_chat.router)
     app.dependency_overrides[get_current_user] = lambda: {"user_id": "u-1", "role": "member"}
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
-    return TestClient(app, raise_server_exceptions=False)
+    return app
 
 
-def test_create_session_uses_current_user(monkeypatch):
+async def test_create_session_uses_current_user(monkeypatch):
     stub = _StubAgentChatService()
     monkeypatch.setattr(agent_chat, "requirement_agent_chat_service", stub)
     monkeypatch.setattr(agent_chat, "_require_project_access", lambda project_id, current_user: None)
 
-    with _build_client() as client:
-        response = client.post("/api/v2/agent-chat/sessions", json={"project_id": "p-1"})
+    async with async_client(_build_app()) as client:
+        response = await client.post("/api/v2/agent-chat/sessions", json={"project_id": "p-1"})
 
     assert response.status_code == 200
     assert response.json()["session_id"] == "sess-1"
     assert stub.last_session_args == ("u-1", "p-1")
 
 
-def test_list_messages_returns_router_shape(monkeypatch):
+async def test_list_messages_returns_router_shape(monkeypatch):
     stub = _StubAgentChatService()
     monkeypatch.setattr(agent_chat, "requirement_agent_chat_service", stub)
 
-    with _build_client() as client:
-        response = client.get("/api/v2/agent-chat/sessions/sess-1/messages?limit=20")
+    async with async_client(_build_app()) as client:
+        response = await client.get("/api/v2/agent-chat/sessions/sess-1/messages?limit=20")
 
     assert response.status_code == 200
     assert response.json()["messages"][0]["message_id"] == "m-1"
     assert stub.last_messages_args == ("sess-1", "u-1", 20)
 
 
-def test_get_session_graph_chain_returns_router_shape(monkeypatch):
+async def test_get_session_graph_chain_returns_router_shape(monkeypatch):
     stub = _StubAgentChatService()
     monkeypatch.setattr(agent_chat, "requirement_agent_chat_service", stub)
     monkeypatch.setattr(agent_chat, "_require_project_access", lambda project_id, current_user: None)
 
-    with _build_client() as client:
-        response = client.get("/api/v2/agent-chat/sessions/sess-1/graph-chain")
+    async with async_client(_build_app()) as client:
+        response = await client.get("/api/v2/agent-chat/sessions/sess-1/graph-chain")
 
     assert response.status_code == 200
     body = response.json()
@@ -133,13 +122,13 @@ def test_get_session_graph_chain_returns_router_shape(monkeypatch):
     assert stub.last_graph_chain_args == ("sess-1", "u-1")
 
 
-def test_stream_message_returns_sse_events(monkeypatch):
+async def test_stream_message_returns_sse_events(monkeypatch):
     stub = _StubAgentChatService()
     monkeypatch.setattr(agent_chat, "requirement_agent_chat_service", stub)
     monkeypatch.setattr(agent_chat, "_require_project_access", lambda project_id, current_user: None)
 
-    with _build_client() as client:
-        response = client.post(
+    async with async_client(_build_app()) as client:
+        response = await client.post(
             "/api/v2/agent-chat/sessions/sess-1/messages/stream",
             json={"project_id": "p-1", "requirement_id": "r-1", "message": "修改标题"},
         )
@@ -157,13 +146,13 @@ def test_stream_message_returns_sse_events(monkeypatch):
     }
 
 
-def test_get_graph_detail_returns_detail(monkeypatch):
+async def test_get_graph_detail_returns_detail(monkeypatch):
     stub = _StubAgentChatService()
     monkeypatch.setattr(agent_chat, "requirement_agent_chat_service", stub)
     monkeypatch.setattr(agent_chat, "_require_project_access", lambda project_id, current_user: None)
 
-    with _build_client() as client:
-        response = client.get("/api/v2/agent-chat/graphs/graph-1/detail")
+    async with async_client(_build_app()) as client:
+        response = await client.get("/api/v2/agent-chat/graphs/graph-1/detail")
 
     assert response.status_code == 200
     assert response.json()["graph"]["graph_id"] == "graph-1"

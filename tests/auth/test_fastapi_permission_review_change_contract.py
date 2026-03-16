@@ -2,20 +2,12 @@
 FastAPI permission reviews/change/baseline lock contract tests.
 """
 
-import os
-import sys
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
-
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.deps.auth import get_current_user
 from backend_business.api.http.errors import error_response_handler, validation_error_handler
@@ -173,81 +165,77 @@ class _StubPermissionDB:
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     stub = _StubPermissionDB()
     monkeypatch.setattr(permission, "db_service", stub)
 
-    app = FastAPI()
-    app.include_router(permission.router)
+    app = build_test_app(permission.router)
     app.dependency_overrides[get_current_user] = lambda: {"user_id": "u-op", "role": "member"}
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, stub
 
 
-def test_review_endpoints_contract(fastapi_client):
+async def test_review_endpoints_contract(fastapi_client):
     client, _ = fastapi_client
 
-    create = client.post(
+    create = await client.post(
         "/api/v2/permission/requirements/r1/reviews",
         json={"reviewer_id": "reviewer-1", "seq": 1, "comment": "please review"},
     )
     assert create.status_code == 200
     assignment_id = create.json()["assignment_id"]
 
-    listed = client.get("/api/v2/permission/requirements/r1/reviews")
+    listed = await client.get("/api/v2/permission/requirements/r1/reviews")
     assert listed.status_code == 200
     assert listed.json()[0]["assignment_id"] == assignment_id
 
-    approved = client.post(
+    approved = await client.post(
         f"/api/v2/permission/reviews/{assignment_id}/approve",
         json={"comment": "ok"},
     )
     assert approved.status_code == 200
     assert approved.json()["status"] == "approved"
 
-    rejected = client.post(
+    rejected = await client.post(
         f"/api/v2/permission/reviews/{assignment_id}/reject",
         json={"comment": "no"},
     )
     assert rejected.status_code == 200
     assert rejected.json()["status"] == "rejected"
 
-    withdrawn = client.post(f"/api/v2/permission/reviews/{assignment_id}/withdraw")
+    withdrawn = await client.post(f"/api/v2/permission/reviews/{assignment_id}/withdraw")
     assert withdrawn.status_code == 200
     assert withdrawn.json()["status"] == "withdrawn"
 
-    pending = client.get("/api/v2/permission/user/pending-reviews")
+    pending = await client.get("/api/v2/permission/user/pending-reviews")
     assert pending.status_code == 200
     assert isinstance(pending.json(), list)
 
 
-def test_baseline_lock_unlock_and_change_request_contract(fastapi_client):
+async def test_baseline_lock_unlock_and_change_request_contract(fastapi_client):
     client, stub = fastapi_client
 
-    locked = client.post("/api/v2/permission/baselines/11/lock")
+    locked = await client.post("/api/v2/permission/baselines/11/lock")
     assert locked.status_code == 200
     assert locked.json()["locked"] is True
 
-    unlocked = client.post("/api/v2/permission/baselines/11/unlock")
+    unlocked = await client.post("/api/v2/permission/baselines/11/unlock")
     assert unlocked.status_code == 200
     assert unlocked.json()["locked"] is False
 
-    created = client.post(
+    created = await client.post(
         "/api/v2/permission/requirements/r1/change-requests",
         json={"baseline_id": 11, "reason": "need update", "change_summary": "summary"},
     )
     assert created.status_code == 200
     created_req_id = created.json()["request_id"]
 
-    listed = client.get("/api/v2/permission/requirements/r1/change-requests")
+    listed = await client.get("/api/v2/permission/requirements/r1/change-requests")
     assert listed.status_code == 200
     assert listed.json()[0]["request_id"] == created_req_id
 
-    rejected = client.post(
+    rejected = await client.post(
         f"/api/v2/permission/change-requests/{created_req_id}/reject",
         json={"review_comment": "not allowed"},
     )
@@ -256,6 +244,6 @@ def test_baseline_lock_unlock_and_change_request_contract(fastapi_client):
 
     # keep one pending request and verify list pending aggregation path
     stub.change_requests["cr-pending"] = {"request_id": "cr-pending", "project_id": "p1", "status": "pending"}
-    pending = client.get("/api/v2/permission/change-requests/pending")
+    pending = await client.get("/api/v2/permission/change-requests/pending")
     assert pending.status_code == 200
     assert any(item["request_id"] == "cr-pending" for item in pending.json())

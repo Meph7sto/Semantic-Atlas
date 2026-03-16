@@ -2,22 +2,15 @@
 FastAPI requirements route contract tests.
 """
 
-import os
-import sys
 from collections.abc import Generator
 from typing import Any
 
+import httpx
 import pytest
 import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
 
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.http.errors import (
     error_response_handler,
@@ -143,7 +136,7 @@ class _StubDBService:
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     stub_ai = _StubAIProxy()
     stub_requirements = _StubRequirementsService()
     stub_dedup = _StubDedupService()
@@ -154,20 +147,16 @@ def fastapi_client(monkeypatch):
     monkeypatch.setattr(requirements, "dedup_service", stub_dedup)
     monkeypatch.setattr(requirements, "db_service", stub_db)
 
-    app = FastAPI()
-    app.include_router(requirements.router)
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
+    app = build_test_app(requirements.router)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, stub_ai, stub_requirements, stub_dedup, stub_db
 
 
-def test_extract_requirements_success_returns_raw_data(fastapi_client):
+async def test_extract_requirements_success_returns_raw_data(fastapi_client):
     client, stub_ai, _, _, _ = fastapi_client
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/requirements/extract",
         json={"text": "  需求文本  ", "chunk_size": 1000, "overlap": 120},
     )
@@ -179,19 +168,19 @@ def test_extract_requirements_success_returns_raw_data(fastapi_client):
     assert stub_ai.extract_calls[0]["text"] == "需求文本"
 
 
-def test_extract_requirements_missing_text_returns_422(fastapi_client):
+async def test_extract_requirements_missing_text_returns_422(fastapi_client):
     client, _, _, _, _ = fastapi_client
 
-    response = client.post("/api/v2/requirements/extract", json={})
+    response = await client.post("/api/v2/requirements/extract", json={})
     assert response.status_code == 422
     detail = response.json()["detail"]
     assert any(item.get("loc") == ["body", "text"] for item in detail)
 
 
-def test_extract_l123_strict_bool_validation_returns_422(fastapi_client):
+async def test_extract_l123_strict_bool_validation_returns_422(fastapi_client):
     client, _, _, _, _ = fastapi_client
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/requirements/extract_l123",
         json={"session_id": "s-1", "use_toolcall": "true"},
     )
@@ -201,10 +190,10 @@ def test_extract_l123_strict_bool_validation_returns_422(fastapi_client):
     assert any(item.get("loc") == ["body", "use_toolcall"] for item in detail)
 
 
-def test_extract_l123_success_with_post_dedup(fastapi_client):
+async def test_extract_l123_success_with_post_dedup(fastapi_client):
     client, _, stub_requirements, stub_dedup, _ = fastapi_client
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/requirements/extract_l123",
         json={
             "session_id": "session-1",
@@ -227,10 +216,10 @@ def test_extract_l123_success_with_post_dedup(fastapi_client):
     assert stub_dedup.calls[0]["with_llm_decision"] is True
 
 
-def test_extract_l123_stream_emits_reset_and_dedup_events(fastapi_client):
+async def test_extract_l123_stream_emits_reset_and_dedup_events(fastapi_client):
     client, _, _, _, _ = fastapi_client
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/requirements/extract_l123/stream",
         json={"session_id": "s-1", "post_dedup": True},
     )
@@ -243,28 +232,28 @@ def test_extract_l123_stream_emits_reset_and_dedup_events(fastapi_client):
     assert "event: dedup_final" in response.text
 
 
-def test_get_requirements_by_session_invalid_page_returns_422(fastapi_client):
+async def test_get_requirements_by_session_invalid_page_returns_422(fastapi_client):
     client, _, _, _, _ = fastapi_client
 
-    response = client.get("/api/v2/requirements/session/s-1?page=abc")
+    response = await client.get("/api/v2/requirements/session/s-1?page=abc")
     assert response.status_code == 422
     detail = response.json()["detail"]
     assert any(item.get("loc") == ["query", "page"] for item in detail)
 
 
-def test_get_requirement_detail_not_found_returns_404(fastapi_client):
+async def test_get_requirement_detail_not_found_returns_404(fastapi_client):
     client, _, stub_requirements, _, _ = fastapi_client
     stub_requirements.detail_data = None
 
-    response = client.get("/api/v2/requirements/r-404")
+    response = await client.get("/api/v2/requirements/r-404")
     assert response.status_code == 404
     assert response.json()["detail"] == "Requirement not found"
 
 
-def test_get_requirements_stats_uses_stats_route_not_detail(fastapi_client):
+async def test_get_requirements_stats_uses_stats_route_not_detail(fastapi_client):
     client, _, stub_requirements, _, _ = fastapi_client
 
-    response = client.get("/api/v2/requirements/stats", params={"session_id": " s-1 "})
+    response = await client.get("/api/v2/requirements/stats", params={"session_id": " s-1 "})
 
     assert response.status_code == 200
     body = response.json()
@@ -274,15 +263,15 @@ def test_get_requirements_stats_uses_stats_route_not_detail(fastapi_client):
     assert stub_requirements.detail_calls == []
 
 
-def test_l4_exists_and_list_success(fastapi_client):
+async def test_l4_exists_and_list_success(fastapi_client):
     client, _, _, _, stub_db = fastapi_client
 
-    exists_response = client.get("/api/v2/requirements/l4/session-1/exists")
+    exists_response = await client.get("/api/v2/requirements/l4/session-1/exists")
     assert exists_response.status_code == 200
     assert exists_response.json() == {"exists": True}
     assert stub_db.exists_calls == ["session-1"]
 
-    list_response = client.get("/api/v2/requirements/l4/session-1?page=1&per_page=10")
+    list_response = await client.get("/api/v2/requirements/l4/session-1?page=1&per_page=10")
     assert list_response.status_code == 200
     body = list_response.json()
     assert "success" not in body
@@ -290,7 +279,7 @@ def test_l4_exists_and_list_success(fastapi_client):
     assert stub_db.list_calls[0]["per_page"] == 10
 
 
-def test_generate_l4_requirements_cache_hit(fastapi_client, monkeypatch):
+async def test_generate_l4_requirements_cache_hit(fastapi_client, monkeypatch):
     client, _, _, _, stub_db = fastapi_client
     stub_db.existing_top_ids = ["t1", "t2"]
 
@@ -299,7 +288,7 @@ def test_generate_l4_requirements_cache_hit(fastapi_client, monkeypatch):
 
     monkeypatch.setattr(requirements.requests, "post", _unexpected_post)
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/requirements/l4/generate",
         json={
             "session_id": "s-cache",
@@ -313,7 +302,7 @@ def test_generate_l4_requirements_cache_hit(fastapi_client, monkeypatch):
     assert body["total"] == 1
 
 
-def test_generate_l4_requirements_inference_failure_returns_500(
+async def test_generate_l4_requirements_inference_failure_returns_500(
     fastapi_client, monkeypatch
 ):
     client, _, _, _, stub_db = fastapi_client
@@ -324,7 +313,7 @@ def test_generate_l4_requirements_inference_failure_returns_500(
 
     monkeypatch.setattr(requirements.requests, "post", _mock_post)
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/requirements/l4/generate",
         json={
             "session_id": "s-1",
