@@ -10,11 +10,22 @@ DeepSeek Tool Calls 功能测试脚本
 
 import os
 import sys
+import pytest
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backend_inference.core.engine import DeepSeekEngine, ToolCallResult
+
+
+_RUN_DEEPSEEK_INTEGRATION = (
+    os.getenv("RUN_DEEPSEEK_INTEGRATION", "").strip().lower() in {"1", "true", "yes"}
+)
+
+pytestmark = pytest.mark.skipif(
+    not _RUN_DEEPSEEK_INTEGRATION,
+    reason="DeepSeek integration tests are opt-in. Set RUN_DEEPSEEK_INTEGRATION=1 to run.",
+)
 
 
 def test_tool_calls_non_stream():

@@ -2,20 +2,13 @@
 FastAPI push route contract tests.
 """
 
-import os
 import queue
-import sys
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.routers import push
 
@@ -66,21 +59,20 @@ class _StubPushService:
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     stub = _StubPushService()
     monkeypatch.setattr(push, "push_service", stub)
 
-    app = FastAPI()
-    app.include_router(push.router)
+    app = build_test_app(push.router)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, stub
 
 
-def test_list_messages_parsing_is_flask_compatible(fastapi_client):
+async def test_list_messages_parsing_is_flask_compatible(fastapi_client):
     client, stub = fastapi_client
 
-    response = client.get(
+    response = await client.get(
         "/api/v2/push/messages",
         params={"message_type": "review", "pushed": "yes", "page": "abc", "per_page": "x"},
     )
@@ -95,18 +87,18 @@ def test_list_messages_parsing_is_flask_compatible(fastapi_client):
     }
 
 
-def test_create_message_missing_required_fields_returns_400(fastapi_client):
+async def test_create_message_missing_required_fields_returns_400(fastapi_client):
     client, _ = fastapi_client
 
-    response = client.post("/api/v2/push/messages", json={"message_type": "review"})
+    response = await client.post("/api/v2/push/messages", json={"message_type": "review"})
     assert response.status_code == 400
     assert response.json() == {"success": False, "error": "缺少 title"}
 
 
-def test_create_message_value_error_returns_400(fastapi_client):
+async def test_create_message_value_error_returns_400(fastapi_client):
     client, _ = fastapi_client
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/push/messages",
         json={"message_type": "review", "title": "t", "priority": "urgent"},
     )
@@ -114,14 +106,14 @@ def test_create_message_value_error_returns_400(fastapi_client):
     assert "priority must be" in response.json()["error"]
 
 
-def test_get_message_and_pending_messages(fastapi_client):
+async def test_get_message_and_pending_messages(fastapi_client):
     client, stub = fastapi_client
 
-    detail_resp = client.get("/api/v2/push/messages/msg-1")
+    detail_resp = await client.get("/api/v2/push/messages/msg-1")
     assert detail_resp.status_code == 200
     assert detail_resp.json()["data"]["message_id"] == "msg-1"
 
-    pending_resp = client.get(
+    pending_resp = await client.get(
         "/api/v2/push/messages/pending",
         params={"message_type": "change", "since": "2026-03-03T00:00:00Z"},
     )
@@ -133,10 +125,10 @@ def test_get_message_and_pending_messages(fastapi_client):
     }
 
 
-def test_stream_returns_sse_headers(fastapi_client):
+async def test_stream_returns_sse_headers(fastapi_client):
     client, _ = fastapi_client
 
-    response = client.get("/api/v2/push/stream")
+    response = await client.get("/api/v2/push/stream")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     assert response.headers["cache-control"] == "no-cache"

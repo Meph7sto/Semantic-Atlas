@@ -2,21 +2,13 @@
 FastAPI vision route contract tests.
 """
 
-import os
-import sys
 from typing import Any
 
 import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
 
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.http.errors import (
     error_response_handler,
@@ -71,7 +63,7 @@ class _StubDBService:
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     stub_http = _StubHTTPClient()
     stub_db = _StubDBService()
 
@@ -103,27 +95,23 @@ def fastapi_client(monkeypatch):
     monkeypatch.setattr(vision, "parse_transcript_to_spans", _fake_parse)
     vision._previews.clear()
 
-    app = FastAPI()
-    app.include_router(vision.router)
+    app = build_test_app(vision.router)
     app.state.http_client = stub_http
     app.dependency_overrides[vision.get_current_user] = lambda: {
         "user_id": "u1",
         "role": "member",
     }
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, stub_http, stub_db
 
     vision._previews.clear()
 
 
-def test_callback_requires_source_headers(fastapi_client):
+async def test_callback_requires_source_headers(fastapi_client):
     client, _, _ = fastapi_client
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/vision/callback",
         json={
             "filename": "a.png",
@@ -137,10 +125,10 @@ def test_callback_requires_source_headers(fastapi_client):
     assert response.json()["detail"] == "非法来源"
 
 
-def test_callback_list_and_confirm_contract(fastapi_client):
+async def test_callback_list_and_confirm_contract(fastapi_client):
     client, _, stub_db = fastapi_client
 
-    callback_resp = client.post(
+    callback_resp = await client.post(
         "/api/v2/vision/callback",
         headers={
             "X-Vision-Source": "autodl",
@@ -157,14 +145,14 @@ def test_callback_list_and_confirm_contract(fastapi_client):
     assert callback_resp.status_code == 200
     preview_id = callback_resp.json()["data"]["preview_id"]
 
-    list_resp = client.get("/api/v2/vision/previews")
+    list_resp = await client.get("/api/v2/vision/previews")
     assert list_resp.status_code == 200
     items = list_resp.json()["data"]
     assert len(items) == 1
     assert items[0]["preview_id"] == preview_id
     assert items[0]["status"] == "pending"
 
-    confirm_resp = client.post(
+    confirm_resp = await client.post(
         f"/api/v2/vision/previews/{preview_id}/confirm",
         json={"session_id": "s-1", "max_spans_returned": 1},
     )
@@ -175,7 +163,7 @@ def test_callback_list_and_confirm_contract(fastapi_client):
     assert len(data["spans_preview"]) == 1
     assert len(stub_db.upsert_calls) == 1
 
-    confirm_again = client.post(
+    confirm_again = await client.post(
         f"/api/v2/vision/previews/{preview_id}/confirm",
         json={"session_id": "s-1"},
     )
@@ -183,10 +171,10 @@ def test_callback_list_and_confirm_contract(fastapi_client):
     assert confirm_again.json()["detail"] == "该预览已确认入库"
 
 
-def test_caption_rejects_non_image_file(fastapi_client):
+async def test_caption_rejects_non_image_file(fastapi_client):
     client, _, _ = fastapi_client
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/vision/caption",
         data={"prompt": "x", "speaker": "vision_agent"},
         files={"file": ("a.txt", b"text", "text/plain")},
@@ -195,10 +183,10 @@ def test_caption_rejects_non_image_file(fastapi_client):
     assert response.json()["detail"] == "仅支持图片文件"
 
 
-def test_caption_success_creates_preview(fastapi_client):
+async def test_caption_success_creates_preview(fastapi_client):
     client, stub_http, _ = fastapi_client
 
-    response = client.post(
+    response = await client.post(
         "/api/v2/vision/caption",
         data={"prompt": "describe image", "speaker": "vision_agent"},
         files={"file": ("a.png", b"\x89PNG\r\n", "image/png")},

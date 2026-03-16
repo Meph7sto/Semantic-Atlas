@@ -2,20 +2,12 @@
 FastAPI auth admin/profile route contract tests.
 """
 
-import os
-import sys
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
-
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.http.errors import error_response_handler, validation_error_handler
 from backend_business.api.routers import auth
@@ -90,48 +82,44 @@ class _StubAuthDB:
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     stub = _StubAuthDB()
     monkeypatch.setattr(auth, "db_service", stub)
 
-    app = FastAPI()
-    app.include_router(auth.router)
+    app = build_test_app(auth.router)
     app.dependency_overrides[auth.get_current_user] = lambda: {"user_id": "u-1", "role": "member"}
     app.dependency_overrides[auth.require_admin] = lambda: {"user_id": "admin-1", "role": "admin"}
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, stub
 
 
-def test_logout_and_profile_and_directory(fastapi_client):
+async def test_logout_and_profile_and_directory(fastapi_client):
     client, _ = fastapi_client
 
-    logout_resp = client.post("/api/v2/auth/logout")
+    logout_resp = await client.post("/api/v2/auth/logout")
     assert logout_resp.status_code == 200
     assert logout_resp.json()["message"] == "登出成功"
 
-    profile_resp = client.get("/api/v2/auth/profile")
+    profile_resp = await client.get("/api/v2/auth/profile")
     assert profile_resp.status_code == 200
     assert profile_resp.json()["data"]["user_id"] == "u-1"
 
-    directory_resp = client.get("/api/v2/auth/user-directory?role=member&limit=10&offset=0")
+    directory_resp = await client.get("/api/v2/auth/user-directory?role=member&limit=10&offset=0")
     assert directory_resp.status_code == 200
     data = directory_resp.json()["data"]
     assert data["users"][0]["username"] == "u1"
     assert data["limit"] == 10
 
 
-def test_admin_user_list_patch_scope_and_registration_endpoints(fastapi_client):
+async def test_admin_user_list_patch_scope_and_registration_endpoints(fastapi_client):
     client, _ = fastapi_client
 
-    users_resp = client.get("/api/v2/auth/users?limit=10&offset=0")
+    users_resp = await client.get("/api/v2/auth/users?limit=10&offset=0")
     assert users_resp.status_code == 200
     assert "users" in users_resp.json()["data"]
 
-    patch_resp = client.patch(
+    patch_resp = await client.patch(
         "/api/v2/auth/users/u-1",
         json={"display_name": "U1-New", "role": "viewer", "is_active": False},
     )
@@ -140,19 +128,19 @@ def test_admin_user_list_patch_scope_and_registration_endpoints(fastapi_client):
     assert patch_resp.json()["data"]["role"] == "viewer"
     assert patch_resp.json()["data"]["is_active"] is False
 
-    scope_options = client.get("/api/v2/auth/scope-options")
+    scope_options = await client.get("/api/v2/auth/scope-options")
     assert scope_options.status_code == 200
     assert scope_options.json()["data"]["products"][0]["product_id"] == "prd-1"
 
-    reg_list = client.get("/api/v2/auth/registrations?status=pending&limit=10&offset=0")
+    reg_list = await client.get("/api/v2/auth/registrations?status=pending&limit=10&offset=0")
     assert reg_list.status_code == 200
     assert reg_list.json()["total"] == 1
 
-    reg_detail = client.get("/api/v2/auth/registrations/pending-1")
+    reg_detail = await client.get("/api/v2/auth/registrations/pending-1")
     assert reg_detail.status_code == 200
     assert reg_detail.json()["user_id"] == "pending-1"
 
-    pending_count = client.get("/api/v2/auth/registrations/pending/count")
+    pending_count = await client.get("/api/v2/auth/registrations/pending/count")
     assert pending_count.status_code == 200
     assert pending_count.json()["count"] == 1
 

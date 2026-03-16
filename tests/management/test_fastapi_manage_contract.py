@@ -4,19 +4,12 @@ FastAPI manage route contract tests.
 Focus on migrated behavior and FastAPI validation semantics.
 """
 
-import os
-import sys
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
 
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.http.errors import error_response_handler, validation_error_handler
 from backend_business.api.routers import manage
@@ -91,25 +84,21 @@ def _assert_validation_error(response, field: str, scope: str = "body"):
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     stub = _StubManageService()
     stub_db = _StubManageDBService()
     monkeypatch.setattr(manage, "_service", stub)
     monkeypatch.setattr(manage, "db_service", stub_db)
 
-    app = FastAPI()
-    app.include_router(manage.router)
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
+    app = build_test_app(manage.router)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, stub
 
 
-def test_update_project_current_session_id_uses_set_project_session(fastapi_client):
+async def test_update_project_current_session_id_uses_set_project_session(fastapi_client):
     client, stub = fastapi_client
-    response = client.patch(
+    response = await client.patch(
         "/api/v2/manage/projects/p1",
         json={"current_session_id": "s-1"},
         headers=_auth_headers(),
@@ -121,9 +110,9 @@ def test_update_project_current_session_id_uses_set_project_session(fastapi_clie
     assert stub.last_update_project_info is None
 
 
-def test_update_project_null_current_session_id_is_supported(fastapi_client):
+async def test_update_project_null_current_session_id_is_supported(fastapi_client):
     client, stub = fastapi_client
-    response = client.patch(
+    response = await client.patch(
         "/api/v2/manage/projects/p1",
         json={"current_session_id": None},
         headers=_auth_headers(),
@@ -134,9 +123,9 @@ def test_update_project_null_current_session_id_is_supported(fastapi_client):
     assert stub.last_update_project_info is None
 
 
-def test_update_project_name_uses_update_project_info(fastapi_client):
+async def test_update_project_name_uses_update_project_info(fastapi_client):
     client, stub = fastapi_client
-    response = client.patch(
+    response = await client.patch(
         "/api/v2/manage/projects/p1",
         json={"name": "New Name"},
         headers=_auth_headers(),
@@ -147,9 +136,9 @@ def test_update_project_name_uses_update_project_info(fastapi_client):
     assert stub.last_set_project_session is None
 
 
-def test_update_project_empty_payload_returns_400(fastapi_client):
+async def test_update_project_empty_payload_returns_400(fastapi_client):
     client, _ = fastapi_client
-    response = client.patch(
+    response = await client.patch(
         "/api/v2/manage/projects/p1",
         json={},
         headers=_auth_headers(),
@@ -158,9 +147,9 @@ def test_update_project_empty_payload_returns_400(fastapi_client):
     assert response.json()["detail"] == "No updatable fields provided"
 
 
-def test_create_project_missing_name_returns_422(fastapi_client):
+async def test_create_project_missing_name_returns_422(fastapi_client):
     client, _ = fastapi_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/manage/projects",
         json={"description": "x"},
         headers=_auth_headers(),
@@ -168,15 +157,15 @@ def test_create_project_missing_name_returns_422(fastapi_client):
     _assert_validation_error(response, "name")
 
 
-def test_list_requirements_invalid_tree_query_returns_422(fastapi_client):
+async def test_list_requirements_invalid_tree_query_returns_422(fastapi_client):
     client, _ = fastapi_client
-    response = client.get("/api/v2/manage/projects/p1/requirements?tree=abc", headers=_auth_headers())
+    response = await client.get("/api/v2/manage/projects/p1/requirements?tree=abc", headers=_auth_headers())
     _assert_validation_error(response, "tree", scope="query")
 
 
-def test_list_requirements_tree_mode_calls_tree_service(fastapi_client):
+async def test_list_requirements_tree_mode_calls_tree_service(fastapi_client):
     client, stub = fastapi_client
-    response = client.get(
+    response = await client.get(
         "/api/v2/manage/projects/p1/requirements?tree=true&include_deleted=true",
         headers=_auth_headers(),
     )

@@ -4,17 +4,8 @@ FastAPI permission route contract tests.
 These tests enforce FastAPI-native request/response semantics.
 """
 
-import os
-import sys
-
+import httpx
 import pytest
-from fastapi.testclient import TestClient
-
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.main import app
 from backend_business.services.auth_service import get_auth_service
@@ -37,21 +28,21 @@ def _assert_validation_error(response, loc_field: str, loc_scope: str = "body") 
     assert any(item.get("loc") == [loc_scope, loc_field] for item in detail)
 
 
-def _send(client: TestClient, method: str, url: str, headers: dict, payload):
+async def _send(client: httpx.AsyncClient, method: str, url: str, headers: dict, payload):
     if method == "POST":
-        return client.post(url, headers=headers, json=payload)
+        return await client.post(url, headers=headers, json=payload)
     if method == "GET":
-        return client.get(url, headers=headers)
+        return await client.get(url, headers=headers)
     if method == "DELETE":
-        return client.delete(url, headers=headers)
+        return await client.delete(url, headers=headers)
     if method == "PUT":
-        return client.put(url, headers=headers, json=payload)
+        return await client.put(url, headers=headers, json=payload)
     raise AssertionError(f"Unsupported method: {method}")
 
 
 @pytest.fixture
-def client():
-    with TestClient(app, raise_server_exceptions=False) as c:
+async def client():
+    async with async_client(app) as c:
         yield c
 
 
@@ -87,19 +78,19 @@ def auth_headers():
         ),
     ],
 )
-def test_request_validation_errors_are_422(client, auth_headers, method, path, payload, field):
-    response = _send(client, method, path, auth_headers, payload)
+async def test_request_validation_errors_are_422(client, auth_headers, method, path, payload, field):
+    response = await _send(client, method, path, auth_headers, payload)
     _assert_validation_error(response, field)
 
 
-def test_unauthorized_without_token(client):
-    response = client.get("/api/v2/permission/projects/p1/members")
+async def test_unauthorized_without_token(client):
+    response = await client.get("/api/v2/permission/projects/p1/members")
     assert response.status_code == 401
     assert response.json()["detail"] == "未提供认证 Token"
 
 
-def test_invalid_token(client):
-    response = client.get(
+async def test_invalid_token(client):
+    response = await client.get(
         "/api/v2/permission/projects/p1/members",
         headers={"Authorization": "Bearer invalid_token"},
     )
@@ -107,8 +98,8 @@ def test_invalid_token(client):
     assert response.json()["detail"] == "Token 无效或已过期"
 
 
-def test_valid_token_hits_business_error_when_db_is_uninitialized(client, auth_headers):
-    response = client.get(
+async def test_valid_token_hits_business_error_when_db_is_uninitialized(client, auth_headers):
+    response = await client.get(
         "/api/v2/permission/projects/p1/members",
         headers=auth_headers,
     )
@@ -116,8 +107,8 @@ def test_valid_token_hits_business_error_when_db_is_uninitialized(client, auth_h
     assert response.json()["detail"] == "数据库服务未初始化"
 
 
-def test_health_check(client):
-    response = client.get("/health")
+async def test_health_check(client):
+    response = await client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "business_backend_ok"
 
@@ -151,24 +142,23 @@ def test_health_check(client):
         ("GET", "/api/v2/permission/projects/p1/context", None),
     ],
 )
-def test_permission_endpoints_registered(client, auth_headers, method, url, payload):
-    response = _send(client, method, url, auth_headers, payload)
+async def test_permission_endpoints_registered(client, auth_headers, method, url, payload):
+    response = await _send(client, method, url, auth_headers, payload)
     assert response.status_code == 500
     assert response.json()["detail"] == "数据库服务未初始化"
 
 
-def test_invalid_include_roles_query_fails_with_422(client, auth_headers):
-    response = client.get(
+async def test_invalid_include_roles_query_fails_with_422(client, auth_headers):
+    response = await client.get(
         "/api/v2/permission/projects/p1/members?include_roles=abc",
         headers=auth_headers,
     )
     _assert_validation_error(response, "include_roles", loc_scope="query")
 
 
-def test_invalid_include_locked_query_fails_with_422(client, auth_headers):
-    response = client.get(
+async def test_invalid_include_locked_query_fails_with_422(client, auth_headers):
+    response = await client.get(
         "/api/v2/permission/projects/p1/baselines?include_locked=abc",
         headers=auth_headers,
     )
     _assert_validation_error(response, "include_locked", loc_scope="query")
-

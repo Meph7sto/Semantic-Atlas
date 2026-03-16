@@ -2,20 +2,13 @@
 FastAPI manage extended route contract tests.
 """
 
-import os
-import sys
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
 
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.http.errors import error_response_handler, validation_error_handler
 from backend_business.api.routers import manage
@@ -154,46 +147,42 @@ class _StubManageService:
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     stub_db = _StubManageDB()
     stub_service = _StubManageService()
     monkeypatch.setattr(manage, "db_service", stub_db)
     monkeypatch.setattr(manage, "_service", stub_service)
     monkeypatch.setattr(manage, "_get_project_id_by_branch", lambda branch_id: "p-1" if branch_id.startswith("b-") else None)
 
-    app = FastAPI()
-    app.include_router(manage.router)
+    app = build_test_app(manage.router)
     app.dependency_overrides[manage.get_current_user] = lambda: {"user_id": "admin-1", "role": "admin"}
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, stub_service
 
 
-def test_import_and_test_case_and_bind_contract(fastapi_client):
+async def test_import_and_test_case_and_bind_contract(fastapi_client):
     client, _ = fastapi_client
 
-    imported = client.post(
+    imported = await client.post(
         "/api/v2/manage/projects/p-1/requirements/import",
         json={"session_id": "s-1", "mapping_mode": "tree"},
     )
     assert imported.status_code == 200
     assert imported.json()["inserted"] == 2
 
-    create_tc = client.post(
+    create_tc = await client.post(
         "/api/v2/manage/projects/p-1/test-cases",
         json={"title": "TC new", "description": "d", "status": "draft", "source": "manual"},
     )
     assert create_tc.status_code == 200
     tc_id = create_tc.json()["test_case_id"]
 
-    list_tc = client.get("/api/v2/manage/projects/p-1/test-cases")
+    list_tc = await client.get("/api/v2/manage/projects/p-1/test-cases")
     assert list_tc.status_code == 200
     assert any(tc["test_case_id"] == tc_id for tc in list_tc.json()["test_cases"])
 
-    bind = client.post(
+    bind = await client.post(
         "/api/v2/manage/requirements/r-1/bind-testcase",
         json={"test_case_id": tc_id, "link_type": "verification"},
     )
@@ -201,36 +190,36 @@ def test_import_and_test_case_and_bind_contract(fastapi_client):
     assert bind.json()["success"] is True
 
 
-def test_milestone_endpoints_contract(fastapi_client):
+async def test_milestone_endpoints_contract(fastapi_client):
     client, _ = fastapi_client
 
-    created = client.post(
+    created = await client.post(
         "/api/v2/manage/projects/p-1/milestones",
         json={"name": "M3", "message": "snapshot"},
     )
     assert created.status_code == 200
     milestone_id = created.json()["milestone_id"]
 
-    listed = client.get("/api/v2/manage/projects/p-1/milestones")
+    listed = await client.get("/api/v2/manage/projects/p-1/milestones")
     assert listed.status_code == 200
     assert any(m["milestone_id"] == milestone_id for m in listed.json()["milestones"])
 
-    detail = client.get(f"/api/v2/manage/milestones/{milestone_id}")
+    detail = await client.get(f"/api/v2/manage/milestones/{milestone_id}")
     assert detail.status_code == 200
     assert detail.json()["milestone_id"] == milestone_id
 
-    baseline = client.post(f"/api/v2/manage/milestones/{milestone_id}/baseline")
+    baseline = await client.post(f"/api/v2/manage/milestones/{milestone_id}/baseline")
     assert baseline.status_code == 200
     assert baseline.json()["success"] is True
 
-    compare = client.post(
+    compare = await client.post(
         "/api/v2/manage/milestones/compare",
         json={"from_milestone_id": "m-1", "to_milestone_id": "m-2"},
     )
     assert compare.status_code == 200
     assert compare.json()["summary"]["added"] == 0
 
-    link = client.post(
+    link = await client.post(
         "/api/v2/manage/projects/p-1/milestones/link",
         json={
             "from_milestone_id": "m-1",
@@ -242,26 +231,26 @@ def test_milestone_endpoints_contract(fastapi_client):
     assert link.status_code == 200
     assert link.json()["project_id"] == "p-1"
 
-    graph = client.get("/api/v2/manage/projects/p-1/milestone-graph")
+    graph = await client.get("/api/v2/manage/projects/p-1/milestone-graph")
     assert graph.status_code == 200
     assert graph.json()["nodes"][0]["id"] == "m-1"
 
 
-def test_branch_and_audit_endpoints_contract(fastapi_client):
+async def test_branch_and_audit_endpoints_contract(fastapi_client):
     client, _ = fastapi_client
 
-    create_branch = client.post(
+    create_branch = await client.post(
         "/api/v2/manage/projects/p-1/branches",
         json={"name": "feature-x", "base_milestone_id": "m-1"},
     )
     assert create_branch.status_code == 200
     branch_id = create_branch.json()["ref_id"]
 
-    list_branch = client.get("/api/v2/manage/projects/p-1/branches")
+    list_branch = await client.get("/api/v2/manage/projects/p-1/branches")
     assert list_branch.status_code == 200
     assert any(b["ref_id"] == branch_id for b in list_branch.json()["branches"])
 
-    add_change = client.post(
+    add_change = await client.post(
         f"/api/v2/manage/branches/{branch_id}/changes",
         json={
             "change_type": "update",
@@ -273,29 +262,29 @@ def test_branch_and_audit_endpoints_contract(fastapi_client):
     assert add_change.status_code == 200
     assert add_change.json()["change_id"] == "chg-1"
 
-    list_change = client.get(f"/api/v2/manage/branches/{branch_id}/changes")
+    list_change = await client.get(f"/api/v2/manage/branches/{branch_id}/changes")
     assert list_change.status_code == 200
     assert list_change.json()["changes"][0]["change_id"] == "chg-1"
 
-    impact = client.post(f"/api/v2/manage/branches/{branch_id}/impact")
+    impact = await client.post(f"/api/v2/manage/branches/{branch_id}/impact")
     assert impact.status_code == 200
     assert impact.json()["report_id"] == "impact-1"
 
-    merge_req = client.post(
+    merge_req = await client.post(
         f"/api/v2/manage/branches/{branch_id}/merge",
         json={"target_milestone_id": "m-2"},
     )
     assert merge_req.status_code == 200
     assert merge_req.json()["merge_id"] == "mr-1"
 
-    merged = client.post(
+    merged = await client.post(
         "/api/v2/manage/projects/p-1/branches/merge",
         json={"source_branch": "feature-x", "target_branch": "main", "message": "merge"},
     )
     assert merged.status_code == 200
     assert merged.json()["conflict_count"] == 0
 
-    audits = client.get("/api/v2/manage/projects/p-1/audits?limit=10")
+    audits = await client.get("/api/v2/manage/projects/p-1/audits?limit=10")
     assert audits.status_code == 200
     assert audits.json()["logs"][0]["project_id"] == "p-1"
 

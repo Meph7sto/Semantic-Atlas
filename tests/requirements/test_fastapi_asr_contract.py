@@ -2,19 +2,12 @@
 FastAPI ASR business route contract tests.
 """
 
-import os
-import sys
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
 
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.deps.auth import get_current_user
 from backend_business.api.http.errors import error_response_handler, validation_error_handler
@@ -91,31 +84,27 @@ class _StubOrchestrator:
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     stub_db = _StubDB()
     stub_orchestrator = _StubOrchestrator()
 
     monkeypatch.setattr(asr, "db_service", stub_db)
     monkeypatch.setattr(asr, "asr_orchestrator", stub_orchestrator)
 
-    app = FastAPI()
-    app.include_router(asr.router)
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
+    app = build_test_app(asr.router)
     app.dependency_overrides[get_current_user] = lambda: {
         "user_id": "u-test",
         "username": "tester",
         "role": "member",
     }
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, stub_db, stub_orchestrator
 
 
-def test_create_asr_session_success(fastapi_client):
+async def test_create_asr_session_success(fastapi_client):
     client, stub_db, _ = fastapi_client
-    resp = client.post(
+    resp = await client.post(
         "/api/v2/asr/sessions",
         files={"file": ("demo.wav", b"fake-audio", "audio/wav")},
     )
@@ -127,9 +116,9 @@ def test_create_asr_session_success(fastapi_client):
     assert body["session_id"] in stub_db.rows
 
 
-def test_create_asr_session_reject_unsupported_file(fastapi_client):
+async def test_create_asr_session_reject_unsupported_file(fastapi_client):
     client, _, _ = fastapi_client
-    resp = client.post(
+    resp = await client.post(
         "/api/v2/asr/sessions",
         files={"file": ("demo.exe", b"x", "application/octet-stream")},
     )
@@ -137,52 +126,52 @@ def test_create_asr_session_reject_unsupported_file(fastapi_client):
     assert "不支持的文件类型" in resp.json()["detail"]
 
 
-def test_list_and_detail_asr_sessions(fastapi_client):
+async def test_list_and_detail_asr_sessions(fastapi_client):
     client, _, _ = fastapi_client
-    create_resp = client.post(
+    create_resp = await client.post(
         "/api/v2/asr/sessions",
         files={"file": ("demo.mp3", b"fake-audio", "audio/mpeg")},
     )
     session_id = create_resp.json()["session_id"]
 
-    list_resp = client.get("/api/v2/asr/sessions")
+    list_resp = await client.get("/api/v2/asr/sessions")
     assert list_resp.status_code == 200
     assert list_resp.json()["total"] == 1
 
-    detail_resp = client.get(f"/api/v2/asr/sessions/{session_id}")
+    detail_resp = await client.get(f"/api/v2/asr/sessions/{session_id}")
     assert detail_resp.status_code == 200
     assert detail_resp.json()["session_id"] == session_id
 
 
-def test_retry_only_failed_or_timeout(fastapi_client):
+async def test_retry_only_failed_or_timeout(fastapi_client):
     client, stub_db, _ = fastapi_client
-    create_resp = client.post(
+    create_resp = await client.post(
         "/api/v2/asr/sessions",
         files={"file": ("demo.m4a", b"fake-audio", "audio/m4a")},
     )
     session_id = create_resp.json()["session_id"]
 
     # queued 状态不可重试
-    retry_resp = client.post(f"/api/v2/asr/sessions/{session_id}/retry")
+    retry_resp = await client.post(f"/api/v2/asr/sessions/{session_id}/retry")
     assert retry_resp.status_code == 409
 
     # failed 状态可重试
     stub_db.rows[session_id]["status"] = "failed"
-    retry_resp = client.post(f"/api/v2/asr/sessions/{session_id}/retry")
+    retry_resp = await client.post(f"/api/v2/asr/sessions/{session_id}/retry")
     assert retry_resp.status_code == 200
     assert retry_resp.json()["status"] == "queued"
 
 
-def test_export_requires_succeeded_status(fastapi_client):
+async def test_export_requires_succeeded_status(fastapi_client):
     client, stub_db, _ = fastapi_client
-    create_resp = client.post(
+    create_resp = await client.post(
         "/api/v2/asr/sessions",
         files={"file": ("demo.wav", b"fake-audio", "audio/wav")},
     )
     session_id = create_resp.json()["session_id"]
 
     # 未成功前导出失败
-    export_resp = client.get(f"/api/v2/asr/sessions/{session_id}/export?format=txt")
+    export_resp = await client.get(f"/api/v2/asr/sessions/{session_id}/export?format=txt")
     assert export_resp.status_code == 409
 
     stub_db.rows[session_id]["status"] = "succeeded"
@@ -190,7 +179,7 @@ def test_export_requires_succeeded_status(fastapi_client):
     stub_db.rows[session_id]["transcript_segments"] = [{"start": 0.0, "end": 1.0, "text": "hello"}]
     stub_db.rows[session_id]["transcript_metadata"] = {"model": "vibevoice"}
 
-    export_resp = client.get(f"/api/v2/asr/sessions/{session_id}/export?format=json")
+    export_resp = await client.get(f"/api/v2/asr/sessions/{session_id}/export?format=json")
     assert export_resp.status_code == 200
     assert export_resp.headers["content-type"].startswith("application/json")
 

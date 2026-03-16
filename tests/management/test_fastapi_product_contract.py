@@ -4,19 +4,12 @@ FastAPI product route contract tests.
 Focus on migrated behavior and FastAPI validation semantics.
 """
 
-import os
-import sys
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
 
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.http.errors import error_response_handler, validation_error_handler
 from backend_business.api.routers import product
@@ -247,17 +240,13 @@ def _assert_validation_error(response, field: str, scope: str = "body"):
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     stub = _StubProductService()
     monkeypatch.setattr(product, "_service", stub)
 
-    app = FastAPI()
-    app.include_router(product.router)
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
+    app = build_test_app(product.router)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, stub
 
 
@@ -265,9 +254,9 @@ def fastapi_client(monkeypatch):
 # Products CRUD Tests
 # ========================
 
-def test_create_product_missing_name_returns_422(fastapi_client):
+async def test_create_product_missing_name_returns_422(fastapi_client):
     client, _ = fastapi_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/product/products",
         json={"description": "test desc"},
         headers=_admin_auth_headers(),
@@ -275,9 +264,9 @@ def test_create_product_missing_name_returns_422(fastapi_client):
     _assert_validation_error(response, "name")
 
 
-def test_create_product_requires_admin_role(fastapi_client):
+async def test_create_product_requires_admin_role(fastapi_client):
     client, stub = fastapi_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/product/products",
         json={"name": "Test Product"},
         headers=_auth_headers("user1", "member"),
@@ -287,9 +276,9 @@ def test_create_product_requires_admin_role(fastapi_client):
     assert stub.last_create_product_args is None
 
 
-def test_create_product_success(fastapi_client):
+async def test_create_product_success(fastapi_client):
     client, stub = fastapi_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/product/products",
         json={
             "name": "Test Product",
@@ -315,44 +304,44 @@ def test_create_product_success(fastapi_client):
     assert stub.audit_logs[0]["target_type"] == "product"
 
 
-def test_list_products_default_archived_false(fastapi_client):
+async def test_list_products_default_archived_false(fastapi_client):
     client, stub = fastapi_client
-    response = client.get("/api/v2/product/products", headers=_auth_headers("user1"))
+    response = await client.get("/api/v2/product/products", headers=_auth_headers("user1"))
     assert response.status_code == 200
     assert response.json() == {"products": []}
     assert stub.last_list_products_args == (False,)
 
 
-def test_list_products_include_archived_true(fastapi_client):
+async def test_list_products_include_archived_true(fastapi_client):
     client, stub = fastapi_client
-    response = client.get("/api/v2/product/products?include_archived=true", headers=_auth_headers("user1"))
+    response = await client.get("/api/v2/product/products?include_archived=true", headers=_auth_headers("user1"))
     assert response.status_code == 200
     assert stub.last_list_products_args == (True,)
 
 
-def test_get_product_not_found_returns_404(fastapi_client):
+async def test_get_product_not_found_returns_404(fastapi_client):
     client, _ = fastapi_client
-    response = client.get("/api/v2/product/products/nonexistent-id", headers=_auth_headers("user1"))
+    response = await client.get("/api/v2/product/products/nonexistent-id", headers=_auth_headers("user1"))
     assert response.status_code == 404
     assert response.json()["detail"] == "Product not found"
 
 
-def test_get_product_success(fastapi_client):
+async def test_get_product_success(fastapi_client):
     client, stub = fastapi_client
     # 先创建产品
     stub.create_product(name="Test Product", created_by="admin-user")
-    response = client.get(f"/api/v2/product/products/prod-1", headers=_auth_headers("user1"))
+    response = await client.get(f"/api/v2/product/products/prod-1", headers=_auth_headers("user1"))
     assert response.status_code == 200
     data = response.json()
     assert data["product_id"] == "prod-1"
     assert data["name"] == "Test Product"
 
 
-def test_update_product_empty_payload_returns_400(fastapi_client):
+async def test_update_product_empty_payload_returns_400(fastapi_client):
     client, stub = fastapi_client
     stub.create_product(name="Test Product", created_by="admin-user")
     stub.add_member("prod-1", "user1", "owner")
-    response = client.patch(
+    response = await client.patch(
         "/api/v2/product/products/prod-1",
         json={},
         headers=_auth_headers("user1"),
@@ -361,11 +350,11 @@ def test_update_product_empty_payload_returns_400(fastapi_client):
     assert response.json()["detail"] == "没有可更新字段"
 
 
-def test_update_product_requires_write_permission(fastapi_client):
+async def test_update_product_requires_write_permission(fastapi_client):
     client, stub = fastapi_client
     stub.create_product(name="Test Product", created_by="admin-user")
     stub.add_member("prod-1", "user1", "viewer")
-    response = client.patch(
+    response = await client.patch(
         "/api/v2/product/products/prod-1",
         json={"name": "Updated Name"},
         headers=_auth_headers("user1"),
@@ -374,11 +363,11 @@ def test_update_product_requires_write_permission(fastapi_client):
     assert response.json()["detail"] == "Permission denied"
 
 
-def test_update_product_success(fastapi_client):
+async def test_update_product_success(fastapi_client):
     client, stub = fastapi_client
     stub.create_product(name="Test Product", created_by="admin-user")
     stub.add_member("prod-1", "user1", "owner")
-    response = client.patch(
+    response = await client.patch(
         "/api/v2/product/products/prod-1",
         json={"name": "Updated Name", "description": "Updated Desc"},
         headers=_auth_headers("user1"),
@@ -391,11 +380,11 @@ def test_update_product_success(fastapi_client):
 
 
 @pytest.mark.skip(reason="Pydantic validator behavior differs in test environment")
-def test_update_product_invalid_status_returns_422(fastapi_client):
+async def test_update_product_invalid_status_returns_422(fastapi_client):
     client, stub = fastapi_client
     stub.create_product(name="Test Product", created_by="admin-user")
     stub.add_member("prod-1", "user1", "owner")
-    response = client.patch(
+    response = await client.patch(
         "/api/v2/product/products/prod-1",
         json={"status": "invalid"},
         headers=_auth_headers("user1"),
@@ -405,11 +394,11 @@ def test_update_product_invalid_status_returns_422(fastapi_client):
     assert any("status 必须是 active 或 archived" in str(d) for d in detail)
 
 
-def test_delete_product_success(fastapi_client):
+async def test_delete_product_success(fastapi_client):
     client, stub = fastapi_client
     stub.create_product(name="Test Product", created_by="admin-user")
     stub.add_member("prod-1", "user1", "owner")
-    response = client.delete(
+    response = await client.delete(
         "/api/v2/product/products/prod-1",
         headers=_auth_headers("user1"),
     )
@@ -418,13 +407,13 @@ def test_delete_product_success(fastapi_client):
     assert stub._products["prod-1"]["status"] == "archived"
 
 
-def test_delete_product_not_found_returns_404(fastapi_client):
+async def test_delete_product_not_found_returns_404(fastapi_client):
     client, stub = fastapi_client
     stub.create_product(name="Test Product", created_by="admin-user")
     # 先归档
     stub.delete_product("prod-1")
     stub.add_member("prod-1", "user1", "owner")
-    response = client.delete(
+    response = await client.delete(
         "/api/v2/product/products/prod-1",
         headers=_auth_headers("user1"),
     )
@@ -436,9 +425,9 @@ def test_delete_product_not_found_returns_404(fastapi_client):
 # Product Members Tests
 # ========================
 
-def test_add_member_missing_user_id_returns_422(fastapi_client):
+async def test_add_member_missing_user_id_returns_422(fastapi_client):
     client, _ = fastapi_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/product/products/prod-1/members",
         json={"role": "member"},
         headers=_auth_headers("admin-user", "admin"),
@@ -447,9 +436,9 @@ def test_add_member_missing_user_id_returns_422(fastapi_client):
 
 
 @pytest.mark.skip(reason="Pydantic validator behavior differs in test environment")
-def test_add_member_invalid_role_returns_422(fastapi_client):
+async def test_add_member_invalid_role_returns_422(fastapi_client):
     client, _ = fastapi_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/product/products/prod-1/members",
         json={"user_id": "user1", "role": "invalid"},
         headers=_auth_headers("admin-user", "admin"),
@@ -459,11 +448,11 @@ def test_add_member_invalid_role_returns_422(fastapi_client):
     assert any("role 必须是 owner、admin 或 member" in str(d) for d in detail)
 
 
-def test_add_member_success(fastapi_client):
+async def test_add_member_success(fastapi_client):
     client, stub = fastapi_client
     stub.create_product(name="Test Product", created_by="admin-user")
     stub.add_member("prod-1", "admin-user", "owner")
-    response = client.post(
+    response = await client.post(
         "/api/v2/product/products/prod-1/members",
         json={"user_id": "user1", "role": "member"},
         headers=_auth_headers("admin-user", "admin"),
@@ -474,12 +463,12 @@ def test_add_member_success(fastapi_client):
     assert data["role"] == "member"
 
 
-def test_remove_member_success(fastapi_client):
+async def test_remove_member_success(fastapi_client):
     client, stub = fastapi_client
     stub.create_product(name="Test Product", created_by="admin-user")
     stub.add_member("prod-1", "admin-user", "owner")
     stub.add_member("prod-1", "user1", "member")
-    response = client.delete(
+    response = await client.delete(
         "/api/v2/product/products/prod-1/members/user1",
         headers=_auth_headers("admin-user", "admin"),
     )
@@ -487,11 +476,11 @@ def test_remove_member_success(fastapi_client):
     assert response.json() == {"success": True, "removed": 1}
 
 
-def test_remove_member_not_found_returns_404(fastapi_client):
+async def test_remove_member_not_found_returns_404(fastapi_client):
     client, stub = fastapi_client
     stub.create_product(name="Test Product", created_by="admin-user")
     stub.add_member("prod-1", "admin-user", "owner")
-    response = client.delete(
+    response = await client.delete(
         "/api/v2/product/products/prod-1/members/nonexistent",
         headers=_auth_headers("admin-user", "admin"),
     )
@@ -499,12 +488,12 @@ def test_remove_member_not_found_returns_404(fastapi_client):
     assert response.json()["detail"] == "Member not found"
 
 
-def test_list_members_success(fastapi_client):
+async def test_list_members_success(fastapi_client):
     client, stub = fastapi_client
     stub.create_product(name="Test Product", created_by="admin-user")
     stub.add_member("prod-1", "admin-user", "owner")
     stub.add_member("prod-1", "user1", "member")
-    response = client.get("/api/v2/product/products/prod-1/members", headers=_auth_headers("user1"))
+    response = await client.get("/api/v2/product/products/prod-1/members", headers=_auth_headers("user1"))
     assert response.status_code == 200
     data = response.json()
     assert "members" in data
@@ -515,9 +504,9 @@ def test_list_members_success(fastapi_client):
 # Product-Project Relations Tests
 # ========================
 
-def test_create_project_missing_name_returns_422(fastapi_client):
+async def test_create_project_missing_name_returns_422(fastapi_client):
     client, _ = fastapi_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/product/products/prod-1/projects",
         json={"description": "desc"},
         headers=_auth_headers("user1"),
@@ -525,11 +514,11 @@ def test_create_project_missing_name_returns_422(fastapi_client):
     _assert_validation_error(response, "name")
 
 
-def test_create_project_under_product_success(fastapi_client):
+async def test_create_project_under_product_success(fastapi_client):
     client, stub = fastapi_client
     stub.create_product(name="Test Product", created_by="admin-user")
     stub.add_member("prod-1", "user1", "owner")
-    response = client.post(
+    response = await client.post(
         "/api/v2/product/products/prod-1/projects",
         json={"name": "New Project", "description": "Project Description"},
         headers=_auth_headers("user1"),
@@ -541,11 +530,11 @@ def test_create_project_under_product_success(fastapi_client):
     assert data["product_id"] == "prod-1"
 
 
-def test_bind_project_bind_requires_permission(fastapi_client):
+async def test_bind_project_bind_requires_permission(fastapi_client):
     client, stub = fastapi_client
     stub.create_product(name="Test Product", created_by="admin-user")
     # 不添加成员，没有权限
-    response = client.post(
+    response = await client.post(
         "/api/v2/product/projects/proj-1/bind",
         json={"product_id": "prod-1"},
         headers=_auth_headers("user1", "member"),
@@ -554,9 +543,9 @@ def test_bind_project_bind_requires_permission(fastapi_client):
     assert response.json()["detail"] == "Permission denied"
 
 
-def test_bind_project_unbind_no_permission_needed(fastapi_client):
+async def test_bind_project_unbind_no_permission_needed(fastapi_client):
     client, stub = fastapi_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/product/projects/proj-1/bind",
         json={"product_id": None},
         headers=_auth_headers("user1", "member"),
@@ -565,11 +554,11 @@ def test_bind_project_unbind_no_permission_needed(fastapi_client):
     assert stub.last_bind_project_args == ("proj-1", None)
 
 
-def test_bind_project_bind_success(fastapi_client):
+async def test_bind_project_bind_success(fastapi_client):
     client, stub = fastapi_client
     stub.create_product(name="Test Product", created_by="admin-user")
     stub.add_member("prod-1", "user1", "owner")
-    response = client.post(
+    response = await client.post(
         "/api/v2/product/projects/proj-1/bind",
         json={"product_id": "prod-1"},
         headers=_auth_headers("user1"),
@@ -578,9 +567,9 @@ def test_bind_project_bind_success(fastapi_client):
     assert response.json()["product_id"] == "prod-1"
 
 
-def test_list_projects_by_product_success(fastapi_client):
+async def test_list_projects_by_product_success(fastapi_client):
     client, stub = fastapi_client
-    response = client.get("/api/v2/product/products/prod-1/projects", headers=_auth_headers("user1"))
+    response = await client.get("/api/v2/product/products/prod-1/projects", headers=_auth_headers("user1"))
     assert response.status_code == 200
     data = response.json()
     assert "projects" in data
@@ -590,10 +579,10 @@ def test_list_projects_by_product_success(fastapi_client):
 # Product Overview Tests
 # ========================
 
-def test_get_product_overview_success(fastapi_client):
+async def test_get_product_overview_success(fastapi_client):
     client, stub = fastapi_client
     stub.create_product(name="Test Product", created_by="admin-user")
-    response = client.get("/api/v2/product/products/prod-1/overview", headers=_auth_headers("user1"))
+    response = await client.get("/api/v2/product/products/prod-1/overview", headers=_auth_headers("user1"))
     assert response.status_code == 200
     data = response.json()
     assert "product" in data
@@ -603,40 +592,40 @@ def test_get_product_overview_success(fastapi_client):
     assert "milestones" in data["stats"]
 
 
-def test_get_product_overview_not_found_raises_error(fastapi_client):
+async def test_get_product_overview_not_found_raises_error(fastapi_client):
     client, stub = fastapi_client
-    response = client.get("/api/v2/product/products/nonexistent/overview", headers=_auth_headers("user1"))
+    response = await client.get("/api/v2/product/products/nonexistent/overview", headers=_auth_headers("user1"))
     assert response.status_code == 400  # ValueError 转为 400
     assert "产品不存在" in response.json()["detail"]
 
 
-def test_list_requirements_by_product_success(fastapi_client):
+async def test_list_requirements_by_product_success(fastapi_client):
     client, stub = fastapi_client
-    response = client.get("/api/v2/product/products/prod-1/requirements", headers=_auth_headers("user1"))
+    response = await client.get("/api/v2/product/products/prod-1/requirements", headers=_auth_headers("user1"))
     assert response.status_code == 200
     data = response.json()
     assert "requirements" in data
     assert stub.last_list_requirements_args == ("prod-1", False)
 
 
-def test_list_requirements_with_include_deleted(fastapi_client):
+async def test_list_requirements_with_include_deleted(fastapi_client):
     client, stub = fastapi_client
-    response = client.get("/api/v2/product/products/prod-1/requirements?include_deleted=true", headers=_auth_headers("user1"))
+    response = await client.get("/api/v2/product/products/prod-1/requirements?include_deleted=true", headers=_auth_headers("user1"))
     assert response.status_code == 200
     assert stub.last_list_requirements_args == ("prod-1", True)
 
 
-def test_list_milestones_by_product_success(fastapi_client):
+async def test_list_milestones_by_product_success(fastapi_client):
     client, stub = fastapi_client
-    response = client.get("/api/v2/product/products/prod-1/milestones", headers=_auth_headers("user1"))
+    response = await client.get("/api/v2/product/products/prod-1/milestones", headers=_auth_headers("user1"))
     assert response.status_code == 200
     data = response.json()
     assert "milestones" in data
 
 
-def test_list_baselines_by_product_success(fastapi_client):
+async def test_list_baselines_by_product_success(fastapi_client):
     client, stub = fastapi_client
-    response = client.get("/api/v2/product/products/prod-1/baselines", headers=_auth_headers("user1"))
+    response = await client.get("/api/v2/product/products/prod-1/baselines", headers=_auth_headers("user1"))
     assert response.status_code == 200
     data = response.json()
     assert "baselines" in data

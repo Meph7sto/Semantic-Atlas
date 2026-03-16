@@ -8,11 +8,22 @@ import time
 from typing import List
 import os
 import sys
+import pytest
 
 # 添加项目路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from backend_inference.core.engine import DeepSeekEngine
+
+
+_RUN_DEEPSEEK_INTEGRATION = (
+    os.getenv("RUN_DEEPSEEK_INTEGRATION", "").strip().lower() in {"1", "true", "yes"}
+)
+
+pytestmark = pytest.mark.skipif(
+    not _RUN_DEEPSEEK_INTEGRATION,
+    reason="DeepSeek integration/performance tests are opt-in. Set RUN_DEEPSEEK_INTEGRATION=1 to run.",
+)
 
 
 # ========================================

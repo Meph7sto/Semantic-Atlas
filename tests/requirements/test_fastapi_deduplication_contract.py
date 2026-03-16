@@ -4,39 +4,8 @@ FastAPI deduplication route contract tests.
 These tests enforce FastAPI-native validation semantics.
 """
 
-import os
-import sys
-import types
-
 import pytest
-from fastapi import FastAPI
-from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
 
-
-def _install_psycopg2_stub() -> None:
-    if "psycopg2" in sys.modules and "psycopg2.extras" in sys.modules:
-        return
-
-    psycopg2_stub = types.ModuleType("psycopg2")
-    psycopg2_stub.connect = lambda *args, **kwargs: None
-    psycopg2_stub.extensions = types.SimpleNamespace(connection=object)
-
-    extras_stub = types.ModuleType("psycopg2.extras")
-    extras_stub.RealDictCursor = object
-
-    sys.modules.setdefault("psycopg2", psycopg2_stub)
-    sys.modules.setdefault("psycopg2.extras", extras_stub)
-
-
-_install_psycopg2_stub()
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
-
-from backend_business.api.http.errors import error_response_handler, validation_error_handler
 from backend_business.api.routers import deduplication
 
 
@@ -87,34 +56,31 @@ def _assert_validation_error(response, field: str):
 
 
 @pytest.fixture
-def api_client(monkeypatch):
+async def api_client(monkeypatch):
     dummy = _DummyDedupService()
     monkeypatch.setattr(deduplication, "_dedup_service", dummy)
 
-    app = FastAPI()
-    app.include_router(deduplication.router)
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(Exception, error_response_handler)
+    app = build_test_app(deduplication.router)
 
-    with TestClient(app) as client:
+    async with async_client(app) as client:
         yield client, dummy
 
 
-def test_detect_missing_session_id(api_client):
+async def test_detect_missing_session_id(api_client):
     client, _ = api_client
-    response = client.post("/api/v2/dedup/detect", json={})
+    response = await client.post("/api/v2/dedup/detect", json={})
     _assert_validation_error(response, "session_id")
 
 
-def test_detect_empty_session_id(api_client):
+async def test_detect_empty_session_id(api_client):
     client, _ = api_client
-    response = client.post("/api/v2/dedup/detect", json={"session_id": ""})
+    response = await client.post("/api/v2/dedup/detect", json={"session_id": ""})
     _assert_validation_error(response, "session_id")
 
 
-def test_detect_invalid_bool_values_rejected(api_client):
+async def test_detect_invalid_bool_values_rejected(api_client):
     client, _ = api_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/dedup/detect",
         json={
             "session_id": "s1",
@@ -125,9 +91,9 @@ def test_detect_invalid_bool_values_rejected(api_client):
     assert response.status_code == 422
 
 
-def test_detect_null_bool_values_rejected(api_client):
+async def test_detect_null_bool_values_rejected(api_client):
     client, _ = api_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/dedup/detect",
         json={
             "session_id": "s1",
@@ -138,9 +104,9 @@ def test_detect_null_bool_values_rejected(api_client):
     assert response.status_code == 422
 
 
-def test_detect_valid_payload_calls_service(api_client):
+async def test_detect_valid_payload_calls_service(api_client):
     client, dummy = api_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/dedup/detect",
         json={
             "session_id": "s1",
@@ -153,9 +119,9 @@ def test_detect_valid_payload_calls_service(api_client):
     assert dummy.detect_kwargs["auto_merge"] is False
 
 
-def test_merge_missing_primary_req_id(api_client):
+async def test_merge_missing_primary_req_id(api_client):
     client, _ = api_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/dedup/merge",
         json={
             "session_id": "s1",
@@ -168,27 +134,27 @@ def test_merge_missing_primary_req_id(api_client):
     _assert_validation_error(response, "primary_req_id")
 
 
-def test_delete_missing_req_ids(api_client):
+async def test_delete_missing_req_ids(api_client):
     client, _ = api_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/dedup/delete",
         json={"session_id": "s1", "req_ids": []},
     )
     _assert_validation_error(response, "req_ids")
 
 
-def test_update_missing_new_text(api_client):
+async def test_update_missing_new_text(api_client):
     client, _ = api_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/dedup/update",
         json={"session_id": "s1", "req_id": "r1", "new_text": ""},
     )
     _assert_validation_error(response, "new_text")
 
 
-def test_regenerate_requires_at_least_two_ids(api_client):
+async def test_regenerate_requires_at_least_two_ids(api_client):
     client, _ = api_client
-    response = client.post(
+    response = await client.post(
         "/api/v2/dedup/regenerate",
         json={"session_id": "s1", "req_ids": ["r1"]},
     )

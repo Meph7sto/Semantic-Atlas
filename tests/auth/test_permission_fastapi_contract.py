@@ -3,21 +3,8 @@ FastAPI strict contract tests for permission routes.
 It ensures we do not keep compatibility coercions for legacy callers.
 """
 
-import os
-import sys
-
 import pytest
-from fastapi import FastAPI, HTTPException
-from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
 
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
-
-from backend_business.api.http.errors import error_response_handler, validation_error_handler
 from backend_business.api.routers import permission
 from backend_business.services.auth_service import get_auth_service
 
@@ -35,11 +22,22 @@ class _StubPermissionDBService:
     def is_project_member(*args, **kwargs):
         return True
 
+    @staticmethod
+    def get_user_by_id(user_id):
+        return {"user_id": user_id}
+
+    @staticmethod
+    def can_access_project(project_id, user_id, user):
+        _ = project_id, user_id, user
+        return True
+
     def list_project_members(self, project_id, include_roles=False):
+        _ = project_id
         self.last_include_roles = include_roles
         return {"members": [], "total": 0}
 
     def list_project_baselines(self, project_id, include_locked=True):
+        _ = project_id
         self.last_include_locked = include_locked
         return []
 
@@ -62,30 +60,25 @@ def _assert_validation_error(response, field: str, scope: str = "body"):
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     stub = _StubPermissionDBService()
     monkeypatch.setattr(permission, "db_service", stub)
 
-    app = FastAPI()
-    app.include_router(permission.router)
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
-
-    with TestClient(app, raise_server_exceptions=False) as client:
+    app = build_test_app(permission.router)
+    async with async_client(app) as client:
         yield client, stub
 
 
-def test_missing_token_uses_fastapi_error_shape(fastapi_client):
+async def test_missing_token_uses_fastapi_error_shape(fastapi_client):
     client, _ = fastapi_client
-    response = client.get("/api/v2/permission/projects/p1/members")
+    response = await client.get("/api/v2/permission/projects/p1/members")
     assert response.status_code == 401
     assert response.json()["detail"] == "未提供认证 Token"
 
 
-def test_invalid_token_uses_fastapi_error_shape(fastapi_client):
+async def test_invalid_token_uses_fastapi_error_shape(fastapi_client):
     client, _ = fastapi_client
-    response = client.get(
+    response = await client.get(
         "/api/v2/permission/projects/p1/members",
         headers={"Authorization": "Bearer invalid_token"},
     )
@@ -104,18 +97,20 @@ def test_invalid_token_uses_fastapi_error_shape(fastapi_client):
         ("post", "/api/v2/permission/requirements/r1/reviews", {"seq": 1}, "reviewer_id"),
     ],
 )
-def test_validation_errors_follow_fastapi_422(fastapi_client, method, path, payload, field):
+async def test_validation_errors_follow_fastapi_422(
+    fastapi_client, method, path, payload, field
+):
     client, _ = fastapi_client
     headers = _auth_headers()
 
     if payload is None:
-        response = getattr(client, method)(
+        response = await getattr(client, method)(
             path,
             content="null",
             headers={**headers, "Content-Type": "application/json"},
         )
     else:
-        response = getattr(client, method)(path, json=payload, headers=headers)
+        response = await getattr(client, method)(path, json=payload, headers=headers)
 
     if field == "body":
         assert response.status_code == 422
@@ -124,9 +119,11 @@ def test_validation_errors_follow_fastapi_422(fastapi_client, method, path, payl
         _assert_validation_error(response, field)
 
 
-def test_invalid_include_roles_is_rejected_instead_of_legacy_coercion(fastapi_client):
+async def test_invalid_include_roles_is_rejected_instead_of_legacy_coercion(
+    fastapi_client,
+):
     client, stub = fastapi_client
-    response = client.get(
+    response = await client.get(
         "/api/v2/permission/projects/p1/members?include_roles=abc",
         headers=_auth_headers(),
     )
@@ -134,9 +131,11 @@ def test_invalid_include_roles_is_rejected_instead_of_legacy_coercion(fastapi_cl
     assert stub.last_include_roles is None
 
 
-def test_invalid_include_locked_is_rejected_instead_of_legacy_coercion(fastapi_client):
+async def test_invalid_include_locked_is_rejected_instead_of_legacy_coercion(
+    fastapi_client,
+):
     client, stub = fastapi_client
-    response = client.get(
+    response = await client.get(
         "/api/v2/permission/projects/p1/baselines?include_locked=abc",
         headers=_auth_headers(),
     )
@@ -144,15 +143,15 @@ def test_invalid_include_locked_is_rejected_instead_of_legacy_coercion(fastapi_c
     assert stub.last_include_locked is None
 
 
-def test_valid_bool_query_values_are_forwarded(fastapi_client):
+async def test_valid_bool_query_values_are_forwarded(fastapi_client):
     client, stub = fastapi_client
     headers = _auth_headers()
 
-    members_resp = client.get(
+    members_resp = await client.get(
         "/api/v2/permission/projects/p1/members?include_roles=true",
         headers=headers,
     )
-    baselines_resp = client.get(
+    baselines_resp = await client.get(
         "/api/v2/permission/projects/p1/baselines?include_locked=false",
         headers=headers,
     )
@@ -161,4 +160,3 @@ def test_valid_bool_query_values_are_forwarded(fastapi_client):
     assert baselines_resp.status_code == 200
     assert stub.last_include_roles is True
     assert stub.last_include_locked is False
-

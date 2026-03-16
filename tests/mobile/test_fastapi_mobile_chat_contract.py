@@ -2,21 +2,14 @@
 FastAPI mobile chat route contract tests.
 """
 
-import os
 import queue
-import sys
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
 
-os.environ["SKIP_DB_INIT"] = "1"
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
 
 from backend_business.api.http.errors import error_response_handler, validation_error_handler
 from backend_business.api.routers import mobile_chat
@@ -73,39 +66,35 @@ class _StubMobileChatService:
 
 
 @pytest.fixture
-def fastapi_client(monkeypatch):
+async def fastapi_client(monkeypatch):
     stub = _StubMobileChatService()
     monkeypatch.setattr(mobile_chat, "mobile_chat_service", stub)
 
-    app = FastAPI()
-    app.include_router(mobile_chat.router)
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, error_response_handler)
-    app.add_exception_handler(Exception, error_response_handler)
+    app = build_test_app(mobile_chat.router)
 
-    with TestClient(app, raise_server_exceptions=False) as client:
+    async with async_client(app) as client:
         yield client, stub
 
 
-def test_list_sessions_user_id_falls_back_to_header_then_anonymous(fastapi_client):
+async def test_list_sessions_user_id_falls_back_to_header_then_anonymous(fastapi_client):
     client, stub = fastapi_client
 
-    resp = client.get("/api/v2/mobile/sessions?user_id=query-user", headers={"X-Actor": "actor-user"})
+    resp = await client.get("/api/v2/mobile/sessions?user_id=query-user", headers={"X-Actor": "actor-user"})
     assert resp.status_code == 200
     assert stub.last_sessions["user_id"] == "query-user"
 
-    resp = client.get("/api/v2/mobile/sessions", headers={"X-Actor": "actor-user"})
+    resp = await client.get("/api/v2/mobile/sessions", headers={"X-Actor": "actor-user"})
     assert resp.status_code == 200
     assert stub.last_sessions["user_id"] == "actor-user"
 
-    resp = client.get("/api/v2/mobile/sessions")
+    resp = await client.get("/api/v2/mobile/sessions")
     assert resp.status_code == 200
     assert stub.last_sessions["user_id"] == "anonymous"
 
 
-def test_list_messages_uses_query_user_id(fastapi_client):
+async def test_list_messages_uses_query_user_id(fastapi_client):
     client, stub = fastapi_client
-    resp = client.get("/api/v2/mobile/messages?session_id=s1&user_id=u-query&limit=20")
+    resp = await client.get("/api/v2/mobile/messages?session_id=s1&user_id=u-query&limit=20")
     assert resp.status_code == 200
     assert stub.last_messages == {
         "user_id": "u-query",
@@ -115,17 +104,17 @@ def test_list_messages_uses_query_user_id(fastapi_client):
     }
 
 
-def test_list_messages_missing_session_id_returns_422(fastapi_client):
+async def test_list_messages_missing_session_id_returns_422(fastapi_client):
     client, _ = fastapi_client
-    resp = client.get("/api/v2/mobile/messages")
+    resp = await client.get("/api/v2/mobile/messages")
     assert resp.status_code == 422
     detail = resp.json()["detail"]
     assert any(item.get("loc") == ["query", "session_id"] for item in detail)
 
 
-def test_create_message_user_id_priority_payload_over_header(fastapi_client):
+async def test_create_message_user_id_priority_payload_over_header(fastapi_client):
     client, stub = fastapi_client
-    resp = client.post(
+    resp = await client.post(
         "/api/v2/mobile/messages",
         json={
             "user_id": "u-payload",
@@ -139,9 +128,9 @@ def test_create_message_user_id_priority_payload_over_header(fastapi_client):
     assert stub.last_create["user_id"] == "u-payload"
 
 
-def test_create_message_invalid_sender_returns_400_detail(fastapi_client):
+async def test_create_message_invalid_sender_returns_400_detail(fastapi_client):
     client, _ = fastapi_client
-    resp = client.post(
+    resp = await client.post(
         "/api/v2/mobile/messages",
         json={
             "session_id": "s1",
@@ -153,9 +142,9 @@ def test_create_message_invalid_sender_returns_400_detail(fastapi_client):
     assert resp.json()["detail"] == "sender must be 'web' or 'mobile'"
 
 
-def test_create_message_missing_content_returns_422(fastapi_client):
+async def test_create_message_missing_content_returns_422(fastapi_client):
     client, _ = fastapi_client
-    resp = client.post(
+    resp = await client.post(
         "/api/v2/mobile/messages",
         json={"session_id": "s1", "sender": "web"},
     )
@@ -164,9 +153,9 @@ def test_create_message_missing_content_returns_422(fastapi_client):
     assert any(item.get("loc") == ["body", "content"] for item in detail)
 
 
-def test_stream_uses_user_id_for_subscription(fastapi_client):
+async def test_stream_uses_user_id_for_subscription(fastapi_client):
     client, stub = fastapi_client
-    resp = client.get("/api/v2/mobile/stream?session_id=s-stream&user_id=u-stream")
+    resp = await client.get("/api/v2/mobile/stream?session_id=s-stream&user_id=u-stream")
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/event-stream")
     assert resp.headers["cache-control"] == "no-cache"
