@@ -356,6 +356,47 @@ function Test-LocalPortOpen {
   }
 }
 
+function Resolve-NativeCommandPath {
+  param([Parameter(Mandatory = $true)][string]$CommandName)
+
+  if ([System.IO.Path]::IsPathRooted($CommandName) -or $CommandName.Contains('\') -or $CommandName.Contains('/')) {
+    return $CommandName
+  }
+
+  $isWindowsHost = $env:OS -eq "Windows_NT"
+  $candidates = @($CommandName)
+  if ($isWindowsHost -and -not [System.IO.Path]::GetExtension($CommandName)) {
+    $candidates = @("$CommandName.cmd", "$CommandName.exe", "$CommandName.bat", $CommandName)
+  }
+
+  foreach ($candidate in $candidates) {
+    $command = Get-Command $candidate -CommandType Application, ExternalScript -ErrorAction SilentlyContinue |
+      Select-Object -First 1
+    if ($command) {
+      if ($command.Source) {
+        return $command.Source
+      }
+      if ($command.Path) {
+        return $command.Path
+      }
+      return $command.Definition
+    }
+  }
+
+  $fallback = Get-Command $CommandName -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($fallback) {
+    if ($fallback.Source) {
+      return $fallback.Source
+    }
+    if ($fallback.Path) {
+      return $fallback.Path
+    }
+    return $fallback.Definition
+  }
+
+  return $null
+}
+
 function Invoke-RequiredNativeCommand {
   param(
     [string]$FilePath,
@@ -364,9 +405,13 @@ function Invoke-RequiredNativeCommand {
     [string]$StepName
   )
 
+  $resolvedFilePath = Resolve-NativeCommandPath -CommandName $FilePath
+  if (-not $resolvedFilePath) {
+    $resolvedFilePath = $FilePath
+  }
   Push-Location $WorkingDirectory
   try {
-    & $FilePath @ArgumentList
+    & $resolvedFilePath @ArgumentList
     if ($LASTEXITCODE -ne 0) {
       throw "[start] $StepName failed with exit code $LASTEXITCODE."
     }
@@ -391,6 +436,11 @@ function Invoke-RequiredProcess {
     WorkingDirectory = $WorkingDirectory
     Wait             = $true
     PassThru         = $true
+  }
+
+  $resolvedFilePath = Resolve-NativeCommandPath -CommandName $FilePath
+  if ($resolvedFilePath) {
+    $processArgs.FilePath = $resolvedFilePath
   }
 
   if ($NoNewWindow) {
@@ -676,15 +726,12 @@ if ($doFrontend -and $FrontendRuntime -eq "dev") {
   $env:VITE_PUBLIC_PORT = "8008"
   $env:VITE_USE_POLLING = "1"
   $env:VITE_POLL_INTERVAL = "300"
-  $NpmCmd = Get-Command npm.cmd -ErrorAction SilentlyContinue
-  if (-not $NpmCmd) {
-    $NpmCmd = Get-Command npm -ErrorAction SilentlyContinue
-  }
-  if (-not $NpmCmd) {
+  $NpmExe = Resolve-NativeCommandPath -CommandName "npm"
+  if (-not $NpmExe) {
     throw "[start] npm not found."
   }
   Write-Host "[start] Starting Vite dev server ($FRONTEND_DEV_PORT) behind Nginx 8008..."
-  $viteProcess = Start-Process -FilePath $NpmCmd.Source -ArgumentList @("run", "dev") -WorkingDirectory (Join-Path $BASE_DIR "frontend") -PassThru
+  $viteProcess = Start-Process -FilePath $NpmExe -ArgumentList @("run", "dev") -WorkingDirectory (Join-Path $BASE_DIR "frontend") -PassThru
   Start-Sleep -Seconds 3
   if ($viteProcess.HasExited) {
     throw "[start] Vite dev server exited immediately with code $($viteProcess.ExitCode)."
