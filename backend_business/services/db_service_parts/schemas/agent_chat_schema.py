@@ -10,6 +10,7 @@ def init_agent_chat_schema(cur):
             user_id TEXT NOT NULL,
             title TEXT,
             active_graph_id TEXT,
+            agent_type TEXT NOT NULL DEFAULT 'requirement_agent',
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
@@ -19,7 +20,19 @@ def init_agent_chat_schema(cur):
         "ALTER TABLE ai_chat_sessions ADD COLUMN IF NOT EXISTS active_graph_id TEXT"
     )
     cur.execute(
+        "ALTER TABLE ai_chat_sessions ADD COLUMN IF NOT EXISTS agent_type TEXT"
+    )
+    cur.execute(
+        "UPDATE ai_chat_sessions SET agent_type = 'requirement_agent' WHERE agent_type IS NULL OR agent_type = ''"
+    )
+    cur.execute(
+        "ALTER TABLE ai_chat_sessions ALTER COLUMN agent_type SET DEFAULT 'requirement_agent'"
+    )
+    cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_user_project ON ai_chat_sessions(user_id, project_id, updated_at DESC)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_agent_type ON ai_chat_sessions(agent_type)"
     )
 
     cur.execute(

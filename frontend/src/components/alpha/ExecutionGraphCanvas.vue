@@ -366,11 +366,30 @@ const applyZoomCenter = (newZoom) => {
   panX.value = centerX - localX * newZoom
   panY.value = centerY - localY * newZoom
 }
+const findScrollableParent = (el) => {
+  let current = el?.parentElement
+  while (current) {
+    const style = window.getComputedStyle(current)
+    const overflowY = style.overflowY
+    if ((overflowY === 'auto' || overflowY === 'scroll') && current.scrollHeight > current.clientHeight) {
+      return current
+    }
+    current = current.parentElement
+  }
+  return null
+}
 
 const handleWheel = (event) => {
-  // 禁用滚轮缩放和滚动，仅允许手动拖拽
   event.preventDefault()
+  event.stopPropagation()
+  const scrollable = findScrollableParent(wrapperRef.value)
+  if (scrollable) {
+    scrollable.scrollTop += event.deltaY
+    scrollable.scrollLeft += event.deltaX
+  }
 }
+
+
 
 const handleCanvasPointerDown = (event) => {
   if (event.button !== undefined && event.button !== 0 && event.button !== 1) return
@@ -690,7 +709,10 @@ const getPortXY = (pos, side) => {
 }
 
 // Picks source/target port sides based on the relative position of the two nodes
-const computeEdgeSides = (sourcePos, targetPos) => {
+const computeEdgeSides = (sourcePos, targetPos, edge) => {
+  if (edge?.config_json?.session_chain) {
+    return ['bottom', 'top']
+  }
   const dx = (targetPos.x + NODE_WIDTH / 2) - (sourcePos.x + NODE_WIDTH / 2)
   const dy = (targetPos.y + NODE_HEIGHT / 2) - (sourcePos.y + NODE_HEIGHT / 2)
   if (Math.abs(dx) >= Math.abs(dy)) {
@@ -740,7 +762,7 @@ const edgePaths = computed(() => {
         }
       }
 
-      const [sourceSide, targetSide] = computeEdgeSides(sourcePos, targetPos)
+      const [sourceSide, targetSide] = computeEdgeSides(sourcePos, targetPos, edge)
       const start = getPortXY(sourcePos, sourceSide)
       const end   = getPortXY(targetPos, targetSide)
       const [svx, svy] = getSideVector(sourceSide)
@@ -931,22 +953,6 @@ onBeforeUnmount(() => {
       <div class="absolute -right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 bg-white border border-zinc-400 rounded-full" />
       <div class="absolute left-1/2 -top-1.5 -translate-x-1/2 w-3 h-3 bg-white border border-zinc-400 rounded-full" />
       <div class="absolute left-1/2 -bottom-1.5 -translate-x-1/2 w-3 h-3 bg-white border border-zinc-400 rounded-full" />
-    </div>
-
-    <div class="absolute left-4 top-3 px-3 py-2 text-[11px] text-zinc-600 bg-white/95 rounded-lg border border-zinc-200 leading-5" style="z-index: 18;">
-      <div class="font-semibold text-zinc-700 mb-1">关系图例</div>
-      <div class="flex items-center gap-2">
-        <span class="inline-block w-5 h-0.5 bg-slate-600"></span>
-        <span>容器内边</span>
-      </div>
-      <div class="flex items-center gap-2">
-        <span class="inline-block w-5 h-0.5 border-t-2 border-dashed border-amber-700"></span>
-        <span>跨容器边</span>
-      </div>
-      <div class="flex items-center gap-2">
-        <span class="inline-block w-5 h-0.5 border-t-2 border-dashed border-violet-600"></span>
-        <span>跨未分配边</span>
-      </div>
     </div>
 
     </div> <!-- close canvasRef -->

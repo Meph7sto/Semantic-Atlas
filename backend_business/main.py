@@ -123,6 +123,7 @@ from backend_business.api.routers import (
     auth,
     classification,
     conflict,
+    conflict_agent_chat,
     deduplication,
     execution_graph,
     file,
@@ -137,6 +138,7 @@ from backend_business.api.routers import (
 )
 
 app.include_router(agent_chat.router)
+app.include_router(conflict_agent_chat.router)
 app.include_router(deduplication.router)
 app.include_router(auth.router)
 app.include_router(permission.router)

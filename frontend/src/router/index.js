@@ -18,6 +18,7 @@ import ExecutionTopologyTemplate from '../views/alpha/ExecutionTopologyTemplate.
 import ActorVisualTester from '../views/alpha/ActorVisualTester.vue'
 import RequirementReplay from '../views/alpha/RequirementReplay.vue'
 import RequirementAgentChat from '../views/alpha/RequirementAgentChat.vue'
+import ConflictAgentChat from '../views/alpha/ConflictAgentChat.vue'
 import ImageCaptionPreview from '../views/alpha/ImageCaptionPreview.vue'
 
 // Main views (migrated from frontend_ref)
@@ -165,6 +166,11 @@ const router = createRouter({
                     path: 'conflict',
                     name: 'conflict',
                     component: ConflictDetection
+                },
+                {
+                    path: 'conflict-agent',
+                    name: 'conflict-agent',
+                    component: ConflictAgentChat
                 },
                 {
                     path: 'transcript-ingestion',

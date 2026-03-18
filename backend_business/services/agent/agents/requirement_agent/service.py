@@ -27,6 +27,7 @@ from .utils import inference_url
 
 class RequirementAgentChatService:
     MAX_TOOL_CALL_ROUNDS = 6
+    AGENT_TYPE = "requirement_agent"
 
     def __init__(
         self,
@@ -115,7 +116,7 @@ class RequirementAgentChatService:
     ) -> dict[str, Any]:
         if not self.chat_storage:
             raise RuntimeError("AI chat storage not initialized")
-        session = self.chat_storage.get_or_create_session(user_id=user_id, project_id=project_id)
+        session = self.chat_storage.get_or_create_session(user_id=user_id, project_id=project_id, agent_type=self.AGENT_TYPE)
         if prompt_payload_format:
             normalized_format = normalize_prompt_payload_format(prompt_payload_format)
             if session.get("prompt_payload_format") != normalized_format:
@@ -152,6 +153,7 @@ class RequirementAgentChatService:
             title=title,
             prompt_payload_format=normalized_format,
             context_mode=normalized_context_mode,
+            agent_type=self.AGENT_TYPE,
         )
         return self._hydrate_session_graph(session)
 
@@ -195,6 +197,7 @@ class RequirementAgentChatService:
             user_id=user_id,
             project_id=project_id,
             limit=limit,
+            agent_type=self.AGENT_TYPE,
         )
         return [self._hydrate_session_graph(session) for session in sessions]
 

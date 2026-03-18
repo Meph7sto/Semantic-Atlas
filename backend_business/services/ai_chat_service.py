@@ -37,6 +37,7 @@ class AiChatService:
         self._lock = threading.Lock()
         self._ensure_session_prompt_payload_format_column()
         self._ensure_session_context_mode_column()
+        self._ensure_session_agent_type_column()
 
     def _ensure_session_prompt_payload_format_column(self) -> None:
         try:
@@ -75,6 +76,22 @@ class AiChatService:
         except Exception:
             return
 
+    def _ensure_session_agent_type_column(self) -> None:
+        try:
+            with db_service._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "ALTER TABLE ai_chat_sessions ADD COLUMN IF NOT EXISTS agent_type TEXT"
+                    )
+                    cur.execute(
+                        "ALTER TABLE ai_chat_sessions ALTER COLUMN agent_type SET DEFAULT 'requirement_agent'"
+                    )
+                    cur.execute(
+                        "UPDATE ai_chat_sessions SET agent_type = 'requirement_agent' WHERE agent_type IS NULL OR agent_type = ''"
+                    )
+        except Exception:
+            return
+
     # ========================
     # Session Management
     # ========================
@@ -89,7 +106,7 @@ class AiChatService:
                 cur.execute(
                     """
                     SELECT
-                        session_id, project_id, user_id, title, active_graph_id, prompt_payload_format, context_mode,
+                        session_id, project_id, user_id, title, active_graph_id, prompt_payload_format, context_mode, agent_type,
                         to_char(created_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
                         to_char(updated_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
                     FROM ai_chat_sessions
@@ -110,6 +127,7 @@ class AiChatService:
         title: Optional[str] = None,
         prompt_payload_format: str = DEFAULT_PROMPT_PAYLOAD_FORMAT,
         context_mode: str = DEFAULT_CONTEXT_MODE,
+        agent_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a new chat session."""
         if not user_id:
@@ -117,15 +135,16 @@ class AiChatService:
 
         session_id = f"aisess_{uuid.uuid4().hex[:12]}"
         now = _utc_now_iso(timespec="milliseconds")
+        resolved_agent_type = agent_type or "requirement_agent"
 
         with db_service._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO ai_chat_sessions (
-                        session_id, project_id, user_id, title, active_graph_id, prompt_payload_format, context_mode, created_at, updated_at
+                        session_id, project_id, user_id, title, active_graph_id, prompt_payload_format, context_mode, agent_type, created_at, updated_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s::timestamptz, %s::timestamptz)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::timestamptz, %s::timestamptz)
                     """,
                     (
                         session_id,
@@ -135,6 +154,7 @@ class AiChatService:
                         None,
                         prompt_payload_format or DEFAULT_PROMPT_PAYLOAD_FORMAT,
                         context_mode or DEFAULT_CONTEXT_MODE,
+                        resolved_agent_type,
                         now,
                         now,
                     ),
@@ -148,6 +168,7 @@ class AiChatService:
             "active_graph_id": None,
             "prompt_payload_format": prompt_payload_format or DEFAULT_PROMPT_PAYLOAD_FORMAT,
             "context_mode": context_mode or DEFAULT_CONTEXT_MODE,
+            "agent_type": resolved_agent_type,
             "created_at": now,
             "updated_at": now,
         }
@@ -159,7 +180,7 @@ class AiChatService:
                 cur.execute(
                     """
                     SELECT
-                        session_id, project_id, user_id, title, active_graph_id, prompt_payload_format, context_mode,
+                        session_id, project_id, user_id, title, active_graph_id, prompt_payload_format, context_mode, agent_type,
                         to_char(created_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
                         to_char(updated_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
                     FROM ai_chat_sessions
@@ -174,52 +195,55 @@ class AiChatService:
         self,
         user_id: str,
         project_id: Optional[str] = None,
+        agent_type: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Get the latest session for user/project or create a new one."""
+        """Get the latest session for user/project/agent_type or create a new one."""
+        resolved_agent_type = agent_type or "requirement_agent"
         with db_service._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                # Find the most recent session for this user/project
+                # Find the most recent session for this user/project/agent_type
                 if project_id:
                     cur.execute(
                         """
                         SELECT
-                            session_id, project_id, user_id, title, active_graph_id, prompt_payload_format, context_mode,
+                            session_id, project_id, user_id, title, active_graph_id, prompt_payload_format, context_mode, agent_type,
                             to_char(created_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
                             to_char(updated_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
                         FROM ai_chat_sessions
-                        WHERE user_id = %s AND project_id = %s
+                        WHERE user_id = %s AND project_id = %s AND agent_type = %s
                         ORDER BY updated_at DESC
                         LIMIT 1
                         """,
-                        (user_id, project_id),
+                        (user_id, project_id, resolved_agent_type),
                     )
                 else:
                     cur.execute(
                         """
                         SELECT
-                            session_id, project_id, user_id, title, active_graph_id, prompt_payload_format, context_mode,
+                            session_id, project_id, user_id, title, active_graph_id, prompt_payload_format, context_mode, agent_type,
                             to_char(created_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
                             to_char(updated_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
                         FROM ai_chat_sessions
-                        WHERE user_id = %s AND project_id IS NULL
+                        WHERE user_id = %s AND project_id IS NULL AND agent_type = %s
                         ORDER BY updated_at DESC
                         LIMIT 1
                         """,
-                        (user_id,),
+                        (user_id, resolved_agent_type),
                     )
                 row = cur.fetchone()
 
         if row:
             return dict(row)
-        return self.create_session(user_id=user_id, project_id=project_id)
+        return self.create_session(user_id=user_id, project_id=project_id, agent_type=resolved_agent_type)
 
     def list_sessions(
         self,
         user_id: str,
         project_id: Optional[str] = None,
         limit: int = 50,
+        agent_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """List sessions for a user, optionally filtered by project."""
+        """List sessions for a user, optionally filtered by project and agent_type."""
         limit = max(1, min(200, int(limit)))
         params: List[Any] = [user_id]
         where_clause = "WHERE user_id = %s"
@@ -228,12 +252,16 @@ class AiChatService:
             where_clause += " AND project_id = %s"
             params.append(project_id)
 
+        if agent_type:
+            where_clause += " AND agent_type = %s"
+            params.append(agent_type)
+
         with db_service._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     f"""
                     SELECT
-                        s.session_id, s.project_id, s.user_id, s.title, s.active_graph_id, s.prompt_payload_format, s.context_mode,
+                        s.session_id, s.project_id, s.user_id, s.title, s.active_graph_id, s.prompt_payload_format, s.context_mode, s.agent_type,
                         to_char(s.created_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
                         to_char(s.updated_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at,
                         (SELECT COUNT(*) FROM ai_chat_messages m WHERE m.session_id = s.session_id) AS message_count,

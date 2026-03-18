@@ -16,8 +16,9 @@ import { manageApi } from '@/api/project'
 import { agentChatApi } from '@/api/agentChat'
 import { api } from '@/api/request'
 import ExecutionGraphCanvas from '@/components/alpha/ExecutionGraphCanvas.vue'
+import NodeDetailPanel from '@/components/alpha/NodeDetailPanel.vue'
+import { createEmptyGraphDetail, buildMergedSessionGraphDetail } from '@/utils/sessionGraphLayout'
 
-const createEmptyGraphDetail = () => ({ graph: null, containers: [], nodes: [], edges: [] })
 const PROMPT_FORMAT_OPTIONS = [
   { value: 'json', label: 'JSON' },
   { value: 'yaml', label: 'YAML' },
@@ -259,149 +260,6 @@ const ensureDraftAssistant = () => {
   draftAssistantId.value = draft.message_id
   messages.value.push(draft)
   return draft
-}
-
-const sortByOrder = (items = []) => {
-  return [...items].sort((a, b) => {
-    const orderDiff = Number(a?.order_index || 0) - Number(b?.order_index || 0)
-    if (orderDiff !== 0) return orderDiff
-    return String(a?.created_at || '').localeCompare(String(b?.created_at || ''))
-  })
-}
-
-const resolveBoundaryNode = (detail, type) => {
-  const nodes = sortByOrder(detail?.nodes || [])
-  if (!nodes.length) return null
-  if (type === 'start') {
-    return nodes.find((node) => node.node_type === 'start') || nodes[0]
-  }
-  return [...nodes].reverse().find((node) => node.node_type === 'end') || nodes[nodes.length - 1]
-}
-
-const buildMergedSessionGraphDetail = (chainPayload) => {
-  const details = chainPayload?.graphs || []
-  if (!details.length) return createEmptyGraphDetail()
-
-  const mergedContainers = []
-  const mergedNodes = []
-  const mergedEdges = []
-  const nodePositions = {}
-  const edgeOffsets = {}
-  const containerOffsets = {}
-
-  let baseX = 94
-  const baseY = 98
-  const columnGap = 320
-  const rowGap = 112
-  const graphGap = 260
-
-  details.forEach((detail, graphIndex) => {
-    const graph = detail?.graph || {}
-    const graphLabel = `第${graphIndex + 1}轮`
-    const containers = sortByOrder(detail?.containers || [])
-    const nodes = sortByOrder(detail?.nodes || [])
-    const containerOrder = containers.map((container) => container.container_id)
-    const nodesByContainer = new Map(containerOrder.map((containerId) => [containerId, []]))
-    const unassignedNodes = []
-
-    nodes.forEach((node) => {
-      if (node.container_id && nodesByContainer.has(node.container_id)) {
-        nodesByContainer.get(node.container_id).push(node)
-        return
-      }
-      unassignedNodes.push(node)
-    })
-
-    containers.forEach((container) => {
-      mergedContainers.push({
-        ...container,
-        label: `${graphLabel} · ${container.label || container.container_key || '未命名容器'}`,
-        graph_index: graphIndex + 1
-      })
-    })
-
-    nodes.forEach((node) => {
-      mergedNodes.push({
-        ...node,
-        graph_index: graphIndex + 1
-      })
-    })
-
-    ;(detail?.edges || []).forEach((edge) => {
-      mergedEdges.push({
-        ...edge,
-        graph_index: graphIndex + 1
-      })
-      edgeOffsets[edge.edge_id] = detail?.graph?.layout_json?.edge_offsets?.[edge.edge_id] || { dx: 0, dy: 0 }
-    })
-
-    const columns = [
-      ...containerOrder.map((containerId) => sortByOrder(nodesByContainer.get(containerId) || [])),
-      ...(unassignedNodes.length ? [sortByOrder(unassignedNodes)] : [])
-    ]
-
-    columns.forEach((columnNodes, columnIndex) => {
-      columnNodes.forEach((node, rowIndex) => {
-        nodePositions[node.node_id] = {
-          x: baseX + columnIndex * columnGap + (rowIndex % 2 === 0 ? 0 : 8),
-          y: baseY + rowIndex * rowGap
-        }
-      })
-    })
-
-    containers.forEach((container) => {
-      containerOffsets[container.container_id] = detail?.graph?.layout_json?.container_offsets?.[container.container_id] || { dx: 0, dy: 0 }
-    })
-
-    const columnCount = Math.max(columns.length, 1)
-    baseX += columnCount * columnGap + graphGap
-  })
-
-  for (let index = 1; index < details.length; index += 1) {
-    const previous = details[index - 1]
-    const current = details[index]
-    const sourceNode = resolveBoundaryNode(previous, 'end')
-    const targetNode = resolveBoundaryNode(current, 'start')
-    if (!sourceNode || !targetNode) continue
-
-    mergedEdges.push({
-      edge_id: `session-link-${previous.graph?.graph_id}-${current.graph?.graph_id}`,
-      graph_id: current.graph?.graph_id,
-      source_node_id: sourceNode.node_id,
-      target_node_id: targetNode.node_id,
-      edge_type: 'call',
-      label: `会话链 ${index} -> ${index + 1}`,
-      condition_expr: null,
-      config_json: {
-        session_chain: true,
-        prev_graph_id: current.graph?.meta_json?.prev_graph_id || null
-      },
-      order_index: 10_000 + index,
-      created_at: current.graph?.created_at || ''
-    })
-  }
-
-  const tailGraph = details[details.length - 1]?.graph || null
-  return {
-    graph: {
-      graph_id: chainPayload?.active_graph_id || tailGraph?.graph_id || '',
-      status: tailGraph?.status || 'idle',
-      project_id: tailGraph?.project_id || null,
-      layout_json: {
-        node_positions: nodePositions,
-        edge_offsets: edgeOffsets,
-        container_offsets: containerOffsets
-      },
-      meta_json: {
-        session_id: chainPayload?.session_id || '',
-        active_graph_id: chainPayload?.active_graph_id || '',
-        graph_count: details.length
-      }
-    },
-    containers: mergedContainers,
-    nodes: mergedNodes,
-    edges: mergedEdges
-  }
 }
 
 const refreshSessionGraphChain = async (targetSessionId = sessionId.value) => {
@@ -1001,44 +859,15 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div class="flex flex-col overflow-hidden border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)] max-h-[600px]">
+          <div class="flex flex-col overflow-hidden border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)] max-h-[800px]">
             <div class="shrink-0 border-b border-stone-200 px-5 py-4">
               <h2 class="text-lg font-semibold text-stone-900">节点详情</h2>
             </div>
-            <div class="flex-1 min-h-0 space-y-5 overflow-y-auto px-5 py-4 text-sm text-stone-700">
-              <div>
-                <p class="text-xs uppercase tracking-[0.2em] text-stone-500">当前选中</p>
-                <p class="mt-2 font-medium text-stone-900">
-                  {{ selectedNode?.label || selectedEdge?.label || '未选择节点/边' }}
-                </p>
-              </div>
-
-              <div v-if="selectedNode" class="space-y-4">
-                <div>
-                  <p class="text-xs uppercase tracking-[0.2em] text-stone-500">类型</p>
-                  <p class="mt-2">{{ selectedNode.node_type }}</p>
-                </div>
-                <div>
-                  <p class="text-xs uppercase tracking-[0.2em] text-stone-500">状态摘要</p>
-                  <pre class="mt-2 overflow-x-auto bg-stone-900 p-4 text-xs leading-6 text-stone-100">{{ formatJson(selectedNode.config_json) }}</pre>
-                </div>
-              </div>
-
-              <div v-else-if="selectedEdge" class="space-y-4">
-                <div>
-                  <p class="text-xs uppercase tracking-[0.2em] text-stone-500">边类型</p>
-                  <p class="mt-2">{{ selectedEdge.edge_type }}</p>
-                </div>
-                <div>
-                  <p class="text-xs uppercase tracking-[0.2em] text-stone-500">配置</p>
-                  <pre class="mt-2 overflow-x-auto bg-stone-900 p-4 text-xs leading-6 text-stone-100">{{ formatJson(selectedEdge.config_json) }}</pre>
-                </div>
-              </div>
-
-              <div class="space-y-3 bg-stone-50 p-4">
-                <p class="text-xs uppercase tracking-[0.2em] text-stone-500">最新写入结果</p>
-                <pre class="overflow-x-auto text-xs leading-6 text-stone-700">{{ formatJson(latestWriteSummary) }}</pre>
-              </div>
+            <div class="flex-1 min-h-0 overflow-y-auto px-5 py-4">
+              <NodeDetailPanel
+                :selected-node="selectedNode"
+                :selected-edge="selectedEdge"
+              />
             </div>
           </div>
 
