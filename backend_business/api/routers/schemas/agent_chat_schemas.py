@@ -10,11 +10,16 @@ from pydantic import BaseModel, Field, field_validator
 
 PromptPayloadFormat = Literal["json", "yaml", "markdown"]
 
+# full: 全量上下文（传入完整历史执行图节点上下文，当前已实现行为）
+# incremental: 增量上下文（仅传入架构/文件层面的上下文，具体实现留空待扩展）
+ContextMode = Literal["full", "incremental"]
+
 
 class AgentChatSessionRequest(BaseModel):
     project_id: Optional[str] = Field(default=None)
     title: Optional[str] = Field(default=None, max_length=120)
     prompt_payload_format: Optional[PromptPayloadFormat] = Field(default=None)
+    context_mode: Optional[ContextMode] = Field(default=None)
 
     @field_validator("project_id", "title")
     @classmethod
@@ -28,6 +33,7 @@ class AgentChatSessionRequest(BaseModel):
 class AgentChatSessionUpdateRequest(BaseModel):
     title: Optional[str] = Field(default=None, max_length=120)
     prompt_payload_format: Optional[PromptPayloadFormat] = Field(default=None)
+    context_mode: Optional[ContextMode] = Field(default=None)
 
     @field_validator("title")
     @classmethod

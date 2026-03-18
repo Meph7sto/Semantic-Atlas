@@ -111,6 +111,7 @@ class RequirementAgentChatService:
         user_id: str,
         project_id: str | None = None,
         prompt_payload_format: str | None = None,
+        context_mode: str | None = None,
     ) -> dict[str, Any]:
         if not self.chat_storage:
             raise RuntimeError("AI chat storage not initialized")
@@ -123,6 +124,13 @@ class RequirementAgentChatService:
                     prompt_payload_format=normalized_format,
                 )
                 session["prompt_payload_format"] = normalized_format
+        if context_mode and context_mode in ("full", "incremental"):
+            if session.get("context_mode") != context_mode:
+                self.chat_storage.update_session(
+                    session_id=session["session_id"],
+                    context_mode=context_mode,
+                )
+                session["context_mode"] = context_mode
         return self._hydrate_session_graph(session)
 
     def create_session(
@@ -132,15 +140,18 @@ class RequirementAgentChatService:
         project_id: str | None = None,
         title: str | None = None,
         prompt_payload_format: str | None = None,
+        context_mode: str | None = None,
     ) -> dict[str, Any]:
         if not self.chat_storage:
             raise RuntimeError("AI chat storage not initialized")
         normalized_format = normalize_prompt_payload_format(prompt_payload_format)
+        normalized_context_mode = context_mode if context_mode in ("full", "incremental") else "full"
         session = self.chat_storage.create_session(
             user_id=user_id,
             project_id=project_id,
             title=title,
             prompt_payload_format=normalized_format,
+            context_mode=normalized_context_mode,
         )
         return self._hydrate_session_graph(session)
 
@@ -151,6 +162,7 @@ class RequirementAgentChatService:
         user_id: str,
         title: str | None = None,
         prompt_payload_format: str | None = None,
+        context_mode: str | None = None,
     ) -> dict[str, Any]:
         if not self.chat_storage:
             raise RuntimeError("AI chat storage not initialized")
@@ -158,10 +170,14 @@ class RequirementAgentChatService:
         normalized_format = None
         if prompt_payload_format is not None:
             normalized_format = normalize_prompt_payload_format(prompt_payload_format)
+        normalized_context_mode = None
+        if context_mode is not None:
+            normalized_context_mode = context_mode if context_mode in ("full", "incremental") else "full"
         self.chat_storage.update_session(
             session_id=session_id,
             title=title,
             prompt_payload_format=normalized_format if prompt_payload_format is not None else ...,
+            context_mode=normalized_context_mode if context_mode is not None else ...,
         )
         current = self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
         return self._hydrate_session_graph(current)
@@ -403,6 +419,7 @@ class RequirementAgentChatService:
         requirement_id: str | None,
         session_id: str,
         prompt_payload_format: str,
+        context_mode: str,
     ) -> Generator[dict[str, Any], None, dict[str, Any]]:
         runner = RequirementAgentToolLoopRunner(
             ai_proxy_client=self.ai_proxy,
@@ -420,6 +437,7 @@ class RequirementAgentChatService:
             requirement_id=requirement_id,
             session_id=session_id,
             prompt_payload_format=prompt_payload_format,
+            context_mode=context_mode,
         )
 
     def stream_requirement_agent_reply(
@@ -439,6 +457,7 @@ class RequirementAgentChatService:
             session.get("prompt_payload_format"),
             default=DEFAULT_PROMPT_PAYLOAD_FORMAT,
         )
+        context_mode = session.get("context_mode") or "full"
         user_record = self.chat_storage.create_message(
             session_id=session_id,
             user_id=user_id,
@@ -520,6 +539,7 @@ class RequirementAgentChatService:
                 requirement_id=requirement_id,
                 session_id=session_id,
                 prompt_payload_format=prompt_payload_format,
+                context_mode=context_mode,
             )
             while True:
                 try:

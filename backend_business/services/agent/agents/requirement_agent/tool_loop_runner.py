@@ -84,7 +84,18 @@ class RequirementAgentToolLoopRunner:
         requirement_id: str | None,
         session_id: str,
         prompt_payload_format: str,
+        context_mode: str = "full",
     ) -> Generator[dict[str, Any], None, dict[str, Any]]:
+        # 根据上下文模式决定注入 LLM 的历史节点上下文
+        # full: 全量模式，传入完整历史节点上下文（当前已实现）
+        # incremental: 增量模式，仅保留架构/文件层面上下文，具体实现留空待扩展
+        if context_mode == "incremental":
+            # TODO: 增量上下文实现（仅保留架构和文件，不传递具体执行结果）
+            effective_historical_context: list[dict[str, Any]] = []
+        else:
+            # full: 传入完整历史节点上下文
+            effective_historical_context = recorder.historical_node_context
+
         context: dict[str, Any] = {
             "project_id": project_id,
             "user_id": user_id,
@@ -93,7 +104,8 @@ class RequirementAgentToolLoopRunner:
             "selected_requirement_id": requirement_id,
             "resolved_requirement_id": requirement_id,
             "resolved_requirement_ids": {requirement_id} if requirement_id else set(),
-            "historical_node_context": recorder.historical_node_context,
+            "historical_node_context": effective_historical_context,
+            "context_mode": context_mode,
             "prompt_payload_format": prompt_payload_format,
             "tool_results": [],
             "write_performed": False,

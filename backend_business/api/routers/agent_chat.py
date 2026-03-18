@@ -52,6 +52,8 @@ def create_or_get_session(
         }
         if payload.prompt_payload_format is not None:
             kwargs["prompt_payload_format"] = payload.prompt_payload_format
+        if payload.context_mode is not None:
+            kwargs["context_mode"] = payload.context_mode
         return requirement_agent_chat_service.create_or_get_session(**kwargs)
     except Exception as exc:
         raise ErrorResponse(str(exc), 500)
@@ -91,6 +93,8 @@ def create_session(
         }
         if payload.prompt_payload_format is not None:
             kwargs["prompt_payload_format"] = payload.prompt_payload_format
+        if payload.context_mode is not None:
+            kwargs["context_mode"] = payload.context_mode
         return requirement_agent_chat_service.create_session(**kwargs)
     except Exception as exc:
         raise ErrorResponse(str(exc), 500)
@@ -102,7 +106,7 @@ def update_session(
     payload: AgentChatSessionUpdateRequest,
     current_user: Optional[dict] = Depends(get_current_user),
 ):
-    if payload.title is None and payload.prompt_payload_format is None:
+    if payload.title is None and payload.prompt_payload_format is None and payload.context_mode is None:
         raise ErrorResponse("至少提供一个可更新字段", 400)
     try:
         return requirement_agent_chat_service.update_session(
@@ -110,6 +114,7 @@ def update_session(
             user_id=current_user["user_id"],
             title=payload.title,
             prompt_payload_format=payload.prompt_payload_format,
+            context_mode=payload.context_mode,
         )
     except Exception as exc:
         raise ErrorResponse(str(exc), 500)

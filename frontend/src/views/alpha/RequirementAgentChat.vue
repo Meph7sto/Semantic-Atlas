@@ -25,6 +25,12 @@ const PROMPT_FORMAT_OPTIONS = [
 ]
 const DEFAULT_PROMPT_FORMAT = 'json'
 
+const CONTEXT_MODE_OPTIONS = [
+  { value: 'full', label: '全量 (Full)', description: '传入完整历史节点上下文' },
+  { value: 'incremental', label: '增量 (Incremental)', description: '仅保留架构/文件上下文' }
+]
+const DEFAULT_CONTEXT_MODE = 'full'
+
 const projects = ref([])
 const requirements = ref([])
 const sessions = ref([])
@@ -46,6 +52,8 @@ const stageTimeline = ref([])
 const selectedCanvasId = ref(null)
 const draftAssistantId = ref(null)
 const promptPayloadFormatDraft = ref('markdown')
+const contextModeDraft = ref(DEFAULT_CONTEXT_MODE)
+const isUpdatingContextMode = ref(false)
 const isAssistantOpen = ref(false)
 
 const currentSession = computed(() => {
@@ -166,6 +174,13 @@ const normalizePromptPayloadFormat = (value) => {
   return PROMPT_FORMAT_OPTIONS.some((item) => item.value === normalized)
     ? normalized
     : DEFAULT_PROMPT_FORMAT
+}
+
+const normalizeContextMode = (value) => {
+  const normalized = String(value || '').trim().toLowerCase()
+  return CONTEXT_MODE_OPTIONS.some((item) => item.value === normalized)
+    ? normalized
+    : DEFAULT_CONTEXT_MODE
 }
 
 const promptPayloadFormatLabel = (value) => {
@@ -449,6 +464,7 @@ const loadSessionContent = async (session) => {
 
   sessionId.value = session.session_id
   promptPayloadFormatDraft.value = normalizePromptPayloadFormat(session.prompt_payload_format)
+  contextModeDraft.value = normalizeContextMode(session.context_mode)
   errorMessage.value = ''
   resetSessionView()
 
@@ -479,11 +495,13 @@ const loadSessions = async ({ preferredSessionId = sessionId.value } = {}) => {
     const existingCurrent = sessions.value.find((item) => item.session_id === sessionId.value)
     if (existingCurrent) {
       promptPayloadFormatDraft.value = normalizePromptPayloadFormat(existingCurrent.prompt_payload_format)
+      contextModeDraft.value = normalizeContextMode(existingCurrent.context_mode)
     }
 
     if (!sessions.value.length) {
       sessionId.value = ''
       promptPayloadFormatDraft.value = 'markdown'
+      contextModeDraft.value = DEFAULT_CONTEXT_MODE
       resetSessionView()
       return
     }
@@ -556,6 +574,33 @@ const updateCurrentSessionPromptFormat = async () => {
     errorMessage.value = err?.message || '更新 Prompt 结构失败'
   } finally {
     isUpdatingSessionFormat.value = false
+  }
+}
+
+const updateCurrentSessionContextMode = async () => {
+  if (!sessionId.value || isSending.value || isUpdatingContextMode.value) return
+  const nextMode = normalizeContextMode(contextModeDraft.value)
+  const currentMode = normalizeContextMode(currentSession.value?.context_mode)
+  if (nextMode === currentMode) return
+
+  isUpdatingContextMode.value = true
+  errorMessage.value = ''
+  try {
+    const resp = await api.patch(`/agent-chat/sessions/${encodeURIComponent(sessionId.value)}`, {
+      context_mode: nextMode
+    })
+    const updated = resp.data || {}
+    const normalized = normalizeContextMode(updated.context_mode || nextMode)
+    upsertSessionPatch(sessionId.value, {
+      ...updated,
+      context_mode: normalized
+    })
+    contextModeDraft.value = normalized
+  } catch (err) {
+    contextModeDraft.value = currentMode
+    errorMessage.value = err?.message || '更新上下文模式失败'
+  } finally {
+    isUpdatingContextMode.value = false
   }
 }
 
@@ -717,6 +762,7 @@ watch(selectedProjectId, async (projectId) => {
   sessionId.value = ''
   sessions.value = []
   promptPayloadFormatDraft.value = 'markdown'
+  contextModeDraft.value = DEFAULT_CONTEXT_MODE
   resetSessionView()
   if (!projectId) {
     requirements.value = []
@@ -812,6 +858,40 @@ onMounted(async () => {
                   {{ sessionTitle(session, index) }} ({{ session.message_count || 0 }}条)
                 </option>
               </select>
+            </div>
+
+            <!-- 会话配置选项 -->
+            <div v-if="sessionId" class="flex flex-col gap-1.5">
+              <!-- Prompt 格式 -->
+              <div class="flex items-center gap-2">
+                <span class="w-[80px] shrink-0 text-[11px] text-stone-400">Prompt 格式</span>
+                <select
+                  v-model="promptPayloadFormatDraft"
+                  class="flex-1 border border-stone-200 bg-white px-2 py-1 text-xs text-stone-700 outline-none transition focus:border-stone-400"
+                  :disabled="isUpdatingSessionFormat || isSending"
+                  @change="updateCurrentSessionPromptFormat"
+                >
+                  <option v-for="opt in PROMPT_FORMAT_OPTIONS" :key="opt.value" :value="opt.value">
+                    {{ opt.label }}
+                  </option>
+                </select>
+              </div>
+              <!-- 上下文模式 -->
+              <div class="flex items-center gap-2">
+                <span class="w-[80px] shrink-0 text-[11px] text-stone-400">上下文模式</span>
+                <select
+                  v-model="contextModeDraft"
+                  class="flex-1 border border-stone-200 bg-white px-2 py-1 text-xs text-stone-700 outline-none transition focus:border-stone-400"
+                  :disabled="isUpdatingContextMode || isSending"
+                  @change="updateCurrentSessionContextMode"
+                  :title="CONTEXT_MODE_OPTIONS.find(o => o.value === contextModeDraft)?.description || ''"
+                >
+                  <option v-for="opt in CONTEXT_MODE_OPTIONS" :key="opt.value" :value="opt.value">
+                    {{ opt.label }}
+                  </option>
+                </select>
+                <span v-if="isUpdatingContextMode" class="text-[11px] text-stone-400 shrink-0">保存中...</span>
+              </div>
             </div>
           </div>
           
