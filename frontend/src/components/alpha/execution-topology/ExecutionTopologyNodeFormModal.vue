@@ -54,6 +54,9 @@ const updateField = (field, value) => {
               </option>
             </select>
           </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
           <div>
             <label class="block text-sm font-medium text-zinc-700 mb-1">节点 Key *</label>
             <input
@@ -120,6 +123,17 @@ const updateField = (field, value) => {
               </option>
             </select>
           </div>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-zinc-700 mb-1">阶段提示</label>
+          <textarea
+            :value="form.stage_prompt"
+            rows="3"
+            class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+            placeholder="描述该拓扑节点应完成的任务目标（将注入节点执行上下文）"
+            @input="updateField('stage_prompt', $event.target.value)"
+          />
         </div>
 
         <div>

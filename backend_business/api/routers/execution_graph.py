@@ -14,6 +14,8 @@ from backend_business.api.routers.schemas.execution_graph_schemas import (
     UpdateGraphRequest,
     CreateContainerRequest,
     UpdateContainerRequest,
+    CreateSubgraphRequest,
+    UpdateSubgraphRequest,
     CreateNodeRequest,
     UpdateNodeRequest,
     CreateEdgeRequest,
@@ -233,6 +235,91 @@ async def delete_container(
 
 
 # ========================
+# Subgraph Endpoints
+# ========================
+
+
+@router.post("/{graph_id}/subgraphs")
+async def create_subgraph(
+    graph_id: str,
+    req: CreateSubgraphRequest,
+    request: Request,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    """在图中创建子图"""
+    actor = _get_actor(request, current_user)
+    try:
+        subgraph = _service.create_subgraph(
+            graph_id=graph_id,
+            container_id=req.container_id,
+            subgraph_key=req.subgraph_key,
+            label=req.label,
+            task_description=req.task_description,
+            order_index=req.order_index,
+            config_json=req.config_json,
+            created_by=actor,
+        )
+        return subgraph
+    except ValueError as e:
+        raise ErrorResponse(str(e), 400)
+
+
+@router.get("/{graph_id}/subgraphs")
+async def list_subgraphs(
+    graph_id: str,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    """列出图中的子图"""
+    try:
+        subgraphs = _service.list_subgraphs(graph_id=graph_id)
+        return {"subgraphs": subgraphs}
+    except ValueError as e:
+        raise ErrorResponse(str(e), 400)
+
+
+@router.patch("/subgraphs/{subgraph_id}")
+async def update_subgraph(
+    subgraph_id: str,
+    req: UpdateSubgraphRequest,
+    request: Request,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    """更新子图"""
+    actor = _get_actor(request, current_user)
+    try:
+        subgraph = _service.update_subgraph(
+            subgraph_id=subgraph_id,
+            label=req.label,
+            task_description=req.task_description,
+            order_index=req.order_index,
+            config_json=req.config_json,
+            updated_by=actor,
+        )
+        if not subgraph:
+            raise ErrorResponse("子图不存在或已删除", 404)
+        return subgraph
+    except ValueError as e:
+        raise ErrorResponse(str(e), 400)
+
+
+@router.delete("/subgraphs/{subgraph_id}")
+async def delete_subgraph(
+    subgraph_id: str,
+    request: Request,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    """删除子图"""
+    actor = _get_actor(request, current_user)
+    try:
+        deleted = _service.delete_subgraph(subgraph_id=subgraph_id, updated_by=actor)
+        if not deleted:
+            raise ErrorResponse("子图不存在或已删除", 404)
+        return {"message": "删除成功"}
+    except ValueError as e:
+        raise ErrorResponse(str(e), 400)
+
+
+# ========================
 # Node Endpoints
 # ========================
 
@@ -254,6 +341,7 @@ async def create_node(
             node_type=req.node_type,
             role_type=req.role_type,
             container_id=req.container_id,
+            subgraph_id=req.subgraph_id,
             config_json=req.config_json,
             input_schema_json=req.input_schema_json,
             output_schema_json=req.output_schema_json,
@@ -278,6 +366,7 @@ async def update_node(
         node = _service.update_node(
             node_id=node_id,
             container_id=req.container_id,
+            subgraph_id=req.subgraph_id,
             label=req.label,
             node_type=req.node_type,
             role_type=req.role_type,

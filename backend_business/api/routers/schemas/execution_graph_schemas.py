@@ -115,6 +115,29 @@ class UpdateContainerRequest(BaseModel):
 
 
 # ========================
+# Subgraph Schemas
+# ========================
+
+
+class CreateSubgraphRequest(BaseModel):
+    """创建子图请求"""
+    container_id: str = Field(..., min_length=1, description="所属容器ID")
+    subgraph_key: str = Field(..., min_length=1, description="子图唯一标识（图内唯一）")
+    label: str = Field(..., min_length=1, description="子图显示标签")
+    task_description: str = Field(..., min_length=1, description="任务描述（注入 start 节点上下文）")
+    order_index: int = Field(default=0, description="排序索引")
+    config_json: Optional[Dict[str, Any]] = Field(default_factory=dict, description="配置JSON")
+
+
+class UpdateSubgraphRequest(BaseModel):
+    """更新子图请求（支持部分字段）"""
+    label: Optional[str] = Field(None, min_length=1, description="子图显示标签")
+    task_description: Optional[str] = Field(None, min_length=1, description="任务描述")
+    order_index: Optional[int] = Field(None, description="排序索引")
+    config_json: Optional[Dict[str, Any]] = Field(None, description="配置JSON")
+
+
+# ========================
 # Node Schemas
 # ========================
 
@@ -122,6 +145,7 @@ class UpdateContainerRequest(BaseModel):
 class CreateNodeRequest(BaseModel):
     """创建节点请求"""
     container_id: Optional[str] = Field(default=None, description="所属容器ID（可选）")
+    subgraph_id: Optional[str] = Field(default=None, description="所属子图ID（可选）")
     node_key: str = Field(..., min_length=1, description="节点唯一标识（图内唯一）")
     label: str = Field(..., min_length=1, description="节点显示标签")
     node_type: str = Field(..., description="节点类型: start|node|decision|handoff|end|llm|invoke")
@@ -151,6 +175,7 @@ class CreateNodeRequest(BaseModel):
 class UpdateNodeRequest(BaseModel):
     """更新节点请求（支持部分字段）"""
     container_id: Optional[str] = Field(None, description="所属容器ID（可选）")
+    subgraph_id: Optional[str] = Field(None, description="所属子图ID（可选）")
     label: Optional[str] = Field(None, min_length=1, description="节点显示标签")
     node_type: Optional[str] = Field(None, description="节点类型: start|node|decision|handoff|end|llm|invoke")
     role_type: Optional[str] = Field(None, description="角色类型: human|agent|system")

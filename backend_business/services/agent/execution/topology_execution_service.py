@@ -36,6 +36,7 @@ class TopologyExecutionService:
         nodes = list(template_detail.get("nodes") or [])
         edges = list(template_detail.get("edges") or [])
         containers = list(template_detail.get("containers") or [])
+        subgraphs = list(template_detail.get("subgraphs") or [])
         if not nodes:
             raise ValueError("拓扑模板不包含任何节点")
 
@@ -71,6 +72,7 @@ class TopologyExecutionService:
             runtime_detail = self._clone_template_to_runtime(
                 runtime_graph=runtime_graph,
                 containers=containers,
+                subgraphs=subgraphs,
                 nodes=nodes,
                 edges=edges,
                 actor=actor,
@@ -105,6 +107,7 @@ class TopologyExecutionService:
         *,
         runtime_graph: dict[str, Any],
         containers: list[dict[str, Any]],
+        subgraphs: list[dict[str, Any]] | None = None,
         nodes: list[dict[str, Any]],
         edges: list[dict[str, Any]],
         actor: str,
@@ -112,6 +115,7 @@ class TopologyExecutionService:
         runtime_graph_id = runtime_graph["graph_id"]
         container_id_map: dict[str, str] = {}
         runtime_containers: list[dict[str, Any]] = []
+        runtime_subgraphs: list[dict[str, Any]] = []
         runtime_nodes: list[dict[str, Any]] = []
         runtime_edges: list[dict[str, Any]] = []
 
@@ -131,6 +135,26 @@ class TopologyExecutionService:
             container_id_map[container["container_id"]] = created["container_id"]
             runtime_containers.append(created)
 
+        subgraph_id_map: dict[str, str] = {}
+        for subgraph in sorted(subgraphs or [], key=lambda item: (item.get("order_index") or 0, item.get("subgraph_key") or "")):
+            mapped_container_id = container_id_map.get(subgraph.get("container_id"))
+            if not mapped_container_id:
+                continue
+            config = copy.deepcopy(subgraph.get("config_json") or {})
+            config["template_subgraph_id"] = subgraph.get("subgraph_id")
+            created = self._service.create_subgraph(
+                graph_id=runtime_graph_id,
+                container_id=mapped_container_id,
+                subgraph_key=subgraph.get("subgraph_key") or "subgraph",
+                label=subgraph.get("label") or subgraph.get("subgraph_key") or "Subgraph",
+                task_description=subgraph.get("task_description") or "",
+                order_index=subgraph.get("order_index") or 0,
+                config_json=config,
+                created_by=actor,
+            )
+            subgraph_id_map[subgraph["subgraph_id"]] = created["subgraph_id"]
+            runtime_subgraphs.append(created)
+
         node_id_map: dict[str, str] = {}
         for node in sorted(nodes, key=lambda item: (item.get("order_index") or 0, item.get("node_key") or "")):
             config = copy.deepcopy(node.get("config_json") or {})
@@ -144,6 +168,7 @@ class TopologyExecutionService:
             created = self._service.create_node(
                 graph_id=runtime_graph_id,
                 container_id=container_id_map.get(node.get("container_id")),
+                subgraph_id=subgraph_id_map.get(node.get("subgraph_id")),
                 node_key=node.get("node_key") or "node",
                 label=node.get("label") or node.get("node_key") or "Node",
                 node_type=node.get("node_type") or "node",
@@ -180,6 +205,7 @@ class TopologyExecutionService:
         return {
             "graph": runtime_graph,
             "containers": runtime_containers,
+            "subgraphs": runtime_subgraphs,
             "nodes": runtime_nodes,
             "edges": runtime_edges,
         }
@@ -445,11 +471,29 @@ class TopologyExecutionService:
         node_type = node.get("node_type") or "node"
         config = copy.deepcopy(node.get("config_json") or {})
         static_output = config.get("output", config.get("static_output"))
+        stage_prompt = config.get("stage_prompt")
+        if isinstance(stage_prompt, str):
+            stage_prompt = stage_prompt.strip()
+        else:
+            stage_prompt = ""
 
         if node_type == "start":
             base_payload = copy.deepcopy(node_input.get("payload") or {})
             if not isinstance(base_payload, dict):
                 base_payload = {"value": base_payload}
+            if stage_prompt and "task" not in base_payload:
+                base_payload["task"] = stage_prompt
+            else:
+                # Backward compatibility: use subgraph task description if available.
+                subgraph_id = config.get("subgraph_id") or node.get("subgraph_id")
+                if subgraph_id:
+                    try:
+                        subgraph = self._service.get_subgraph(subgraph_id)
+                        if subgraph and subgraph.get("task_description"):
+                            if "task" not in base_payload:
+                                base_payload["task"] = subgraph["task_description"]
+                    except Exception:
+                        pass
             if isinstance(static_output, dict):
                 base_payload.update(copy.deepcopy(static_output))
             return base_payload

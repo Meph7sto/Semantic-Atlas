@@ -265,3 +265,55 @@ def init_execution_schema(cur):
     cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_execution_edges_target ON execution_edges(target_node_id)"
     )
+
+    # execution_subgraphs: 子图（container 的子元素，对应拓扑图中一个可见节点）
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS execution_subgraphs (
+            subgraph_id TEXT PRIMARY KEY,
+            graph_id TEXT NOT NULL REFERENCES execution_graphs(graph_id) ON DELETE CASCADE,
+            container_id TEXT NOT NULL REFERENCES execution_containers(container_id) ON DELETE CASCADE,
+            subgraph_key TEXT NOT NULL,
+            label TEXT NOT NULL,
+            task_description TEXT NOT NULL DEFAULT '',
+            order_index INTEGER NOT NULL DEFAULT 0,
+            config_json JSONB,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+            UNIQUE(graph_id, subgraph_key)
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_execution_subgraphs_graph ON execution_subgraphs(graph_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_execution_subgraphs_container ON execution_subgraphs(container_id)"
+    )
+
+    # Migration: add subgraph_id column to execution_nodes (nullable for backward compat)
+    cur.execute(
+        "ALTER TABLE execution_nodes ADD COLUMN IF NOT EXISTS subgraph_id TEXT"
+    )
+    cur.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'fk_execution_nodes_subgraph'
+            ) THEN
+                ALTER TABLE execution_nodes
+                ADD CONSTRAINT fk_execution_nodes_subgraph
+                FOREIGN KEY (subgraph_id)
+                REFERENCES execution_subgraphs(subgraph_id)
+                ON DELETE SET NULL;
+            END IF;
+        END $$;
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_execution_nodes_subgraph ON execution_nodes(subgraph_id)"
+    )

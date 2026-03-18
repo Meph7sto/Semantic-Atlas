@@ -53,6 +53,13 @@ const edgeTypeOptions = [
   { value: 'retry', label: 'Retry (重试)' }
 ]
 
+const asObject = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+  return value
+}
+
 const hydrateFormData = (selectedObject, objectType) => {
   if (!selectedObject) {
     return {}
@@ -65,6 +72,8 @@ const hydrateFormData = (selectedObject, objectType) => {
   }
 
   if (objectType === 'node') {
+    const nodeConfig = asObject(cloned.config_json)
+    cloned.stage_prompt = typeof nodeConfig.stage_prompt === 'string' ? nodeConfig.stage_prompt : ''
     cloned.config_json = stringifyJsonForEditor(cloned.config_json, '{}')
     cloned.input_schema_json = stringifyJsonForEditor(cloned.input_schema_json, '[]')
     cloned.output_schema_json = stringifyJsonForEditor(cloned.output_schema_json, '[]')
@@ -317,6 +326,16 @@ const objectTypeTitle = computed(() => {
               type="number"
               min="0"
               class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-zinc-700 mb-1">阶段提示</label>
+            <textarea
+              v-model="formData.stage_prompt"
+              rows="3"
+              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              placeholder="描述该拓扑节点应完成的任务目标（注入节点执行上下文）"
             />
           </div>
 

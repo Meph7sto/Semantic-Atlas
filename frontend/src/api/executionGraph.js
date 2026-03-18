@@ -94,6 +94,48 @@ export const executionGraphApi = {
   },
 
   // ========================
+  // Subgraph Methods
+  // ========================
+
+  /**
+   * 在图中创建子图
+   * @param {string} graphId - 图 ID
+   * @param {object} data - 子图数据 {container_id, subgraph_key, label, task_description, order_index, config_json}
+   */
+  async createSubgraph(graphId, data) {
+    const resp = await api.post(`/execution-topology/${encodeURIComponent(graphId)}/subgraphs`, data)
+    return resp.data
+  },
+
+  /**
+   * 列出图中的子图
+   * @param {string} graphId - 图 ID
+   */
+  async listSubgraphs(graphId) {
+    const resp = await api.get(`/execution-topology/${encodeURIComponent(graphId)}/subgraphs`)
+    return resp.data?.subgraphs || []
+  },
+
+  /**
+   * 更新子图
+   * @param {string} subgraphId - 子图 ID
+   * @param {object} data - 更新数据 {label, task_description, order_index, config_json}
+   */
+  async updateSubgraph(subgraphId, data) {
+    const resp = await api.patch(`/execution-topology/subgraphs/${encodeURIComponent(subgraphId)}`, data)
+    return resp.data
+  },
+
+  /**
+   * 删除子图
+   * @param {string} subgraphId - 子图 ID
+   */
+  async deleteSubgraph(subgraphId) {
+    const resp = await api.delete(`/execution-topology/subgraphs/${encodeURIComponent(subgraphId)}`)
+    return resp.data
+  },
+
+  // ========================
   // Node Methods
   // ========================
 

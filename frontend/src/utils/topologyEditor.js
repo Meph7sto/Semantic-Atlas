@@ -110,18 +110,40 @@ export const normalizeNodePayload = (formData) => {
     return { ok: false, error: '输出 Schema 必须是 JSON 数组' }
   }
 
+  const stagePrompt = typeof formData.stage_prompt === 'string'
+    ? formData.stage_prompt.trim()
+    : ''
+  const configValue = { ...config.value }
+  if (stagePrompt) {
+    configValue.stage_prompt = stagePrompt
+  } else if (Object.prototype.hasOwnProperty.call(configValue, 'stage_prompt')) {
+    delete configValue.stage_prompt
+  }
+
   return {
     ok: true,
     value: {
       container_id: formData.container_id || null,
+      subgraph_id: formData.subgraph_id || null,
       node_key: formData.node_key?.trim(),
       label: formData.label?.trim(),
       node_type: formData.node_type || 'node',
       role_type: formData.role_type || 'human',
       order_index: normalizeInteger(formData.order_index, 0),
-      config_json: config.value,
+      config_json: configValue,
       input_schema_json: inputSchema.value,
       output_schema_json: outputSchema.value
+    }
+  }
+}
+
+export const normalizeSubgraphPayload = (formData) => {
+  return {
+    ok: true,
+    value: {
+      label: formData.label?.trim(),
+      task_description: formData.task_description?.trim() || '',
+      order_index: normalizeInteger(formData.order_index, 0)
     }
   }
 }
@@ -153,6 +175,19 @@ export const normalizeEdgePayload = (formData) => {
 export const normalizeInspectorPayload = (objectType, formData) => {
   if (objectType === 'graph') {
     return { ok: true, value: normalizeGraphPayload(formData) }
+  }
+
+  if (objectType === 'subgraph') {
+    const payload = normalizeSubgraphPayload(formData)
+    if (!payload.ok) return payload
+    return {
+      ok: true,
+      value: {
+        label: payload.value.label,
+        task_description: payload.value.task_description,
+        order_index: payload.value.order_index
+      }
+    }
   }
 
   if (objectType === 'container') {
