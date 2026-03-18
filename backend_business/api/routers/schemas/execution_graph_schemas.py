@@ -180,7 +180,8 @@ class UpdateNodeRequest(BaseModel):
     node_type: Optional[str] = Field(None, description="节点类型: start|node|decision|handoff|end|llm|invoke")
     role_type: Optional[str] = Field(None, description="角色类型: human|agent|system")
     config_json: Optional[Dict[str, Any]] = Field(None, description="配置JSON")
-    input_schema_json: Optional[List[str]] = Field(None, description="输入模式JSON")
+    stage_prompt: Optional[str] = Field(None, description="阶段提示词（将自动合并至 config_json.stage_prompt）")
+    input_schema_json: Optional[List[str]] = Field(None, description="输入节点 ID 列表（节点内容 Tab 中选择的输入节点）")
     output_schema_json: Optional[List[str]] = Field(None, description="输出模式JSON")
     order_index: Optional[int] = Field(None, description="排序索引")
 

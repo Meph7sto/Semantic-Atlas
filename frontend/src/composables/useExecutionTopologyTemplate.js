@@ -1062,6 +1062,26 @@ export function useExecutionTopologyTemplate() {
     }
   }
 
+  const handleUpdateNodeContent = async ({ stage_prompt, input_node_ids }) => {
+    if (selectedObject.value.type !== 'node' || !selectedObject.value.id) return
+    try {
+      loading.value = true
+      error.value = ''
+      const updated = await executionGraphApi.updateNode(selectedObject.value.id, {
+        stage_prompt,
+        input_schema_json: input_node_ids
+      })
+      const index = graphDetail.value.nodes.findIndex((item) => item.node_id === selectedObject.value.id)
+      if (index !== -1) {
+        graphDetail.value.nodes[index] = updated
+      }
+    } catch (err) {
+      error.value = getErrorMessage(err, '保存节点内容失败')
+    } finally {
+      loading.value = false
+    }
+  }
+
   const handleSelectGraphObject = () => {
     if (selectedGraphId.value) {
       selectObject('graph', selectedGraphId.value)
@@ -1326,6 +1346,7 @@ export function useExecutionTopologyTemplate() {
     handleValidateTopology,
     handleSelectValidationItem,
     handleOpenExecuteDialog,
-    handleExecuteGraph
+    handleExecuteGraph,
+    handleUpdateNodeContent
   }
 }

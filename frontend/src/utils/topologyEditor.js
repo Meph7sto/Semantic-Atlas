@@ -110,15 +110,7 @@ export const normalizeNodePayload = (formData) => {
     return { ok: false, error: '输出 Schema 必须是 JSON 数组' }
   }
 
-  const stagePrompt = typeof formData.stage_prompt === 'string'
-    ? formData.stage_prompt.trim()
-    : ''
-  const configValue = { ...config.value }
-  if (stagePrompt) {
-    configValue.stage_prompt = stagePrompt
-  } else if (Object.prototype.hasOwnProperty.call(configValue, 'stage_prompt')) {
-    delete configValue.stage_prompt
-  }
+  // stage_prompt 由"节点内容" Tab 单独管理，这里不再操作，直接使用 config_json 文本框里的原始内容
 
   return {
     ok: true,
@@ -130,7 +122,7 @@ export const normalizeNodePayload = (formData) => {
       node_type: formData.node_type || 'node',
       role_type: formData.role_type || 'human',
       order_index: normalizeInteger(formData.order_index, 0),
-      config_json: configValue,
+      config_json: config.value,
       input_schema_json: inputSchema.value,
       output_schema_json: outputSchema.value
     }
@@ -216,7 +208,7 @@ export const normalizeInspectorPayload = (objectType, formData) => {
         role_type: payload.value.role_type,
         order_index: payload.value.order_index,
         config_json: payload.value.config_json,
-        input_schema_json: payload.value.input_schema_json,
+        // input_schema_json 由"节点内容" Tab 单独管理，属性 Tab 不传（避免覆盖）
         output_schema_json: payload.value.output_schema_json
       }
     }

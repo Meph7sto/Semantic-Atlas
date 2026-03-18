@@ -329,15 +329,6 @@ const objectTypeTitle = computed(() => {
             />
           </div>
 
-          <div>
-            <label class="block text-xs font-medium text-zinc-700 mb-1">阶段提示</label>
-            <textarea
-              v-model="formData.stage_prompt"
-              rows="3"
-              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-              placeholder="描述该拓扑节点应完成的任务目标（注入节点执行上下文）"
-            />
-          </div>
 
           <div>
             <label class="block text-xs font-medium text-zinc-700 mb-1">配置 JSON</label>
@@ -349,15 +340,6 @@ const objectTypeTitle = computed(() => {
             />
           </div>
 
-          <div>
-            <label class="block text-xs font-medium text-zinc-700 mb-1">输入 Schema JSON</label>
-            <textarea
-              v-model="formData.input_schema_json"
-              rows="4"
-              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-              placeholder='["input_a", "input_b"]'
-            />
-          </div>
 
           <div>
             <label class="block text-xs font-medium text-zinc-700 mb-1">输出 Schema JSON</label>

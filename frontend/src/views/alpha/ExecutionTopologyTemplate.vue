@@ -90,7 +90,8 @@ const {
   handleValidateTopology,
   handleSelectValidationItem,
   handleOpenExecuteDialog,
-  handleExecuteGraph
+  handleExecuteGraph,
+  handleUpdateNodeContent
 } = useExecutionTopologyTemplate()
 </script>
 
@@ -148,6 +149,7 @@ const {
         :active-tab="activeRightTab"
         :inspector-object="selectedInspectorObject"
         :object-type="selectedObject.type"
+        :all-nodes="graphDetail.nodes"
         :validation-loading="validationLoading"
         :validation-result="validationResult"
         :validation-items="validationItems"
@@ -159,6 +161,7 @@ const {
         @validate-topology="handleValidateTopology"
         @select-validation-item="handleSelectValidationItem"
         @open-execute-dialog="handleOpenExecuteDialog"
+        @update-node-content="handleUpdateNodeContent"
       />
     </div>
 

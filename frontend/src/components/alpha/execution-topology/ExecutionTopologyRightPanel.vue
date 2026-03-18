@@ -1,8 +1,9 @@
 <script setup>
+import { ref, watch, computed } from 'vue'
 import { AlertTriangle } from 'lucide-vue-next'
 import ExecutionGraphInspector from '@/components/alpha/ExecutionGraphInspector.vue'
 
-defineProps({
+const props = defineProps({
   activeTab: {
     type: String,
     required: true
@@ -14,6 +15,10 @@ defineProps({
   objectType: {
     type: String,
     required: true
+  },
+  allNodes: {
+    type: Array,
+    default: () => []
   },
   validationLoading: {
     type: Boolean,
@@ -46,8 +51,62 @@ const emit = defineEmits([
   'update-object',
   'validate-topology',
   'select-validation-item',
-  'open-execute-dialog'
+  'open-execute-dialog',
+  'update-node-content'
 ])
+
+// 判断当前是否选中节点
+const isNodeSelected = computed(() => props.objectType === 'node')
+
+// 中间 Tab 的值
+const middleTabValue = computed(() => isNodeSelected.value ? 'node-content' : 'validation')
+const middleTabLabel = computed(() => isNodeSelected.value ? '节点内容' : '校验')
+
+// 节点内容 Tab 的本地状态
+const nodeContentForm = ref({ stage_prompt: '', input_node_ids: [] })
+const nodeContentSaving = ref(false)
+
+// 当选中的节点变化时，同步表单数据
+watch(
+  () => [props.inspectorObject, props.objectType],
+  ([obj, type]) => {
+    if (type !== 'node' || !obj) {
+      nodeContentForm.value = { stage_prompt: '', input_node_ids: [] }
+      return
+    }
+    const config = (obj.config_json && typeof obj.config_json === 'object') ? obj.config_json : {}
+    nodeContentForm.value = {
+      stage_prompt: config.stage_prompt || '',
+      input_node_ids: Array.isArray(obj.input_schema_json) ? [...obj.input_schema_json] : []
+    }
+  },
+  { immediate: true, deep: true }
+)
+
+// 输入节点列表（排除当前节点自身）
+const availableInputNodes = computed(() => {
+  if (!props.inspectorObject?.node_id) return props.allNodes
+  return props.allNodes.filter(n => n.node_id !== props.inspectorObject.node_id)
+})
+
+const toggleInputNode = (nodeId) => {
+  const ids = nodeContentForm.value.input_node_ids
+  const idx = ids.indexOf(nodeId)
+  if (idx === -1) {
+    nodeContentForm.value.input_node_ids = [...ids, nodeId]
+  } else {
+    nodeContentForm.value.input_node_ids = ids.filter(id => id !== nodeId)
+  }
+}
+
+const handleSaveNodeContent = () => {
+  nodeContentSaving.value = true
+  emit('update-node-content', {
+    stage_prompt: nodeContentForm.value.stage_prompt,
+    input_node_ids: nodeContentForm.value.input_node_ids
+  })
+  nodeContentSaving.value = false
+}
 </script>
 
 <template>
@@ -63,10 +122,10 @@ const emit = defineEmits([
         </button>
         <button
           class="flex-1 px-3 py-2 text-sm transition-colors"
-          :class="activeTab === 'validation' ? 'bg-zinc-100 text-zinc-900 font-medium' : 'text-zinc-500 hover:bg-zinc-50'"
-          @click="emit('update:active-tab', 'validation')"
+          :class="activeTab === middleTabValue ? 'bg-zinc-100 text-zinc-900 font-medium' : 'text-zinc-500 hover:bg-zinc-50'"
+          @click="emit('update:active-tab', middleTabValue)"
         >
-          校验
+          {{ middleTabLabel }}
         </button>
         <button
           class="flex-1 px-3 py-2 text-sm transition-colors"
@@ -85,6 +144,59 @@ const emit = defineEmits([
       @update="emit('update-object', $event)"
     />
 
+    <!-- 节点内容 Tab（仅节点选中时） -->
+    <div v-else-if="activeTab === 'node-content' && isNodeSelected" class="flex-1 overflow-y-auto bg-zinc-50">
+      <div class="p-4 space-y-4">
+
+        <!-- 阶段提示词 -->
+        <div class="rounded-lg border border-zinc-200 bg-white p-4 space-y-2">
+          <div class="text-sm font-semibold text-zinc-900">阶段提示词</div>
+          <div class="text-xs text-zinc-500">描述本节点应完成的任务目标，将注入节点执行上下文。</div>
+          <textarea
+            v-model="nodeContentForm.stage_prompt"
+            rows="5"
+            class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+            placeholder="描述该拓扑节点应完成的任务目标（注入节点执行上下文）"
+          />
+        </div>
+
+        <!-- 输入节点选择 -->
+        <div class="rounded-lg border border-zinc-200 bg-white p-4 space-y-2">
+          <div class="text-sm font-semibold text-zinc-900">输入节点</div>
+          <div class="text-xs text-zinc-500">勾选后，这些节点的输出将作为本节点的增量输入上下文。</div>
+          <div v-if="availableInputNodes.length === 0" class="text-xs text-zinc-400 py-2">
+            当前图中暂无其他节点
+          </div>
+          <div v-else class="space-y-1 max-h-[240px] overflow-y-auto">
+            <label
+              v-for="node in availableInputNodes"
+              :key="node.node_id"
+              class="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer hover:bg-zinc-50 transition-colors"
+            >
+              <input
+                type="checkbox"
+                :checked="nodeContentForm.input_node_ids.includes(node.node_id)"
+                class="rounded border-zinc-300 text-blue-600 focus:ring-blue-500"
+                @change="toggleInputNode(node.node_id)"
+              />
+              <span class="text-sm text-zinc-800">{{ node.label }}</span>
+              <span class="text-xs text-zinc-400 ml-auto">{{ node.node_type }}</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- 保存按钮 -->
+        <button
+          class="w-full px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:bg-zinc-400"
+          :disabled="nodeContentSaving"
+          @click="handleSaveNodeContent"
+        >
+          保存节点内容
+        </button>
+      </div>
+    </div>
+
+    <!-- 校验 Tab -->
     <div v-else-if="activeTab === 'validation'" class="flex-1 overflow-y-auto bg-zinc-50">
       <div class="p-4 space-y-4">
         <div class="rounded-lg border border-zinc-200 bg-white p-4">
@@ -104,7 +216,7 @@ const emit = defineEmits([
         </div>
 
         <div v-if="!validationResult" class="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-6 text-center text-sm text-zinc-500">
-          还没有校验结果，点击“重新校验”或顶部“校验拓扑”开始。
+          还没有校验结果，点击"重新校验"或顶部"校验拓扑"开始。
         </div>
 
         <div v-else-if="!validationResult.success" class="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
@@ -158,6 +270,7 @@ const emit = defineEmits([
       </div>
     </div>
 
+    <!-- 执行 Tab -->
     <div v-else class="flex-1 overflow-y-auto bg-zinc-50">
       <div class="p-4 space-y-4">
         <div class="rounded-lg border border-zinc-200 bg-white p-4">

@@ -363,6 +363,26 @@ async def update_node(
     """更新节点"""
     actor = _get_actor(request, current_user)
     try:
+        # 如果传了 stage_prompt，需要把它 merge 进 config_json
+        merged_config_json = req.config_json
+        if req.stage_prompt is not None:
+            # 先取当前节点的 config_json
+            current_node = _service.get_node(node_id)
+            if not current_node:
+                raise ErrorResponse("节点不存在或已删除", 404)
+            base_config = current_node.get("config_json") or {}
+            if isinstance(base_config, str):
+                import json as _json
+                try:
+                    base_config = _json.loads(base_config)
+                except Exception:
+                    base_config = {}
+            # 用传入的 config_json（若有）覆盖 base，再写入 stage_prompt
+            if req.config_json is not None:
+                base_config = {**base_config, **req.config_json}
+            base_config["stage_prompt"] = req.stage_prompt
+            merged_config_json = base_config
+
         node = _service.update_node(
             node_id=node_id,
             container_id=req.container_id,
@@ -370,7 +390,7 @@ async def update_node(
             label=req.label,
             node_type=req.node_type,
             role_type=req.role_type,
-            config_json=req.config_json,
+            config_json=merged_config_json,
             input_schema_json=req.input_schema_json,
             output_schema_json=req.output_schema_json,
             order_index=req.order_index,
@@ -379,6 +399,8 @@ async def update_node(
         if not node:
             raise ErrorResponse("节点不存在或已删除", 404)
         return node
+    except ErrorResponse:
+        raise
     except ValueError as e:
         raise ErrorResponse(str(e), 400)
 
