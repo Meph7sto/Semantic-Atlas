@@ -255,3 +255,5 @@ frps.toml
 frpc.ini
 frps.ini
 mutagen.yml
+
+frontend/build_output.txt
