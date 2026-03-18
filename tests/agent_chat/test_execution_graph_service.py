@@ -13,7 +13,7 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from backend_business.services.agent import execution_graph_service as execution_graph_module
+from backend_business.services.agent.execution_graph_service import _base as execution_graph_module
 from backend_business.services.agent.execution_graph_service import ExecutionGraphService
 from backend_business.services.db_service_parts.schemas.execution_schema import init_execution_schema
 
