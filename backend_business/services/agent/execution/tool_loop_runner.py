@@ -7,6 +7,8 @@ from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from backend_business.services.agent.runtime.scratchpad import Scratchpad
+
 from .prompt_interface import PromptBuilderProtocol
 
 
@@ -52,6 +54,37 @@ class ToolLoopResult:
     rounds: int
 
 
+# scratchpad_write tool definition injected when scratchpad mode is active
+_SCRATCHPAD_WRITE_TOOL_DEF: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "scratchpad_write",
+        "description": (
+            "将重要发现、判断或工具结果摘录写入 Scratchpad 工作记忆。"
+            "这些内容会在后续阶段中作为上下文保留，帮助跨阶段传递关键信息。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "entry_type": {
+                    "type": "string",
+                    "enum": ["note", "tool_excerpt"],
+                    "description": (
+                        "条目类型。note: 自由备注（发现/判断/决策依据）；"
+                        "tool_excerpt: 工具结果的选择性摘录（标记为只读，不可覆盖）"
+                    ),
+                },
+                "content": {
+                    "type": "string",
+                    "description": "要写入 Scratchpad 的内容",
+                },
+            },
+            "required": ["entry_type", "content"],
+        },
+    },
+}
+
+
 class ToolLoopRunner:
     def __init__(
         self,
@@ -68,6 +101,7 @@ class ToolLoopRunner:
         actor_manager_getter: Callable[[], Any] | None = None,
         graph_meta_patcher: Callable[[str, dict[str, Any], str], None] | None = None,
         graph_meta_patch_builder: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        scratchpad: Scratchpad | None = None,
     ) -> None:
         self.ai_proxy = ai_proxy_client
         self.tool_executor = tool_executor
@@ -81,6 +115,7 @@ class ToolLoopRunner:
         self.actor_manager_getter = actor_manager_getter
         self.graph_meta_patcher = graph_meta_patcher
         self.graph_meta_patch_builder = graph_meta_patch_builder
+        self.scratchpad = scratchpad
 
     def run(
         self,
@@ -133,9 +168,18 @@ class ToolLoopRunner:
                 },
             }
 
+            tools_list = self.tool_executor.get_tools_list()
+            if self.scratchpad is not None:
+                # Inject scratchpad_write tool when scratchpad mode is active
+                if not any(
+                    (t.get("function") or {}).get("name") == "scratchpad_write"
+                    for t in tools_list
+                ):
+                    tools_list = [*tools_list, _SCRATCHPAD_WRITE_TOOL_DEF]
+
             response = self.ai_proxy.chat_completion_with_tools(
                 messages=messages,
-                tools=self.tool_executor.get_tools_list(),
+                tools=tools_list,
                 temperature=0.2,
                 tool_choice="auto",
             )
@@ -177,7 +221,17 @@ class ToolLoopRunner:
                     }
 
                     try:
-                        tool_result = self.tool_executor.execute(tool_name, arguments, normalized_context)
+                        if tool_name == "scratchpad_write" and self.scratchpad is not None:
+                            # Built-in scratchpad_write handling
+                            self.scratchpad.write(
+                                entry_type=arguments.get("entry_type", "note"),
+                                content=arguments.get("content", ""),
+                                source_subgraph=normalized_context.get("_current_subgraph"),
+                                readonly=(arguments.get("entry_type") == "tool_excerpt"),
+                            )
+                            tool_result = {"ok": True, "message": "已写入 Scratchpad"}
+                        else:
+                            tool_result = self.tool_executor.execute(tool_name, arguments, normalized_context)
                     except Exception as exc:
                         tool_result = {
                             "error": str(exc),

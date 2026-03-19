@@ -125,7 +125,7 @@ class RequirementAgentChatService:
                     prompt_payload_format=normalized_format,
                 )
                 session["prompt_payload_format"] = normalized_format
-        if context_mode and context_mode in ("full", "incremental"):
+        if context_mode and context_mode in ("full", "incremental", "scratchpad"):
             if session.get("context_mode") != context_mode:
                 self.chat_storage.update_session(
                     session_id=session["session_id"],
@@ -146,7 +146,7 @@ class RequirementAgentChatService:
         if not self.chat_storage:
             raise RuntimeError("AI chat storage not initialized")
         normalized_format = normalize_prompt_payload_format(prompt_payload_format)
-        normalized_context_mode = context_mode if context_mode in ("full", "incremental") else "full"
+        normalized_context_mode = context_mode if context_mode in ("full", "incremental", "scratchpad") else "full"
         session = self.chat_storage.create_session(
             user_id=user_id,
             project_id=project_id,
@@ -174,7 +174,7 @@ class RequirementAgentChatService:
             normalized_format = normalize_prompt_payload_format(prompt_payload_format)
         normalized_context_mode = None
         if context_mode is not None:
-            normalized_context_mode = context_mode if context_mode in ("full", "incremental") else "full"
+            normalized_context_mode = context_mode if context_mode in ("full", "incremental", "scratchpad") else "full"
         self.chat_storage.update_session(
             session_id=session_id,
             title=title,

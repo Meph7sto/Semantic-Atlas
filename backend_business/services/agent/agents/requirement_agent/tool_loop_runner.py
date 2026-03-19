@@ -7,6 +7,7 @@ from typing import Any
 
 from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner
 from backend_business.services.agent.execution_graph_service import ExecutionGraphService
+from backend_business.services.agent.runtime.scratchpad import Scratchpad
 from backend_business.services.agent.tools import RequirementAgentTools
 
 from .constants import DEFAULT_PROMPT_PAYLOAD_FORMAT
@@ -19,7 +20,16 @@ class _RequirementToolLoopPromptAdapter:
         self._prompt_builder = prompt_builder
 
     def build_system_prompt(self, *, context: dict[str, Any]) -> str:
-        return self._prompt_builder.build_tool_loop_system_prompt()
+        base = self._prompt_builder.build_tool_loop_system_prompt()
+        # In scratchpad mode, append scratchpad contents and tool instruction
+        scratchpad_text = context.get("_scratchpad_prompt_text") or ""
+        if scratchpad_text:
+            base += (
+                "\n\n" + scratchpad_text
+                + "\n\n你可以随时调用 scratchpad_write 工具，将重要发现、判断或工具结果摘录写入 Scratchpad 工作记忆，"
+                "这些内容会在后续阶段中作为上下文保留。"
+            )
+        return base
 
     def build_user_message(self, *, user_message: str, context: dict[str, Any]) -> str:
         return self._prompt_builder.build_tool_loop_user_message(
@@ -55,24 +65,12 @@ class RequirementAgentToolLoopRunner:
         prompt_builder: RequirementAgentPromptBuilder,
         max_tool_call_rounds: int,
     ) -> None:
-        self._runner = ToolLoopRunner(
-            ai_proxy_client=ai_proxy_client,
-            tool_executor=tools,
-            prompt_builder=_RequirementToolLoopPromptAdapter(prompt_builder),
-            max_tool_call_rounds=max_tool_call_rounds,
-            stage_container_key="requirements_agent",
-            stage_node_key_builder=lambda round_index: f"requirements_agent_tool_loop_round_{round_index}",
-            stage_label_builder=lambda round_index: f"Tool Loop Round {round_index}",
-            actor_manager_getter=actor_manager_getter,
-            graph_meta_patcher=lambda graph_id, meta_patch, updated_by: execution_graph_service.patch_graph_meta(
-                graph_id,
-                meta_patch,
-                updated_by=updated_by,
-            ),
-            graph_meta_patch_builder=lambda context: {
-                "resolved_requirement_id": context.get("resolved_requirement_id"),
-            },
-        )
+        self._ai_proxy_client = ai_proxy_client
+        self._tools = tools
+        self._execution_graph_service = execution_graph_service
+        self._actor_manager_getter = actor_manager_getter
+        self._prompt_builder = prompt_builder
+        self._max_tool_call_rounds = max_tool_call_rounds
 
     def run(
         self,
@@ -87,11 +85,20 @@ class RequirementAgentToolLoopRunner:
         context_mode: str = "full",
     ) -> Generator[dict[str, Any], None, dict[str, Any]]:
         # 根据上下文模式决定注入 LLM 的历史节点上下文
-        # full: 全量模式，传入完整历史节点上下文（当前已实现）
-        # incremental: 增量模式，仅保留架构/文件层面上下文，具体实现留空待扩展
-        if context_mode == "incremental":
-            # TODO: 增量上下文实现（仅保留架构和文件，不传递具体执行结果）
+        scratchpad: Scratchpad | None = None
+        scratchpad_prompt_text = ""
+
+        if context_mode == "scratchpad":
+            # Scratchpad 蒸馏模式：不传递全量历史，从 graph meta 恢复 Scratchpad
             effective_historical_context: list[dict[str, Any]] = []
+            graph = self._execution_graph_service.get_execution_graph(recorder.graph_id)
+            meta = (graph.get("meta_json") or {}) if graph else {}
+            existing_entries = meta.get("scratchpad_entries") or []
+            scratchpad = Scratchpad.from_snapshot(existing_entries)
+            scratchpad_prompt_text = scratchpad.format_for_prompt()
+        elif context_mode == "incremental":
+            # 增量模式：仅保留架构和文件上下文，不传递具体执行结果
+            effective_historical_context = []
         else:
             # full: 传入完整历史节点上下文
             effective_historical_context = recorder.historical_node_context
@@ -110,16 +117,49 @@ class RequirementAgentToolLoopRunner:
             "tool_results": [],
             "write_performed": False,
             "clarification_required": False,
+            "_scratchpad_prompt_text": scratchpad_prompt_text,
         }
-        result = yield from self._runner.run(
+
+        # Build ToolLoopRunner with optional scratchpad
+        runner = ToolLoopRunner(
+            ai_proxy_client=self._ai_proxy_client,
+            tool_executor=self._tools,
+            prompt_builder=_RequirementToolLoopPromptAdapter(self._prompt_builder),
+            max_tool_call_rounds=self._max_tool_call_rounds,
+            stage_container_key="requirements_agent",
+            stage_node_key_builder=lambda round_index: f"requirements_agent_tool_loop_round_{round_index}",
+            stage_label_builder=lambda round_index: f"Tool Loop Round {round_index}",
+            actor_manager_getter=self._actor_manager_getter,
+            graph_meta_patcher=lambda graph_id, meta_patch, updated_by: self._execution_graph_service.patch_graph_meta(
+                graph_id,
+                meta_patch,
+                updated_by=updated_by,
+            ),
+            graph_meta_patch_builder=lambda ctx: {
+                "resolved_requirement_id": ctx.get("resolved_requirement_id"),
+            },
+            scratchpad=scratchpad,
+        )
+
+        result = yield from runner.run(
             recorder=recorder,
             user_id=user_id,
             user_message=user_message,
             context=context,
         )
+
+        # Persist scratchpad state back to graph meta after tool loop completes
+        if scratchpad and context_mode == "scratchpad":
+            self._execution_graph_service.patch_graph_meta(
+                recorder.graph_id,
+                {"scratchpad_entries": scratchpad.snapshot()},
+                updated_by=user_id,
+            )
+
         return {
             "tool_loop_reply": result.tool_loop_reply,
             "context": result.context,
             "rounds": result.rounds,
         }
+
 

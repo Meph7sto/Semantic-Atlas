@@ -12,7 +12,8 @@ PromptPayloadFormat = Literal["json", "yaml", "markdown"]
 
 # full: 全量上下文（传入完整历史执行图节点上下文，当前已实现行为）
 # incremental: 增量上下文（仅传入架构/文件层面的上下文，具体实现留空待扩展）
-ContextMode = Literal["full", "incremental"]
+# scratchpad: Scratchpad 蒸馏模式（subgraph 内部增量累积，subgraph 间通过 Scratchpad 工作记忆传递关键信息）
+ContextMode = Literal["full", "incremental", "scratchpad"]
 
 
 class AgentChatSessionRequest(BaseModel):

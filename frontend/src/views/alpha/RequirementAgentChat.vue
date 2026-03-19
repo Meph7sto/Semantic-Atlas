@@ -28,7 +28,8 @@ const DEFAULT_PROMPT_FORMAT = 'json'
 
 const CONTEXT_MODE_OPTIONS = [
   { value: 'full', label: '全量 (Full)', description: '传入完整历史节点上下文' },
-  { value: 'incremental', label: '增量 (Incremental)', description: '仅保留架构/文件上下文' }
+  { value: 'incremental', label: '增量 (Incremental)', description: '仅保留架构/文件上下文' },
+  { value: 'scratchpad', label: '蒸馏 (Scratchpad)', description: 'Subgraph 间通过工作记忆传递关键信息，而非全量历史' }
 ]
 const DEFAULT_CONTEXT_MODE = 'full'
 
