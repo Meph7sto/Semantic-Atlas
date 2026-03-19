@@ -17,8 +17,8 @@ from backend_business.services.db_service_parts.schema import init_db
 
 # ─── 业务常量 ───────────────────────────────────────────
 
-_ALLOWED_NODE_TYPES = {"start", "node", "decision", "handoff", "end", "llm", "invoke"}
-_ALLOWED_EDGE_TYPES = {"call", "return", "retry"}
+_ALLOWED_NODE_TYPES = {"start", "llm", "handoff", "invoke", "end"}
+_ALLOWED_EDGE_TYPES = {"call", "return", "retry", "seq"}
 _ALLOWED_ROLE_TYPES = {"human", "agent", "system"}
 _ALLOWED_GRAPH_STATUSES = {"draft", "active", "running", "succeeded", "failed", "suspended"}
 _ALLOWED_GRAPH_TYPES = {"execution_topology_template", "agent_runtime_execution"}

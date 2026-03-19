@@ -20,6 +20,7 @@ class EdgeType(str, Enum):
     CALL = "call"
     RETURN = "return"
     RETRY = "retry"
+    SEQ = "seq"
 
 
 @dataclass

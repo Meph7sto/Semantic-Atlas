@@ -65,30 +65,24 @@ const containerDragState = ref(null)
 
 const nodeTypeRank = {
   start: 0,
-  node: 1,
-  llm: 2,
-  invoke: 3,
-  decision: 4,
-  handoff: 5,
-  end: 6
+  llm: 1,
+  invoke: 2,
+  handoff: 3,
+  end: 4
 }
 
 const nodeColors = {
   start: 'bg-emerald-100 border-emerald-500 text-emerald-900',
-  node: 'bg-blue-100 border-blue-500 text-blue-900',
   llm: 'bg-indigo-100 border-indigo-500 text-indigo-900',
   invoke: 'bg-fuchsia-100 border-fuchsia-500 text-fuchsia-900',
-  decision: 'bg-amber-100 border-amber-500 text-amber-900',
   handoff: 'bg-sky-100 border-sky-500 text-sky-900',
   end: 'bg-rose-100 border-rose-500 text-rose-900'
 }
 
 const nodeLabels = {
   start: 'START',
-  node: 'NODE',
   llm: 'LLM',
   invoke: 'INVOKE',
-  decision: 'DECISION',
   handoff: 'HANDOFF',
   end: 'END'
 }
@@ -96,7 +90,8 @@ const nodeLabels = {
 const edgeTypeLabels = {
   call: '调用',
   return: '返回',
-  retry: '重试'
+  retry: '重试',
+  seq: '顺序'
 }
 
 const edgeRelationLabels = {

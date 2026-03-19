@@ -9,12 +9,10 @@ from typing import Any, Dict, List, Optional
 class NodeType(str, Enum):
     """Node type definitions."""
     START = "start"
-    NODE = "node"
-    DECISION = "decision"
-    HANDOFF = "handoff"
-    END = "end"
     LLM = "llm"
+    HANDOFF = "handoff"
     INVOKE = "invoke"
+    END = "end"
 
 
 class RoleType(str, Enum):
@@ -33,6 +31,9 @@ class ContainerNode:
     label: str
     node_type: NodeType
     role_type: RoleType
+    phase_label: str = ""
+    task_prompt: str = ""
+    conditional_edges: List[Dict[str, Any]] = field(default_factory=list)
     config: Dict[str, Any] = field(default_factory=dict)
     input_schema: List[Dict[str, Any]] = field(default_factory=list)
     output_schema: List[Dict[str, Any]] = field(default_factory=list)
@@ -45,6 +46,9 @@ class ContainerNode:
             "label": self.label,
             "node_type": self.node_type.value,
             "role_type": self.role_type.value,
+            "phase_label": self.phase_label,
+            "task_prompt": self.task_prompt,
+            "conditional_edges": self.conditional_edges,
             "config": self.config,
             "input_schema": self.input_schema,
             "output_schema": self.output_schema,
@@ -57,8 +61,11 @@ class ContainerNode:
             node_id=node_db.get("node_id", ""),
             node_key=node_db.get("node_key", ""),
             label=node_db.get("label", ""),
-            node_type=NodeType(node_db.get("node_type", "node")),
+            node_type=NodeType(node_db.get("node_type", "llm")),
             role_type=RoleType(node_db.get("role_type", "system")),
+            phase_label=node_db.get("phase_label", "") or "",
+            task_prompt=node_db.get("task_prompt", "") or "",
+            conditional_edges=node_db.get("conditional_edges", []) or [],
             config=node_db.get("config_json", {}) or {},
             input_schema=node_db.get("input_schema_json", []) or [],
             output_schema=node_db.get("output_schema_json", []) or [],

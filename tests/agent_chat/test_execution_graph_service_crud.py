@@ -157,7 +157,7 @@ def _node_row(**overrides) -> Dict[str, Any]:
         "subgraph_id": None,
         "node_key": "n-key",
         "label": "Node",
-        "node_type": "node",
+        "node_type": "llm",
         "role_type": "agent",
         "config_json": None,
         "input_schema_json": None,
@@ -200,10 +200,10 @@ class TestBaseHelpers:
         assert re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", ts)
 
     def test_allowed_node_types_complete(self):
-        assert _ALLOWED_NODE_TYPES == {"start", "node", "decision", "handoff", "end", "llm", "invoke"}
+        assert _ALLOWED_NODE_TYPES == {"start", "llm", "handoff", "invoke", "end"}
 
     def test_allowed_edge_types_complete(self):
-        assert _ALLOWED_EDGE_TYPES == {"call", "return", "retry"}
+        assert _ALLOWED_EDGE_TYPES == {"call", "return", "retry", "seq"}
 
     def test_allowed_role_types_complete(self):
         assert _ALLOWED_ROLE_TYPES == {"human", "agent", "system"}
@@ -715,7 +715,7 @@ class TestNodeCRUD:
             graph_id="g1",
             node_key="nk",
             label="N",
-            node_type="node",
+            node_type="llm",
             role_type="agent",
         )
 
@@ -758,7 +758,7 @@ class TestNodeCRUD:
     def test_create_node_invalid_role_type(self):
         svc, _ = _build_service()
         with pytest.raises(ValueError, match="role_type"):
-            svc.create_node("g1", "nk", "N", node_type="node", role_type="robot")
+            svc.create_node("g1", "nk", "N", node_type="llm", role_type="robot")
 
     def test_create_node_container_not_belong(self):
         cursor = _MultiStepCursor([None])  # container check fails
@@ -770,7 +770,7 @@ class TestNodeCRUD:
 
         with pytest.raises(ValueError, match="容器不存在"):
             svc.create_node(
-                "g1", "nk", "N", node_type="node", role_type="agent", container_id="bad-c"
+                "g1", "nk", "N", node_type="llm", role_type="agent", container_id="bad-c"
             )
 
     def test_create_node_subgraph_not_belong(self):
@@ -784,7 +784,7 @@ class TestNodeCRUD:
 
         with pytest.raises(ValueError, match="子图不存在"):
             svc.create_node(
-                "g1", "nk", "N", node_type="node", role_type="agent", subgraph_id="bad-sg"
+                "g1", "nk", "N", node_type="llm", role_type="agent", subgraph_id="bad-sg"
             )
 
     def test_create_node_with_schemas(self):
@@ -852,11 +852,11 @@ class TestNodeCRUD:
         assert svc.get_node("nope") is None
 
     def test_update_node_basic_fields(self):
-        row = _node_row(label="New", node_type="decision")
+        row = _node_row(label="New", node_type="invoke")
         svc, cur = _build_service(fetchone_result=row)
 
         result = svc.update_node(
-            row["node_id"], label="New", node_type="decision", role_type="system"
+            row["node_id"], label="New", node_type="invoke", role_type="system"
         )
 
         assert result == row

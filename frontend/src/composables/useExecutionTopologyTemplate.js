@@ -50,7 +50,7 @@ const createNodeForm = () => ({
   subgraph_id: '',
   node_key: '',
   label: '',
-  node_type: 'node',
+  node_type: 'llm',
   role_type: 'human',
   order_index: 0,
   stage_prompt: '',
@@ -78,12 +78,10 @@ const createExecuteForm = () => ({
 
 const nodeTypeOptions = [
   { value: 'start', label: 'Start' },
-  { value: 'node', label: 'Node' },
-  { value: 'decision', label: 'Decision' },
-  { value: 'handoff', label: 'Handoff' },
-  { value: 'end', label: 'End' },
   { value: 'llm', label: 'LLM' },
-  { value: 'invoke', label: 'Invoke' }
+  { value: 'invoke', label: 'Invoke' },
+  { value: 'handoff', label: 'Handoff' },
+  { value: 'end', label: 'End' }
 ]
 
 const roleTypeOptions = [
@@ -95,7 +93,8 @@ const roleTypeOptions = [
 const edgeTypeOptions = [
   { value: 'call', label: 'Call' },
   { value: 'return', label: 'Return' },
-  { value: 'retry', label: 'Retry' }
+  { value: 'retry', label: 'Retry' },
+  { value: 'seq', label: 'Seq' }
 ]
 
 const getErrorMessage = (err, fallback) => {

@@ -33,12 +33,10 @@ const graphStatusOptions = [
 
 const nodeTypeOptions = [
   { value: 'start', label: 'Start (开始)' },
-  { value: 'node', label: 'Node (节点)' },
-  { value: 'decision', label: 'Decision (决策)' },
-  { value: 'handoff', label: 'Handoff (交接)' },
-  { value: 'end', label: 'End (结束)' },
   { value: 'llm', label: 'LLM (模型)' },
-  { value: 'invoke', label: 'Invoke (工具调用)' }
+  { value: 'invoke', label: 'Invoke (工具调用)' },
+  { value: 'handoff', label: 'Handoff (交接)' },
+  { value: 'end', label: 'End (结束)' }
 ]
 
 const roleTypeOptions = [
@@ -50,7 +48,8 @@ const roleTypeOptions = [
 const edgeTypeOptions = [
   { value: 'call', label: 'Call (调用)' },
   { value: 'return', label: 'Return (返回)' },
-  { value: 'retry', label: 'Retry (重试)' }
+  { value: 'retry', label: 'Retry (重试)' },
+  { value: 'seq', label: 'Seq (顺序)' }
 ]
 
 const asObject = (value) => {

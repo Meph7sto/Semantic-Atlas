@@ -35,6 +35,9 @@ class AgentContainerSchema(BaseModel):
         label: str
         node_type: str
         role_type: str
+        phase_label: Optional[str] = None
+        task_prompt: Optional[str] = None
+        conditional_edges: List[Dict[str, Any]] = Field(default_factory=list)
         config: Dict[str, Any] = Field(default_factory=dict)
         input_schema: List[Dict[str, Any]] = Field(default_factory=list)
         output_schema: List[Dict[str, Any]] = Field(default_factory=list)

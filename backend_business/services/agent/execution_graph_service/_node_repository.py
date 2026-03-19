@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from psycopg2 import IntegrityError
 from psycopg2.extras import RealDictCursor
@@ -20,6 +20,20 @@ from backend_business.services.agent.execution_graph_service._base import (
 class _NodeMixin:
     """Node 实体的 CRUD 方法。"""
 
+    _NODE_RETURNING_COLS = (
+        "node_id, graph_id, container_id, subgraph_id, node_key, label, node_type, role_type,"
+        " phase_label, task_prompt, conditional_edges,"
+        " config_json, input_schema_json, output_schema_json, order_index,"
+        " created_at::text AS created_at"
+    )
+
+    _NODE_SELECT_COLS = (
+        "node_id, graph_id, container_id, subgraph_id, node_key, label, node_type, role_type,"
+        " phase_label, task_prompt, conditional_edges,"
+        " config_json, input_schema_json, output_schema_json, order_index,"
+        " created_at::text AS created_at"
+    )
+
     def create_node(
         self,
         graph_id: str,
@@ -29,6 +43,9 @@ class _NodeMixin:
         role_type: str,
         container_id: str = None,
         subgraph_id: str = None,
+        phase_label: str = None,
+        task_prompt: str = None,
+        conditional_edges: Sequence = None,
         config_json: Dict = None,
         input_schema_json: List = None,
         output_schema_json: List = None,
@@ -74,16 +91,15 @@ class _NodeMixin:
                         raise ValueError("子图不存在、已删除，或不属于当前图")
                 try:
                     cur.execute(
-                        """
+                        f"""
                         INSERT INTO execution_nodes(
-                            node_id, graph_id, container_id, subgraph_id, node_key, label, node_type, role_type, config_json,
-                            input_schema_json, output_schema_json, order_index,
+                            node_id, graph_id, container_id, subgraph_id, node_key, label, node_type, role_type,
+                            phase_label, task_prompt, conditional_edges,
+                            config_json, input_schema_json, output_schema_json, order_index,
                             created_at, updated_at
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
-                        RETURNING node_id, graph_id, container_id, subgraph_id, node_key, label, node_type, role_type, config_json,
-                                  input_schema_json, output_schema_json, order_index,
-                                  created_at::text AS created_at
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                        RETURNING {self._NODE_RETURNING_COLS}
                         """,
                         (
                             node_id,
@@ -94,6 +110,9 @@ class _NodeMixin:
                             label,
                             node_type,
                             role_type,
+                            phase_label or None,
+                            task_prompt or None,
+                            json.dumps(conditional_edges) if conditional_edges else None,
                             json.dumps(config_json) if config_json else None,
                             json.dumps(input_schema_json) if input_schema_json else None,
                             json.dumps(output_schema_json) if output_schema_json else None,
@@ -117,10 +136,8 @@ class _NodeMixin:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 if include_deleted:
                     cur.execute(
-                        """
-                        SELECT node_id, graph_id, container_id, subgraph_id, node_key, label, node_type, role_type, config_json,
-                               input_schema_json, output_schema_json, order_index,
-                               created_at::text AS created_at
+                        f"""
+                        SELECT {self._NODE_SELECT_COLS}
                         FROM execution_nodes
                         WHERE graph_id = %s
                         ORDER BY order_index, created_at
@@ -129,10 +146,8 @@ class _NodeMixin:
                     )
                 else:
                     cur.execute(
-                        """
-                        SELECT node_id, graph_id, container_id, subgraph_id, node_key, label, node_type, role_type, config_json,
-                               input_schema_json, output_schema_json, order_index,
-                               created_at::text AS created_at
+                        f"""
+                        SELECT {self._NODE_SELECT_COLS}
                         FROM execution_nodes
                         WHERE graph_id = %s AND is_deleted = FALSE
                         ORDER BY order_index, created_at
@@ -146,10 +161,8 @@ class _NodeMixin:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 if include_deleted:
                     cur.execute(
-                        """
-                        SELECT node_id, graph_id, container_id, subgraph_id, node_key, label, node_type, role_type, config_json,
-                               input_schema_json, output_schema_json, order_index,
-                               created_at::text AS created_at
+                        f"""
+                        SELECT {self._NODE_SELECT_COLS}
                         FROM execution_nodes
                         WHERE node_id = %s
                         """,
@@ -157,10 +170,8 @@ class _NodeMixin:
                     )
                 else:
                     cur.execute(
-                        """
-                        SELECT node_id, graph_id, container_id, subgraph_id, node_key, label, node_type, role_type, config_json,
-                               input_schema_json, output_schema_json, order_index,
-                               created_at::text AS created_at
+                        f"""
+                        SELECT {self._NODE_SELECT_COLS}
                         FROM execution_nodes
                         WHERE node_id = %s AND is_deleted = FALSE
                         """,
@@ -177,6 +188,9 @@ class _NodeMixin:
         label: str = None,
         node_type: str = None,
         role_type: str = None,
+        phase_label: str = None,
+        task_prompt: str = None,
+        conditional_edges: Sequence = None,
         config_json: Dict = None,
         input_schema_json: List = None,
         output_schema_json: List = None,
@@ -205,6 +219,15 @@ class _NodeMixin:
                 raise ValueError(f"role_type 必须是: {', '.join(_ALLOWED_ROLE_TYPES)}")
             fields.append("role_type = %s")
             values.append(role_type)
+        if phase_label is not None:
+            fields.append("phase_label = %s")
+            values.append(phase_label or None)
+        if task_prompt is not None:
+            fields.append("task_prompt = %s")
+            values.append(task_prompt or None)
+        if conditional_edges is not None:
+            fields.append("conditional_edges = %s")
+            values.append(json.dumps(conditional_edges) if conditional_edges else None)
         if config_json is not None:
             fields.append("config_json = %s")
             values.append(json.dumps(config_json) if config_json else None)
@@ -234,9 +257,7 @@ class _NodeMixin:
 
         sql = (
             f"UPDATE execution_nodes SET {', '.join(fields)} WHERE node_id = %s AND is_deleted = FALSE"
-            " RETURNING node_id, graph_id, container_id, subgraph_id, node_key, label, node_type, role_type,"
-            " config_json, input_schema_json, output_schema_json, order_index,"
-            " created_at::text AS created_at"
+            f" RETURNING {self._NODE_RETURNING_COLS}"
         )
 
         with self._connect() as conn:

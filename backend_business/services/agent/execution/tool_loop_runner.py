@@ -157,7 +157,7 @@ class ToolLoopRunner:
                     messages=messages,
                     context=normalized_context,
                 ),
-                edge_type_from_previous="call",
+                edge_type_from_previous="seq",
             )
             yield {
                 "event": "stage",

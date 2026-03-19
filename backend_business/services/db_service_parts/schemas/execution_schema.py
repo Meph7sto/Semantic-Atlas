@@ -148,9 +148,12 @@ def init_execution_schema(cur):
             node_key TEXT NOT NULL,
             label TEXT NOT NULL,
             node_type TEXT NOT NULL CHECK (
-                node_type IN ('start', 'node', 'decision', 'handoff', 'end', 'llm', 'invoke')
+                node_type IN ('start', 'llm', 'handoff', 'invoke', 'end')
             ),
             role_type TEXT NOT NULL CHECK (role_type IN ('human', 'agent', 'system')),
+            phase_label TEXT,
+            task_prompt TEXT,
+            conditional_edges JSONB,
             config_json JSONB,
             input_schema_json JSONB,
             output_schema_json JSONB,
@@ -162,13 +165,16 @@ def init_execution_schema(cur):
         )
         """
     )
+    # Migration: unify node types to 5 kinds (start/llm/handoff/invoke/end).
+    # Migrate legacy 'node', 'decision', 'task' → 'llm' and replace the CHECK constraint.
     cur.execute(
         """
         DO $$
         DECLARE
-            node_type_constraint_name TEXT;
-            has_expected_constraint BOOLEAN;
+            constraint_name TEXT;
+            has_unified_constraint BOOLEAN;
         BEGIN
+            -- Check whether the unified 5-type constraint already exists.
             SELECT EXISTS (
                 SELECT 1
                   FROM pg_constraint
@@ -176,35 +182,37 @@ def init_execution_schema(cur):
                    AND contype = 'c'
                    AND conname = 'chk_execution_nodes_node_type'
                    AND pg_get_constraintdef(oid) ILIKE '%node_type%'
-                   AND pg_get_constraintdef(oid) ILIKE '%start%'
-                   AND pg_get_constraintdef(oid) ILIKE '%node%'
-                   AND pg_get_constraintdef(oid) ILIKE '%decision%'
-                   AND pg_get_constraintdef(oid) ILIKE '%handoff%'
-                   AND pg_get_constraintdef(oid) ILIKE '%end%'
-                   AND pg_get_constraintdef(oid) ILIKE '%llm%'
-                   AND pg_get_constraintdef(oid) ILIKE '%invoke%'
-            ) INTO has_expected_constraint;
+                   AND pg_get_constraintdef(oid) NOT ILIKE '%decision%'
+                   AND pg_get_constraintdef(oid) NOT ILIKE '%''node''%'
+            ) INTO has_unified_constraint;
 
-            IF NOT has_expected_constraint THEN
-                FOR node_type_constraint_name IN
+            IF NOT has_unified_constraint THEN
+                -- Drop ALL existing node_type CHECK constraints.
+                FOR constraint_name IN
                     SELECT conname
                       FROM pg_constraint
                      WHERE conrelid = 'execution_nodes'::regclass
                        AND contype = 'c'
                        AND pg_get_constraintdef(oid) ILIKE '%node_type%'
                 LOOP
-                    EXECUTE format('ALTER TABLE execution_nodes DROP CONSTRAINT %I', node_type_constraint_name);
+                    EXECUTE format('ALTER TABLE execution_nodes DROP CONSTRAINT %I', constraint_name);
                 END LOOP;
 
-                UPDATE execution_nodes SET node_type = 'node' WHERE node_type = 'task';
+                -- Migrate legacy node types to 'llm'.
+                UPDATE execution_nodes SET node_type = 'llm' WHERE node_type IN ('node', 'decision', 'task');
 
+                -- Add the unified 5-type constraint.
                 ALTER TABLE execution_nodes
                 ADD CONSTRAINT chk_execution_nodes_node_type
-                CHECK (node_type IN ('start', 'node', 'decision', 'handoff', 'end', 'llm', 'invoke'));
+                CHECK (node_type IN ('start', 'llm', 'handoff', 'invoke', 'end'));
             END IF;
         END $$;
         """
     )
+    # Migration: add phase_label / task_prompt / conditional_edges columns.
+    cur.execute("ALTER TABLE execution_nodes ADD COLUMN IF NOT EXISTS phase_label TEXT")
+    cur.execute("ALTER TABLE execution_nodes ADD COLUMN IF NOT EXISTS task_prompt TEXT")
+    cur.execute("ALTER TABLE execution_nodes ADD COLUMN IF NOT EXISTS conditional_edges JSONB")
     cur.execute(
         "ALTER TABLE execution_nodes ADD COLUMN IF NOT EXISTS container_id TEXT"
     )

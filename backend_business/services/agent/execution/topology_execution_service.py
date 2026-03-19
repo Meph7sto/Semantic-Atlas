@@ -171,7 +171,7 @@ class TopologyExecutionService:
                 subgraph_id=subgraph_id_map.get(node.get("subgraph_id")),
                 node_key=node.get("node_key") or "node",
                 label=node.get("label") or node.get("node_key") or "Node",
-                node_type=node.get("node_type") or "node",
+                node_type=node.get("node_type") or "llm",
                 role_type=node.get("role_type") or "system",
                 config_json=config,
                 input_schema_json=copy.deepcopy(node.get("input_schema_json") or []),
@@ -468,7 +468,7 @@ class TopologyExecutionService:
         return fallback_edge
 
     def _execute_node(self, node: dict[str, Any], node_input: dict[str, Any]) -> dict[str, Any]:
-        node_type = node.get("node_type") or "node"
+        node_type = node.get("node_type") or "llm"
         config = copy.deepcopy(node.get("config_json") or {})
         static_output = config.get("output", config.get("static_output"))
         stage_prompt = config.get("stage_prompt")

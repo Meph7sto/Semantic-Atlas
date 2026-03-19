@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-_ALLOWED_NODE_TYPES = {"start", "node", "decision", "handoff", "end", "llm", "invoke"}
-_ALLOWED_EDGE_TYPES = {"call", "return", "retry"}
+_ALLOWED_NODE_TYPES = {"start", "llm", "handoff", "invoke", "end"}
+_ALLOWED_EDGE_TYPES = {"call", "return", "retry", "seq"}
 _ALLOWED_ROLE_TYPES = {"human", "agent", "system"}
 _ALLOWED_GRAPH_STATUSES = {"draft", "active", "running", "succeeded", "failed", "suspended"}
 
@@ -148,8 +148,11 @@ class CreateNodeRequest(BaseModel):
     subgraph_id: Optional[str] = Field(default=None, description="所属子图ID（可选）")
     node_key: str = Field(..., min_length=1, description="节点唯一标识（图内唯一）")
     label: str = Field(..., min_length=1, description="节点显示标签")
-    node_type: str = Field(..., description="节点类型: start|node|decision|handoff|end|llm|invoke")
+    node_type: str = Field(..., description="节点类型: start|llm|handoff|invoke|end")
     role_type: str = Field(..., description="角色类型: human|agent|system")
+    phase_label: Optional[str] = Field(default=None, description="阶段标签")
+    task_prompt: Optional[str] = Field(default=None, description="阶段任务提示词")
+    conditional_edges: Optional[List[Dict[str, Any]]] = Field(default=None, description="条件出边列表")
     config_json: Optional[Dict[str, Any]] = Field(
         default_factory=dict, description="配置JSON"
     )
@@ -177,8 +180,11 @@ class UpdateNodeRequest(BaseModel):
     container_id: Optional[str] = Field(None, description="所属容器ID（可选）")
     subgraph_id: Optional[str] = Field(None, description="所属子图ID（可选）")
     label: Optional[str] = Field(None, min_length=1, description="节点显示标签")
-    node_type: Optional[str] = Field(None, description="节点类型: start|node|decision|handoff|end|llm|invoke")
+    node_type: Optional[str] = Field(None, description="节点类型: start|llm|handoff|invoke|end")
     role_type: Optional[str] = Field(None, description="角色类型: human|agent|system")
+    phase_label: Optional[str] = Field(None, description="阶段标签")
+    task_prompt: Optional[str] = Field(None, description="阶段任务提示词")
+    conditional_edges: Optional[List[Dict[str, Any]]] = Field(None, description="条件出边列表")
     config_json: Optional[Dict[str, Any]] = Field(None, description="配置JSON")
     stage_prompt: Optional[str] = Field(None, description="阶段提示词（将自动合并至 config_json.stage_prompt）")
     input_schema_json: Optional[List[str]] = Field(None, description="输入节点 ID 列表（节点内容 Tab 中选择的输入节点）")

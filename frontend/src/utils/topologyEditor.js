@@ -119,7 +119,7 @@ export const normalizeNodePayload = (formData) => {
       subgraph_id: formData.subgraph_id || null,
       node_key: formData.node_key?.trim(),
       label: formData.label?.trim(),
-      node_type: formData.node_type || 'node',
+      node_type: formData.node_type || 'llm',
       role_type: formData.role_type || 'human',
       order_index: normalizeInteger(formData.order_index, 0),
       config_json: config.value,

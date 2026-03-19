@@ -379,12 +379,22 @@ class RuntimeGraphRecorder:
             self._nodes[node_key] = stage_node
 
             if self._last_node_id and edge_type_from_previous:
+                # Auto-detect same-container edges: use "seq" for intra-container flow
+                actual_edge_type = edge_type_from_previous
+                if actual_edge_type == "call":
+                    last_stage = next(
+                        (s for s in self._nodes.values() if s.node_id == self._last_node_id),
+                        None,
+                    )
+                    if last_stage and last_stage.container_id == stage_node.container_id:
+                        actual_edge_type = "seq"
+
                 self._service.create_edge(
                     graph_id=self.graph_id,
                     source_node_id=self._last_node_id,
                     target_node_id=stage_node.node_id,
-                    edge_type=edge_type_from_previous,
-                    label=edge_type_from_previous,
+                    edge_type=actual_edge_type,
+                    label=actual_edge_type,
                     config_json={"runtime": True},
                     order_index=self._edge_order,
                     created_by=created_by,
