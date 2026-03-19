@@ -56,6 +56,7 @@ class _StubExecutionGraphService:
             "containers": [],
             "nodes": [],
             "edges": [],
+            "subgraphs": [],
         }
         return graph
 
@@ -89,6 +90,7 @@ class _StubExecutionGraphService:
         node_type: str,
         role_type: str,
         container_id: str | None = None,
+        subgraph_id: str | None = None,
         config_json: dict | None = None,
         input_schema_json: list | None = None,
         output_schema_json: list | None = None,
@@ -99,6 +101,7 @@ class _StubExecutionGraphService:
             "node_id": f"{graph_id}-node-{len(self.runtime_graphs[graph_id]['nodes']) + 1}",
             "graph_id": graph_id,
             "container_id": container_id,
+            "subgraph_id": subgraph_id,
             "node_key": node_key,
             "label": label,
             "node_type": node_type,
@@ -110,6 +113,37 @@ class _StubExecutionGraphService:
         }
         self.runtime_graphs[graph_id]["nodes"].append(node)
         return node
+
+    def create_subgraph(
+        self,
+        graph_id: str,
+        container_id: str,
+        subgraph_key: str,
+        label: str,
+        task_description: str = "",
+        order_index: int = 0,
+        config_json: dict | None = None,
+        created_by: str = "",
+    ):
+        subgraph = {
+            "subgraph_id": f"{graph_id}-subgraph-{len(self.runtime_graphs[graph_id]['subgraphs']) + 1}",
+            "graph_id": graph_id,
+            "container_id": container_id,
+            "subgraph_key": subgraph_key,
+            "label": label,
+            "task_description": task_description,
+            "order_index": order_index,
+            "config_json": config_json or {},
+        }
+        self.runtime_graphs[graph_id]["subgraphs"].append(subgraph)
+        return subgraph
+
+    def get_subgraph(self, subgraph_id: str):
+        for detail in self.runtime_graphs.values():
+            for sg in detail.get("subgraphs", []):
+                if sg["subgraph_id"] == subgraph_id:
+                    return sg
+        return None
 
     def create_edge(
         self,

@@ -47,11 +47,28 @@ class ToolCallEvent:
     error: str | None = None
 
 
+class CompletePhaseSignal(Exception):
+    """Internal signal raised when LLM calls the complete_phase tool.
+
+    This is NOT a real error — it is used to break out of the tool-call
+    loop and indicate that the current subgraph/phase has been explicitly
+    completed by the model.
+    """
+
+    def __init__(self, conclusion: str, route_key: str | None = None) -> None:
+        self.conclusion = conclusion
+        self.route_key = route_key
+        super().__init__(f"complete_phase signal: route_key={route_key}")
+
+
 @dataclass(frozen=True)
 class ToolLoopResult:
     tool_loop_reply: str
     context: dict[str, Any]
     rounds: int
+    phase_completed: bool = False
+    route_key: str | None = None
+    conclusion: str | None = None
 
 
 # scratchpad_write tool definition injected when scratchpad mode is active
@@ -84,6 +101,38 @@ _SCRATCHPAD_WRITE_TOOL_DEF: dict[str, Any] = {
     },
 }
 
+# complete_phase tool definition injected when phase completion mode is active
+_COMPLETE_PHASE_TOOL_DEF: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "complete_phase",
+        "description": (
+            "当你判断当前阶段的任务已经完成时，调用此工具发出显式的阶段完成信号。"
+            "调用后运行时会标记当前阶段完成并推进到下一阶段。"
+            "这是阶段完成的唯一信号——不要依赖返回纯文本来表示完成，请显式调用此工具。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "conclusion": {
+                    "type": "string",
+                    "description": "当前阶段的结论描述，概括本阶段完成的工作和关键产出",
+                },
+                "route_key": {
+                    "type": "string",
+                    "description": (
+                        "路由字段，用于条件出边匹配。"
+                        "如果当前拓扑节点配置了 conditional_edges，"
+                        "运行时会用此值与条件逐一比对来决定下一阶段。"
+                        "无条件流转时可不传。"
+                    ),
+                },
+            },
+            "required": ["conclusion"],
+        },
+    },
+}
+
 
 class ToolLoopRunner:
     def __init__(
@@ -102,6 +151,7 @@ class ToolLoopRunner:
         graph_meta_patcher: Callable[[str, dict[str, Any], str], None] | None = None,
         graph_meta_patch_builder: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         scratchpad: Scratchpad | None = None,
+        enable_complete_phase: bool = False,
     ) -> None:
         self.ai_proxy = ai_proxy_client
         self.tool_executor = tool_executor
@@ -116,6 +166,7 @@ class ToolLoopRunner:
         self.graph_meta_patcher = graph_meta_patcher
         self.graph_meta_patch_builder = graph_meta_patch_builder
         self.scratchpad = scratchpad
+        self.enable_complete_phase = enable_complete_phase
 
     def run(
         self,
@@ -176,6 +227,13 @@ class ToolLoopRunner:
                     for t in tools_list
                 ):
                     tools_list = [*tools_list, _SCRATCHPAD_WRITE_TOOL_DEF]
+            if self.enable_complete_phase:
+                # Inject complete_phase tool for explicit phase completion signals
+                if not any(
+                    (t.get("function") or {}).get("name") == "complete_phase"
+                    for t in tools_list
+                ):
+                    tools_list = [*tools_list, _COMPLETE_PHASE_TOOL_DEF]
 
             response = self.ai_proxy.chat_completion_with_tools(
                 messages=messages,
@@ -221,7 +279,60 @@ class ToolLoopRunner:
                     }
 
                     try:
-                        if tool_name == "scratchpad_write" and self.scratchpad is not None:
+                        if tool_name == "complete_phase" and self.enable_complete_phase:
+                            # Built-in complete_phase handling: explicit phase completion signal
+                            conclusion = arguments.get("conclusion", "")
+                            route_key = arguments.get("route_key")
+                            tool_result = {"ok": True, "message": "阶段完成信号已确认"}
+
+                            recorder.record_tool_call_result(
+                                node_key,
+                                created_by=user_id,
+                                tool_name=tool_name,
+                                request_payload={
+                                    "tool_call_id": tool_call_id,
+                                    "arguments": arguments,
+                                },
+                                result_payload=tool_result,
+                            )
+
+                            # Auto-append conclusion to Scratchpad as stage_output
+                            if self.scratchpad is not None:
+                                self.scratchpad.append_stage_output(
+                                    normalized_context.get("_current_subgraph") or "unknown",
+                                    conclusion,
+                                )
+
+                            output_summary["phase_completed"] = True
+                            output_summary["route_key"] = route_key
+                            output_summary["conclusion"] = conclusion
+
+                            self._complete_round_and_patch_meta(
+                                recorder=recorder,
+                                node_key=node_key,
+                                user_id=user_id,
+                                output_summary=output_summary,
+                                context=normalized_context,
+                            )
+                            yield {
+                                "event": "stage",
+                                "data": {
+                                    "graph_id": recorder.graph_id,
+                                    "node_key": node_key,
+                                    "status": "succeeded",
+                                    "phase_completed": True,
+                                },
+                            }
+                            return ToolLoopResult(
+                                tool_loop_reply=conclusion or assistant_content,
+                                context=normalized_context,
+                                rounds=round_index,
+                                phase_completed=True,
+                                route_key=route_key,
+                                conclusion=conclusion,
+                            )
+
+                        elif tool_name == "scratchpad_write" and self.scratchpad is not None:
                             # Built-in scratchpad_write handling
                             self.scratchpad.write(
                                 entry_type=arguments.get("entry_type", "note"),

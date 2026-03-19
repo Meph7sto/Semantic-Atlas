@@ -452,3 +452,289 @@ class TestToolLoopRunnerScratchpadIntegration:
         tool_names = [t.get("function", {}).get("name") for t in tools_sent]
         assert "scratchpad_write" in tool_names
         assert "dummy" in tool_names
+
+
+# ============================================================
+# ToolLoopRunner complete_phase integration
+# ============================================================
+
+
+class TestToolLoopRunnerCompletePhaseIntegration:
+    def test_complete_phase_tool_injected_when_enabled(self):
+        from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner
+        from backend_business.services.agent.runtime.graph_recorder import RuntimeGraphRecorder, ContainerConfig
+
+        graph_service = _FakeGraphService()
+        recorder = RuntimeGraphRecorder(
+            execution_graph_service=graph_service,
+            container_configs=[ContainerConfig("agent_main", "Agent Main", "agent")],
+            project_id="p-1", user_id="u-1", session_id="s-1", user_message="hello",
+        )
+
+        ai_proxy = _FakeAiProxy([
+            {"content": "just text", "tool_calls": [], "finish_reason": "stop"},
+        ])
+
+        runner = ToolLoopRunner(
+            ai_proxy_client=ai_proxy,
+            tool_executor=_FakeToolExecutor(),
+            prompt_builder=_FakePromptBuilder(),
+            stage_container_key="agent_main",
+            enable_complete_phase=True,
+        )
+
+        _run_to_completion(runner.run(
+            recorder=recorder, user_id="u-1", user_message="hello",
+            context={"project_id": "p-1", "tool_results": []},
+        ))
+
+        tools_sent = ai_proxy.calls[0]["tools"]
+        tool_names = [t.get("function", {}).get("name") for t in tools_sent]
+        assert "complete_phase" in tool_names
+        assert "dummy" in tool_names
+
+    def test_complete_phase_tool_not_injected_when_disabled(self):
+        from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner
+        from backend_business.services.agent.runtime.graph_recorder import RuntimeGraphRecorder, ContainerConfig
+
+        graph_service = _FakeGraphService()
+        recorder = RuntimeGraphRecorder(
+            execution_graph_service=graph_service,
+            container_configs=[ContainerConfig("agent_main", "Agent Main", "agent")],
+            project_id="p-1", user_id="u-1", session_id="s-1", user_message="hello",
+        )
+
+        ai_proxy = _FakeAiProxy([
+            {"content": "just text", "tool_calls": [], "finish_reason": "stop"},
+        ])
+
+        runner = ToolLoopRunner(
+            ai_proxy_client=ai_proxy,
+            tool_executor=_FakeToolExecutor(),
+            prompt_builder=_FakePromptBuilder(),
+            stage_container_key="agent_main",
+            # enable_complete_phase defaults to False
+        )
+
+        _run_to_completion(runner.run(
+            recorder=recorder, user_id="u-1", user_message="hello",
+            context={"project_id": "p-1", "tool_results": []},
+        ))
+
+        tools_sent = ai_proxy.calls[0]["tools"]
+        tool_names = [t.get("function", {}).get("name") for t in tools_sent]
+        assert "complete_phase" not in tool_names
+
+    def test_complete_phase_triggers_loop_exit_with_phase_completed(self):
+        from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner
+        from backend_business.services.agent.runtime.graph_recorder import RuntimeGraphRecorder, ContainerConfig
+
+        graph_service = _FakeGraphService()
+        recorder = RuntimeGraphRecorder(
+            execution_graph_service=graph_service,
+            container_configs=[ContainerConfig("agent_main", "Agent Main", "agent")],
+            project_id="p-1", user_id="u-1", session_id="s-1", user_message="hello",
+        )
+
+        ai_proxy = _FakeAiProxy([
+            {
+                "content": "",
+                "tool_calls": [{
+                    "id": "tc-cp-1",
+                    "type": "function",
+                    "function": {
+                        "name": "complete_phase",
+                        "arguments": '{"conclusion":"分析完成，需求明确"}',
+                    },
+                }],
+                "finish_reason": "tool_calls",
+            },
+            # This second response should never be reached
+            {"content": "should not reach here", "tool_calls": [], "finish_reason": "stop"},
+        ])
+
+        runner = ToolLoopRunner(
+            ai_proxy_client=ai_proxy,
+            tool_executor=_FakeToolExecutor(),
+            prompt_builder=_FakePromptBuilder(),
+            stage_container_key="agent_main",
+            enable_complete_phase=True,
+        )
+
+        events, result = _run_to_completion(runner.run(
+            recorder=recorder, user_id="u-1", user_message="hello",
+            context={"project_id": "p-1", "tool_results": []},
+        ))
+
+        assert result.phase_completed is True
+        assert result.conclusion == "分析完成，需求明确"
+        assert result.rounds == 1
+        # AI proxy should only have been called once (loop exits after complete_phase)
+        assert len(ai_proxy.calls) == 1
+
+    def test_complete_phase_passes_route_key(self):
+        from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner
+        from backend_business.services.agent.runtime.graph_recorder import RuntimeGraphRecorder, ContainerConfig
+
+        graph_service = _FakeGraphService()
+        recorder = RuntimeGraphRecorder(
+            execution_graph_service=graph_service,
+            container_configs=[ContainerConfig("agent_main", "Agent Main", "agent")],
+            project_id="p-1", user_id="u-1", session_id="s-1", user_message="hello",
+        )
+
+        ai_proxy = _FakeAiProxy([
+            {
+                "content": "",
+                "tool_calls": [{
+                    "id": "tc-cp-2",
+                    "type": "function",
+                    "function": {
+                        "name": "complete_phase",
+                        "arguments": '{"conclusion":"needs review","route_key":"review_required"}',
+                    },
+                }],
+                "finish_reason": "tool_calls",
+            },
+        ])
+
+        runner = ToolLoopRunner(
+            ai_proxy_client=ai_proxy,
+            tool_executor=_FakeToolExecutor(),
+            prompt_builder=_FakePromptBuilder(),
+            stage_container_key="agent_main",
+            enable_complete_phase=True,
+        )
+
+        events, result = _run_to_completion(runner.run(
+            recorder=recorder, user_id="u-1", user_message="hello",
+            context={"project_id": "p-1", "tool_results": []},
+        ))
+
+        assert result.phase_completed is True
+        assert result.route_key == "review_required"
+        assert result.conclusion == "needs review"
+
+    def test_complete_phase_auto_appends_scratchpad_stage_output(self):
+        from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner
+        from backend_business.services.agent.runtime.graph_recorder import RuntimeGraphRecorder, ContainerConfig
+
+        pad = Scratchpad()
+        graph_service = _FakeGraphService()
+        recorder = RuntimeGraphRecorder(
+            execution_graph_service=graph_service,
+            container_configs=[ContainerConfig("agent_main", "Agent Main", "agent")],
+            project_id="p-1", user_id="u-1", session_id="s-1", user_message="hello",
+        )
+
+        ai_proxy = _FakeAiProxy([
+            {
+                "content": "",
+                "tool_calls": [{
+                    "id": "tc-cp-3",
+                    "type": "function",
+                    "function": {
+                        "name": "complete_phase",
+                        "arguments": '{"conclusion":"all requirements gathered"}',
+                    },
+                }],
+                "finish_reason": "tool_calls",
+            },
+        ])
+
+        runner = ToolLoopRunner(
+            ai_proxy_client=ai_proxy,
+            tool_executor=_FakeToolExecutor(),
+            prompt_builder=_FakePromptBuilder(),
+            stage_container_key="agent_main",
+            scratchpad=pad,
+            enable_complete_phase=True,
+        )
+
+        events, result = _run_to_completion(runner.run(
+            recorder=recorder, user_id="u-1", user_message="hello",
+            context={"project_id": "p-1", "tool_results": []},
+        ))
+
+        assert result.phase_completed is True
+        # Scratchpad should have a stage_output entry
+        stage_outputs = pad.read(filter_type="stage_output")
+        assert len(stage_outputs) == 1
+        assert stage_outputs[0].content == "all requirements gathered"
+
+    def test_complete_phase_without_scratchpad_still_works(self):
+        from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner
+        from backend_business.services.agent.runtime.graph_recorder import RuntimeGraphRecorder, ContainerConfig
+
+        graph_service = _FakeGraphService()
+        recorder = RuntimeGraphRecorder(
+            execution_graph_service=graph_service,
+            container_configs=[ContainerConfig("agent_main", "Agent Main", "agent")],
+            project_id="p-1", user_id="u-1", session_id="s-1", user_message="hello",
+        )
+
+        ai_proxy = _FakeAiProxy([
+            {
+                "content": "",
+                "tool_calls": [{
+                    "id": "tc-cp-4",
+                    "type": "function",
+                    "function": {
+                        "name": "complete_phase",
+                        "arguments": '{"conclusion":"done without scratchpad"}',
+                    },
+                }],
+                "finish_reason": "tool_calls",
+            },
+        ])
+
+        runner = ToolLoopRunner(
+            ai_proxy_client=ai_proxy,
+            tool_executor=_FakeToolExecutor(),
+            prompt_builder=_FakePromptBuilder(),
+            stage_container_key="agent_main",
+            # No scratchpad, but complete_phase enabled
+            enable_complete_phase=True,
+        )
+
+        events, result = _run_to_completion(runner.run(
+            recorder=recorder, user_id="u-1", user_message="hello",
+            context={"project_id": "p-1", "tool_results": []},
+        ))
+
+        assert result.phase_completed is True
+        assert result.conclusion == "done without scratchpad"
+
+    def test_backward_compat_text_completion_still_works(self):
+        from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner
+        from backend_business.services.agent.runtime.graph_recorder import RuntimeGraphRecorder, ContainerConfig
+
+        graph_service = _FakeGraphService()
+        recorder = RuntimeGraphRecorder(
+            execution_graph_service=graph_service,
+            container_configs=[ContainerConfig("agent_main", "Agent Main", "agent")],
+            project_id="p-1", user_id="u-1", session_id="s-1", user_message="hello",
+        )
+
+        ai_proxy = _FakeAiProxy([
+            {"content": "task done naturally", "tool_calls": [], "finish_reason": "stop"},
+        ])
+
+        runner = ToolLoopRunner(
+            ai_proxy_client=ai_proxy,
+            tool_executor=_FakeToolExecutor(),
+            prompt_builder=_FakePromptBuilder(),
+            stage_container_key="agent_main",
+            enable_complete_phase=True,  # enabled but model doesn't call it
+        )
+
+        events, result = _run_to_completion(runner.run(
+            recorder=recorder, user_id="u-1", user_message="hello",
+            context={"project_id": "p-1", "tool_results": []},
+        ))
+
+        # Natural text completion should still work
+        assert result.tool_loop_reply == "task done naturally"
+        assert result.phase_completed is False
+        assert result.route_key is None
+        assert result.conclusion is None
