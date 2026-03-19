@@ -13,7 +13,6 @@ import {
 const createEmptyGraphDetail = () => ({
   graph: null,
   containers: [],
-  subgraphs: [],
   nodes: [],
   edges: []
 })
@@ -36,24 +35,17 @@ const createContainerForm = () => ({
   config_json: '{}'
 })
 
-const createSubgraphForm = () => ({
-  container_id: '',
-  subgraph_key: '',
-  label: '',
-  task_description: '',
-  order_index: 0,
-  config_json: '{}'
-})
 
 const createNodeForm = () => ({
   container_id: '',
-  subgraph_id: '',
   node_key: '',
   label: '',
   node_type: 'llm',
   role_type: 'human',
   order_index: 0,
-  stage_prompt: '',
+  phase_label: '',
+  task_prompt: '',
+  conditional_edges: '[]',
   config_json: '{}',
   input_schema_json: '[]',
   output_schema_json: '[]'
@@ -115,7 +107,6 @@ export function useExecutionTopologyTemplate() {
 
   const showNewGraphDialog = ref(false)
   const showNewContainerDialog = ref(false)
-  const showNewSubgraphDialog = ref(false)
   const showNewNodeDialog = ref(false)
   const showNewEdgeDialog = ref(false)
   const showStructureViewer = ref(false)
@@ -123,13 +114,11 @@ export function useExecutionTopologyTemplate() {
 
   const graphFormErrors = ref({})
   const containerFormErrors = ref({})
-  const subgraphFormErrors = ref({})
   const nodeFormErrors = ref({})
   const edgeFormErrors = ref({})
 
   const newGraphForm = ref(createGraphForm())
   const newContainerForm = ref(createContainerForm())
-  const newSubgraphForm = ref(createSubgraphForm())
   const newNodeForm = ref(createNodeForm())
   const newEdgeForm = ref(createEdgeForm())
 
@@ -178,33 +167,10 @@ export function useExecutionTopologyTemplate() {
     return graphDetail.value.edges.find((item) => item.edge_id === selectedObject.value.id) || null
   })
 
-  const selectedSubgraphData = computed(() => {
-    if (selectedObject.value.type !== 'subgraph') return null
-    return (graphDetail.value.subgraphs || []).find((item) => item.subgraph_id === selectedObject.value.id) || null
-  })
-
   const selectedInspectorObject = computed(() => {
-    return selectedGraphData.value || selectedContainerData.value || selectedSubgraphData.value || selectedNodeData.value || selectedEdgeData.value
+    return selectedGraphData.value || selectedContainerData.value || selectedNodeData.value || selectedEdgeData.value
   })
 
-  const nodesBySubgraph = computed(() => {
-    const groups = {}
-    const subgraphs = graphDetail.value.subgraphs || []
-    const nodes = graphDetail.value.nodes || []
-
-    subgraphs.forEach((subgraph) => {
-      groups[subgraph.subgraph_id] = []
-    })
-
-    nodes.forEach((node) => {
-      const subgraphId = node.subgraph_id
-      if (subgraphId && groups[subgraphId]) {
-        groups[subgraphId].push(node)
-      }
-    })
-
-    return groups
-  })
 
   const nodesByContainer = computed(() => {
     const groups = {}
@@ -428,10 +394,7 @@ export function useExecutionTopologyTemplate() {
     containerFormErrors.value = {}
   }
 
-  const resetSubgraphForm = () => {
-    newSubgraphForm.value = createSubgraphForm()
-    subgraphFormErrors.value = {}
-  }
+
 
   const resetNodeForm = () => {
     newNodeForm.value = createNodeForm()
@@ -451,9 +414,7 @@ export function useExecutionTopologyTemplate() {
     newContainerForm.value = form
   }
 
-  const updateSubgraphForm = (form) => {
-    newSubgraphForm.value = form
-  }
+
 
   const updateNodeForm = (form) => {
     newNodeForm.value = form
@@ -487,15 +448,7 @@ export function useExecutionTopologyTemplate() {
     resetContainerForm()
   }
 
-  const openNewSubgraphDialog = () => {
-    resetSubgraphForm()
-    showNewSubgraphDialog.value = true
-  }
 
-  const closeNewSubgraphDialog = () => {
-    showNewSubgraphDialog.value = false
-    resetSubgraphForm()
-  }
 
   const openNewNodeDialog = () => {
     resetNodeForm()
@@ -592,9 +545,7 @@ export function useExecutionTopologyTemplate() {
       if (current.type === 'container' && !graphDetail.value.containers.some((item) => item.container_id === current.id)) {
         selectedObject.value = createSelectedObject('graph', graphId)
       }
-      if (current.type === 'subgraph' && !(graphDetail.value.subgraphs || []).some((item) => item.subgraph_id === current.id)) {
-        selectedObject.value = createSelectedObject('graph', graphId)
-      }
+
       if (current.type === 'node' && !graphDetail.value.nodes.some((item) => item.node_id === current.id)) {
         selectedObject.value = createSelectedObject('graph', graphId)
       }
@@ -656,42 +607,7 @@ export function useExecutionTopologyTemplate() {
     return normalized.value
   }
 
-  const validateSubgraphForm = () => {
-    const errors = {}
-    if (isBlank(newSubgraphForm.value.subgraph_key)) {
-      errors.subgraph_key = '子图 key 不能为空'
-    }
-    if (isBlank(newSubgraphForm.value.label)) {
-      errors.label = '子图名称不能为空'
-    }
-    if (isBlank(newSubgraphForm.value.task_description)) {
-      errors.task_description = '任务描述不能为空'
-    }
-    if (!newSubgraphForm.value.container_id) {
-      errors.container_id = '请选择所属容器'
-    }
 
-    const duplicated = (graphDetail.value.subgraphs || []).some((item) => (
-      item.subgraph_key?.trim().toLowerCase() === newSubgraphForm.value.subgraph_key?.trim().toLowerCase()
-    ))
-    if (duplicated) {
-      errors.subgraph_key = '子图 key 已存在'
-    }
-
-    if (Number(newSubgraphForm.value.order_index) < 0) {
-      errors.order_index = '排序不能小于 0'
-    }
-
-    subgraphFormErrors.value = errors
-    if (Object.keys(errors).length > 0) return null
-    return {
-      container_id: newSubgraphForm.value.container_id,
-      subgraph_key: newSubgraphForm.value.subgraph_key.trim(),
-      label: newSubgraphForm.value.label.trim(),
-      task_description: newSubgraphForm.value.task_description.trim(),
-      order_index: Number(newSubgraphForm.value.order_index) || 0
-    }
-  }
 
   const validateNodeForm = () => {
     const errors = {}
@@ -804,68 +720,6 @@ export function useExecutionTopologyTemplate() {
     }
   }
 
-  const handleCreateSubgraph = async () => {
-    if (!selectedGraphId.value) {
-      error.value = '请先选择一个图'
-      return
-    }
-
-    const payload = validateSubgraphForm()
-    if (!payload) return
-
-    try {
-      loading.value = true
-      error.value = ''
-      const subgraph = await executionGraphApi.createSubgraph(selectedGraphId.value, payload)
-      if (!graphDetail.value.subgraphs) {
-        graphDetail.value.subgraphs = []
-      }
-      graphDetail.value.subgraphs.push(subgraph)
-      closeNewSubgraphDialog()
-      selectObject('subgraph', subgraph.subgraph_id)
-    } catch (err) {
-      error.value = getErrorMessage(err, '创建子图失败')
-    } finally {
-      loading.value = false
-    }
-  }
-
-  const handleDeleteSubgraph = async (subgraphId) => {
-    if (!window.confirm('确定要删除此子图吗？')) return
-
-    try {
-      loading.value = true
-      error.value = ''
-      await executionGraphApi.deleteSubgraph(subgraphId)
-      graphDetail.value.subgraphs = (graphDetail.value.subgraphs || []).filter((item) => item.subgraph_id !== subgraphId)
-      graphDetail.value.nodes = graphDetail.value.nodes.map((node) => (
-        node.subgraph_id === subgraphId ? { ...node, subgraph_id: null } : node
-      ))
-      if (selectedObject.value.type === 'subgraph' && selectedObject.value.id === subgraphId) {
-        selectedObject.value = createSelectedObject('graph', selectedGraphId.value)
-      }
-    } catch (err) {
-      error.value = getErrorMessage(err, '删除子图失败')
-    } finally {
-      loading.value = false
-    }
-  }
-
-  const handleUpdateSubgraph = async (subgraphId, data) => {
-    try {
-      loading.value = true
-      error.value = ''
-      const updated = await executionGraphApi.updateSubgraph(subgraphId, data)
-      const index = (graphDetail.value.subgraphs || []).findIndex((item) => item.subgraph_id === subgraphId)
-      if (index !== -1) {
-        graphDetail.value.subgraphs[index] = updated
-      }
-    } catch (err) {
-      error.value = getErrorMessage(err, '更新子图失败')
-    } finally {
-      loading.value = false
-    }
-  }
 
   const handleCreateNode = async () => {
     if (!selectedGraphId.value) {
@@ -939,19 +793,14 @@ export function useExecutionTopologyTemplate() {
       error.value = ''
       await executionGraphApi.deleteContainer(containerId)
       graphDetail.value.containers = graphDetail.value.containers.filter((item) => item.container_id !== containerId)
-      graphDetail.value.subgraphs = (graphDetail.value.subgraphs || []).filter((item) => item.container_id !== containerId)
+
       graphDetail.value.nodes = graphDetail.value.nodes.map((node) => (
         node.container_id === containerId ? { ...node, container_id: null } : node
       ))
       if (selectedObject.value.type === 'container' && selectedObject.value.id === containerId) {
         selectedObject.value = createSelectedObject('graph', selectedGraphId.value)
       }
-      if (selectedObject.value.type === 'subgraph') {
-        const stillExists = (graphDetail.value.subgraphs || []).some((item) => item.subgraph_id === selectedObject.value.id)
-        if (!stillExists) {
-          selectedObject.value = createSelectedObject('graph', selectedGraphId.value)
-        }
-      }
+
     } catch (err) {
       error.value = getErrorMessage(err, '删除容器失败')
     } finally {
@@ -1035,12 +884,6 @@ export function useExecutionTopologyTemplate() {
         if (index !== -1) {
           graphDetail.value.containers[index] = updated
         }
-      } else if (selectedObject.value.type === 'subgraph') {
-        const updated = await executionGraphApi.updateSubgraph(selectedObject.value.id, data)
-        const index = (graphDetail.value.subgraphs || []).findIndex((item) => item.subgraph_id === selectedObject.value.id)
-        if (index !== -1) {
-          graphDetail.value.subgraphs[index] = updated
-        }
       } else if (selectedObject.value.type === 'node') {
         const updated = await executionGraphApi.updateNode(selectedObject.value.id, data)
         const index = graphDetail.value.nodes.findIndex((item) => item.node_id === selectedObject.value.id)
@@ -1061,13 +904,13 @@ export function useExecutionTopologyTemplate() {
     }
   }
 
-  const handleUpdateNodeContent = async ({ stage_prompt, input_node_ids }) => {
+  const handleUpdateNodeContent = async ({ task_prompt, input_node_ids }) => {
     if (selectedObject.value.type !== 'node' || !selectedObject.value.id) return
     try {
       loading.value = true
       error.value = ''
       const updated = await executionGraphApi.updateNode(selectedObject.value.id, {
-        stage_prompt,
+        task_prompt,
         input_schema_json: input_node_ids
       })
       const index = graphDetail.value.nodes.findIndex((item) => item.node_id === selectedObject.value.id)
@@ -1261,19 +1104,19 @@ export function useExecutionTopologyTemplate() {
     error,
     showNewGraphDialog,
     showNewContainerDialog,
-    showNewSubgraphDialog,
+
     showNewNodeDialog,
     showNewEdgeDialog,
     showStructureViewer,
     showExecuteDialog,
     graphFormErrors,
     containerFormErrors,
-    subgraphFormErrors,
+
     nodeFormErrors,
     edgeFormErrors,
     newGraphForm,
     newContainerForm,
-    newSubgraphForm,
+
     newNodeForm,
     newEdgeForm,
     structureData,
@@ -1293,19 +1136,19 @@ export function useExecutionTopologyTemplate() {
     selectedContainerId,
     selectedGraphData,
     selectedContainerData,
-    selectedSubgraphData,
+
     selectedNodeData,
     selectedEdgeData,
     selectedInspectorObject,
     nodesByContainer,
-    nodesBySubgraph,
+
     graphHints,
     validationSummary,
     validationItems,
     executionStatusClass,
     updateGraphForm,
     updateContainerForm,
-    updateSubgraphForm,
+
     updateNodeForm,
     updateEdgeForm,
     updateExecuteForm,
@@ -1313,8 +1156,7 @@ export function useExecutionTopologyTemplate() {
     closeNewGraphDialog,
     openNewContainerDialog,
     closeNewContainerDialog,
-    openNewSubgraphDialog,
-    closeNewSubgraphDialog,
+
     openNewNodeDialog,
     closeNewNodeDialog,
     openNewEdgeDialog,
@@ -1326,9 +1168,7 @@ export function useExecutionTopologyTemplate() {
     handleSelectGraph,
     handleCreateGraph,
     handleCreateContainer,
-    handleCreateSubgraph,
-    handleDeleteSubgraph,
-    handleUpdateSubgraph,
+
     handleCreateNode,
     handleCreateEdge,
     handleAssignNodeContainer,

@@ -125,14 +125,39 @@ const updateField = (field, value) => {
           </div>
         </div>
 
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-zinc-700 mb-1">阶段标签（phase_label）</label>
+            <input
+              :value="form.phase_label"
+              type="text"
+              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="例如: fetch_requirements"
+              @input="updateField('phase_label', $event.target.value)"
+            />
+          </div>
+        </div>
+
         <div>
-          <label class="block text-sm font-medium text-zinc-700 mb-1">阶段提示</label>
+          <label class="block text-sm font-medium text-zinc-700 mb-1">任务提示词（task_prompt）</label>
           <textarea
-            :value="form.stage_prompt"
+            :value="form.task_prompt"
             rows="3"
             class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
             placeholder="描述该拓扑节点应完成的任务目标（将注入节点执行上下文）"
-            @input="updateField('stage_prompt', $event.target.value)"
+            @input="updateField('task_prompt', $event.target.value)"
+          />
+        </div>
+
+        <div v-if="form.node_type === 'llm'">
+          <label class="block text-sm font-medium text-zinc-700 mb-1">条件出边（conditional_edges）</label>
+          <div class="text-xs text-zinc-500 mb-1">阶段完成后根据 route_key 决定走哪条出边，仅 llm 类型节点需要。</div>
+          <textarea
+            :value="form.conditional_edges"
+            rows="3"
+            class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+            placeholder='[{"condition": "pass", "target_node_id": "..."}]'
+            @input="updateField('conditional_edges', $event.target.value)"
           />
         </div>
 

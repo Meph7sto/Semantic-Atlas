@@ -63,7 +63,7 @@ const middleTabValue = computed(() => isNodeSelected.value ? 'node-content' : 'v
 const middleTabLabel = computed(() => isNodeSelected.value ? '节点内容' : '校验')
 
 // 节点内容 Tab 的本地状态
-const nodeContentForm = ref({ stage_prompt: '', input_node_ids: [] })
+const nodeContentForm = ref({ task_prompt: '', input_node_ids: [] })
 const nodeContentSaving = ref(false)
 
 // 当选中的节点变化时，同步表单数据
@@ -71,12 +71,11 @@ watch(
   () => [props.inspectorObject, props.objectType],
   ([obj, type]) => {
     if (type !== 'node' || !obj) {
-      nodeContentForm.value = { stage_prompt: '', input_node_ids: [] }
+      nodeContentForm.value = { task_prompt: '', input_node_ids: [] }
       return
     }
-    const config = (obj.config_json && typeof obj.config_json === 'object') ? obj.config_json : {}
     nodeContentForm.value = {
-      stage_prompt: config.stage_prompt || '',
+      task_prompt: obj.task_prompt || '',
       input_node_ids: Array.isArray(obj.input_schema_json) ? [...obj.input_schema_json] : []
     }
   },
@@ -102,7 +101,7 @@ const toggleInputNode = (nodeId) => {
 const handleSaveNodeContent = () => {
   nodeContentSaving.value = true
   emit('update-node-content', {
-    stage_prompt: nodeContentForm.value.stage_prompt,
+    task_prompt: nodeContentForm.value.task_prompt,
     input_node_ids: nodeContentForm.value.input_node_ids
   })
   nodeContentSaving.value = false
@@ -148,12 +147,12 @@ const handleSaveNodeContent = () => {
     <div v-else-if="activeTab === 'node-content' && isNodeSelected" class="flex-1 overflow-y-auto bg-zinc-50">
       <div class="p-4 space-y-4">
 
-        <!-- 阶段提示词 -->
+        <!-- 任务提示词 -->
         <div class="rounded-lg border border-zinc-200 bg-white p-4 space-y-2">
-          <div class="text-sm font-semibold text-zinc-900">阶段提示词</div>
+          <div class="text-sm font-semibold text-zinc-900">任务提示词（task_prompt）</div>
           <div class="text-xs text-zinc-500">描述本节点应完成的任务目标，将注入节点执行上下文。</div>
           <textarea
-            v-model="nodeContentForm.stage_prompt"
+            v-model="nodeContentForm.task_prompt"
             rows="5"
             class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
             placeholder="描述该拓扑节点应完成的任务目标（注入节点执行上下文）"

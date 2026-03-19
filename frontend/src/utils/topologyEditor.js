@@ -110,17 +110,26 @@ export const normalizeNodePayload = (formData) => {
     return { ok: false, error: '输出 Schema 必须是 JSON 数组' }
   }
 
-  // stage_prompt 由"节点内容" Tab 单独管理，这里不再操作，直接使用 config_json 文本框里的原始内容
+  const conditionalEdges = parseJsonInput(formData.conditional_edges, {
+    fallback: [],
+    label: '条件出边'
+  })
+  if (!conditionalEdges.ok) return conditionalEdges
+  if (!Array.isArray(conditionalEdges.value)) {
+    return { ok: false, error: '条件出边必须是 JSON 数组' }
+  }
 
   return {
     ok: true,
     value: {
       container_id: formData.container_id || null,
-      subgraph_id: formData.subgraph_id || null,
       node_key: formData.node_key?.trim(),
       label: formData.label?.trim(),
       node_type: formData.node_type || 'llm',
       role_type: formData.role_type || 'human',
+      phase_label: formData.phase_label?.trim() || '',
+      task_prompt: formData.task_prompt?.trim() || '',
+      conditional_edges: conditionalEdges.value,
       order_index: normalizeInteger(formData.order_index, 0),
       config_json: config.value,
       input_schema_json: inputSchema.value,
@@ -129,16 +138,6 @@ export const normalizeNodePayload = (formData) => {
   }
 }
 
-export const normalizeSubgraphPayload = (formData) => {
-  return {
-    ok: true,
-    value: {
-      label: formData.label?.trim(),
-      task_description: formData.task_description?.trim() || '',
-      order_index: normalizeInteger(formData.order_index, 0)
-    }
-  }
-}
 
 export const normalizeEdgePayload = (formData) => {
   const config = parseJsonInput(formData.config_json, {
@@ -169,19 +168,6 @@ export const normalizeInspectorPayload = (objectType, formData) => {
     return { ok: true, value: normalizeGraphPayload(formData) }
   }
 
-  if (objectType === 'subgraph') {
-    const payload = normalizeSubgraphPayload(formData)
-    if (!payload.ok) return payload
-    return {
-      ok: true,
-      value: {
-        label: payload.value.label,
-        task_description: payload.value.task_description,
-        order_index: payload.value.order_index
-      }
-    }
-  }
-
   if (objectType === 'container') {
     const payload = normalizeContainerPayload(formData)
     if (!payload.ok) return payload
@@ -206,6 +192,9 @@ export const normalizeInspectorPayload = (objectType, formData) => {
         label: payload.value.label,
         node_type: payload.value.node_type,
         role_type: payload.value.role_type,
+        phase_label: payload.value.phase_label,
+        task_prompt: payload.value.task_prompt,
+        conditional_edges: payload.value.conditional_edges,
         order_index: payload.value.order_index,
         config_json: payload.value.config_json,
         // input_schema_json 由"节点内容" Tab 单独管理，属性 Tab 不传（避免覆盖）

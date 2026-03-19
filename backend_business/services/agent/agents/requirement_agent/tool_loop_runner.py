@@ -139,6 +139,7 @@ class RequirementAgentToolLoopRunner:
                 "resolved_requirement_id": ctx.get("resolved_requirement_id"),
             },
             scratchpad=scratchpad,
+            enable_complete_phase=(scratchpad is not None),
         )
 
         result = yield from runner.run(
@@ -160,6 +161,9 @@ class RequirementAgentToolLoopRunner:
             "tool_loop_reply": result.tool_loop_reply,
             "context": result.context,
             "rounds": result.rounds,
+            "phase_completed": result.phase_completed,
+            "route_key": result.route_key,
+            "conclusion": result.conclusion,
         }
 
 
