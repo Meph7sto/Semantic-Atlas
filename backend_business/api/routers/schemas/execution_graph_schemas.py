@@ -149,7 +149,7 @@ class CreateNodeRequest(BaseModel):
     node_key: str = Field(..., min_length=1, description="节点唯一标识（图内唯一）")
     label: str = Field(..., min_length=1, description="节点显示标签")
     node_type: str = Field(..., description="节点类型: start|llm|handoff|invoke|end")
-    role_type: str = Field(..., description="角色类型: human|agent|system")
+    role_type: Optional[str] = Field(default="agent", description="角色类型: human|agent|system")
     phase_label: Optional[str] = Field(default=None, description="阶段标签")
     task_prompt: Optional[str] = Field(default=None, description="阶段任务提示词")
     conditional_edges: Optional[List[Dict[str, Any]]] = Field(default=None, description="条件出边列表")
@@ -172,7 +172,9 @@ class CreateNodeRequest(BaseModel):
     @field_validator("role_type")
     @classmethod
     def validate_role_type(cls, v):
-        return normalize_role_type(v)
+        if v is not None:
+            return normalize_role_type(v)
+        return v
 
 
 class UpdateNodeRequest(BaseModel):

@@ -83,33 +83,6 @@ export const normalizeContainerPayload = (formData) => {
 }
 
 export const normalizeNodePayload = (formData) => {
-  const config = parseJsonInput(formData.config_json, {
-    fallback: {},
-    label: '节点配置'
-  })
-  if (!config.ok) return config
-  if (!isPlainObject(config.value)) {
-    return { ok: false, error: '节点配置必须是 JSON 对象' }
-  }
-
-  const inputSchema = parseJsonInput(formData.input_schema_json, {
-    fallback: [],
-    label: '输入 Schema'
-  })
-  if (!inputSchema.ok) return inputSchema
-  if (!Array.isArray(inputSchema.value)) {
-    return { ok: false, error: '输入 Schema 必须是 JSON 数组' }
-  }
-
-  const outputSchema = parseJsonInput(formData.output_schema_json, {
-    fallback: [],
-    label: '输出 Schema'
-  })
-  if (!outputSchema.ok) return outputSchema
-  if (!Array.isArray(outputSchema.value)) {
-    return { ok: false, error: '输出 Schema 必须是 JSON 数组' }
-  }
-
   const conditionalEdges = parseJsonInput(formData.conditional_edges, {
     fallback: [],
     label: '条件出边'
@@ -126,14 +99,9 @@ export const normalizeNodePayload = (formData) => {
       node_key: formData.node_key?.trim(),
       label: formData.label?.trim(),
       node_type: formData.node_type || 'llm',
-      role_type: formData.role_type || 'human',
       phase_label: formData.phase_label?.trim() || '',
       task_prompt: formData.task_prompt?.trim() || '',
-      conditional_edges: conditionalEdges.value,
-      order_index: normalizeInteger(formData.order_index, 0),
-      config_json: config.value,
-      input_schema_json: inputSchema.value,
-      output_schema_json: outputSchema.value
+      conditional_edges: conditionalEdges.value
     }
   }
 }
@@ -191,14 +159,9 @@ export const normalizeInspectorPayload = (objectType, formData) => {
         container_id: payload.value.container_id,
         label: payload.value.label,
         node_type: payload.value.node_type,
-        role_type: payload.value.role_type,
         phase_label: payload.value.phase_label,
         task_prompt: payload.value.task_prompt,
-        conditional_edges: payload.value.conditional_edges,
-        order_index: payload.value.order_index,
-        config_json: payload.value.config_json,
-        // input_schema_json 由"节点内容" Tab 单独管理，属性 Tab 不传（避免覆盖）
-        output_schema_json: payload.value.output_schema_json
+        conditional_edges: payload.value.conditional_edges
       }
     }
   }

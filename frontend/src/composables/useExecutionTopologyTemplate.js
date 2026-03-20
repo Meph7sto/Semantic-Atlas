@@ -9,6 +9,13 @@ import {
   normalizeNodePayload,
   parseJsonInput
 } from '@/utils/topologyEditor'
+import {
+  buildExportPayload,
+  downloadTemplateFile,
+  readTemplateFile,
+  validateTemplatePayload,
+  importTemplate
+} from '@/utils/topologyTemplateIO'
 
 const createEmptyGraphDetail = () => ({
   graph: null,
@@ -41,14 +48,9 @@ const createNodeForm = () => ({
   node_key: '',
   label: '',
   node_type: 'llm',
-  role_type: 'human',
-  order_index: 0,
   phase_label: '',
   task_prompt: '',
-  conditional_edges: '[]',
-  config_json: '{}',
-  input_schema_json: '[]',
-  output_schema_json: '[]'
+  conditional_edges: '[]'
 })
 
 const createEdgeForm = () => ({
@@ -132,6 +134,10 @@ export function useExecutionTopologyTemplate() {
   const executionLoading = ref(false)
   const executionResult = ref(null)
   const executionError = ref('')
+
+  const importLoading = ref(false)
+  const importError = ref('')
+  const importProgress = ref('')
 
   const executeForm = ref(createExecuteForm())
 
@@ -1081,6 +1087,79 @@ export function useExecutionTopologyTemplate() {
     }
   }
 
+  const handleExportTemplate = () => {
+    if (!selectedGraphId.value || !graphDetail.value.graph) {
+      error.value = '请先选择一个图'
+      return
+    }
+
+    try {
+      const payload = buildExportPayload(graphDetail.value)
+      const graphName = graphDetail.value.graph.name || 'topology'
+      const safeName = graphName.replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]/g, '_')
+      downloadTemplateFile(payload, `${safeName}_template.satpl.json`)
+    } catch (err) {
+      error.value = '导出失败: ' + (err.message || '未知错误')
+    }
+  }
+
+  const handleImportTemplate = async (file) => {
+    if (!selectedProjectId.value) {
+      error.value = '请先选择项目'
+      return
+    }
+
+    if (!file) return
+
+    importLoading.value = true
+    importError.value = ''
+    importProgress.value = '正在读取文件...'
+    error.value = ''
+
+    try {
+      // 1. 读取文件
+      const readResult = await readTemplateFile(file)
+      if (!readResult.ok) {
+        importError.value = readResult.error
+        return
+      }
+
+      // 2. 校验格式
+      const validation = validateTemplatePayload(readResult.value)
+      if (!validation.ok) {
+        importError.value = '模板校验失败:\n' + validation.errors.join('\n')
+        return
+      }
+
+      // 3. 执行导入
+      const result = await importTemplate(
+        selectedProjectId.value,
+        readResult.value,
+        (msg) => { importProgress.value = msg }
+      )
+
+      if (!result.ok) {
+        importError.value = result.error
+        return
+      }
+
+      // 4. 刷新列表并选中新图
+      await loadGraphs()
+      if (result.graphId) {
+        const newGraph = graphs.value.find((g) => g.graph_id === result.graphId)
+        if (newGraph) {
+          await handleSelectGraph(newGraph)
+        }
+      }
+
+      importProgress.value = '导入完成'
+    } catch (err) {
+      importError.value = '导入失败: ' + (err.message || '未知错误')
+    } finally {
+      importLoading.value = false
+    }
+  }
+
   onMounted(async () => {
     await loadProjects()
     await loadGraphs()
@@ -1186,6 +1265,11 @@ export function useExecutionTopologyTemplate() {
     handleSelectValidationItem,
     handleOpenExecuteDialog,
     handleExecuteGraph,
-    handleUpdateNodeContent
+    handleUpdateNodeContent,
+    handleExportTemplate,
+    handleImportTemplate,
+    importLoading,
+    importError,
+    importProgress
   }
 }

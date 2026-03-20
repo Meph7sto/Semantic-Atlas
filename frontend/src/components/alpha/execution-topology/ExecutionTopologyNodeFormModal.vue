@@ -16,10 +16,6 @@ const props = defineProps({
     type: Array,
     required: true
   },
-  roleTypeOptions: {
-    type: Array,
-    required: true
-  },
   submitDisabled: {
     type: Boolean,
     required: true
@@ -71,31 +67,17 @@ const updateField = (field, value) => {
           </div>
         </div>
 
-        <div class="grid grid-cols-2 gap-4">
-          <div>
-            <label class="block text-sm font-medium text-zinc-700 mb-1">标签 *</label>
-            <input
-              :value="form.label"
-              type="text"
-              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              :class="errors.label ? 'border-red-500' : ''"
-              placeholder="例如: 第一步"
-              @input="updateField('label', $event.target.value)"
-            />
-            <p v-if="errors.label" class="mt-1 text-xs text-red-500">{{ errors.label }}</p>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-zinc-700 mb-1">排序</label>
-            <input
-              :value="form.order_index"
-              type="number"
-              min="0"
-              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              :class="errors.order_index ? 'border-red-500' : ''"
-              @input="updateField('order_index', Number($event.target.value))"
-            />
-            <p v-if="errors.order_index" class="mt-1 text-xs text-red-500">{{ errors.order_index }}</p>
-          </div>
+        <div>
+          <label class="block text-sm font-medium text-zinc-700 mb-1">标签 *</label>
+          <input
+            :value="form.label"
+            type="text"
+            class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            :class="errors.label ? 'border-red-500' : ''"
+            placeholder="例如: 第一步"
+            @input="updateField('label', $event.target.value)"
+          />
+          <p v-if="errors.label" class="mt-1 text-xs text-red-500">{{ errors.label }}</p>
         </div>
 
         <div class="grid grid-cols-2 gap-4">
@@ -107,18 +89,6 @@ const updateField = (field, value) => {
               @change="updateField('node_type', $event.target.value)"
             >
               <option v-for="opt in nodeTypeOptions" :key="opt.value" :value="opt.value">
-                {{ opt.label }}
-              </option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-zinc-700 mb-1">角色类型</label>
-            <select
-              :value="form.role_type"
-              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              @change="updateField('role_type', $event.target.value)"
-            >
-              <option v-for="opt in roleTypeOptions" :key="opt.value" :value="opt.value">
                 {{ opt.label }}
               </option>
             </select>
@@ -161,39 +131,7 @@ const updateField = (field, value) => {
           />
         </div>
 
-        <div>
-          <label class="block text-sm font-medium text-zinc-700 mb-1">配置 JSON</label>
-          <textarea
-            :value="form.config_json"
-            rows="5"
-            class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-            placeholder='{"timeout": 60}'
-            @input="updateField('config_json', $event.target.value)"
-          />
-        </div>
 
-        <div class="grid grid-cols-2 gap-4">
-          <div>
-            <label class="block text-sm font-medium text-zinc-700 mb-1">输入 Schema JSON</label>
-            <textarea
-              :value="form.input_schema_json"
-              rows="5"
-              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-              placeholder='["requirement_id"]'
-              @input="updateField('input_schema_json', $event.target.value)"
-            />
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-zinc-700 mb-1">输出 Schema JSON</label>
-            <textarea
-              :value="form.output_schema_json"
-              rows="5"
-              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-              placeholder='["result"]'
-              @input="updateField('output_schema_json', $event.target.value)"
-            />
-          </div>
-        </div>
 
         <div v-if="errors.form" class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
           {{ errors.form }}

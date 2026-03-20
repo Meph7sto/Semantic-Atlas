@@ -1,5 +1,6 @@
 <script setup>
-import { Plus, Trash2 } from 'lucide-vue-next'
+import { ref } from 'vue'
+import { Download, Plus, Trash2, Upload } from 'lucide-vue-next'
 
 defineProps({
   projects: {
@@ -44,8 +45,25 @@ const emit = defineEmits([
   'assign-node-container',
   'delete-node',
   'create-edge',
-  'delete-edge'
+  'delete-edge',
+  'export-template',
+  'import-template'
 ])
+
+const importFileInput = ref(null)
+
+const triggerImport = () => {
+  importFileInput.value?.click()
+}
+
+const onFileSelected = (event) => {
+  const file = event.target.files?.[0]
+  if (file) {
+    emit('import-template', file)
+  }
+  // 重置以允许再次选择相同文件
+  event.target.value = ''
+}
 
 const emitObjectSelection = (type, id) => {
   emit('select-object', { type, id })
@@ -70,14 +88,31 @@ const emitObjectSelection = (type, id) => {
     <div class="flex-1 flex flex-col overflow-hidden">
       <div class="px-4 py-3 border-b border-zinc-200 flex items-center justify-between">
         <h3 class="text-sm font-semibold text-zinc-900">执行拓扑图</h3>
-        <button
-          :disabled="!selectedProjectId"
-          class="p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          title="新建图"
-          @click="emit('create-graph')"
-        >
-          <Plus class="w-4 h-4" />
-        </button>
+        <div class="flex items-center gap-1">
+          <button
+            :disabled="!selectedProjectId"
+            class="p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="导入模板"
+            @click="triggerImport"
+          >
+            <Upload class="w-4 h-4" />
+          </button>
+          <input
+            ref="importFileInput"
+            type="file"
+            accept=".json,.satpl.json"
+            class="hidden"
+            @change="onFileSelected"
+          />
+          <button
+            :disabled="!selectedProjectId"
+            class="p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="新建图"
+            @click="emit('create-graph')"
+          >
+            <Plus class="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       <div class="flex-1 overflow-y-auto px-2 py-2">
@@ -90,13 +125,23 @@ const emitObjectSelection = (type, id) => {
         >
           <div class="flex items-center justify-between mb-1 gap-2">
             <span class="text-sm font-medium text-zinc-900 truncate">{{ graph.name }}</span>
-            <button
-              class="p-1 text-zinc-400 hover:text-red-500 transition-colors"
-              title="删除"
-              @click.stop="emit('delete-graph', graph.graph_id)"
-            >
-              <Trash2 class="w-4 h-4" />
-            </button>
+            <div class="flex items-center gap-0.5">
+              <button
+                v-if="selectedGraphId === graph.graph_id"
+                class="p-1 text-zinc-400 hover:text-blue-500 transition-colors"
+                title="导出模板"
+                @click.stop="emit('export-template')"
+              >
+                <Download class="w-4 h-4" />
+              </button>
+              <button
+                class="p-1 text-zinc-400 hover:text-red-500 transition-colors"
+                title="删除"
+                @click.stop="emit('delete-graph', graph.graph_id)"
+              >
+                <Trash2 class="w-4 h-4" />
+              </button>
+            </div>
           </div>
           <div class="flex items-center justify-between gap-2">
             <span class="text-xs text-zinc-500 truncate">{{ graph.description || '无描述' }}</span>

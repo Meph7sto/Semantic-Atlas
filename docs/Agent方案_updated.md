@@ -35,20 +35,19 @@ height="3.910416666666667in"}
 
 系统共定义五种节点类型：
 
-  --------------------------------------------------------------------------------------------------------------------------------------------
-  **类型**   **执行模型**                                                                 **完成信号**
-  ---------- ---------------------------------------------------------------------------- ----------------------------------------------------
-  start      透传，接收上游输入并注入当前节点上下文                                       直接流转，无推理过程
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------
+  **类型**   **执行模型**                                                                                  **完成信号**
+  ---------- --------------------------------------------------------------------------------------------- ----------------------------------------------------
+  start      透传，接收上游输入并注入当前节点上下文                                                        直接流转，无推理过程
 
-  llm        input（增量上下文）→output（结构化结果+tool call列表）→tool call             模型调用complete_phase工具提交结构化结论即视为完成
-             results（若有）                                                              
+  llm        input（增量上下文）→output（结构化结果+tool call列表）→tool call results（若有）              模型调用complete_phase工具提交结构化结论即视为完成
 
-  handoff    将流程控制权交回human，挂起当前执行，等待用户确认或补充输入                  用户输入到达，结果注入当前节点上下文后继续
+  handoff    将流程控制权交回human，挂起当前执行，等待用户确认或补充输入                                   用户输入到达，结果注入当前节点上下文后继续
 
-  invoke     确定性跨容器调用，目标容器在配置中静态指定，payload经Sidebar路由至目标容器   return边到达，结果注入当前节点上下文后继续
+  invoke     确定性跨容器调用，目标容器在配置中静态指定，payload由运行时按执行图中的call边投递至目标容器   return边到达，结果注入当前节点上下文后继续
 
-  end        透传，将执行图最终输出返回给调用方                                           节点完成即执行图完成
-  --------------------------------------------------------------------------------------------------------------------------------------------
+  end        透传，将执行图最终输出返回给调用方                                                            节点完成即执行图完成
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 1.  Start节点
 
@@ -131,7 +130,7 @@ container有三种角色类型（role_type）：
 
 container内部包含若干执行节点，节点之间通过seq边顺序流转，构成该container内部完整的执行序列。container对外只暴露入口（start节点）和出口（end节点），内部节点序列对其他container不可见。
 
-container之间通过call、return、retry边通信，所有跨container的调用都经由Sidebar路由，不存在container之间的直接函数调用。这一约束保证了每个container的执行边界在运行时是可追踪、可审计的。
+container之间通过call、return、retry边通信，运行时按执行图中定义的跨容器边完成消息投递，不存在container之间的直接函数调用。这一约束保证了每个container的执行边界在运行时是可追踪、可审计的。
 
 ## 执行拓扑图
 
@@ -182,6 +181,51 @@ subgraph；对于 invoke 节点，完成信号是被调用容器的 return
 边到达，结果注入后自动流转，无需配置条件；对于 handoff
 节点，完成信号是用户输入到达，到达即恢复推进。这一设计将条件分支的决策完全编码在拓扑图的节点配置与出边条件中，运行时只需按节点类型执行对应的完成判断、匹配出边、激活下一
 subgraph，无需引入额外的动态决策逻辑，映射过程机械且确定。
+
+## 拓扑图到执行图的映射
+
+拓扑图描述某类任务"应当怎么跑"的静态结构，执行图记录某条具体指令"实际怎么跑"的动态轨迹。两者之间的映射分为两个阶段：第一阶段是骨架实例化，运行时以拓扑图为蓝本，机械地创建执行图的全部结构元素；第二阶段是运行时展开，各subgraph在激活后由LLM驱动推进，内部节点序列非确定性地生长，直至阶段完成信号触发流转。前者是确定性的一次性动作，后者是非确定性的持续过程，两者的分界线恰好落在subgraph层面：骨架实例化决定了执行图有多少个subgraph、它们之间如何连接；运行时展开决定了每个subgraph内部实际产生多少个执行节点、经历多少轮工具调用。
+
+1.  骨架实例化
+
+当计划Agent为一条用户指令选定拓扑图后，运行时执行以下步骤创建执行图骨架。
+
+首先，运行时为本次指令分配唯一的graph_id，创建一张空的执行图实例，并将其挂载到当前session链的末端。
+
+随后，遍历拓扑图中定义的每一个container，在执行图中创建对应的container实例，继承其container_id、role_type与agent_type绑定。container的创建顺序不影响最终行为，因为container之间的协作关系由边定义，而非由创建顺序隐含。
+
+对每个container，遍历其下属的全部拓扑节点，为每个拓扑节点创建一个状态为Pending的subgraph实例。subgraph在创建时继承拓扑节点的phase_label、node_type与task_prompt，同时运行时自动在subgraph内部注入一对start节点与end节点作为边界定义。start节点负责在subgraph激活时接收注入的上下文（包含task_prompt、Scratchpad已有内容，以及来自调用方的payload），end节点负责在subgraph完成时将产出物向出边传递。这一对边界节点无需拓扑设计者声明，由运行时框架统一生成，拓扑图中的三种节点类型（llm、invoke、handoff）只描述start与end之间的执行性质。
+
+对每个container内部的拓扑边（连接同一container下两个拓扑节点的seq边），在执行图中创建对应的container级seq边，连接两个subgraph。对拓扑图中的跨容器边（call、return、retry），在执行图中创建对应的跨容器边，初始状态设为Inactive，等待运行时根据执行进度激活。
+
+最后，运行时将用户指令的payload注入入口container的第一个subgraph的start节点，将该subgraph的状态从Pending切换为Running，骨架实例化完成，执行图开始推进。
+
+需要强调的是，骨架实例化是一次完成的整体动作，而非随执行逐步展开。执行图在第一个subgraph激活之前，已经拥有全部的container、全部的subgraph（均为Pending）和全部的边（内部边已就绪，跨容器边为Inactive）。这一设计的意义在于：执行图的结构在运行开始前即完整可见，观测工具可以在任何时刻展示"当前执行走到了拓扑图的哪个阶段"，而不必等到某个subgraph实际被激活后才知道它的存在。
+
+2.  subgraph的运行时推进
+
+骨架实例化决定了执行图有哪些subgraph，运行时推进决定了每个subgraph内部实际产生哪些执行节点。推进规则因subgraph的node_type不同而不同。
+
+对于llm类型的subgraph，运行时在激活时执行以下循环。首先，组装本轮LLM推理的输入上下文：start节点注入的task_prompt与payload作为基础，Scratchpad中的已有内容作为跨阶段记忆，前序执行节点（若有）的output与tool
+call
+results作为subgraph内部的增量累积。然后，发起一次LLM推理调用，在subgraph内部追加一个llm执行节点，记录本轮的input与output。若output中包含普通业务工具调用（如actor_ask、scratchpad_write），运行时并行执行全部tool
+call，将results追加到当前subgraph的上下文，随即进入下一轮循环，继续发起LLM推理。若output中包含complete_phase调用，运行时将其参数内容自动追加到所属container的Scratchpad中，标记该subgraph为Completed，退出循环。subgraph内部经历了多少轮循环、产生了多少个llm执行节点，完全由LLM的推理过程决定，拓扑图对此不做约束，这正是subgraph作为确定性拓扑与非确定性执行之间缓冲层的核心价值。
+
+对于invoke类型的subgraph，推进过程不涉及LLM推理。subgraph激活后，运行时直接从start节点读取payload，沿call边将其投递给目标container的入口subgraph，随即将当前subgraph的状态切换为Waiting。当目标container执行完成、return边将结论回流后，运行时将返回内容注入当前subgraph的上下文，标记subgraph为Completed。invoke类型的subgraph内部通常只有start、invoke、end三个执行节点，执行轨迹是确定的。
+
+对于handoff类型的subgraph，运行时在激活后将当前上下文整理呈现给用户，将执行图状态切换为Suspended。用户输入到达后，新输入作为增量消息注入subgraph的上下文，subgraph标记为Completed，执行图恢复为Running并继续推进。
+
+3.  边的激活与阶段流转
+
+subgraph完成后，运行时需要决定下一步激活哪个subgraph，这一决策由拓扑图中定义的边和条件出边驱动。
+
+对于container内部的seq边，流转是无条件的：前驱subgraph完成后，运行时直接将后继subgraph从Pending切换为Running并注入上下文，无需判断任何条件。冲突检测Agent的三个subgraph（fetch_states、generate_pairs、semantic_verdict）之间就是这种无条件顺序流转。
+
+对于llm类型拓扑节点配置了conditional_edges的情形，运行时在subgraph完成后，从complete_phase的参数中读取路由字段，与该节点的条件出边列表逐一比对，激活第一条满足条件的边。这是拓扑图中唯一的分支机制，分支条件在拓扑设计阶段显式声明，运行时只做机械匹配，不引入额外的动态决策。
+
+对于跨容器边，激活时机由触发它的subgraph决定。当一个invoke类型的subgraph被激活时，运行时将对应的call边从Inactive切换为Active，payload由运行时按call边投递给目标container。当目标container的末尾subgraph完成时，运行时将对应的return边激活，结论回流给调用方container中发起invoke的那个subgraph。retry边的激活条件类似call边，区别在于语义层面：retry边携带上一次return的结论作为新约束，执行图中会额外记录重试序号与约束变化，使重试过程完整可追溯。
+
+当container中最后一个subgraph完成、且该container不存在未处理的出边时，container本身标记为Completed。当执行图中所有container均为Completed，执行图进入Succeeded终态。
 
 ## 运行时执行图
 
@@ -529,7 +573,7 @@ call列表并发发起，所有需求状态的快照在本subgraph内汇聚，�
 
 领域层以RequirementActor为基本组织单元。系统为每一条需求条目分配唯一一个Actor，以requirement_id为全局寻址依据。该Actor是这条需求数据在整个系统中的唯一权威持有者------任何对该需求的写入，必须且只能经过这个Actor的信箱串行处理，不存在绕过Actor直接操作底层数据的合法路径。
 
-领域层对外暴露的接口语义极为简单：接收Command，返回执行结论。调用方无需关心Actor当前是否在内存中、是否刚被激活、并发请求如何排队------这些生命周期细节全部由ActorManager在领域层内部透明处理。执行层与领域层之间的全部交互经由Sidebar路由，通过执行图中的call/return边完成，不存在跨层的直接函数调用。
+领域层对外暴露的接口语义极为简单：接收Command，返回执行结论。调用方无需关心Actor当前是否在内存中、是否刚被激活、并发请求如何排队------这些生命周期细节全部由ActorManager在领域层内部透明处理。执行层与领域层之间的全部交互通过执行图中的call/return边完成，不存在跨层的直接函数调用。
 
 ## RequirementActor的设计
 

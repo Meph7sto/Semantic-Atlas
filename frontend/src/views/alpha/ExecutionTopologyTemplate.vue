@@ -91,7 +91,9 @@ const {
   handleSelectValidationItem,
   handleOpenExecuteDialog,
   handleExecuteGraph,
-  handleUpdateNodeContent
+  handleUpdateNodeContent,
+  handleExportTemplate,
+  handleImportTemplate
 } = useExecutionTopologyTemplate()
 </script>
 
@@ -122,6 +124,8 @@ const {
         @delete-node="handleDeleteNode"
         @create-edge="openNewEdgeDialog"
         @delete-edge="handleDeleteEdge"
+        @export-template="handleExportTemplate"
+        @import-template="handleImportTemplate"
       />
 
       <ExecutionTopologyCanvasPanel
@@ -192,7 +196,6 @@ const {
       :errors="nodeFormErrors"
       :containers="graphDetail.containers"
       :node-type-options="nodeTypeOptions"
-      :role-type-options="roleTypeOptions"
       :submit-disabled="loading"
       @update:form="updateNodeForm"
       @close="closeNewNodeDialog"
