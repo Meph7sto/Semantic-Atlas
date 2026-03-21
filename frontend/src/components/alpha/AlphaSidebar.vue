@@ -299,6 +299,24 @@ const toggleSidebar = (open) => {
           <ArrowLeft class="w-4 h-4" />
           <span class="whitespace-nowrap">需求回放</span>
         </RouterLink>
+
+        <RouterLink
+          to="/alpha/image-caption"
+          active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
+          class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+        >
+          <Image class="w-4 h-4" />
+          <span class="whitespace-nowrap">图生文</span>
+        </RouterLink>
+
+        <RouterLink
+          to="/alpha/asr"
+          active-class="bg-white shadow-sm ring-1 ring-zinc-200 text-zinc-900"
+          class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-200/50 hover:text-zinc-900"
+        >
+          <Mic class="w-4 h-4" />
+          <span class="whitespace-nowrap">语音转写（ASR）</span>
+        </RouterLink>
       </nav>
 
       <!-- Footer: Return to Guide -->

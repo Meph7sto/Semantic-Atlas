@@ -71,11 +71,9 @@ const createExecuteForm = () => ({
 })
 
 const nodeTypeOptions = [
-  { value: 'start', label: 'Start' },
   { value: 'llm', label: 'LLM' },
   { value: 'invoke', label: 'Invoke' },
-  { value: 'handoff', label: 'Handoff' },
-  { value: 'end', label: 'End' }
+  { value: 'handoff', label: 'Handoff' }
 ]
 
 const roleTypeOptions = [
@@ -200,13 +198,7 @@ export function useExecutionTopologyTemplate() {
     return { groups, unassigned }
   })
 
-  const startNodes = computed(() => {
-    return graphDetail.value.nodes.filter((item) => item.node_type === 'start')
-  })
 
-  const endNodes = computed(() => {
-    return graphDetail.value.nodes.filter((item) => item.node_type === 'end')
-  })
 
   const graphHints = computed(() => {
     const hints = []
@@ -216,12 +208,11 @@ export function useExecutionTopologyTemplate() {
       hints.push('空图建议：先建容器 -> 再建节点 -> 再连边 -> 再校验 -> 再执行。')
     }
 
-    if (startNodes.value.length === 0) {
-      hints.push('当前没有 start 节点，执行前请至少配置一个开始节点。')
-    }
-
-    if (endNodes.value.length === 0) {
-      hints.push('当前没有 end 节点，执行前请至少配置一个结束节点。')
+    const hasBusinessNode = graphDetail.value.nodes.some((item) =>
+      ['llm', 'invoke', 'handoff'].includes(item.node_type)
+    )
+    if (graphDetail.value.nodes.length > 0 && !hasBusinessNode) {
+      hints.push('当前没有业务节点（LLM / Invoke / Handoff），执行前请至少配置一个。')
     }
 
     return hints

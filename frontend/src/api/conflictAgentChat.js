@@ -66,13 +66,14 @@ export const conflictAgentChatApi = {
     return resp.data
   },
 
-  async streamMessage({ sessionId, projectId, message }) {
+  async streamMessage({ sessionId, projectId, message, executionMode }) {
     const response = await fetch(`/api/v2/conflict-agent-chat/sessions/${encodeURIComponent(sessionId)}/messages/stream`, {
       method: 'POST',
       headers: buildAuthHeaders(),
       body: JSON.stringify({
         project_id: projectId,
-        message
+        message,
+        execution_mode: executionMode || 'classic'
       })
     })
 

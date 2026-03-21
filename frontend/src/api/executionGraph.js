@@ -142,7 +142,7 @@ export const executionGraphApi = {
   /**
    * 在图中创建节点
    * @param {string} graphId - 图 ID
-   * @param {object} data - 节点数据 {node_key, label, node_type, role_type, config_json, input_schema_json, output_schema_json, order_index}
+   * @param {object} data - 节点数据 {node_key, label, node_type, role_type, config_json, input_schema_json, order_index}
    */
   async createNode(graphId, data) {
     const resp = await api.post(`/execution-topology/${encodeURIComponent(graphId)}/nodes`, data)
@@ -152,7 +152,7 @@ export const executionGraphApi = {
   /**
    * 更新节点
    * @param {string} nodeId - 节点 ID
-   * @param {object} data - 更新数据 {label, node_type, role_type, config_json, input_schema_json, output_schema_json, order_index}
+   * @param {object} data - 更新数据 {label, node_type, role_type, config_json, input_schema_json, order_index}
    */
   async updateNode(nodeId, data) {
     const resp = await api.patch(`/execution-topology/nodes/${encodeURIComponent(nodeId)}`, data)

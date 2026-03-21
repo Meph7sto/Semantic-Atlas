@@ -17,6 +17,7 @@ import { conflictAgentChatApi } from '@/api/conflictAgentChat'
 import { api } from '@/api/request'
 import ExecutionGraphCanvas from '@/components/alpha/ExecutionGraphCanvas.vue'
 import NodeDetailPanel from '@/components/alpha/NodeDetailPanel.vue'
+import SubgraphTracePanel from '@/components/alpha/SubgraphTracePanel.vue'
 import { createEmptyGraphDetail, buildMergedSessionGraphDetail } from '@/utils/sessionGraphLayout'
 
 const PROMPT_FORMAT_OPTIONS = [
@@ -31,6 +32,12 @@ const CONTEXT_MODE_OPTIONS = [
   { value: 'incremental', label: '增量 (Incremental)', description: '仅保留架构/文件上下文' }
 ]
 const DEFAULT_CONTEXT_MODE = 'full'
+
+const EXECUTION_MODE_OPTIONS = [
+  { value: 'classic', label: '经典模式', description: '使用现有 TopologyExecutionService' },
+  { value: 'graph', label: '执行图模式', description: '使用新引擎 GraphExecutor + IntentJudge' }
+]
+const DEFAULT_EXECUTION_MODE = 'classic'
 
 const projects = ref([])
 const sessions = ref([])
@@ -54,6 +61,7 @@ const promptPayloadFormatDraft = ref('markdown')
 const contextModeDraft = ref(DEFAULT_CONTEXT_MODE)
 const isUpdatingContextMode = ref(false)
 const isAssistantOpen = ref(false)
+const executionModeDraft = ref(localStorage.getItem('conflict_agent_execution_mode') || DEFAULT_EXECUTION_MODE)
 
 const currentSession = computed(() => {
   return sessions.value.find((item) => item.session_id === sessionId.value) || null
@@ -520,7 +528,8 @@ const sendMessage = async () => {
     const stream = await conflictAgentChatApi.streamMessage({
       sessionId: sessionId.value,
       projectId: selectedProjectId.value,
-      message
+      message,
+      executionMode: executionModeDraft.value
     })
     inputMessage.value = ''
     appendTimeline('submit', { message })
@@ -672,6 +681,21 @@ onMounted(async () => {
                 </select>
                 <span v-if="isUpdatingContextMode" class="text-[11px] text-stone-400 shrink-0">保存中...</span>
               </div>
+              <!-- 执行模式 -->
+              <div class="flex items-center gap-2">
+                <span class="w-[80px] shrink-0 text-[11px] text-stone-400">执行模式</span>
+                <select
+                  v-model="executionModeDraft"
+                  class="flex-1 border border-stone-200 bg-white px-2 py-1 text-xs text-stone-700 outline-none transition focus:border-stone-400"
+                  :disabled="isSending"
+                  @change="localStorage.setItem('conflict_agent_execution_mode', executionModeDraft)"
+                  :title="EXECUTION_MODE_OPTIONS.find(o => o.value === executionModeDraft)?.description || ''"
+                >
+                  <option v-for="opt in EXECUTION_MODE_OPTIONS" :key="opt.value" :value="opt.value">
+                    {{ opt.label }}
+                  </option>
+                </select>
+              </div>
             </div>
           </div>
           
@@ -774,6 +798,23 @@ onMounted(async () => {
                 :layout="graphDetail.graph?.layout_json"
                 @select-edge="handleCanvasSelectEdge"
                 @select-node="handleCanvasSelectNode"
+              />
+            </div>
+          </div>
+
+          <div class="flex flex-col overflow-hidden border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)] max-h-[900px]">
+            <div class="shrink-0 border-b border-stone-200 px-5 py-4">
+              <h2 class="flex items-center gap-2 text-lg font-semibold text-stone-900">
+                <Workflow class="h-5 w-5" />
+                Subgraph 执行轨迹
+              </h2>
+            </div>
+            <div class="flex-1 min-h-0 overflow-y-auto px-5 py-4">
+              <SubgraphTracePanel
+                :containers="graphDetail.containers"
+                :subgraphs="graphDetail.subgraphs"
+                :nodes="graphDetail.nodes"
+                :edges="graphDetail.edges"
               />
             </div>
           </div>

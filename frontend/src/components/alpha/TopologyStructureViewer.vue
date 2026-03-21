@@ -18,11 +18,9 @@ const showJson = ref(false)
 const activeTab = ref('tree') // 'tree' or 'json'
 
 const nodeTypeColors = {
-  start: 'bg-emerald-100 text-emerald-900',
-  node: 'bg-blue-100 text-blue-900',
-  decision: 'bg-amber-100 text-amber-900',
-  handoff: 'bg-sky-100 text-sky-900',
-  end: 'bg-rose-100 text-rose-900'
+  llm: 'bg-blue-100 text-blue-900',
+  invoke: 'bg-cyan-100 text-cyan-900',
+  handoff: 'bg-sky-100 text-sky-900'
 }
 
 const edgeTypeColors = {
@@ -211,11 +209,11 @@ const treeData = computed(() => {
                   <span class="ml-2">{{ normalizedTopology?.edges?.length || 0 }}</span>
                 </div>
                 <div>
-                  <span class="text-gray-500">开始节点:</span>
+                  <span class="text-gray-500">入口容器:</span>
                   <span class="ml-2">{{ normalizedTopology?.start_containers?.length || 0 }}</span>
                 </div>
                 <div>
-                  <span class="text-gray-500">结束节点:</span>
+                  <span class="text-gray-500">出口容器:</span>
                   <span class="ml-2">{{ normalizedTopology?.end_containers?.length || 0 }}</span>
                 </div>
               </div>

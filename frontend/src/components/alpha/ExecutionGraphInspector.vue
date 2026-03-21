@@ -75,7 +75,6 @@ const hydrateFormData = (selectedObject, objectType) => {
     cloned.stage_prompt = typeof nodeConfig.stage_prompt === 'string' ? nodeConfig.stage_prompt : ''
     cloned.config_json = stringifyJsonForEditor(cloned.config_json, '{}')
     cloned.input_schema_json = stringifyJsonForEditor(cloned.input_schema_json, '[]')
-    cloned.output_schema_json = stringifyJsonForEditor(cloned.output_schema_json, '[]')
   }
 
   if (objectType === 'edge') {
@@ -339,16 +338,6 @@ const objectTypeTitle = computed(() => {
             />
           </div>
 
-
-          <div>
-            <label class="block text-xs font-medium text-zinc-700 mb-1">输出 Schema JSON</label>
-            <textarea
-              v-model="formData.output_schema_json"
-              rows="4"
-              class="w-full px-3 py-2 border border-zinc-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-              placeholder='["result"]'
-            />
-          </div>
         </div>
 
         <div v-if="objectType === 'edge'" class="space-y-3">

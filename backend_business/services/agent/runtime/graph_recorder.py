@@ -238,6 +238,31 @@ class RuntimeGraphRecorder:
             )
             self._containers[container_key] = container["container_id"]
 
+    def ensure_container(
+        self,
+        *,
+        container_key: str,
+        label: str,
+        role_type: str,
+        created_by: str,
+        config_json: dict[str, Any] | None = None,
+    ) -> str:
+        """Ensure a recorder container exists and return its container_id."""
+        if container_key in self._containers:
+            return self._containers[container_key]
+
+        container = self._service.create_container(
+            graph_id=self.graph_id,
+            container_key=container_key,
+            label=label,
+            role_type=role_type,
+            config_json=config_json or {"runtime": True},
+            order_index=len(self._containers),
+            created_by=created_by,
+        )
+        self._containers[container_key] = container["container_id"]
+        return container["container_id"]
+
     @staticmethod
     def _summarize_existing_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         summaries: list[dict[str, Any]] = []

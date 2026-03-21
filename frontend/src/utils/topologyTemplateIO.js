@@ -60,8 +60,7 @@ export const buildExportPayload = (graphDetail) => {
       conditional_edges: n.conditional_edges || [],
       order_index: n.order_index ?? 0,
       config_json: n.config_json || {},
-      input_schema_json: n.input_schema_json || [],
-      output_schema_json: n.output_schema_json || []
+      input_schema_json: n.input_schema_json || []
     })),
     edges: edges.map((e) => ({
       source_node_key: nodeIdToKey[e.source_node_id] || '',
@@ -247,8 +246,7 @@ export const importTemplate = async (projectId, payload, onProgress) => {
           conditional_edges: n.conditional_edges || [],
           order_index: n.order_index ?? 0,
           config_json: n.config_json || {},
-          input_schema_json: n.input_schema_json || [],
-          output_schema_json: n.output_schema_json || []
+          input_schema_json: n.input_schema_json || []
         })
         nodeKeyToId[n.node_key] = node.node_id
       }

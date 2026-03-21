@@ -11,7 +11,7 @@ No actual graph traversal or execution is performed at this stage.
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from .agent_container import AgentContainer, ContainerNode, NodeType, RoleType
+from .agent_container import AgentContainer, ContainerNode, RoleType
 from .edge_processor import CrossContainerEdge, EdgeType, EdgeProcessor
 
 
@@ -108,21 +108,20 @@ class GraphStructureBuilder:
         # Build edges from database edges
         edges = self.edge_processor.build_edges(containers, edges_db)
 
-        # Find start and end containers
-        start_containers = [
-            c for c in containers if any(n.node_type == NodeType.START for n in c.nodes)
-        ]
-        end_containers = [
-            c for c in containers if any(n.node_type == NodeType.END for n in c.nodes)
-        ]
+        # Derive entry and exit containers by order_index.
+        # Topology templates don't have explicit start/end node types;
+        # the first and last containers by order serve as entry/exit.
+        sorted_containers = sorted(containers, key=lambda c: (c.order_index, c.container_key))
+        entry_containers = [sorted_containers[0]] if sorted_containers else []
+        exit_containers = [sorted_containers[-1]] if sorted_containers else []
 
         return TopologyStructure(
             graph_id=graph_id,
             graph_name=graph_db.get("name", ""),
             containers=containers,
             edges=edges,
-            start_containers=start_containers,
-            end_containers=end_containers,
+            start_containers=entry_containers,
+            end_containers=exit_containers,
         )
 
     def _build_containers(

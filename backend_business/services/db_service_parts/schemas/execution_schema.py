@@ -252,7 +252,7 @@ def init_execution_schema(cur):
             graph_id TEXT NOT NULL REFERENCES execution_graphs(graph_id) ON DELETE CASCADE,
             source_node_id TEXT NOT NULL REFERENCES execution_nodes(node_id) ON DELETE CASCADE,
             target_node_id TEXT NOT NULL REFERENCES execution_nodes(node_id) ON DELETE CASCADE,
-            edge_type TEXT NOT NULL CHECK (edge_type IN ('call', 'return', 'retry')),
+            edge_type TEXT NOT NULL CHECK (edge_type IN ('seq', 'call', 'return', 'retry')),
             label TEXT,
             condition_expr TEXT,
             config_json JSONB,
@@ -262,6 +262,38 @@ def init_execution_schema(cur):
             is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
             UNIQUE(graph_id, source_node_id, target_node_id, edge_type)
         )
+        """
+    )
+    # Migration: ensure edge_type CHECK constraint includes 'seq'
+    cur.execute(
+        """
+        DO $$
+        DECLARE
+            constraint_name TEXT;
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                  FROM pg_constraint
+                 WHERE conrelid = 'execution_edges'::regclass
+                   AND contype = 'c'
+                   AND conname = 'chk_execution_edges_edge_type'
+                   AND pg_get_constraintdef(oid) ILIKE '%seq%'
+            ) THEN
+                -- Drop ALL existing edge_type CHECK constraints.
+                FOR constraint_name IN
+                    SELECT conname
+                      FROM pg_constraint
+                     WHERE conrelid = 'execution_edges'::regclass
+                       AND contype = 'c'
+                       AND pg_get_constraintdef(oid) ILIKE '%edge_type%'
+                LOOP
+                    EXECUTE format('ALTER TABLE execution_edges DROP CONSTRAINT %I', constraint_name);
+                END LOOP;
+                ALTER TABLE execution_edges
+                ADD CONSTRAINT chk_execution_edges_edge_type
+                CHECK (edge_type IN ('seq', 'call', 'return', 'retry'));
+            END IF;
+        END $$;
         """
     )
     cur.execute(
@@ -284,6 +316,8 @@ def init_execution_schema(cur):
             subgraph_key TEXT NOT NULL,
             label TEXT NOT NULL,
             task_description TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending', 'running', 'completed', 'failed')),
             order_index INTEGER NOT NULL DEFAULT 0,
             config_json JSONB,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -293,11 +327,48 @@ def init_execution_schema(cur):
         )
         """
     )
+    # Migration: add status column to existing execution_subgraphs table
+    cur.execute(
+        "ALTER TABLE execution_subgraphs ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'"
+    )
+    cur.execute(
+        """
+        DO $$
+        DECLARE
+            constraint_name TEXT;
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                  FROM pg_constraint
+                 WHERE conrelid = 'execution_subgraphs'::regclass
+                   AND contype = 'c'
+                   AND conname = 'chk_execution_subgraphs_status'
+            ) THEN
+                -- Drop any existing status CHECK constraints first.
+                FOR constraint_name IN
+                    SELECT conname
+                      FROM pg_constraint
+                     WHERE conrelid = 'execution_subgraphs'::regclass
+                       AND contype = 'c'
+                       AND pg_get_constraintdef(oid) ILIKE '%status%'
+                LOOP
+                    EXECUTE format('ALTER TABLE execution_subgraphs DROP CONSTRAINT %I', constraint_name);
+                END LOOP;
+                ALTER TABLE execution_subgraphs
+                ADD CONSTRAINT chk_execution_subgraphs_status
+                CHECK (status IN ('pending', 'running', 'completed', 'failed'));
+            END IF;
+        END $$;
+        """
+    )
     cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_execution_subgraphs_graph ON execution_subgraphs(graph_id)"
     )
     cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_execution_subgraphs_container ON execution_subgraphs(container_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_execution_subgraphs_status ON execution_subgraphs(status)"
     )
 
     # Migration: add subgraph_id column to execution_nodes (nullable for backward compat)

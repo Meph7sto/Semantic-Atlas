@@ -166,8 +166,8 @@ class _StubExecutionGraphService:
         role_type: str,
         container_id: str | None,
         config_json: dict[str, Any] | None,
-        input_schema_json: list[str] | None,
-        output_schema_json: list[str] | None,
+        input_schema_json: list[Any] | None,
+        output_schema_json: list[Any] | None,
         order_index: int,
         created_by: str,
     ):
@@ -182,8 +182,8 @@ class _StubExecutionGraphService:
         node_type: str | None = None,
         role_type: str | None = None,
         config_json: dict[str, Any] | None = None,
-        input_schema_json: list[str] | None = None,
-        output_schema_json: list[str] | None = None,
+        input_schema_json: list[Any] | None = None,
+        output_schema_json: list[Any] | None = None,
         order_index: int | None = None,
         updated_by: str = "system",
     ):
@@ -359,12 +359,18 @@ async def test_node_crud_and_validation_contract(fastapi_client):
         json={
             "node_key": "n1",
             "label": "Node 1",
-            "node_type": "NODE",
+            "node_type": "LLM",
             "role_type": "HUMAN",
+            "input_schema_json": [
+                {"field": "anchor", "type": "string"},
+            ],
+            "output_schema_json": [
+                {"field": "summary", "type": "object"},
+            ],
         },
     )
     assert create_resp.status_code == 200
-    assert create_resp.json()["node_type"] == "node"
+    assert create_resp.json()["node_type"] == "llm"
     assert create_resp.json()["role_type"] == "human"
 
     update_resp = await client.patch(

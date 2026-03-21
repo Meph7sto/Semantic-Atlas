@@ -1,0 +1,59 @@
+一、拓扑图的创建
+与之前相同，设计者预先在系统中创建"需求冲突检测"拓扑图，静态描述这类任务应当怎么跑：
+节点phase_labelnode_typetask_prompt节点1fetch_statesllm获取所有相关需求条目的当前状态，将结果写入 Scratchpad节点2generate_pairsllm基于 Scratchpad 中的需求列表，构建需要两两语义对比的候选对节点3semantic_verdictllm对每个候选对做语义裁决，判断是否存在冲突，输出带置信度的结论
+节点之间通过 seq 边顺序连接，拓扑图此刻只是结构定义，尚未产生任何执行实例。
+
+二、指令到达：骨架实例化
+用户指令到达后，运行时直接执行骨架实例化，无需计划 Agent 介入：
+
+分配唯一 graph_id，创建空执行图实例挂入当前 session 链末端。
+运行时允许先创建一层固定容器骨架；在当前冲突检测场景中，运行时图会预建 human_input、conductor、conflict_detection_agent 三个 container。
+此阶段只在 conflict_detection_agent container 上挂入入口 judge 节点，其余预置 container 仅承担运行轨迹承载作用；此时仍不存在任何业务 subgraph，执行图结构极为轻薄。
+将用户指令的 payload 注入该 judge 节点，将其状态切换为 Running，骨架实例化完成。
+
+
+三、judge 节点的判断
+judge 节点是 conflict_detection_agent container 的入口 llm 节点，其 task_prompt 承担双重职责：一是判断当前任务是否复杂到需要展开拓扑图；二是若需要，从系统已有的拓扑图中选定目标图。
+模型在 judge 节点内分析任务意图与复杂度，随后调用 complete_phase，参数中显式携带两类决策信息：expand_topology（是否展开）以及 target_template_graph_id（目标拓扑图标识，只有在 expand_topology=true 时才填写）。运行时严格读取这两个字段，进入两条路径之一；judge 阶段不使用 route_key。
+拓扑图的选择权完全归属于 judge，系统不存在其他角色在此环节介入。
+
+四A：judge 决定拉起拓扑图
+运行时以 judge 指定的拓扑图为模板，遍历其全部三个拓扑节点，批量创建三个 subgraph 实例，初始状态均为 Pending，在 container 内部建立 seq 边连接，随后激活 fetch_states subgraph 开始推进。
+fetch_states： 模型循环调用工具拉取需求状态，结论写入 Scratchpad，调用 complete_phase 标记阶段完成。
+generate_pairs： seq 边激活，模型读取 Scratchpad 构建候选对，完成后调用 complete_phase，结论追加写入 Scratchpad。
+semantic_verdict： seq 边再次激活，模型对候选对逐一裁决，可能经历多轮推理与工具调用，最终调用 complete_phase，完整冲突结论写入 Scratchpad，subgraph 标记为 Completed。
+三个 subgraph 全部 Completed 后，container 的 end 节点触发，结论经 return 边回流，执行图进入 Succeeded 终态。
+
+四B：judge 决定不拉起拓扑图
+任务被判定为足够简单，judge 在 complete_phase 参数中写入 expand_topology=false，且不指定任何 target_template_graph_id。运行时在 container 内直接追加普通 llm 节点，顺序流转推进至 end 节点收尾。
+此路径下 Scratchpad 仍可用于节点间的中间信息存储，但不存在 phase_label 锚点与 complete_phase 分阶段机制，全量上下文对模型可见，适合轻量任务直接推理。
+
+整体流转示意
+用户指令到达
+    │
+    ▼
+骨架实例化（预置固定容器 + 创建 conflict_detection_agent 的 judge 节点，无业务 subgraph）
+    │
+    ▼
+judge 节点推理
+（同时决定：是否展开 + 选哪张拓扑图）
+    │
+    ├─── 拉起拓扑图 ──→ 实例化三个 subgraph（Pending）
+    │                       │
+    │                       ▼
+    │               fetch_states（llm循环 → complete_phase）
+    │                       │ seq边
+    │                       ▼
+    │               generate_pairs（llm循环 → complete_phase）
+    │                       │ seq边
+    │                       ▼
+    │               semantic_verdict（llm循环 → complete_phase）
+    │                       │
+    │                       ▼
+    │                   end → return / Succeeded
+    │
+    └─── 不拉起 ──→ 普通 llm 节点顺序流转
+                    （Scratchpad 保留，无 subgraph 上下文管理）
+                           │
+                           ▼
+                       end → Succeeded

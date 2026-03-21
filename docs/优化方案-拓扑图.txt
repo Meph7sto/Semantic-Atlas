@@ -52,7 +52,7 @@
   - 新建容器：
     container_key、label、role_type、order_index、config_json
   - 新建节点：
-    container_id、node_key、label、node_type、role_type、order_index、config_json、input_schema_json、output_schema_json
+    container_id、node_key、label、node_type、role_type、order_index、config_json、input_schema_json
   - 新建边：
     source_node_id、target_node_id、edge_type、label、condition_expr、order_index、config_json
 

@@ -94,16 +94,17 @@ class AgentContainer:
 
     def to_dict(self) -> Dict[str, Any]:
         node_types = sorted({n.node_type.value for n in self.nodes})
-        start_node_ids = [n.node_id for n in self.nodes if n.node_type == NodeType.START]
-        end_node_ids = [n.node_id for n in self.nodes if n.node_type == NodeType.END]
+        sorted_nodes = sorted(self.nodes, key=lambda n: n.order_index)
+        entry_node_ids = [sorted_nodes[0].node_id] if sorted_nodes else []
+        exit_node_ids = [sorted_nodes[-1].node_id] if sorted_nodes else []
         return {
             "container_id": self.container_id,
             "container_key": self.container_key,
             "label": self.label,
             "node_count": len(self.nodes),
             "node_types": node_types,
-            "start_node_ids": start_node_ids,
-            "end_node_ids": end_node_ids,
+            "entry_node_ids": entry_node_ids,
+            "exit_node_ids": exit_node_ids,
             "role_type": self.role_type.value,
             "agent_id": self.agent_id,
             "config": self.config,

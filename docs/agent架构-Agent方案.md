@@ -103,7 +103,7 @@ Agent 之间的通信遵循以下规则：
 | `graph`     | 一类流程模板，如”修改需求并自动质检”                       | `name`、`description`、`status`、`layout_json`                                  |
 | `container` | 一个 agent 的职责边界，对应一个具体角色                   | `container_key`、`label`、`role_type`、`config_json`                            |
 | `subgraph`  | container 的子元素，对应拓扑图中的**一个可见节点**；内部包含若干执行节点，表达一个语义单元的完整实现 | `subgraph_key`、`label`、`nodes`、`edges` |
-| `node`      | subgraph 内部的执行节点，代表一次具体的执行动作（如 LLM 推理、跨容器调用等） | `node_key`、`node_type`、`input_schema_json`、`output_schema_json` |
+| `node`      | subgraph 内部的执行节点，代表一次具体的执行动作（如 LLM 推理、跨容器调用等） | `node_key`、`node_type`、`task_prompt`、`conditional_edges`、`input_schema_json` |
 | `edge`      | 流转关系；container 级别的 edge 连接 subgraph，subgraph 级别的 edge 连接内部 node | `edge_type`、`condition_expr`、`config_json`                                    |
 
 项目当前已固定的结构类型如下：
@@ -125,7 +125,7 @@ Agent 之间的通信遵循以下规则：
 | 类型      | 执行模型                                                                        | 完成信号                                   |
 | --------- | ------------------------------------------------------------------------------- | ------------------------------------------ |
 | `start`   | 透传，接收上游输入并注入当前节点上下文                                          | 直接流转，无推理过程                       |
-| `llm`     | 三段式执行：`input`（增量上下文）→ `output`（结构化结果 ± tool call 列表）→ `tool call results`（若有）| 输出匹配 `output_schema_json` 即视为完成   |
+| `llm`     | 三段式执行：`input`（增量上下文）→ `output`（结构化结果 ± tool call 列表）→ `tool call results`（若有）| 显式调用 `complete_phase` 后视为完成       |
 | `handoff` | 将流程控制权交回 `human` 容器，挂起当前执行，等待用户确认或补充输入             | 用户输入到达，结果注入当前节点上下文后继续 |
 | `invoke`  | 确定性跨容器调用，目标容器在配置中静态指定，payload 经 Sidebar 路由至目标容器   | `return` 边到达，结果注入当前节点上下文后继续 |
 | `end`     | 透传，将 subgraph 最终输出返回给调用方                                          | 节点完成即 subgraph 完成                   |

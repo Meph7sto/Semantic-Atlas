@@ -22,12 +22,15 @@ from backend_business.services.agent.agents.conflict_detection_agent import (
 router = APIRouter(prefix="/api/v2/conflict-agent-chat", tags=["conflict-agent-chat"])
 
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ConflictAgentMessageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     project_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
+    execution_mode: str = Field(default="classic")
 
     @field_validator("project_id", "message")
     @classmethod
@@ -36,6 +39,14 @@ class ConflictAgentMessageRequest(BaseModel):
         if not text:
             raise ValueError("字段不能为空")
         return text
+
+    @field_validator("execution_mode")
+    @classmethod
+    def normalize_execution_mode(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in ("classic", "graph"):
+            return "classic"
+        return normalized
 
 
 def _require_project_access(project_id: str, current_user: dict) -> None:
@@ -200,6 +211,7 @@ def stream_message(
                 user_id=current_user["user_id"],
                 project_id=payload.project_id,
                 user_message=payload.message,
+                execution_mode=payload.execution_mode,
             ):
                 yield _sse_event(event["event"], event.get("data", {}))
         except Exception as exc:

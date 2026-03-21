@@ -70,9 +70,7 @@ input：喂给模型的输入上下文。节点不接收全量历史，而是从
 output：模型基于input产出的结构化结果。输出有两种形态：其一是不含tool
 call的中间推理产物，直接作为本节点的输出向后传递；其二是附带tool
 call列表的输出，表达模型希望对系统执行的动作序列。列表中的所有调用一次性并行发起，而非逐条串行等待，这使得多个独立操作（如同时读取多条需求状态）可以在单个节点内高效完成。在tool
-call列表中，有一类工具具有特殊的控制流语义：complete_phase。该工具由运行时为每个subgraph自动注入，其参数schema即为当前拓扑节点预设的阶段产出物结构。模型在判断当前阶段任务已完成时，调用complete_phase并将结论作为参数传入；运行时收到此调用后对参数执行schema校验，校验通过则标记当前subgraph完成并激活出边，校验不通过则将校验错误作为tool
-call
-result反馈给模型，由模型修正后重新提交。complete_phase与业务工具的核心区别在于：业务工具的执行结果回填后，模型继续在当前subgraph内推理；complete_phase的成功执行直接终结当前subgraph，触发阶段流转。这一设计将阶段完成信号从被动的输出结构匹配变为模型的主动显式声明，彻底消除了中间输出碰巧匹配产出物schema而导致阶段被误判为完成的风险。
+call列表中，有一类工具具有特殊的控制流语义：complete_phase。该工具由运行时为每个subgraph自动注入。模型在判断当前阶段任务已完成时调用complete_phase，运行时收到此调用即标记当前subgraph完成并激活出边，不对参数做结构校验，调用本身即完成信号。complete_phase与业务工具的核心区别在于：业务工具的执行结果回填后，模型继续在当前subgraph内推理；complete_phase的调用直接终结当前subgraph，触发阶段流转。这一设计将阶段完成信号从被动的输出结构匹配变为模型的主动显式声明，彻底消除了中间输出碰巧匹配而导致阶段被误判为完成的风险。
 
 tool call results：仅在output含有tool
 call时出现。系统并行执行所有调用后，将全部结果追加到本节点的上下文中，供模型完成后续推理或供下一节点的input选取。至此，节点完成。若output不含tool
@@ -105,9 +103,9 @@ seq边连接container内部的执行节点，表达节点间的顺序流转关�
 
 容器间边连接不同的container，表达跨容器的协作关系。共三种类型：
 
-call边表示一个容器向另一个容器发起调用。调用方将payload投递给目标container的入口节点，目标container开始执行。call边发出后，调用方容器进入Waiting状态，等待对应的return到达。
+call边表示一个容器向另一个容器发起调用。调用方将payload投递给目标container的入口节点，目标container开始执行。call边发出后，调用方容器进入Waiting状态，等待对应的return到达（多个call边可同时处于Active，各目标container的LLM调用因此并发执行，而非逐条串行等待）。
 
-return边表示被调用container将执行结果回流给调用方。目标container的end节点触发return边，结果注入调用方发起调用的节点上下文，调用方从Waiting恢复为Running，继续推进后续节点。call与return成对出现，共同构成一次完整的跨容器调用闭环。
+return边表示被调用container将执行结果回流给调用方。目标container的end节点触发return边，回流的内容是被调用container末尾subgraph通过complete_phase提交的结构化结论；Scratchpad作为container内部的工作记忆，不随return边对外暴露。结论注入调用方发起调用的节点上下文，调用方从Waiting恢复为Running，继续推进后续节点。call与return成对出现，共同构成一次完整的跨容器调用闭环。
 
 retry边表示调用方在收到返回结论后，决定以新的约束条件重新发起调用。与call边的区别在于语义：call是首次委托，retry是基于上一次返回结论的修正重试，执行图中会记录重试次数与每次的约束变化，使重试过程完整可追溯。典型场景是质检不通过后，会话总控将质检结论作为新约束重新委托需求管理Agent。
 
@@ -176,7 +174,7 @@ subgraph 开始推进。每个 subgraph
 在激活时，会将其对应拓扑节点配置的提示词作为固定上下文注入，始终告知模型当前阶段应完成的任务目标，使节点的推理焦点在整个执行过程中与拓扑设计保持对齐。
 
 subgraph 的完成判断方式由拓扑节点类型决定。对于 llm
-节点，完成信号是模型在subgraph内显式调用complete_phase工具并通过参数schema校验，完成后运行时从complete_phase的参数中读取路由字段，与该节点配置的条件出边逐一比对，激活第一条满足条件的边并推进到对应的下一个
+节点，完成信号是模型在subgraph内显式调用complete_phase工具，调用本身即完成信号，不做参数校验，运行时随即从complete_phase的参数中读取路由字段，与该节点配置的条件出边逐一比对，激活第一条满足条件的边并推进到对应的下一个
 subgraph；对于 invoke 节点，完成信号是被调用容器的 return
 边到达，结果注入后自动流转，无需配置条件；对于 handoff
 节点，完成信号是用户输入到达，到达即恢复推进。这一设计将条件分支的决策完全编码在拓扑图的节点配置与出边条件中，运行时只需按节点类型执行对应的完成判断、匹配出边、激活下一
@@ -184,7 +182,7 @@ subgraph，无需引入额外的动态决策逻辑，映射过程机械且确定
 
 ## 拓扑图到执行图的映射
 
-拓扑图描述某类任务"应当怎么跑"的静态结构，执行图记录某条具体指令"实际怎么跑"的动态轨迹。两者之间的映射分为两个阶段：第一阶段是骨架实例化，运行时以拓扑图为蓝本，机械地创建执行图的全部结构元素；第二阶段是运行时展开，各subgraph在激活后由LLM驱动推进，内部节点序列非确定性地生长，直至阶段完成信号触发流转。前者是确定性的一次性动作，后者是非确定性的持续过程，两者的分界线恰好落在subgraph层面：骨架实例化决定了执行图有多少个subgraph、它们之间如何连接；运行时展开决定了每个subgraph内部实际产生多少个执行节点、经历多少轮工具调用。
+拓扑图描述某类任务"应当怎么跑"的静态结构，执行图记录某条具体指令"实际怎么跑"的动态轨迹。两者之间的映射分为两个阶段：第一阶段是骨架实例化，运行时为每个container创建入口judge节点并激活；第二阶段是运行时展开，judge节点完成后决定是否以某张拓扑图为模板展开后续subgraph，各subgraph随后由LLM驱动推进，内部节点序列非确定性地生长，直至阶段完成信号触发流转。前者是确定性的一次性动作，后者是非确定性的持续过程，两者的分界线恰好落在subgraph层面：骨架实例化决定了执行图的入口结构；运行时展开决定了每个subgraph内部实际产生多少个执行节点、经历多少轮工具调用。
 
 1.  骨架实例化
 
@@ -194,13 +192,13 @@ subgraph，无需引入额外的动态决策逻辑，映射过程机械且确定
 
 随后，遍历拓扑图中定义的每一个container，在执行图中创建对应的container实例，继承其container_id、role_type与agent_type绑定。container的创建顺序不影响最终行为，因为container之间的协作关系由边定义，而非由创建顺序隐含。
 
-对每个container，遍历其下属的全部拓扑节点，为每个拓扑节点创建一个状态为Pending的subgraph实例。subgraph在创建时继承拓扑节点的phase_label、node_type与task_prompt，同时运行时自动在subgraph内部注入一对start节点与end节点作为边界定义。start节点负责在subgraph激活时接收注入的上下文（包含task_prompt、Scratchpad已有内容，以及来自调用方的payload），end节点负责在subgraph完成时将产出物向出边传递。这一对边界节点无需拓扑设计者声明，由运行时框架统一生成，拓扑图中的三种节点类型（llm、invoke、handoff）只描述start与end之间的执行性质。
+对每个container，运行时仅创建入口judge节点并将其状态设为Running，骨架阶段不预先创建后续subgraph。judge节点是一个普通的llm节点，其task_prompt负责判断当前任务是否需要展开后续拓扑图。若不需要，judge完成后执行图向下延伸普通llm节点，每个节点对应一次API交互，正常推进直至结束；若需要，judge在complete_phase中指定目标拓扑图，运行时以该拓扑图为模板，遍历其全部拓扑节点，为每个拓扑节点创建一个状态为Pending的subgraph实例并挂载到当前执行图，随即激活入口subgraph，流程继续推进。subgraph在创建时继承拓扑节点的phase_label、node_type与task_prompt，同时运行时自动在subgraph内部注入一对start节点与end节点作为边界定义。start节点负责在subgraph激活时接收注入的上下文（包含task_prompt、Scratchpad已有内容，以及来自调用方的payload），end节点负责在subgraph完成时将产出物向出边传递。这一对边界节点无需拓扑设计者声明，由运行时框架统一生成，拓扑图中的三种节点类型（llm、invoke、handoff）只描述start与end之间的执行性质。
 
 对每个container内部的拓扑边（连接同一container下两个拓扑节点的seq边），在执行图中创建对应的container级seq边，连接两个subgraph。对拓扑图中的跨容器边（call、return、retry），在执行图中创建对应的跨容器边，初始状态设为Inactive，等待运行时根据执行进度激活。
 
-最后，运行时将用户指令的payload注入入口container的第一个subgraph的start节点，将该subgraph的状态从Pending切换为Running，骨架实例化完成，执行图开始推进。
+最后，运行时将用户指令的payload注入入口container的judge节点，将其状态切换为Running，骨架实例化完成，执行图开始推进。
 
-需要强调的是，骨架实例化是一次完成的整体动作，而非随执行逐步展开。执行图在第一个subgraph激活之前，已经拥有全部的container、全部的subgraph（均为Pending）和全部的边（内部边已就绪，跨容器边为Inactive）。这一设计的意义在于：执行图的结构在运行开始前即完整可见，观测工具可以在任何时刻展示"当前执行走到了拓扑图的哪个阶段"，而不必等到某个subgraph实际被激活后才知道它的存在。
+需要强调的是，骨架实例化仅创建各container的入口judge节点，后续subgraph的存在与结构由judge节点在运行时按需确定。拓扑图在此作为可选模板存在，而非在执行开始前强制绑定的结构约定。"执行图结构完整可见"的承诺对应调整为：judge节点完成后，当前执行图的完整结构即确定可见，观测工具从此刻起可以在任何时刻展示"当前执行走到了哪个阶段"。
 
 2.  subgraph的运行时推进
 
@@ -258,9 +256,34 @@ call的发起与结果、跨容器边的流转时序，以及执行中途发生�
   Failed      发生不可恢复错误             执行异常且无降级路径
   ------------------------------------------------------------------------------------------
 
-Waiting与Suspended是两种性质不同的等待状态。Waiting等待的是系统内部的异步结果，结果到达后由运行时自动恢复推进，无需用户介入；Suspended等待的是用户的外部输入，系统在此主动将控制权交还给用户，直到用户补充输入后才能继续。
+Waiting与Suspended是两种性质不同的等待状态。Waiting等待的是系统内部的异步结果，结果到达后由运行时自动恢复推进，无需用户介入；Suspended等待的是用户的外部输入，系统在此主动将控制权交还给用户，直到用户补充输入后才能继续。Waiting状态的异步设计动机不是解决数据底座的状态并发问题------DB随时可读写，Actor的串行信箱已从架构层面消除写入冲突------而是使多个container的LLM
+API调用能够并发执行。LLM调用是I/O密集型操作，将多个并行invoke的等待时间叠加为一次Waiting而非逐条串行阻塞，可显著降低整体响应延迟。
 
 Suspended恢复时，运行时不创建新的执行图，而是在原执行图上追加新的输入节点，将用户输入作为增量消息注入到挂起节点的上下文末尾，执行图从Suspended恢复为Running，从挂起点继续推进。一次用户意图始终对应同一张执行图，挂起前后的完整轨迹保持连续。
+
+## Subgraph 级状态机
+
+执行图的五态状态机描述的是整张图的宏观状态，而每个 subgraph
+自身也维护一套独立的四态状态机，两个层级的状态各司其职，graph 级状态由
+subgraph 状态派生得出，不由 subgraph 直接设置。
+
+subgraph 的四种状态定义如下：Pending
+表示骨架实例化时已创建但尚未被激活；Running 表示当前正在推进，对于 llm
+类型即 LLM 推理循环正在执行，对于 invoke 类型即已发出 call 边正在等待
+return，对于 handoff 类型即正在等待用户输入；Completed
+表示阶段任务已完成，完成信号因类型而异（llm 类型为 complete_phase
+调用、invoke 类型为 return 边到达、handoff 类型为用户输入到达）；Failed
+表示发生不可恢复错误。
+
+graph 级状态的派生规则如下：若某个 invoke 类型的 subgraph 进入 Running
+状态（已发出 call、等待 return），graph 进入 Waiting；若某个 handoff
+类型的 subgraph 进入 Running 状态（等待用户输入），graph 进入
+Suspended；return 边到达或用户输入到达后，对应 subgraph 标记为
+Completed，graph 恢复为 Running；所有 container 的末尾 subgraph 均为
+Completed 时，graph 进入 Succeeded；任何 subgraph 进入 Failed
+且无降级路径时，graph 进入 Failed。subgraph 只负责推进自身，graph
+状态由运行时框架在 subgraph 状态变更后统一派生，不允许 subgraph
+内部逻辑直接修改 graph 状态。
 
 ## 子图（Subgraph）
 
@@ -271,8 +294,8 @@ subgraph是执行图中的阶段对象，在归属关系上挂在container之下
 理解这一映射，需要区分两个层面：其一是**提示词逻辑**，即拓扑节点对该阶段的任务描述------它告知模型在这一阶段应当完成什么、输出什么结构；其二是**实际执行情况**，即为完成该阶段任务而在执行图中展开的真实节点序列。前者是确定性的意图约定，后者是非确定性的推理展开，两者并不对等。一个拓扑节点在提示词层面只是一段任务描述，但模型完成它可能需要多轮tool
 call、多个执行节点，这正是引入subgraph作为缓冲层的根本原因。
 
-subgraph的判定机制非常简单：拓扑图为每个节点预设一个阶段标签；运行时进入该阶段后创建对应的subgraph实例，并将该阶段的任务描述注入后续执行节点，同时为该subgraph内的所有llm节点注入一个专用工具complete_phase，其参数schema即为当前拓扑节点预设的阶段产出物结构。模型在subgraph内自由推理、调用业务工具，当模型判断当前阶段任务已完成时，调用complete_phase并将结论作为参数传入，运行时对参数执行schema校验，校验通过则标记当前subgraph完成，随即切换到下一个拓扑节点，创建新的subgraph实例，将下一阶段的任务描述注入其后续执行节点，依次推进。阶段完成的时机由模型自主决定，而非由固定的节点数量或tool
-call次数决定；但完成信号本身是确定性的，运行时只认complete_phase的成功调用，不会因模型的中间输出碰巧匹配产出物结构而误判阶段已完成。
+subgraph的判定机制非常简单：拓扑图为每个节点预设一个阶段标签；运行时进入该阶段后创建对应的subgraph实例，并将该阶段的任务描述注入后续执行节点，同时为该subgraph内的所有llm节点注入一个专用工具complete_phase，模型在subgraph内自由推理、调用业务工具，当模型判断当前阶段任务已完成时调用complete_phase，运行时收到调用即标记当前subgraph完成，不对参数做结构校验，调用本身即完成信号，随即切换到下一个拓扑节点，创建新的subgraph实例，将下一阶段的任务描述注入其后续执行节点，依次推进。阶段完成的时机由模型自主决定，而非由固定的节点数量或tool
+call次数决定。
 
 层级关系：
 
@@ -468,15 +491,38 @@ results而丢失事实性依据；写入Scratchpad的工具结果片段标记为
 
 ## Agent设计详述
 
-1.  需求分析Agent
+1.  意图判断门控节点（intent_judge）
 
-2.  需求分类Agent
+意图判断门控节点是执行层所有专项Agent拓扑图的强制首节点，其职责是在拓扑图实例化之前，通过一次轻量
+LLM 调用判断用户消息是否与本 Agent
+的业务职责相关，从而决定是否拉起完整拓扑流程。这一节点不属于拓扑图的业务节点序列，而是执行图层面的前置步骤，由各
+Agent 的服务层代码在骨架实例化前手动写入执行图，不参与骨架实例化流程。
 
-3.  需求管理 Agent
+设计动机是：执行层专项Agent的各业务 subgraph
+代价较高，涉及并行数据拉取、多轮 LLM
+推理与跨容器调用。用户输入中存在与该 Agent
+职责无关的问题（如概念询问、闲聊），此时拉起完整拓扑图流程无意义且浪费资源。门控节点以极低代价过滤掉不相关请求，并对用户给出自然语言的直接回复，执行图随即正常结束；只有判断为相关时才继续实例化拓扑图并推进业务
+subgraph。
 
-4.  质检 Agent
+intent_judge 节点的属性如下：node_type 为 llm，role_type 为 agent，所属
+container 为对应专项 Agent 的 container；完成条件是一次 LLM 调用返回
+is_relevant 判断即视为完成。当 is_relevant 为 false 时，Agent
+服务层直接调用一次轻量 LLM 生成自然语言回复并写入执行图，执行图进入
+Succeeded 终态，拓扑图骨架不实例化；当 is_relevant 为 true
+时，服务层继续调用 TopologyInstantiator 实例化拓扑图骨架，SubgraphRunner
+从第一个业务 subgraph
+开始推进。整个门控流程在同一张执行图内完成，intent_judge 节点与后续业务
+subgraph 的完整轨迹均可在执行图中追溯。
 
-5.  冲突检测 Agent
+2.  需求分析Agent
+
+3.  需求分类Agent
+
+4.  需求管理 Agent
+
+5.  质检 Agent
+
+6.  冲突检测 Agent
 
 冲突检测Agent是执行层分析类Agent之一，专责对给定需求集合执行跨需求的语义冲突裁决。它不负责需求内容的写入，不参与流程的协调编排，也不承担单条需求的质量评判；其唯一职责是：在调用方指定的需求范围内，识别出语义上存在矛盾、资源争用或约束不兼容的需求对，并为每一个冲突实例提供带有精确定位的裁决结论。
 
@@ -555,15 +601,15 @@ call列表并发发起，所有需求状态的快照在本subgraph内汇聚，�
   evidence_b            
   ---------------------------------------------------------------------------
 
-6.  影响分析 Agent
+7.  影响分析 Agent
 
-7.  基线变更 Agent
+8.  基线变更 Agent
 
-8.  需求追溯关系 Agent
+9.  需求追溯关系 Agent
 
-9.  知识检索 Agent
+10. 知识检索 Agent
 
-10. 执行图观测 Agent
+11. 执行图观测 Agent
 
 # 领域层
 

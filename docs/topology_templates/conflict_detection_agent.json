@@ -1,0 +1,100 @@
+{
+  "format": "semantic-atlas-topology-template",
+  "version": "1.0.0",
+  "exported_at": "2026-03-21T07:00:00.000Z",
+  "graph": {
+    "name": "冲突检测Agent拓扑图",
+    "description": "冲突检测Agent的执行拓扑模板。包含三个顺序subgraph：需求状态拉取 → 候选冲突对生成 → 冲突语义裁决。专责对给定需求集合执行跨需求的语义冲突裁决，识别对象特性冲突、逻辑与时序冲突、同义术语冲突及FR-NFR冲突。",
+    "status": "draft",
+    "layout_json": {},
+    "meta_json": {
+      "agent_type": "conflict_detection",
+      "category": "analysis",
+      "topology_version": "1.0.0"
+    }
+  },
+  "containers": [
+    {
+      "container_key": "conflict_detection_agent",
+      "label": "冲突检测Agent",
+      "role_type": "agent",
+      "order_index": 0,
+      "config_json": {
+        "agent_type": "conflict_detection",
+        "description": "执行层分析类Agent，专责跨需求语义冲突裁决"
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "node_key": "fetch_states",
+      "label": "需求状态拉取",
+      "node_type": "llm",
+      "role_type": "agent",
+      "container_key": "conflict_detection_agent",
+      "phase_label": "fetch_states",
+      "task_prompt": "你是冲突检测Agent的第一阶段：需求状态拉取。\n\n你必须只使用当前运行时实际提供的工具：`list_requirements`、`get_requirement_detail`、`scratchpad_write`、`complete_phase`。\n不要假设存在 ActorAsk、payload.anchor、payload.scope 或其他未在工具列表中出现的能力。\n\n你的任务是先确定本轮需要参与冲突检测的需求集合，再拉取这些需求的完整快照。\n\n具体执行规则：\n1. 先阅读用户原始消息，识别其中明确提到的 requirement_id（例如 r-1、REQ-001 等）\n2. 如果用户已经明确给出 2 条或以上 requirement_id，则直接把这些 requirement_id 作为本轮检测范围\n3. 如果用户没有明确给出足够的 requirement_id，则调用 `list_requirements` 获取当前项目中的需求摘要，结合用户消息筛选最相关的候选需求；若仍无法确定，至少保留最相关的 2 条候选需求\n4. 对确定下来的每一条 requirement_id 调用 `get_requirement_detail` 拉取完整快照\n5. 将成功拉取的需求快照写入 Scratchpad，建议写成结构化文本或 JSON 片段，字段至少包含 requirement_id、title、description、acceptance_criteria、status、priority\n6. 如果某条需求拉取失败，将其单独记为不可达或无效条目，但不要终止整体流程\n\n输出要求：\n- 使用 `scratchpad_write` 写入 `requirement_snapshots`\n- 使用 `scratchpad_write` 单独记录 `unreachable_ids` 或无效 requirement_id\n- 完成后必须调用 `complete_phase`\n- `conclusion` 中至少写明：成功拉取条数、失败条数、最终进入下一阶段的需求 ID 列表",
+      "conditional_edges": [],
+      "order_index": 0,
+      "config_json": {},
+      "input_schema_json": [
+        {
+          "field": "anchor",
+          "type": "string",
+          "description": "检测锚点：触发本次检测的目标需求 requirement_id"
+        },
+        {
+          "field": "scope",
+          "type": "object",
+          "description": "检测范围定义，包含 mode（all/incremental/specified）和对应的候选需求集合"
+        }
+      ]
+    },
+    {
+      "node_key": "generate_pairs",
+      "label": "候选冲突对生成",
+      "node_type": "llm",
+      "role_type": "agent",
+      "container_key": "conflict_detection_agent",
+      "phase_label": "generate_pairs",
+      "task_prompt": "你是冲突检测Agent的第二阶段：候选冲突对生成。\n\n你只能依赖上一阶段已经写入 Scratchpad 的需求快照，不要重新假设存在额外上下文字段。\n\n你的任务是在这些需求快照中筛选出值得进入精细裁决的候选冲突对，避免把明显无关的组合带到下一阶段。\n\n筛选规则：\n1. 优先关注同一对象、同一功能、同一资源、同一流程步骤上的约束冲突\n2. 重点识别数值阈值、时间窗口、是否允许/禁止、必须/不得、上限/下限这类容易互斥的表达\n3. 若两个需求明显谈论的是同一个业务对象，但命名不同，也可以保留为候选对\n4. 若只有 2 条需求，则直接生成这一对作为候选对\n5. 不要生成重复对，也不要生成 requirement_id 相同的自比较\n\n输出要求：\n- 使用 `scratchpad_write` 写入候选冲突对列表，建议字段包含：requirement_id_a、requirement_id_b、suspected_direction\n- 候选对按疑似冲突程度排序\n- 完成后必须调用 `complete_phase`\n- `conclusion` 中至少写明：总需求数、生成的候选对数、候选对摘要",
+      "conditional_edges": [],
+      "order_index": 1,
+      "config_json": {},
+      "input_schema_json": []
+    },
+    {
+      "node_key": "semantic_verdict",
+      "label": "冲突语义裁决",
+      "node_type": "llm",
+      "role_type": "agent",
+      "container_key": "conflict_detection_agent",
+      "phase_label": "semantic_verdict",
+      "task_prompt": "你是冲突检测Agent的第三阶段：冲突语义裁决。\n\n你必须从 Scratchpad 读取候选冲突对和需求快照，并优先使用当前运行时提供的 `check_conflict` 工具对每个候选对做最终判断。不要假设存在其他外部裁决接口。\n\n执行步骤：\n1. 逐一读取候选冲突对\n2. 对每个候选对调用 `check_conflict(requirement_id_a, requirement_id_b)`\n3. 结合工具返回结果和需求原文，给出最终裁决\n4. 对明显无冲突的候选对，允许判为 `clear`，且不必写入最终冲突列表\n\n裁决字段要求：\n- `conflict_type` 取值可使用：object_property、logic_timing、terminology、fr_nfr、other\n- `verdict` 取值必须是：confirmed、suspected、clear\n- `description` 写明冲突原因\n- `evidence_a`、`evidence_b` 尽量引用两条需求中的关键约束句\n\n输出要求：\n- 使用 `scratchpad_write` 写入最终摘要和冲突实例列表\n- 摘要字段至少包含：scope_count、pairs_evaluated、conflict_count、suspected_count\n- 冲突实例列表中的每个元素至少包含：requirement_id_a、requirement_id_b、conflict_type、verdict、description、evidence_a、evidence_b\n- 完成后必须调用 `complete_phase`\n- `complete_phase.conclusion` 请直接写成结构化 JSON 字符串，便于前端和后续链路消费",
+      "conditional_edges": [],
+      "order_index": 2,
+      "config_json": {},
+      "input_schema_json": []
+    }
+  ],
+  "edges": [
+    {
+      "source_node_key": "fetch_states",
+      "target_node_key": "generate_pairs",
+      "edge_type": "seq",
+      "label": "状态拉取完成 → 候选对生成",
+      "condition_expr": "",
+      "order_index": 0,
+      "config_json": {}
+    },
+    {
+      "source_node_key": "generate_pairs",
+      "target_node_key": "semantic_verdict",
+      "edge_type": "seq",
+      "label": "候选对生成完成 → 语义裁决",
+      "condition_expr": "",
+      "order_index": 1,
+      "config_json": {}
+    }
+  ]
+}

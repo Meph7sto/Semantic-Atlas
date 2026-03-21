@@ -492,6 +492,17 @@ class TestToolLoopRunnerCompletePhaseIntegration:
         tool_names = [t.get("function", {}).get("name") for t in tools_sent]
         assert "complete_phase" in tool_names
         assert "dummy" in tool_names
+        complete_phase_tool = next(
+            t for t in tools_sent
+            if t.get("function", {}).get("name") == "complete_phase"
+        )
+        complete_phase_props = (
+            complete_phase_tool.get("function", {})
+            .get("parameters", {})
+            .get("properties", {})
+        )
+        assert "expand_topology" in complete_phase_props
+        assert "target_template_graph_id" in complete_phase_props
 
     def test_complete_phase_tool_not_injected_when_disabled(self):
         from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner
@@ -614,6 +625,54 @@ class TestToolLoopRunnerCompletePhaseIntegration:
         assert result.phase_completed is True
         assert result.route_key == "review_required"
         assert result.conclusion == "needs review"
+
+    def test_complete_phase_passes_judge_decision_fields(self):
+        from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner
+        from backend_business.services.agent.runtime.graph_recorder import RuntimeGraphRecorder, ContainerConfig
+
+        graph_service = _FakeGraphService()
+        recorder = RuntimeGraphRecorder(
+            execution_graph_service=graph_service,
+            container_configs=[ContainerConfig("agent_main", "Agent Main", "agent")],
+            project_id="p-1", user_id="u-1", session_id="s-1", user_message="hello",
+        )
+
+        ai_proxy = _FakeAiProxy([
+            {
+                "content": "",
+                "tool_calls": [{
+                    "id": "tc-cp-judge",
+                    "type": "function",
+                    "function": {
+                        "name": "complete_phase",
+                        "arguments": (
+                            '{"conclusion":"需要进入冲突检测流程",'
+                            '"expand_topology":true,'
+                            '"target_template_graph_id":"tpl-conflict"}'
+                        ),
+                    },
+                }],
+                "finish_reason": "tool_calls",
+            },
+        ])
+
+        runner = ToolLoopRunner(
+            ai_proxy_client=ai_proxy,
+            tool_executor=_FakeToolExecutor(),
+            prompt_builder=_FakePromptBuilder(),
+            stage_container_key="agent_main",
+            enable_complete_phase=True,
+        )
+
+        events, result = _run_to_completion(runner.run(
+            recorder=recorder, user_id="u-1", user_message="hello",
+            context={"project_id": "p-1", "tool_results": []},
+        ))
+
+        assert result.phase_completed is True
+        assert result.expand_topology is True
+        assert result.target_template_graph_id == "tpl-conflict"
+        assert result.conclusion == "需要进入冲突检测流程"
 
     def test_complete_phase_auto_appends_scratchpad_stage_output(self):
         from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner

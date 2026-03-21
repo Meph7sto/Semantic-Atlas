@@ -68,6 +68,8 @@ class ToolLoopResult:
     rounds: int
     phase_completed: bool = False
     route_key: str | None = None
+    expand_topology: bool | None = None
+    target_template_graph_id: str | None = None
     conclusion: str | None = None
 
 
@@ -125,6 +127,20 @@ _COMPLETE_PHASE_TOOL_DEF: dict[str, Any] = {
                         "如果当前拓扑节点配置了 conditional_edges，"
                         "运行时会用此值与条件逐一比对来决定下一阶段。"
                         "无条件流转时可不传。"
+                    ),
+                },
+                "expand_topology": {
+                    "type": "boolean",
+                    "description": (
+                        "仅 judge 入口节点使用。"
+                        "true 表示需要展开拓扑图，false 表示走直接对话路径。"
+                    ),
+                },
+                "target_template_graph_id": {
+                    "type": "string",
+                    "description": (
+                        "仅 judge 入口节点使用。"
+                        "当 expand_topology=true 时，填写候选拓扑图的 graph_id。"
                     ),
                 },
             },
@@ -283,6 +299,8 @@ class ToolLoopRunner:
                             # Built-in complete_phase handling: explicit phase completion signal
                             conclusion = arguments.get("conclusion", "")
                             route_key = arguments.get("route_key")
+                            expand_topology = arguments.get("expand_topology")
+                            target_template_graph_id = arguments.get("target_template_graph_id")
                             tool_result = {"ok": True, "message": "阶段完成信号已确认"}
 
                             recorder.record_tool_call_result(
@@ -305,6 +323,8 @@ class ToolLoopRunner:
 
                             output_summary["phase_completed"] = True
                             output_summary["route_key"] = route_key
+                            output_summary["expand_topology"] = expand_topology
+                            output_summary["target_template_graph_id"] = target_template_graph_id
                             output_summary["conclusion"] = conclusion
 
                             self._complete_round_and_patch_meta(
@@ -329,6 +349,8 @@ class ToolLoopRunner:
                                 rounds=round_index,
                                 phase_completed=True,
                                 route_key=route_key,
+                                expand_topology=expand_topology,
+                                target_template_graph_id=target_template_graph_id,
                                 conclusion=conclusion,
                             )
 
@@ -449,4 +471,3 @@ class ToolLoopRunner:
         if not meta_patch:
             return
         self.graph_meta_patcher(recorder.graph_id, meta_patch, user_id)
-

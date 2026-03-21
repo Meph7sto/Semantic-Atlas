@@ -156,11 +156,11 @@ class CreateNodeRequest(BaseModel):
     config_json: Optional[Dict[str, Any]] = Field(
         default_factory=dict, description="配置JSON"
     )
-    input_schema_json: Optional[List[str]] = Field(
-        default_factory=list, description="输入模式JSON"
+    input_schema_json: Optional[List[Any]] = Field(
+        default_factory=list, description="输入模式JSON 数组，兼容对象数组或节点ID数组"
     )
-    output_schema_json: Optional[List[str]] = Field(
-        default_factory=list, description="输出模式JSON"
+    output_schema_json: Optional[List[Any]] = Field(
+        default_factory=list, description="输出模式JSON 数组"
     )
     order_index: int = Field(default=0, description="排序索引")
 
@@ -189,8 +189,8 @@ class UpdateNodeRequest(BaseModel):
     conditional_edges: Optional[List[Dict[str, Any]]] = Field(None, description="条件出边列表")
     config_json: Optional[Dict[str, Any]] = Field(None, description="配置JSON")
     stage_prompt: Optional[str] = Field(None, description="阶段提示词（将自动合并至 config_json.stage_prompt）")
-    input_schema_json: Optional[List[str]] = Field(None, description="输入节点 ID 列表（节点内容 Tab 中选择的输入节点）")
-    output_schema_json: Optional[List[str]] = Field(None, description="输出模式JSON")
+    input_schema_json: Optional[List[Any]] = Field(None, description="输入模式JSON 数组，兼容对象数组或节点ID数组")
+    output_schema_json: Optional[List[Any]] = Field(None, description="输出模式JSON 数组")
     order_index: Optional[int] = Field(None, description="排序索引")
 
     @field_validator("node_type")

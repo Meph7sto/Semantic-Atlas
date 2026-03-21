@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Set
 
 from .graph_structure_builder import TopologyStructure
-from .agent_container import NodeType
+
 from .edge_processor import EdgeType, EdgeProcessor
 from .condition_evaluator import ConditionEvaluator
 
@@ -102,15 +102,17 @@ class StructureValidator:
             seen_keys.add(key)
 
         # Validate each container and contained nodes
+        _VALID_TOPOLOGY_NODE_TYPES = {"llm", "invoke", "handoff"}
         for container in structure.containers:
             if container.role_type.value not in {"human", "agent", "system"}:
                 errors.append(
                     f"Invalid role_type '{container.role_type}' in container '{container.container_key}'"
                 )
             for node in container.nodes:
-                if node.node_type not in NodeType:
+                if node.node_type.value not in _VALID_TOPOLOGY_NODE_TYPES:
                     errors.append(
-                        f"Invalid node type '{node.node_type}' in node '{node.node_key}'"
+                        f"Invalid topology node type '{node.node_type.value}' in node '{node.node_key}'. "
+                        f"Allowed: {', '.join(sorted(_VALID_TOPOLOGY_NODE_TYPES))}"
                     )
 
         return errors
@@ -161,20 +163,6 @@ class StructureValidator:
                 if container.container_id not in connected_ids:
                     errors.append(
                         f"Isolated container: '{container.node_key}' is not connected to any cross-container edge"
-                    )
-
-        # Check if end nodes are reachable from start nodes
-        if structure.start_containers and structure.end_containers:
-            reachable_from_start = set()
-            for start in structure.start_containers:
-                reachable_from_start.update(
-                    self._find_reachable(start.container_id, structure.edges)
-                )
-
-            for end in structure.end_containers:
-                if end.container_id not in reachable_from_start:
-                    errors.append(
-                        f"End container '{end.container_key}' is not reachable from any start node"
                     )
 
         return errors

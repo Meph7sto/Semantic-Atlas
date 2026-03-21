@@ -42,11 +42,11 @@ class _SubgraphMixin:
                         """
                         INSERT INTO execution_subgraphs(
                             subgraph_id, graph_id, container_id, subgraph_key, label,
-                            task_description, order_index, config_json, created_at, updated_at
+                            task_description, status, order_index, config_json, created_at, updated_at
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
                         RETURNING subgraph_id, graph_id, container_id, subgraph_key, label,
-                                  task_description, order_index, config_json,
+                                  task_description, status, order_index, config_json,
                                   created_at::text AS created_at
                         """,
                         (
@@ -56,6 +56,7 @@ class _SubgraphMixin:
                             subgraph_key,
                             label,
                             task_description,
+                            "pending",
                             order_index,
                             json.dumps(config_json) if config_json else None,
                         ),
@@ -75,7 +76,7 @@ class _SubgraphMixin:
                     cur.execute(
                         """
                         SELECT subgraph_id, graph_id, container_id, subgraph_key, label,
-                               task_description, order_index, config_json,
+                               task_description, status, order_index, config_json,
                                created_at::text AS created_at
                         FROM execution_subgraphs
                         WHERE graph_id = %s
@@ -87,7 +88,7 @@ class _SubgraphMixin:
                     cur.execute(
                         """
                         SELECT subgraph_id, graph_id, container_id, subgraph_key, label,
-                               task_description, order_index, config_json,
+                               task_description, status, order_index, config_json,
                                created_at::text AS created_at
                         FROM execution_subgraphs
                         WHERE graph_id = %s AND is_deleted = FALSE
@@ -106,7 +107,7 @@ class _SubgraphMixin:
                     cur.execute(
                         """
                         SELECT subgraph_id, graph_id, container_id, subgraph_key, label,
-                               task_description, order_index, config_json,
+                               task_description, status, order_index, config_json,
                                created_at::text AS created_at
                         FROM execution_subgraphs
                         WHERE subgraph_id = %s
@@ -117,7 +118,7 @@ class _SubgraphMixin:
                     cur.execute(
                         """
                         SELECT subgraph_id, graph_id, container_id, subgraph_key, label,
-                               task_description, order_index, config_json,
+                               task_description, status, order_index, config_json,
                                created_at::text AS created_at
                         FROM execution_subgraphs
                         WHERE subgraph_id = %s AND is_deleted = FALSE
@@ -132,6 +133,7 @@ class _SubgraphMixin:
         subgraph_id: str,
         label: str = None,
         task_description: str = None,
+        status: str = None,
         order_index: int = None,
         config_json: Dict = None,
         updated_by: str = "",
@@ -145,6 +147,12 @@ class _SubgraphMixin:
         if task_description is not None:
             fields.append("task_description = %s")
             values.append(task_description)
+        if status is not None:
+            _ALLOWED_SUBGRAPH_STATUSES = {"pending", "running", "completed", "failed"}
+            if status not in _ALLOWED_SUBGRAPH_STATUSES:
+                raise ValueError(f"status 必须是: {', '.join(sorted(_ALLOWED_SUBGRAPH_STATUSES))}")
+            fields.append("status = %s")
+            values.append(status)
         if order_index is not None:
             fields.append("order_index = %s")
             values.append(order_index)
@@ -162,7 +170,7 @@ class _SubgraphMixin:
             f"UPDATE execution_subgraphs SET {', '.join(fields)} "
             "WHERE subgraph_id = %s AND is_deleted = FALSE "
             "RETURNING subgraph_id, graph_id, container_id, subgraph_key, label, "
-            "task_description, order_index, config_json, created_at::text AS created_at"
+            "task_description, status, order_index, config_json, created_at::text AS created_at"
         )
 
         with self._connect() as conn:

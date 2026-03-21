@@ -3,7 +3,7 @@
  * 供 RequirementAgentChat / ConflictAgentChat 等多 Agent 页面共用
  */
 
-export const createEmptyGraphDetail = () => ({ graph: null, containers: [], nodes: [], edges: [] })
+export const createEmptyGraphDetail = () => ({ graph: null, containers: [], subgraphs: [], nodes: [], edges: [] })
 
 export const sortByOrder = (items = []) => {
   return [...items].sort((a, b) => {
@@ -27,6 +27,7 @@ export const buildMergedSessionGraphDetail = (chainPayload) => {
   if (!details.length) return createEmptyGraphDetail()
 
   const mergedContainers = []
+  const mergedSubgraphs = []
   const mergedNodes = []
   const mergedEdges = []
   const nodePositions = {}
@@ -70,6 +71,14 @@ export const buildMergedSessionGraphDetail = (chainPayload) => {
       mergedContainers.push({
         ...container,
         label: `${graphLabel} · ${container.label || container.container_key || '未命名容器'}`,
+        graph_index: graphIndex + 1
+      })
+    })
+
+    const subgraphs = sortByOrder(detail?.subgraphs || [])
+    subgraphs.forEach((subgraph) => {
+      mergedSubgraphs.push({
+        ...subgraph,
         graph_index: graphIndex + 1
       })
     })
@@ -150,6 +159,7 @@ export const buildMergedSessionGraphDetail = (chainPayload) => {
       }
     },
     containers: mergedContainers,
+    subgraphs: mergedSubgraphs,
     nodes: mergedNodes,
     edges: mergedEdges
   }

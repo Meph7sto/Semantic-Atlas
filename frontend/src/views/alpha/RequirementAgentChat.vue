@@ -17,6 +17,7 @@ import { agentChatApi } from '@/api/agentChat'
 import { api } from '@/api/request'
 import ExecutionGraphCanvas from '@/components/alpha/ExecutionGraphCanvas.vue'
 import NodeDetailPanel from '@/components/alpha/NodeDetailPanel.vue'
+import SubgraphTracePanel from '@/components/alpha/SubgraphTracePanel.vue'
 import { createEmptyGraphDetail, buildMergedSessionGraphDetail } from '@/utils/sessionGraphLayout'
 
 const PROMPT_FORMAT_OPTIONS = [
@@ -856,6 +857,23 @@ onMounted(async () => {
                 :layout="graphDetail.graph?.layout_json"
                 @select-edge="handleCanvasSelectEdge"
                 @select-node="handleCanvasSelectNode"
+              />
+            </div>
+          </div>
+
+          <div class="flex flex-col overflow-hidden border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)] max-h-[900px]">
+            <div class="shrink-0 border-b border-stone-200 px-5 py-4">
+              <h2 class="flex items-center gap-2 text-lg font-semibold text-stone-900">
+                <Workflow class="h-5 w-5" />
+                Subgraph 执行轨迹
+              </h2>
+            </div>
+            <div class="flex-1 min-h-0 overflow-y-auto px-5 py-4">
+              <SubgraphTracePanel
+                :containers="graphDetail.containers"
+                :subgraphs="graphDetail.subgraphs"
+                :nodes="graphDetail.nodes"
+                :edges="graphDetail.edges"
               />
             </div>
           </div>

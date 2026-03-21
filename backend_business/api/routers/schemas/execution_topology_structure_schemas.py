@@ -48,8 +48,8 @@ class AgentContainerSchema(BaseModel):
     label: str
     node_count: int
     node_types: List[str] = Field(default_factory=list)
-    start_node_ids: List[str] = Field(default_factory=list)
-    end_node_ids: List[str] = Field(default_factory=list)
+    entry_node_ids: List[str] = Field(default_factory=list)
+    exit_node_ids: List[str] = Field(default_factory=list)
     role_type: str
     agent_id: Optional[str]
     config: Dict[str, Any]
