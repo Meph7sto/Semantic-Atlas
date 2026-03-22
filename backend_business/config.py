@@ -37,6 +37,12 @@ class Settings:
         os.path.join(ROOT_DIR, "data", "uploads"),
     )
 
+    # 拓扑图文件目录：自动持久化所有执行拓扑模板图
+    TOPOLOGY_FOLDER = os.environ.get(
+        "TOPOLOGY_FOLDER",
+        os.path.join(ROOT_DIR, "data", "topology"),
+    )
+
     # Business API (FastAPI)
     HOST = os.environ.get("BUSINESS_HOST", "0.0.0.0")
     PORT = int(os.environ.get("BUSINESS_PORT", "5002"))

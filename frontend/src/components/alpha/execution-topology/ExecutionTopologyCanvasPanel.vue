@@ -1,5 +1,5 @@
 <script setup>
-import { AlertTriangle, CheckCircle2, Eye, Play, RefreshCw } from 'lucide-vue-next'
+import { AlertTriangle, CheckCircle2, Eye, RefreshCw } from 'lucide-vue-next'
 import ExecutionGraphCanvas from '@/components/alpha/ExecutionGraphCanvas.vue'
 
 defineProps({
@@ -48,7 +48,6 @@ defineProps({
 const emit = defineEmits([
   'select-graph-object',
   'validate-topology',
-  'open-execute-dialog',
   'view-structure',
   'refresh',
   'select-object',
@@ -82,14 +81,6 @@ const emitObjectSelection = (type, id) => {
           @click="emit('validate-topology')"
         >
           {{ validationLoading ? '校验中...' : '校验拓扑' }}
-        </button>
-        <button
-          v-if="selectedGraphId"
-          class="p-1.5 text-xs text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 rounded transition-colors"
-          title="执行拓扑"
-          @click="emit('open-execute-dialog')"
-        >
-          <Play class="w-4 h-4" />
         </button>
         <button
           v-if="selectedGraphId"

@@ -240,6 +240,22 @@ class _FakePromptBuilder:
         return {"round": round_index}
 
 
+class _ContextAwarePromptBuilder:
+    def build_system_prompt(self, *, context):
+        execution_context = context.get("_execution_context")
+        if execution_context is None:
+            return "system"
+        return execution_context.format_local_for_prompt(
+            context.get("_current_subgraph"),
+        )
+
+    def build_user_message(self, *, user_message, context):
+        return f"user:{user_message}"
+
+    def build_round_input_summary(self, *, round_index, messages, context):
+        return {"round": round_index}
+
+
 class _FakeGraphService:
     def __init__(self):
         self.graph_counter = 0
@@ -452,6 +468,58 @@ class TestToolLoopRunnerScratchpadIntegration:
         tool_names = [t.get("function", {}).get("name") for t in tools_sent]
         assert "scratchpad_write" in tool_names
         assert "dummy" in tool_names
+
+    def test_execution_context_local_history_visible_next_round(self):
+        from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner
+        from backend_business.services.agent.runtime.graph_recorder import RuntimeGraphRecorder, ContainerConfig
+
+        pad = Scratchpad()
+        execution_context = ExecutionContext(scratchpad=pad)
+        execution_context.begin_subgraph("sg_fetch")
+        graph_service = _FakeGraphService()
+        recorder = RuntimeGraphRecorder(
+            execution_graph_service=graph_service,
+            container_configs=[ContainerConfig("agent_main", "Agent Main", "agent")],
+            project_id="p-1", user_id="u-1", session_id="s-1", user_message="hello",
+        )
+
+        ai_proxy = _FakeAiProxy([
+            {
+                "content": "",
+                "tool_calls": [{
+                    "id": "tc-1",
+                    "type": "function",
+                    "function": {"name": "dummy", "arguments": '{"target":"r-1"}'},
+                }],
+                "finish_reason": "tool_calls",
+            },
+            {"content": "done", "tool_calls": [], "finish_reason": "stop"},
+        ])
+
+        runner = ToolLoopRunner(
+            ai_proxy_client=ai_proxy,
+            tool_executor=_FakeToolExecutor([lambda *_: {"ok": True, "req_id": "r-1"}]),
+            prompt_builder=_ContextAwarePromptBuilder(),
+            stage_container_key="agent_main",
+            scratchpad=pad,
+        )
+
+        _, result = _run_to_completion(runner.run(
+            recorder=recorder, user_id="u-1", user_message="hello",
+            context={
+                "project_id": "p-1",
+                "tool_results": [],
+                "_current_subgraph": "sg_fetch",
+                "_execution_context": execution_context,
+            },
+        ))
+
+        assert result.tool_loop_reply == "done"
+        assert len(ai_proxy.calls) == 2
+        second_system_prompt = ai_proxy.calls[1]["messages"][0]["content"]
+        assert "Subgraph Context" in second_system_prompt
+        assert "tool_result" in second_system_prompt
+        assert "req_id" in second_system_prompt
 
 
 # ============================================================

@@ -7,6 +7,7 @@ from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from backend_business.services.agent.runtime.context import ContextEntry
 from backend_business.services.agent.runtime.scratchpad import Scratchpad
 
 from .prompt_interface import PromptBuilderProtocol
@@ -195,6 +196,7 @@ class ToolLoopRunner:
         normalized_context = dict(context)
         if self.actor_manager_getter:
             normalized_context["actor_manager"] = self.actor_manager_getter()
+        execution_context = normalized_context.get("_execution_context")
 
         messages: list[dict[str, Any]] = [
             {
@@ -209,8 +211,18 @@ class ToolLoopRunner:
                 ),
             },
         ]
+        if execution_context is not None and user_message.strip():
+            execution_context.add(
+                ContextEntry(
+                    kind="user_message",
+                    value=user_message,
+                )
+            )
 
         for round_index in range(1, self.max_tool_call_rounds + 1):
+            messages[0]["content"] = self.prompt_builder.build_system_prompt(
+                context=normalized_context,
+            )
             node_key = recorder.stage_node_key(self.stage_node_key_builder(round_index))
             recorder.start_stage(
                 node_key=node_key,
@@ -314,8 +326,21 @@ class ToolLoopRunner:
                                 result_payload=tool_result,
                             )
 
-                            # Auto-append conclusion to Scratchpad as stage_output
-                            if self.scratchpad is not None:
+                            if execution_context is not None:
+                                execution_context.add(
+                                    ContextEntry(
+                                        kind="phase_conclusion",
+                                        value={
+                                            "conclusion": conclusion,
+                                            "route_key": route_key,
+                                            "expand_topology": expand_topology,
+                                            "target_template_graph_id": target_template_graph_id,
+                                        },
+                                        node_key=node_key,
+                                    )
+                                )
+                            # Backward-compatible fallback when no ExecutionContext lifecycle is active
+                            if self.scratchpad is not None and execution_context is None:
                                 self.scratchpad.append_stage_output(
                                     normalized_context.get("_current_subgraph") or "unknown",
                                     conclusion,
@@ -388,6 +413,18 @@ class ToolLoopRunner:
                             "result": tool_result,
                         }
                     )
+                    if execution_context is not None:
+                        execution_context.add(
+                            ContextEntry(
+                                kind="tool_result",
+                                value={
+                                    "tool_name": tool_name,
+                                    "arguments": arguments,
+                                    "result": tool_result,
+                                },
+                                node_key=node_key,
+                            )
+                        )
                     messages.append(
                         {
                             "role": "tool",
@@ -433,6 +470,14 @@ class ToolLoopRunner:
                 output_summary=output_summary,
                 context=normalized_context,
             )
+            if execution_context is not None:
+                execution_context.add(
+                    ContextEntry(
+                        kind="assistant_message",
+                        value=assistant_content,
+                        node_key=node_key,
+                    )
+                )
             yield {
                 "event": "stage",
                 "data": {

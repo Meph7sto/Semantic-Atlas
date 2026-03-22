@@ -13,6 +13,7 @@ from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Any
 
+from backend_business.services.agent.runtime.context import ExecutionContext
 from backend_business.services.agent.runtime.scratchpad import Scratchpad
 
 from .subgraph_state import (
@@ -81,6 +82,13 @@ class SubgraphPromptBuilder:
         pad_text = self._scratchpad.format_for_prompt()
         if pad_text:
             parts.append(f"\n\n{pad_text}")
+        execution_context = context.get("_execution_context")
+        if execution_context is not None:
+            local_context_text = execution_context.format_local_for_prompt(
+                context.get("_current_subgraph"),
+            )
+            if local_context_text:
+                parts.append(f"\n\n{local_context_text}")
         if self._extra_system_context:
             parts.append(f"\n\n{self._extra_system_context}")
         return "\n".join(parts)
@@ -237,6 +245,7 @@ class SubgraphRunner:
 
         # Create scratchpad and inject user input
         pad = scratchpad if scratchpad is not None else Scratchpad()
+        execution_context = ExecutionContext(scratchpad=pad)
         pad.append_stage_output(
             suspended_sg.subgraph_key,
             f"[用户输入] {user_input}",
@@ -272,6 +281,7 @@ class SubgraphRunner:
             user_message=user_input,
             tracker=tracker,
             pad=pad,
+            execution_context=execution_context,
         ))
 
     # -- container-level orchestration ----------------------------------------
@@ -291,6 +301,7 @@ class SubgraphRunner:
     ) -> Generator[dict[str, Any], None, ContainerResult]:
         """Execute all subgraphs in *container* sequentially."""
         runtime_pad = pad if pad is not None else Scratchpad()
+        execution_context = ExecutionContext(scratchpad=runtime_pad)
         subgraphs = skeleton.get_subgraphs_for_container(container.container_id)
         if not subgraphs:
             return ContainerResult(conclusion="", scratchpad_snapshot=[])
@@ -308,6 +319,7 @@ class SubgraphRunner:
             user_message=user_message,
             tracker=tracker,
             pad=runtime_pad,
+            execution_context=execution_context,
         ))
 
     def _continue_from(
@@ -324,6 +336,7 @@ class SubgraphRunner:
         user_message: str,
         tracker: _SubgraphStatusTracker,
         pad: Scratchpad,
+        execution_context: ExecutionContext,
     ) -> Generator[dict[str, Any], None, ContainerResult]:
         """Drive subgraphs starting from *start_sg* until no more remain."""
         last_conclusion = ""
@@ -352,6 +365,7 @@ class SubgraphRunner:
                     actor=actor,
                     user_message=user_message,
                     tracker=tracker,
+                    execution_context=execution_context,
                 )
                 # _advance_subgraph transitions to COMPLETED internally
                 last_conclusion = (
@@ -411,6 +425,7 @@ class SubgraphRunner:
         actor: str,
         user_message: str,
         tracker: _SubgraphStatusTracker,
+        execution_context: ExecutionContext,
     ) -> Generator[dict[str, Any], None, str | None]:
         """Advance a single subgraph.  Returns ``route_key`` (may be None).
 
@@ -429,6 +444,7 @@ class SubgraphRunner:
                 actor=actor,
                 user_message=user_message,
                 tracker=tracker,
+                execution_context=execution_context,
             ))
         elif node_type == "invoke":
             yield from self._advance_invoke(
@@ -441,6 +457,7 @@ class SubgraphRunner:
                 actor=actor,
                 user_message=user_message,
                 tracker=tracker,
+                execution_context=execution_context,
             )
             return None
         elif node_type == "handoff":
@@ -462,8 +479,10 @@ class SubgraphRunner:
         actor: str,
         user_message: str,
         tracker: _SubgraphStatusTracker,
+        execution_context: ExecutionContext,
     ) -> Generator[dict[str, Any], None, str | None]:
         """Execute an llm subgraph via ToolLoopRunner."""
+        execution_context.begin_subgraph(sg.subgraph_key)
         prompt_builder = SubgraphPromptBuilder(
             task_description=sg.task_description,
             scratchpad=pad,
@@ -501,6 +520,7 @@ class SubgraphRunner:
             )
 
         context = _build_subgraph_context(sg=sg, recorder=recorder)
+        context["_execution_context"] = execution_context
         result: ToolLoopResult | None = None
 
         gen = runner.run(
@@ -525,6 +545,14 @@ class SubgraphRunner:
                 created_by=actor,
             )
 
+        execution_context.end_subgraph(
+            sg.subgraph_key,
+            output=(
+                result.conclusion
+                if result and result.conclusion is not None
+                else (result.tool_loop_reply if result else None)
+            ),
+        )
         tracker.transition(sg.subgraph_id, SubgraphStatus.COMPLETED)
         return result.route_key if result else None
 
@@ -540,6 +568,7 @@ class SubgraphRunner:
         actor: str,
         user_message: str,
         tracker: _SubgraphStatusTracker,
+        execution_context: ExecutionContext,
     ) -> Generator[dict[str, Any], None, None]:
         """Execute an invoke subgraph: synchronously call target container."""
         # Find the call edge originating from this subgraph

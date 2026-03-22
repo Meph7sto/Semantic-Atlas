@@ -34,6 +34,10 @@ from backend_business.services.agent.topology import (
     StructureValidator,
     TopologyStructureSerializer,
 )
+from backend_business.services.agent.topology_file_store import (
+    delete_graph_file,
+    save_graph,
+)
 
 router = APIRouter(prefix="/api/v2/execution-topology", tags=["execution-topology"])
 
@@ -85,8 +89,15 @@ async def create_graph(
             project_id=project_id,
             name=req.name,
             description=req.description,
+            meta_json=req.meta_json or None,
             created_by=actor,
         )
+        # 异步持久化文件（失败不影响响应）
+        try:
+            detail = _service.get_graph_detail(graph["graph_id"])
+            save_graph(detail)
+        except Exception:
+            pass
         return graph
     except ValueError as e:
         raise ErrorResponse(str(e), 400)
@@ -141,6 +152,12 @@ async def update_graph(
         )
         if not graph:
             raise ErrorResponse("图不存在或已删除", 404)
+        # 更新后同步文件
+        try:
+            detail = _service.get_graph_detail(graph_id)
+            save_graph(detail)
+        except Exception:
+            pass
         return graph
     except ValueError as e:
         raise ErrorResponse(str(e), 400)
@@ -158,6 +175,11 @@ async def delete_graph(
         deleted = _service.delete_execution_graph(graph_id=graph_id, updated_by=actor)
         if not deleted:
             raise ErrorResponse("图不存在或已删除", 404)
+        # 删除对应文件
+        try:
+            delete_graph_file(graph_id)
+        except Exception:
+            pass
         return {"message": "删除成功"}
     except ValueError as e:
         raise ErrorResponse(str(e), 400)

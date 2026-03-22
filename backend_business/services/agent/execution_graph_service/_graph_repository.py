@@ -21,7 +21,8 @@ class _GraphMixin:
     """Graph 实体的 CRUD 方法。"""
 
     def create_execution_graph(
-        self, project_id: str, name: str, description: str = "", created_by: str = ""
+        self, project_id: str, name: str, description: str = "", created_by: str = "",
+        meta_json: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         graph_id = str(uuid.uuid4())
         with self._connect() as conn:
@@ -31,14 +32,15 @@ class _GraphMixin:
                         """
                         INSERT INTO execution_graphs(
                             graph_id, project_id, name, description,
-                            graph_type, version, status, created_by, created_at, updated_at
+                            graph_type, version, status, meta_json, created_by, created_at, updated_at
                         )
-                        VALUES (%s, %s, %s, %s, 'execution_topology_template', 1, 'draft', %s, NOW(), NOW())
+                        VALUES (%s, %s, %s, %s, 'execution_topology_template', 1, 'draft', %s, %s, NOW(), NOW())
                         RETURNING graph_id, project_id, name, description, graph_type, version, status,
                                   layout_json, meta_json, created_by, updated_by,
                                   created_at::text AS created_at
                         """,
-                        (graph_id, project_id, name, description, created_by),
+                        (graph_id, project_id, name, description,
+                         json.dumps(meta_json) if meta_json else None, created_by),
                     )
                     return dict(cur.fetchone())
                 except IntegrityError as e:

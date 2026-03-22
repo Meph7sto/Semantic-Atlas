@@ -62,6 +62,7 @@ class CreateGraphRequest(BaseModel):
     """创建执行拓扑图请求"""
     name: str = Field(..., min_length=1, description="图名称")
     description: str = Field(default="", description="图描述")
+    meta_json: Optional[Dict[str, Any]] = Field(None, description="元数据JSON（可含 agent_type 等）")
 
 
 class UpdateGraphRequest(BaseModel):

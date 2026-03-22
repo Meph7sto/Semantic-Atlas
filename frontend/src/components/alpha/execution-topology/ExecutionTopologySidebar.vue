@@ -145,7 +145,25 @@ const emitObjectSelection = (type, id) => {
           </div>
           <div class="flex items-center justify-between gap-2">
             <span class="text-xs text-zinc-500 truncate">{{ graph.description || '无描述' }}</span>
-            <span class="text-[11px] px-2 py-0.5 rounded bg-zinc-100 text-zinc-600">{{ graph.status }}</span>
+            <div class="flex items-center gap-1">
+              <span
+                v-if="graph.meta_json?.agent_type"
+                class="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium"
+                :class="graph.meta_json.agent_type === 'requirement_agent'
+                  ? 'bg-blue-100 text-blue-700'
+                  : graph.meta_json.agent_type === 'conflict_detection_agent'
+                    ? 'bg-orange-100 text-orange-700'
+                    : 'bg-zinc-100 text-zinc-600'"
+                :title="graph.meta_json.agent_type"
+              >
+                {{
+                  graph.meta_json.agent_type === 'requirement_agent' ? '需求'
+                  : graph.meta_json.agent_type === 'conflict_detection_agent' ? '冲突'
+                  : graph.meta_json.agent_type
+                }}
+              </span>
+              <span class="text-[11px] px-2 py-0.5 rounded bg-zinc-100 text-zinc-600">{{ graph.status }}</span>
+            </div>
           </div>
         </div>
 

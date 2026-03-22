@@ -45,6 +45,7 @@ const {
   nodeTypeOptions,
   roleTypeOptions,
   edgeTypeOptions,
+  agentTypeOptions,
   currentGraph,
   selectedCanvasId,
   selectedContainerId,
@@ -174,6 +175,7 @@ const {
       :form="newGraphForm"
       :errors="graphFormErrors"
       :submit-disabled="loading || !selectedProjectId"
+      :agent-type-options="agentTypeOptions"
       @update:form="updateGraphForm"
       @close="closeNewGraphDialog"
       @submit="handleCreateGraph"

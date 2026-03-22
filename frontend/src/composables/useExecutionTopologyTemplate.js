@@ -31,7 +31,8 @@ const createSelectedObject = (type = 'graph', id = null) => ({
 
 const createGraphForm = () => ({
   name: '',
-  description: ''
+  description: '',
+  agentType: ''
 })
 
 const createContainerForm = () => ({
@@ -87,6 +88,12 @@ const edgeTypeOptions = [
   { value: 'return', label: 'Return' },
   { value: 'retry', label: 'Retry' },
   { value: 'seq', label: 'Seq' }
+]
+
+const agentTypeOptions = [
+  { value: '', label: '不关联（通用模板）' },
+  { value: 'requirement_agent', label: '需求 Agent（requirement_agent）' },
+  { value: 'conflict_detection_agent', label: '冲突检测 Agent（conflict_detection_agent）' }
 ]
 
 const getErrorMessage = (err, fallback) => {
@@ -680,6 +687,11 @@ export function useExecutionTopologyTemplate() {
     const payload = validateGraphForm()
     if (!payload) return
 
+    // 若选择了 agentType，写入 meta_json
+    if (newGraphForm.value.agentType) {
+      payload.meta_json = { agent_type: newGraphForm.value.agentType }
+    }
+
     try {
       loading.value = true
       error.value = ''
@@ -1201,6 +1213,7 @@ export function useExecutionTopologyTemplate() {
     nodeTypeOptions,
     roleTypeOptions,
     edgeTypeOptions,
+    agentTypeOptions,
     currentGraph,
     selectedCanvasId,
     selectedContainerId,

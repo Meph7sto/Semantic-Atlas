@@ -190,6 +190,20 @@ class FakeAIProxy:
         }
 
 
+class PromptCapturingAIProxy:
+    """Queue-based AI proxy that records system prompts for each LLM call."""
+
+    def __init__(self, responses: list[dict]) -> None:
+        self._responses = list(responses)
+        self.system_prompts: list[str] = []
+
+    def chat_completion_with_tools(self, *, messages, tools, **_kw) -> dict:
+        self.system_prompts.append(str(messages[0].get("content") or ""))
+        if not self._responses:
+            raise AssertionError("unexpected call")
+        return self._responses.pop(0)
+
+
 class FakeToolExecutor:
     """Empty tool executor — no business tools needed for unit tests."""
 
@@ -781,3 +795,83 @@ class TestScratchpadContext:
         ]
         # At least 3 stage_output entries (one per subgraph's complete_phase)
         assert len(stage_outputs) >= 3
+
+    def test_next_subgraph_sees_scratchpad_but_not_previous_local_context(self):
+        svc = FakeGraphService()
+        skeleton = _make_3node_skeleton(svc)
+        runner = SubgraphRunner()
+
+        import json
+
+        ai = PromptCapturingAIProxy([
+            {
+                "content": "",
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "function": {
+                            "name": "dummy",
+                            "arguments": json.dumps({"target": "r-1"}, ensure_ascii=False),
+                        },
+                    }
+                ],
+            },
+            {
+                "content": "",
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": "call-2",
+                        "function": {
+                            "name": "complete_phase",
+                            "arguments": json.dumps({"conclusion": "第一阶段完成"}, ensure_ascii=False),
+                        },
+                    }
+                ],
+            },
+            {
+                "content": "",
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": "call-3",
+                        "function": {
+                            "name": "complete_phase",
+                            "arguments": json.dumps({"conclusion": "第二阶段完成"}, ensure_ascii=False),
+                        },
+                    }
+                ],
+            },
+            {
+                "content": "",
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": "call-4",
+                        "function": {
+                            "name": "complete_phase",
+                            "arguments": json.dumps({"conclusion": "第三阶段完成"}, ensure_ascii=False),
+                        },
+                    }
+                ],
+            },
+        ])
+
+        tool_executor = FakeToolExecutor()
+        tool_executor.execute = lambda tool_name, arguments, context: {"ok": True, "req_id": "r-1"}
+
+        _, result = _drain_with_result(runner.run(
+            skeleton=skeleton,
+            tool_executor=tool_executor,
+            ai_proxy_client=ai,
+            recorder=FakeRecorder(skeleton.graph_id),
+            actor="test",
+        ))
+
+        assert "tool_result" in ai.system_prompts[1]
+        assert "req_id" in ai.system_prompts[1]
+        assert "第一阶段完成" in ai.system_prompts[2]
+        assert "tool_result" not in ai.system_prompts[2]
+        assert "req_id" not in ai.system_prompts[2]
+        assert result.conclusion == "第三阶段完成"

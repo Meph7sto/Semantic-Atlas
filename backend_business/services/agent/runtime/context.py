@@ -8,6 +8,7 @@ Supports two-level context strategy:
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Any
 
 from .scratchpad import Scratchpad
@@ -79,10 +80,11 @@ class ExecutionContext:
     def begin_subgraph(self, subgraph_key: str) -> None:
         """Start a new subgraph stage.
 
-        Clears subgraph-local entries and injects current Scratchpad content
-        as the initial context for the new subgraph.
+        Starts a new local context scope and injects current Scratchpad
+        content as the initial cross-subgraph context for this subgraph.
         """
         self._current_subgraph = subgraph_key
+        self._global_entries = []
         # Inject Scratchpad content as global entries for this subgraph
         scratchpad_text = self._scratchpad.format_for_prompt()
         if scratchpad_text:
@@ -104,9 +106,32 @@ class ExecutionContext:
         if self._current_subgraph == subgraph_key:
             self._current_subgraph = None
 
-    def subgraph_entries(self, subgraph_key: str | None = None) -> list[ContextEntry]:
-        """Get context entries for a specific subgraph (or current)."""
+    def local_entries(self, subgraph_key: str | None = None) -> list[ContextEntry]:
+        """Get only local entries produced inside a specific subgraph."""
         target = subgraph_key or self._current_subgraph
         if target is None:
             return list(self._entries)
         return [e for e in self._entries if e.subgraph_key == target]
+
+    def subgraph_entries(self, subgraph_key: str | None = None) -> list[ContextEntry]:
+        """Get global+local context entries for a specific subgraph (or current)."""
+        target = subgraph_key or self._current_subgraph
+        if target is None:
+            return list(self._entries)
+        local_entries = [e for e in self._entries if e.subgraph_key == target]
+        global_entries = [e for e in self._global_entries if e.subgraph_key == target]
+        return [*global_entries, *local_entries]
+
+    def format_local_for_prompt(self, subgraph_key: str | None = None) -> str:
+        """Format local in-subgraph entries for prompt injection."""
+        entries = self.local_entries(subgraph_key)
+        if not entries:
+            return ""
+
+        lines = ["[Subgraph Context — 当前子图连续上下文]"]
+        for index, entry in enumerate(entries, 1):
+            value = entry.value
+            if isinstance(value, (dict, list)):
+                value = json.dumps(value, ensure_ascii=False, indent=None)
+            lines.append(f"  [{index}] [{entry.kind}] {value}")
+        return "\n".join(lines)
