@@ -157,7 +157,7 @@ class ToolLoopRunner:
         ai_proxy_client: Any,
         tool_executor: ToolExecutorProtocol,
         prompt_builder: PromptBuilderProtocol,
-        max_tool_call_rounds: int = 6,
+        max_tool_call_rounds: int = 50,
         stage_container_key: str = "agent",
         stage_node_type: str = "llm",
         stage_role_type: str = "agent",

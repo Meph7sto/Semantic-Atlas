@@ -176,6 +176,7 @@ class SubgraphRunner:
         recorder: Any,
         actor: str,
         user_message: str = "",
+        scratchpad: Scratchpad | None = None,
     ) -> Generator[dict[str, Any], None, ContainerResult]:
         """Execute the graph from the entry container's first pending subgraph.
 
@@ -195,6 +196,7 @@ class SubgraphRunner:
             actor=actor,
             user_message=user_message,
             tracker=tracker,
+            pad=scratchpad,
         ))
 
     def resume(
@@ -207,6 +209,7 @@ class SubgraphRunner:
         ai_proxy_client: Any,
         recorder: Any,
         actor: str,
+        scratchpad: Scratchpad | None = None,
     ) -> Generator[dict[str, Any], None, ContainerResult]:
         """Resume execution from a previously suspended handoff subgraph.
 
@@ -233,7 +236,7 @@ class SubgraphRunner:
         subgraphs = skeleton.get_subgraphs_for_container(container.container_id)
 
         # Create scratchpad and inject user input
-        pad = Scratchpad()
+        pad = scratchpad if scratchpad is not None else Scratchpad()
         pad.append_stage_output(
             suspended_sg.subgraph_key,
             f"[用户输入] {user_input}",
@@ -284,9 +287,10 @@ class SubgraphRunner:
         actor: str,
         user_message: str,
         tracker: _SubgraphStatusTracker,
+        pad: Scratchpad | None = None,
     ) -> Generator[dict[str, Any], None, ContainerResult]:
         """Execute all subgraphs in *container* sequentially."""
-        pad = Scratchpad()
+        runtime_pad = pad if pad is not None else Scratchpad()
         subgraphs = skeleton.get_subgraphs_for_container(container.container_id)
         if not subgraphs:
             return ContainerResult(conclusion="", scratchpad_snapshot=[])
@@ -303,7 +307,7 @@ class SubgraphRunner:
             actor=actor,
             user_message=user_message,
             tracker=tracker,
-            pad=pad,
+            pad=runtime_pad,
         ))
 
     def _continue_from(

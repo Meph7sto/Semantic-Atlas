@@ -17,6 +17,8 @@ from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Any
 
+from backend_business.services.agent.runtime import ScratchpadService
+
 from .subgraph_runner import ContainerResult, SubgraphRunner
 from .subgraph_state import (
     ContainerExecutionError,
@@ -215,9 +217,11 @@ class GraphExecutor:
         *,
         instantiator: TopologyInstantiator | None = None,
         runner: SubgraphRunner | None = None,
+        scratchpad_service: ScratchpadService | None = None,
     ) -> None:
         self._instantiator = instantiator or TopologyInstantiator()
         self._runner = runner or SubgraphRunner()
+        self._scratchpad_service = scratchpad_service
 
     # -- public API -----------------------------------------------------------
 
@@ -376,6 +380,8 @@ class GraphExecutor:
         Yields SSE-style event dicts.  Returns ``ExecutionResult`` via
         ``StopIteration.value``.
         """
+        scratchpad_service = self._resolve_scratchpad_service(graph_service)
+        scratchpad = scratchpad_service.load(skeleton.graph_id)
         try:
             gen = self._runner.resume(
                 skeleton=skeleton,
@@ -385,9 +391,15 @@ class GraphExecutor:
                 ai_proxy_client=ai_proxy_client,
                 recorder=recorder,
                 actor=actor,
+                scratchpad=scratchpad,
             )
             container_result: ContainerResult = yield from gen
         except SuspendSignal as sig:
+            scratchpad_service.save(
+                skeleton.graph_id,
+                scratchpad,
+                updated_by=actor,
+            )
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "suspended", actor,
             )
@@ -397,6 +409,11 @@ class GraphExecutor:
                 suspended_subgraph_id=sig.subgraph_id,
             )
         except ContainerExecutionError as exc:
+            scratchpad_service.save(
+                skeleton.graph_id,
+                scratchpad,
+                updated_by=actor,
+            )
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "failed", actor,
             )
@@ -406,6 +423,11 @@ class GraphExecutor:
                 error=str(exc),
             )
         except Exception as exc:
+            scratchpad_service.save(
+                skeleton.graph_id,
+                scratchpad,
+                updated_by=actor,
+            )
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "failed", actor,
             )
@@ -416,6 +438,11 @@ class GraphExecutor:
             )
 
         # Succeeded
+        scratchpad_service.save_snapshot(
+            skeleton.graph_id,
+            container_result.scratchpad_snapshot,
+            updated_by=actor,
+        )
         _persist_graph_status(
             graph_service, skeleton.graph_id, "succeeded", actor,
         )
@@ -624,6 +651,8 @@ class GraphExecutor:
         user_message: str,
     ) -> Generator[dict[str, Any], None, ExecutionResult]:
         """Drive SubgraphRunner.run() and translate outcomes to ExecutionResult."""
+        scratchpad_service = self._resolve_scratchpad_service(graph_service)
+        scratchpad = scratchpad_service.load(skeleton.graph_id)
         try:
             gen = self._runner.run(
                 skeleton=skeleton,
@@ -632,9 +661,15 @@ class GraphExecutor:
                 recorder=recorder,
                 actor=actor,
                 user_message=user_message,
+                scratchpad=scratchpad,
             )
             container_result: ContainerResult = yield from gen
         except SuspendSignal as sig:
+            scratchpad_service.save(
+                skeleton.graph_id,
+                scratchpad,
+                updated_by=actor,
+            )
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "suspended", actor,
             )
@@ -644,6 +679,11 @@ class GraphExecutor:
                 suspended_subgraph_id=sig.subgraph_id,
             )
         except ContainerExecutionError as exc:
+            scratchpad_service.save(
+                skeleton.graph_id,
+                scratchpad,
+                updated_by=actor,
+            )
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "failed", actor,
             )
@@ -653,6 +693,11 @@ class GraphExecutor:
                 error=str(exc),
             )
         except Exception as exc:
+            scratchpad_service.save(
+                skeleton.graph_id,
+                scratchpad,
+                updated_by=actor,
+            )
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "failed", actor,
             )
@@ -663,6 +708,11 @@ class GraphExecutor:
             )
 
         # Succeeded
+        scratchpad_service.save_snapshot(
+            skeleton.graph_id,
+            container_result.scratchpad_snapshot,
+            updated_by=actor,
+        )
         _persist_graph_status(
             graph_service, skeleton.graph_id, "succeeded", actor,
         )
@@ -671,6 +721,11 @@ class GraphExecutor:
             graph_id=skeleton.graph_id,
             final_output=container_result.conclusion,
         )
+
+    def _resolve_scratchpad_service(self, graph_service: Any) -> ScratchpadService:
+        if self._scratchpad_service is not None:
+            return self._scratchpad_service
+        return ScratchpadService(execution_graph_service=graph_service)
 
 
 # ---------------------------------------------------------------------------

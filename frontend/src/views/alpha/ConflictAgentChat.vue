@@ -79,6 +79,17 @@ const selectedEdge = computed(() => {
 
 const latestGraphStatus = computed(() => graphDetail.value.graph?.status || 'idle')
 
+const activeGraphDetail = computed(() => {
+  const details = sessionGraphChain.value || []
+  if (!details.length) return null
+  return details.find((detail) => detail?.graph?.graph_id === activeGraphId.value) || details[details.length - 1] || null
+})
+
+const activeScratchpadEntries = computed(() => {
+  const snapshot = activeGraphDetail.value?.graph?.meta_json?.scratchpad_snapshot
+  return Array.isArray(snapshot) ? snapshot : []
+})
+
 const sessionGraphSummaries = computed(() => {
   return sessionGraphChain.value.map((detail, index) => {
     const graph = detail?.graph || {}
@@ -108,6 +119,15 @@ const latestConflictResult = computed(() => {
     .find((entry) => entry.tool_name === 'check_conflict' && !entry.result?.is_error)?.result || null
 })
 
+const scratchpadEntryLabel = (entryType) => {
+  const labels = {
+    note: '备注',
+    tool_excerpt: '工具摘录',
+    stage_output: '阶段输出'
+  }
+  return labels[entryType] || (entryType || '未分类')
+}
+
 const formatJson = (value) => {
   if (!value) return '暂无'
   try {
@@ -127,6 +147,12 @@ const formatTime = (value) => {
     hour: '2-digit',
     minute: '2-digit'
   })
+}
+
+const formatScratchpadContent = (value) => {
+  if (value == null || value === '') return '暂无内容'
+  if (typeof value === 'string') return value
+  return formatJson(value)
 }
 
 const normalizePromptPayloadFormat = (value) => {
@@ -856,14 +882,50 @@ onMounted(async () => {
               </div>
             </div>
 
-            <div class="flex flex-col overflow-hidden border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)] max-h-[800px]">
-              <div class="shrink-0 border-b border-stone-200 px-5 py-4">
-                <h2 class="text-lg font-semibold text-stone-900">冲突检测工具结果</h2>
+            <div class="flex flex-col gap-6">
+              <div class="flex flex-col overflow-hidden border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)] max-h-[380px]">
+                <div class="shrink-0 border-b border-stone-200 px-5 py-4">
+                  <h2 class="text-lg font-semibold text-stone-900">冲突检测工具结果</h2>
+                </div>
+                <div class="flex-1 min-h-0 overflow-y-auto px-5 py-4">
+                  <NodeDetailPanel
+                    :tool-results="flattenedToolResults"
+                  />
+                </div>
               </div>
-              <div class="flex-1 min-h-0 overflow-y-auto px-5 py-4">
-                <NodeDetailPanel
-                  :tool-results="flattenedToolResults"
-                />
+
+              <div class="flex flex-col overflow-hidden border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)] max-h-[420px]">
+                <div class="shrink-0 border-b border-stone-200 px-5 py-4">
+                  <div class="flex items-center justify-between gap-3">
+                    <h2 class="text-lg font-semibold text-stone-900">执行记事本</h2>
+                    <span class="text-xs uppercase tracking-[0.2em] text-stone-500">
+                      {{ activeScratchpadEntries.length }} entries
+                    </span>
+                  </div>
+                  <p class="mt-1 text-xs text-stone-500">
+                    展示当前激活执行图在冲突检测过程中的 Scratchpad 内容。
+                  </p>
+                </div>
+                <div class="flex-1 min-h-0 overflow-y-auto px-5 py-4">
+                  <div v-if="!activeScratchpadEntries.length" class="border border-dashed border-stone-300 bg-stone-50 px-4 py-5 text-sm text-stone-500">
+                    当前执行图还没有写入记事本内容。
+                  </div>
+                  <div v-else class="space-y-3">
+                    <article
+                      v-for="(entry, index) in activeScratchpadEntries"
+                      :key="`${entry.created_at || 'unknown'}-${entry.source_subgraph || 'na'}-${index}`"
+                      class="border border-stone-200 bg-stone-50/80 px-4 py-3"
+                    >
+                      <div class="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-stone-500">
+                        <span class="bg-stone-200/80 px-2 py-1 text-stone-700">{{ scratchpadEntryLabel(entry.entry_type) }}</span>
+                        <span v-if="entry.source_subgraph">来源 {{ entry.source_subgraph }}</span>
+                        <span v-if="entry.readonly">只读</span>
+                        <span class="ml-auto normal-case tracking-normal text-stone-400">{{ formatTime(entry.created_at) }}</span>
+                      </div>
+                      <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-words bg-white px-3 py-3 text-xs leading-6 text-stone-700">{{ formatScratchpadContent(entry.content) }}</pre>
+                    </article>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

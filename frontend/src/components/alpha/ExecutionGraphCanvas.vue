@@ -42,8 +42,8 @@ const CONTAINER_MIN_HEIGHT = 150
 
 const AUTO_LAYOUT_BASE_X = 94
 const AUTO_LAYOUT_BASE_Y = 98
-const AUTO_LAYOUT_COLUMN_GAP = 320
-const AUTO_LAYOUT_ROW_GAP = 112
+const AUTO_LAYOUT_COLUMN_GAP = 240
+const AUTO_LAYOUT_ROW_GAP = 220
 
 const CURVE_FACTOR = 0.4
 const CURVE_MIN = 50
@@ -171,7 +171,12 @@ const sortByOrderAndLabel = (a, b) => {
 
 const sortNodes = (nodes) => {
   return [...nodes].sort((a, b) => {
-    const orderDiff = toNumber(a?.order_index, 0) - toNumber(b?.order_index, 0)
+    const getOrder = (n) => {
+      if (n?.node_type === 'start') return -999999
+      if (n?.node_type === 'end') return 999999
+      return toNumber(n?.order_index, 0)
+    }
+    const orderDiff = getOrder(a) - getOrder(b)
     if (orderDiff !== 0) return orderDiff
     const rankDiff = toNumber(nodeTypeRank[a?.node_type], 99) - toNumber(nodeTypeRank[b?.node_type], 99)
     if (rankDiff !== 0) return rankDiff
@@ -221,17 +226,59 @@ const buildNodeColumns = (nodes, containers) => {
   return columns
 }
 
-const buildAutoLayout = (nodes, containers) => {
+const buildAutoLayout = (nodes, edges, containers) => {
   const positions = {}
-  const columns = buildNodeColumns(nodes, containers)
 
-  columns.forEach((column, columnIndex) => {
-    column.nodes.forEach((node, rowIndex) => {
-      positions[node.node_id] = {
-        x: AUTO_LAYOUT_BASE_X + columnIndex * AUTO_LAYOUT_COLUMN_GAP + (rowIndex % 2 === 0 ? 0 : 8),
-        y: AUTO_LAYOUT_BASE_Y + rowIndex * AUTO_LAYOUT_ROW_GAP
+  const sortedNodes = sortNodes(nodes)
+
+  const laneSeen = new Set()
+  const laneOrderList = []
+
+  sortedNodes.forEach((node) => {
+    const lk = node.subgraph_id || node.container_id || 'unassigned'
+    if (!laneSeen.has(lk)) {
+      laneSeen.add(lk)
+      laneOrderList.push(lk)
+    }
+  })
+
+  const laneByKey = new Map()
+  laneOrderList.forEach((lk, idx) => laneByKey.set(lk, idx))
+  const unassignedLaneIdx = laneOrderList.length
+
+  const incomingEdges = new Map()
+  edges.forEach((edge) => {
+    if (!incomingEdges.has(edge.target_node_id)) incomingEdges.set(edge.target_node_id, [])
+    incomingEdges.get(edge.target_node_id).push(edge.source_node_id)
+  })
+
+  const nodeCol = new Map()
+  const colOccupied = new Map()
+
+  sortedNodes.forEach((node) => {
+    const lk = node.subgraph_id || node.container_id || 'unassigned'
+    const laneIdx = laneByKey.has(lk) ? laneByKey.get(lk) : unassignedLaneIdx
+    if (!colOccupied.has(laneIdx)) colOccupied.set(laneIdx, new Set())
+
+    let minCol = 0
+    const sources = incomingEdges.get(node.node_id) || []
+    sources.forEach((srcId) => {
+      if (nodeCol.has(srcId)) {
+        minCol = Math.max(minCol, nodeCol.get(srcId) + 1)
       }
     })
+
+    while (colOccupied.get(laneIdx).has(minCol)) {
+      minCol++
+    }
+
+    nodeCol.set(node.node_id, minCol)
+    colOccupied.get(laneIdx).add(minCol)
+
+    positions[node.node_id] = {
+      x: AUTO_LAYOUT_BASE_X + minCol * AUTO_LAYOUT_COLUMN_GAP + (minCol % 2 === 0 ? 0 : 8),
+      y: AUTO_LAYOUT_BASE_Y + laneIdx * AUTO_LAYOUT_ROW_GAP
+    }
   })
 
   return positions
@@ -241,7 +288,7 @@ const syncLayoutState = () => {
   const incomingNodePositions = props.layout?.node_positions || {}
   const incomingEdgeOffsets = props.layout?.edge_offsets || {}
   const incomingContainerOffsets = props.layout?.container_offsets || {}
-  const autoLayout = buildAutoLayout(props.nodes, props.containers)
+  const autoLayout = buildAutoLayout(props.nodes, props.edges, props.containers)
   const mergedPositions = {}
 
   props.nodes.forEach((node) => {
@@ -626,12 +673,33 @@ const containerBoxes = computed(() => {
   const columns = buildNodeColumns(props.nodes, props.containers)
   const boxes = []
 
-  columns.forEach((column, index) => {
+  let minPopulatedY = AUTO_LAYOUT_BASE_Y
+  let hasPositionedNodes = false
+  let totalEmptyContainers = 0
+
+  columns.forEach((column) => {
     const positionedNodes = column.nodes
-      .map((node) => ({
-        node,
-        position: nodePositions.value[node.node_id]
-      }))
+      .map((node) => ({ position: nodePositions.value[node.node_id] }))
+      .filter((item) => item.position)
+
+    if (positionedNodes.length > 0) {
+      const minY = Math.min(...positionedNodes.map((item) => item.position.y))
+      if (!hasPositionedNodes) {
+        minPopulatedY = minY
+        hasPositionedNodes = true
+      } else {
+        minPopulatedY = Math.min(minPopulatedY, minY)
+      }
+    } else {
+      totalEmptyContainers++
+    }
+  })
+
+  let currentEmptyIndex = 0
+
+  columns.forEach((column) => {
+    const positionedNodes = column.nodes
+      .map((node) => ({ position: nodePositions.value[node.node_id] }))
       .filter((item) => item.position)
 
     let left
@@ -646,17 +714,23 @@ const containerBoxes = computed(() => {
       const maxY = Math.max(...positionedNodes.map((item) => item.position.y))
 
       left = clamp(minX - CONTAINER_PADDING_X, 10)
-      top = clamp(minY - CONTAINER_HEADER_HEIGHT - 14, 10)
+      top = minY - CONTAINER_HEADER_HEIGHT - 14
       width = Math.max(CONTAINER_MIN_WIDTH, maxX - minX + NODE_WIDTH + CONTAINER_PADDING_X * 2)
       height = Math.max(
         CONTAINER_MIN_HEIGHT,
         maxY - minY + NODE_HEIGHT + CONTAINER_HEADER_HEIGHT + CONTAINER_PADDING_Y
       )
     } else {
-      left = 56 + index * AUTO_LAYOUT_COLUMN_GAP
-      top = 42
+      left = clamp(AUTO_LAYOUT_BASE_X - CONTAINER_PADDING_X, 10)
+      
+      const emptyBaseY = hasPositionedNodes 
+        ? minPopulatedY - totalEmptyContainers * AUTO_LAYOUT_ROW_GAP 
+        : AUTO_LAYOUT_BASE_Y
+        
+      top = emptyBaseY + currentEmptyIndex * AUTO_LAYOUT_ROW_GAP - CONTAINER_HEADER_HEIGHT - 14
       width = CONTAINER_MIN_WIDTH
       height = CONTAINER_MIN_HEIGHT
+      currentEmptyIndex++
     }
 
     boxes.push({
@@ -665,7 +739,7 @@ const containerBoxes = computed(() => {
       roleType: column.roleType,
       nodeCount: column.nodes.length,
       left: clamp(left + toNumber(containerOffsets.value[column.id]?.dx, 0), 10),
-      top: clamp(top + toNumber(containerOffsets.value[column.id]?.dy, 0), 10),
+      top: top + toNumber(containerOffsets.value[column.id]?.dy, 0),
       width,
       height,
       isUnassigned: column.isUnassigned,
@@ -706,7 +780,7 @@ const getPortXY = (pos, side) => {
 // Picks source/target port sides based on the relative position of the two nodes
 const computeEdgeSides = (sourcePos, targetPos, edge) => {
   if (edge?.config_json?.session_chain) {
-    return ['bottom', 'top']
+    return ['right', 'left']
   }
   const dx = (targetPos.x + NODE_WIDTH / 2) - (sourcePos.x + NODE_WIDTH / 2)
   const dy = (targetPos.y + NODE_HEIGHT / 2) - (sourcePos.y + NODE_HEIGHT / 2)
@@ -717,77 +791,129 @@ const computeEdgeSides = (sourcePos, targetPos, edge) => {
 }
 
 const edgePaths = computed(() => {
-  return props.edges
-    .map((edge) => {
-      const sourcePos = nodePositions.value[edge.source_node_id]
-      const targetPos = nodePositions.value[edge.target_node_id]
-      if (!sourcePos || !targetPos) return null
+  const mappings = props.edges.map((edge) => {
+    const sourcePos = nodePositions.value[edge.source_node_id]
+    const targetPos = nodePositions.value[edge.target_node_id]
+    if (!sourcePos || !targetPos) return null
 
-      const sourceNode = nodeById.value[edge.source_node_id]
-      const targetNode = nodeById.value[edge.target_node_id]
-      const relation = resolveEdgeRelation(sourceNode?.container_id, targetNode?.container_id)
-      const style = edgeStyleMap[relation] || edgeStyleMap.intra
-      const offset = edgeOffsets.value[edge.edge_id] || { dx: 0, dy: 0 }
-      const odx = toNumber(offset.dx, 0)
-      const ody = toNumber(offset.dy, 0)
+    const sourceNode = nodeById.value[edge.source_node_id]
+    const targetNode = nodeById.value[edge.target_node_id]
+    const relation = resolveEdgeRelation(sourceNode?.container_id, targetNode?.container_id)
+    const style = edgeStyleMap[relation] || edgeStyleMap.intra
+    const offset = edgeOffsets.value[edge.edge_id] || { dx: 0, dy: 0 }
+    const odx = toNumber(offset.dx, 0)
+    const ody = toNumber(offset.dy, 0)
 
-      const displayLabel = edge.label
-        ? `${edge.label} · ${edgeRelationLabels[relation] || '连线'}`
-        : `${edgeTypeLabels[edge.edge_type] || edge.edge_type || '边'} · ${edgeRelationLabels[relation] || '连线'}`
+    const displayLabel = edge.label
+      ? `${edge.label} · ${edgeRelationLabels[relation] || '连线'}`
+      : `${edgeTypeLabels[edge.edge_type] || edge.edge_type || '边'} · ${edgeRelationLabels[relation] || '连线'}`
 
-      // Self-loop: source and target are the same node
-      if (edge.source_node_id === edge.target_node_id) {
-        const sx = sourcePos.x + NODE_WIDTH
-        const sy = sourcePos.y + NODE_HEIGHT * 0.25
-        const ex = sourcePos.x + NODE_WIDTH
-        const ey = sourcePos.y + NODE_HEIGHT * 0.75
-        const loopR = 50 + odx
-        const c1x = sx + loopR
-        const c1y = sy - 20
-        const c2x = ex + loopR
-        const c2y = ey + 20
-        const controlX = sx + loopR
-        const controlY = sourcePos.y + NODE_HEIGHT / 2
-        return {
-          id: edge.edge_id, edgeType: edge.edge_type, label: edge.label, relation,
-          relationLabel: edgeRelationLabels[relation] || '连线', style, displayLabel,
-          path: `M ${sx} ${sy} C ${c1x} ${c1y} ${c2x} ${c2y} ${ex} ${ey}`,
-          controlX, controlY,
-          labelX: controlX + 12, labelY: controlY - 10
-        }
-      }
+    const isSelfLoop = edge.source_node_id === edge.target_node_id
+    if (isSelfLoop) {
+      return { edge, isSelfLoop, sourcePos, targetPos, relation, style, odx, ody, displayLabel }
+    }
 
-      const [sourceSide, targetSide] = computeEdgeSides(sourcePos, targetPos, edge)
-      const start = getPortXY(sourcePos, sourceSide)
-      const end   = getPortXY(targetPos, targetSide)
-      const [svx, svy] = getSideVector(sourceSide)
-      const [evx, evy] = getSideVector(targetSide)
+    const [sourceSide, targetSide] = computeEdgeSides(sourcePos, targetPos, edge)
+    return { edge, isSelfLoop, sourcePos, targetPos, relation, style, odx, ody, displayLabel, sourceSide, targetSide }
+  }).filter(Boolean)
 
-      const dist = Math.hypot(end.x - start.x, end.y - start.y)
-      const curve = Math.max(CURVE_MIN, dist * CURVE_FACTOR)
+  const ports = {}
+  mappings.forEach(m => {
+    if (m.isSelfLoop) return
+    const sKey = `${m.edge.source_node_id}:::${m.sourceSide}`
+    const tKey = `${m.edge.target_node_id}:::${m.targetSide}`
 
-      // Both control points shift by the same offset so the drag handle tracks 1:1
-      const c1x = start.x + svx * curve + odx
-      const c1y = start.y + svy * curve + ody
-      const c2x = end.x   + evx * curve + odx
-      const c2y = end.y   + evy * curve + ody
+    if (!ports[sKey]) ports[sKey] = []
+    if (!ports[tKey]) ports[tKey] = []
 
-      const controlX = (c1x + c2x) / 2
-      const controlY = (c1y + c2y) / 2
+    ports[sKey].push({ edgeId: m.edge.edge_id, type: 'source', otherX: m.targetPos.x, otherY: m.targetPos.y })
+    ports[tKey].push({ edgeId: m.edge.edge_id, type: 'target', otherX: m.sourcePos.x, otherY: m.sourcePos.y })
+  })
 
-      // Cubic bezier midpoint at t = 0.5
-      const t = 0.5
-      const labelX = (1-t)**3*start.x + 3*(1-t)**2*t*c1x + 3*(1-t)*t**2*c2x + t**3*end.x
-      const labelY = (1-t)**3*start.y + 3*(1-t)**2*t*c1y + 3*(1-t)*t**2*c2y + t**3*end.y
-
-      return {
-        id: edge.edge_id, edgeType: edge.edge_type, label: edge.label, relation,
-        relationLabel: edgeRelationLabels[relation] || '连线', style, displayLabel,
-        path: `M ${start.x} ${start.y} C ${c1x} ${c1y} ${c2x} ${c2y} ${end.x} ${end.y}`,
-        controlX: labelX, controlY: labelY, labelX, labelY
+  const portOffsets = {}
+  Object.entries(ports).forEach(([key, connections]) => {
+    const side = key.split(':::')[1]
+    connections.sort((a, b) => {
+      if (side === 'top' || side === 'bottom') {
+        const diff = a.otherX - b.otherX
+        return diff !== 0 ? diff : a.edgeId.localeCompare(b.edgeId)
+      } else {
+        const diff = a.otherY - b.otherY
+        return diff !== 0 ? diff : a.edgeId.localeCompare(b.edgeId)
       }
     })
-    .filter(Boolean)
+
+    const count = connections.length
+    connections.forEach((conn, index) => {
+      let dx = 0
+      let dy = 0
+      if (side === 'top' || side === 'bottom') {
+        const span = Math.min((count - 1) * 24, NODE_WIDTH - 32)
+        const step = count > 1 ? span / (count - 1) : 0
+        dx = count > 1 ? (index * step - span / 2) : 0
+      } else {
+        const span = Math.min((count - 1) * 16, NODE_HEIGHT - 24)
+        const step = count > 1 ? span / (count - 1) : 0
+        dy = count > 1 ? (index * step - span / 2) : 0
+      }
+      portOffsets[`${conn.edgeId}_${conn.type}`] = { dx, dy }
+    })
+  })
+
+  return mappings.map((m) => {
+    const edge = m.edge
+    if (m.isSelfLoop) {
+      const sx = m.sourcePos.x + NODE_WIDTH
+      const sy = m.sourcePos.y + NODE_HEIGHT * 0.25
+      const ex = m.sourcePos.x + NODE_WIDTH
+      const ey = m.sourcePos.y + NODE_HEIGHT * 0.75
+      const loopR = 50 + m.odx
+      const c1x = sx + loopR
+      const c1y = sy - 20
+      const c2x = ex + loopR
+      const c2y = ey + 20
+      const controlX = sx + loopR
+      const controlY = m.sourcePos.y + NODE_HEIGHT / 2
+      return {
+        id: edge.edge_id, edgeType: edge.edge_type, label: edge.label, relation: m.relation,
+        relationLabel: edgeRelationLabels[m.relation] || '连线', style: m.style, displayLabel: m.displayLabel,
+        path: `M ${sx} ${sy} C ${c1x} ${c1y} ${c2x} ${c2y} ${ex} ${ey}`,
+        controlX, controlY, labelX: controlX + 12, labelY: controlY - 10
+      }
+    }
+
+    const startBase = getPortXY(m.sourcePos, m.sourceSide)
+    const endBase = getPortXY(m.targetPos, m.targetSide)
+    const sOffset = portOffsets[`${edge.edge_id}_source`] || { dx: 0, dy: 0 }
+    const tOffset = portOffsets[`${edge.edge_id}_target`] || { dx: 0, dy: 0 }
+
+    const start = { x: startBase.x + sOffset.dx, y: startBase.y + sOffset.dy }
+    const end = { x: endBase.x + tOffset.dx, y: endBase.y + tOffset.dy }
+
+    const [svx, svy] = getSideVector(m.sourceSide)
+    const [evx, evy] = getSideVector(m.targetSide)
+    const dist = Math.hypot(end.x - start.x, end.y - start.y)
+    const curve = Math.max(CURVE_MIN, dist * CURVE_FACTOR)
+
+    const c1x = start.x + svx * curve + m.odx
+    const c1y = start.y + svy * curve + m.ody
+    const c2x = end.x + evx * curve + m.odx
+    const c2y = end.y + evy * curve + m.ody
+
+    const controlX = (c1x + c2x) / 2
+    const controlY = (c1y + c2y) / 2
+
+    const t = 0.5
+    const labelX = (1-t)**3*start.x + 3*(1-t)**2*t*c1x + 3*(1-t)*t**2*c2x + t**3*end.x
+    const labelY = (1-t)**3*start.y + 3*(1-t)**2*t*c1y + 3*(1-t)*t**2*c2y + t**3*end.y
+
+    return {
+      id: edge.edge_id, edgeType: edge.edge_type, label: edge.label, relation: m.relation,
+      relationLabel: edgeRelationLabels[m.relation] || '连线', style: m.style, displayLabel: m.displayLabel,
+      path: `M ${start.x} ${start.y} C ${c1x} ${c1y} ${c2x} ${c2y} ${end.x} ${end.y}`,
+      controlX: labelX, controlY: labelY, labelX, labelY
+    }
+  })
 })
 
 onMounted(() => {

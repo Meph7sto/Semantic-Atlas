@@ -286,10 +286,10 @@ class _FakeGraphService:
         self.containers[cid] = c
         return dict(c)
 
-    def create_node(self, graph_id, node_key, label, node_type, role_type, container_id=None, config_json=None, input_schema_json=None, output_schema_json=None, order_index=0, created_by=""):
+    def create_node(self, graph_id, node_key, label, node_type, role_type, container_id=None, subgraph_id=None, config_json=None, input_schema_json=None, output_schema_json=None, order_index=0, created_by=""):
         self.node_counter += 1
         nid = f"node-{self.node_counter}"
-        n = {"node_id": nid, "graph_id": graph_id, "container_id": container_id, "node_key": node_key, "label": label, "node_type": node_type, "role_type": role_type, "config_json": config_json or {}, "order_index": order_index}
+        n = {"node_id": nid, "graph_id": graph_id, "container_id": container_id, "subgraph_id": subgraph_id, "node_key": node_key, "label": label, "node_type": node_type, "role_type": role_type, "config_json": config_json or {}, "order_index": order_index}
         self.nodes[nid] = n
         return dict(n)
 

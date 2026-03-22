@@ -184,6 +184,31 @@ class FakeAIProxy:
         }
 
 
+class RecordingAIProxy(FakeAIProxy):
+    """Fake AI proxy that records prompt payloads for assertions."""
+
+    def __init__(
+        self,
+        conclusions: list[str] | None = None,
+        route_keys: list[str | None] | None = None,
+    ) -> None:
+        super().__init__(conclusions=conclusions, route_keys=route_keys)
+        self.calls: list[dict] = []
+
+    def chat_completion_with_tools(self, *, messages, tools, **kwargs) -> dict:
+        self.calls.append(
+            {
+                "messages": list(messages),
+                "tools": list(tools),
+            }
+        )
+        return super().chat_completion_with_tools(
+            messages=messages,
+            tools=tools,
+            **kwargs,
+        )
+
+
 class FakeToolExecutor:
     """Empty tool executor — no business tools needed for unit tests."""
 
@@ -483,6 +508,37 @@ class TestHandoffAndResume:
         _, resume_result = _drain_with_result(gen_resume)
         assert resume_result.status == "succeeded"
         assert resume_result.final_output is not None
+
+    def test_suspend_persists_scratchpad_snapshot_to_graph_meta(self):
+        ai_run = FakeAIProxy(conclusions=["前置完成"])
+        run_result, skeleton = self._instantiate_and_execute(ai_run)
+        assert run_result.status == "suspended"
+
+        graph = self.svc.graphs.get(skeleton.graph_id, {})
+        snapshot = (graph.get("meta_json") or {}).get("scratchpad_snapshot") or []
+        assert any("前置完成" in str(entry.get("content", "")) for entry in snapshot)
+
+    def test_resume_restores_scratchpad_into_prompt(self):
+        ai_run = FakeAIProxy(conclusions=["前置完成"])
+        run_result, skeleton = self._instantiate_and_execute(ai_run)
+        assert run_result.status == "suspended"
+
+        ai_resume = RecordingAIProxy(conclusions=["后续完成"])
+        gen_resume = self.executor.resume(
+            skeleton=skeleton,
+            suspended_subgraph_id=run_result.suspended_subgraph_id,
+            user_input="用户确认继续",
+            tool_executor=FakeToolExecutor(),
+            ai_proxy_client=ai_resume,
+            graph_service=self.svc,
+            recorder=FakeRecorder(skeleton.graph_id),
+            actor="test",
+        )
+        _, resume_result = _drain_with_result(gen_resume)
+        assert resume_result.status == "succeeded"
+        assert ai_resume.calls
+        system_prompt = ai_resume.calls[0]["messages"][0]["content"]
+        assert "前置完成" in system_prompt
 
 
 # =========================================================================

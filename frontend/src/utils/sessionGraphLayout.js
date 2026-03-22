@@ -7,7 +7,12 @@ export const createEmptyGraphDetail = () => ({ graph: null, containers: [], subg
 
 export const sortByOrder = (items = []) => {
   return [...items].sort((a, b) => {
-    const orderDiff = Number(a?.order_index || 0) - Number(b?.order_index || 0)
+    const getOrder = (n) => {
+      if (n?.node_type === 'start') return -999999
+      if (n?.node_type === 'end') return 999999
+      return Number(n?.order_index || 0)
+    }
+    const orderDiff = getOrder(a) - getOrder(b)
     if (orderDiff !== 0) return orderDiff
     return String(a?.created_at || '').localeCompare(String(b?.created_at || ''))
   })
@@ -36,53 +41,57 @@ export const buildMergedSessionGraphDetail = (chainPayload) => {
 
   const startX = 94
   const baseY = 98
-  const columnGap = 320
-  const rowGap = 112
-  const rowHeight = 400
+  const laneHeight = 220
+  const colWidth = 240
+
+  const laneSeen = new Set()
+  const laneOrderList = []
+
+  const allNodes = details.flatMap(d => d.nodes || []).sort((a, b) => {
+    const getOrder = (n) => {
+      if (n?.node_type === 'start') return -999999
+      if (n?.node_type === 'end') return 999999
+      return Number(n?.order_index || 0)
+    }
+    const orderDiff = getOrder(a) - getOrder(b)
+    if (orderDiff !== 0) return orderDiff
+    return String(a?.created_at || '').localeCompare(String(b?.created_at || ''))
+  })
+
+  allNodes.forEach(node => {
+    const lk = node.subgraph_id || node.container_id || 'unassigned'
+    if (!laneSeen.has(lk)) {
+      laneSeen.add(lk)
+      laneOrderList.push(lk)
+    }
+  })
+
+  const laneByKey = new Map()
+  laneOrderList.forEach((lk, idx) => laneByKey.set(lk, idx))
+  const unassignedLaneIdx = laneOrderList.length
+
+  let globalNextX = startX
 
   details.forEach((detail, graphIndex) => {
-    let baseX = startX
-    const currentBaseY = baseY + graphIndex * rowHeight
     const graphLabel = `第${graphIndex + 1}轮`
-    const containers = sortByOrder(detail?.containers || [])
-    const nodes = sortByOrder(detail?.nodes || [])
 
-    // 将含 end 节点的容器排到最后（最右列）
-    const endNodeContainerIds = new Set(
-      nodes.filter((n) => n.node_type === 'end').map((n) => n.container_id).filter(Boolean)
-    )
-    const nonEndContainers = containers.filter((c) => !endNodeContainerIds.has(c.container_id))
-    const endContainers = containers.filter((c) => endNodeContainerIds.has(c.container_id))
-    const reorderedContainers = [...nonEndContainers, ...endContainers]
-
-    const containerOrder = reorderedContainers.map((container) => container.container_id)
-    const nodesByContainer = new Map(containerOrder.map((containerId) => [containerId, []]))
-    const unassignedNodes = []
-
-    nodes.forEach((node) => {
-      if (node.container_id && nodesByContainer.has(node.container_id)) {
-        nodesByContainer.get(node.container_id).push(node)
-        return
-      }
-      unassignedNodes.push(node)
-    })
-
-    reorderedContainers.forEach((container) => {
+    ;(detail?.containers || []).forEach((container) => {
       mergedContainers.push({
         ...container,
         label: `${graphLabel} · ${container.label || container.container_key || '未命名容器'}`,
         graph_index: graphIndex + 1
       })
+      containerOffsets[container.container_id] = detail?.graph?.layout_json?.container_offsets?.[container.container_id] || { dx: 0, dy: 0 }
     })
 
-    const subgraphs = sortByOrder(detail?.subgraphs || [])
-    subgraphs.forEach((subgraph) => {
+    ;(detail?.subgraphs || []).forEach((subgraph) => {
       mergedSubgraphs.push({
         ...subgraph,
         graph_index: graphIndex + 1
       })
     })
 
+    const nodes = sortByOrder(detail?.nodes || [])
     nodes.forEach((node) => {
       mergedNodes.push({
         ...node,
@@ -90,31 +99,53 @@ export const buildMergedSessionGraphDetail = (chainPayload) => {
       })
     })
 
+    const incomingEdges = new Map()
     ;(detail?.edges || []).forEach((edge) => {
       mergedEdges.push({
         ...edge,
         graph_index: graphIndex + 1
       })
       edgeOffsets[edge.edge_id] = detail?.graph?.layout_json?.edge_offsets?.[edge.edge_id] || { dx: 0, dy: 0 }
+      
+      if (!incomingEdges.has(edge.target_node_id)) incomingEdges.set(edge.target_node_id, [])
+      incomingEdges.get(edge.target_node_id).push(edge.source_node_id)
     })
 
-    const columns = [
-      ...containerOrder.map((containerId) => sortByOrder(nodesByContainer.get(containerId) || [])),
-      ...(unassignedNodes.length ? [sortByOrder(unassignedNodes)] : [])
-    ]
+    const nodeCol = new Map()
+    const colOccupied = new Map()
+    let maxGraphCol = 0
 
-    columns.forEach((columnNodes, columnIndex) => {
-      columnNodes.forEach((node, rowIndex) => {
-        nodePositions[node.node_id] = {
-          x: baseX + columnIndex * columnGap + (rowIndex % 2 === 0 ? 0 : 8),
-          y: currentBaseY + rowIndex * rowGap
+    nodes.forEach((node) => {
+      const lk = node.subgraph_id || node.container_id || 'unassigned'
+      const laneIdx = laneByKey.has(lk) ? laneByKey.get(lk) : unassignedLaneIdx
+
+      if (!colOccupied.has(laneIdx)) colOccupied.set(laneIdx, new Set())
+
+      let minCol = 0
+      const sources = incomingEdges.get(node.node_id) || []
+      sources.forEach((srcId) => {
+        if (nodeCol.has(srcId)) {
+          minCol = Math.max(minCol, nodeCol.get(srcId) + 1)
         }
       })
+
+      while (colOccupied.get(laneIdx).has(minCol)) {
+        minCol++
+      }
+
+      nodeCol.set(node.node_id, minCol)
+      colOccupied.get(laneIdx).add(minCol)
+      maxGraphCol = Math.max(maxGraphCol, minCol)
+
+      nodePositions[node.node_id] = {
+        x: globalNextX + minCol * colWidth + (minCol % 2 === 0 ? 0 : 8),
+        y: baseY + laneIdx * laneHeight
+      }
     })
 
-    reorderedContainers.forEach((container) => {
-      containerOffsets[container.container_id] = detail?.graph?.layout_json?.container_offsets?.[container.container_id] || { dx: 0, dy: 0 }
-    })
+    if (nodes.length > 0) {
+      globalNextX += (maxGraphCol + 1) * colWidth + 120
+    }
   })
 
   for (let index = 1; index < details.length; index += 1) {
