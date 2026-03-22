@@ -417,6 +417,7 @@ class SubgraphRunner:
             return (yield from self._advance_llm(
                 sg=sg,
                 container=container,
+                skeleton=skeleton,
                 pad=pad,
                 tool_executor=tool_executor,
                 ai_proxy_client=ai_proxy_client,
@@ -449,6 +450,7 @@ class SubgraphRunner:
         *,
         sg: RuntimeSubgraph,
         container: RuntimeContainer,
+        skeleton: RuntimeGraphSkeleton,
         pad: Scratchpad,
         tool_executor: Any,
         ai_proxy_client: Any,
@@ -478,6 +480,22 @@ class SubgraphRunner:
             stage_label_builder=lambda r: f"{sg.label} Round {r}",
         )
 
+        # Locate the subgraph's start/end node IDs for recorder context
+        start_node_id = _find_subgraph_boundary_node_id(
+            skeleton, sg.subgraph_id, "start",
+        )
+        end_node_id = _find_subgraph_boundary_node_id(
+            skeleton, sg.subgraph_id, "end",
+        )
+
+        # Enter subgraph context so recorder assigns subgraph_id to LLM nodes
+        enter_subgraph = getattr(recorder, "enter_subgraph", None)
+        if callable(enter_subgraph) and start_node_id:
+            enter_subgraph(
+                subgraph_id=sg.subgraph_id,
+                start_node_id=start_node_id,
+            )
+
         context = _build_subgraph_context(sg=sg, recorder=recorder)
         result: ToolLoopResult | None = None
 
@@ -494,6 +512,14 @@ class SubgraphRunner:
                 event = gen.send(None)
         except StopIteration as stop:
             result = stop.value
+
+        # Leave subgraph context — creates LLM→end edge
+        leave_subgraph = getattr(recorder, "leave_subgraph", None)
+        if callable(leave_subgraph) and end_node_id:
+            leave_subgraph(
+                end_node_id=end_node_id,
+                created_by=actor,
+            )
 
         tracker.transition(sg.subgraph_id, SubgraphStatus.COMPLETED)
         return result.route_key if result else None
@@ -628,6 +654,18 @@ def _find_subgraph_by_source_node(
     for sg in skeleton.subgraphs:
         if sg.source_node_id == source_node_id:
             return sg
+    return None
+
+
+def _find_subgraph_boundary_node_id(
+    skeleton: RuntimeGraphSkeleton,
+    subgraph_id: str,
+    node_type: str,
+) -> str | None:
+    """Return the node_id of the start or end node within *subgraph_id*."""
+    for n in skeleton.nodes:
+        if n.subgraph_id == subgraph_id and n.node_type == node_type:
+            return n.node_id
     return None
 
 

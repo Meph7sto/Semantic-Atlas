@@ -38,6 +38,7 @@ class StageNode:
     node_type: str
     role_type: str
     container_id: str
+    subgraph_id: str | None = None
 
 
 class RuntimeGraphRecorder:
@@ -70,6 +71,8 @@ class RuntimeGraphRecorder:
         self._seed_context_entries: list[dict[str, Any]] = []
         self._historical_node_context: list[dict[str, Any]] = []
         self._last_node_id: str | None = None
+        self._active_subgraph_id: str | None = None
+        self._subgraph_stack: list[dict[str, Any]] = []
         self._last_node_key: str | None = None
         self._node_order = 0
         self._edge_order = 0
@@ -353,6 +356,59 @@ class RuntimeGraphRecorder:
         )
         return config
 
+    def enter_subgraph(
+        self,
+        *,
+        subgraph_id: str,
+        start_node_id: str,
+    ) -> None:
+        """Switch recorder context into a subgraph.
+
+        Saves the current ``_last_node_id`` onto a stack (for nested
+        invoke calls) and points it at the subgraph's start node so
+        that subsequent ``start_stage`` calls create edges from start.
+        """
+        self._subgraph_stack.append({
+            "last_node_id": self._last_node_id,
+            "active_subgraph_id": self._active_subgraph_id,
+        })
+        self._active_subgraph_id = subgraph_id
+        self._last_node_id = start_node_id
+
+    def leave_subgraph(
+        self,
+        *,
+        end_node_id: str,
+        created_by: str,
+    ) -> None:
+        """Exit the current subgraph context.
+
+        Creates an edge from the last LLM node to the subgraph's end
+        node, then restores the previous context from the stack and
+        sets ``_last_node_id`` to the end node so that inter-subgraph
+        edges connect correctly.
+        """
+        if self._last_node_id and self._last_node_id != end_node_id:
+            self._service.create_edge(
+                graph_id=self.graph_id,
+                source_node_id=self._last_node_id,
+                target_node_id=end_node_id,
+                edge_type="seq",
+                label="seq",
+                config_json={"runtime": True, "subgraph_close": True},
+                order_index=self._edge_order,
+                created_by=created_by,
+            )
+            self._edge_order += 1
+
+        if self._subgraph_stack:
+            saved = self._subgraph_stack.pop()
+            self._active_subgraph_id = saved["active_subgraph_id"]
+        else:
+            self._active_subgraph_id = None
+
+        self._last_node_id = end_node_id
+
     def start_stage(
         self,
         *,
@@ -364,15 +420,19 @@ class RuntimeGraphRecorder:
         created_by: str,
         input_summary: Any,
         edge_type_from_previous: str | None = "call",
+        subgraph_id: str | None = None,
     ) -> StageNode:
         if container_key not in self._containers:
             raise KeyError(f"container_key 未配置: {container_key}")
+
+        effective_subgraph_id = subgraph_id or self._active_subgraph_id
 
         stage_node = self._nodes.get(node_key)
         if stage_node is None:
             node = self._service.create_node(
                 graph_id=self.graph_id,
                 container_id=self._containers[container_key],
+                subgraph_id=effective_subgraph_id,
                 node_key=node_key,
                 label=label,
                 node_type=node_type,
@@ -400,6 +460,7 @@ class RuntimeGraphRecorder:
                 node_type=node_type,
                 role_type=role_type,
                 container_id=self._containers[container_key],
+                subgraph_id=effective_subgraph_id,
             )
             self._nodes[node_key] = stage_node
 

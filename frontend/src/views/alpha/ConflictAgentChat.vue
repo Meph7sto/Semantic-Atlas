@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import {
   Bot,
+  Download,
   GitCompare,
   MessageSquare,
   Plus,
@@ -19,6 +20,7 @@ import ExecutionGraphCanvas from '@/components/alpha/ExecutionGraphCanvas.vue'
 import NodeDetailPanel from '@/components/alpha/NodeDetailPanel.vue'
 import SubgraphTracePanel from '@/components/alpha/SubgraphTracePanel.vue'
 import { createEmptyGraphDetail, buildMergedSessionGraphDetail } from '@/utils/sessionGraphLayout'
+import { buildExecutionGraphExportPayload, downloadExecutionGraphFile } from '@/utils/executionGraphExport'
 
 const PROMPT_FORMAT_OPTIONS = [
   { value: 'json', label: 'JSON' },
@@ -543,6 +545,17 @@ const sendMessage = async () => {
   }
 }
 
+const handleExportExecutionGraph = () => {
+  if (!graphDetail.value?.nodes?.length) return
+  try {
+    const payload = buildExecutionGraphExportPayload(graphDetail.value)
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')
+    downloadExecutionGraphFile(payload, `execution-graph_${timestamp}.json`)
+  } catch (err) {
+    errorMessage.value = '导出执行图失败: ' + (err.message || '未知错误')
+  }
+}
+
 const handleCanvasSelectNode = (nodeId) => {
   selectedCanvasId.value = nodeId
 }
@@ -787,7 +800,18 @@ onMounted(async () => {
                 <Workflow class="h-5 w-5" />
                 执行图
               </h2>
-              <span class="text-xs uppercase tracking-[0.2em] text-stone-500">{{ graphDetail.nodes.length }} nodes</span>
+              <div class="flex items-center gap-3">
+                <button
+                  class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-600 border border-stone-300 bg-white hover:bg-stone-100 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                  :disabled="!graphDetail.nodes.length"
+                  title="导出执行图 JSON"
+                  @click="handleExportExecutionGraph"
+                >
+                  <Download class="h-3.5 w-3.5" />
+                  导出
+                </button>
+                <span class="text-xs uppercase tracking-[0.2em] text-stone-500">{{ graphDetail.nodes.length }} nodes</span>
+              </div>
             </div>
             <div class="flex-1 min-h-0 h-full">
               <ExecutionGraphCanvas

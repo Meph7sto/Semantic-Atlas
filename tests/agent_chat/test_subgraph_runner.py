@@ -224,6 +224,12 @@ class FakeRecorder:
     def complete_stage(self, node_key, *, created_by, output_summary, **_kw):
         self._stages[node_key] = {"status": "completed"}
 
+    def enter_subgraph(self, *, subgraph_id, start_node_id):
+        pass
+
+    def leave_subgraph(self, *, end_node_id, created_by):
+        pass
+
 
 class FailingAIProxy:
     """AI proxy that raises an exception (simulating LLM failure)."""
