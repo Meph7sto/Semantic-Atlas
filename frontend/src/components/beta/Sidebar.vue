@@ -66,7 +66,7 @@
                 type="button"
                 class="rail-link submenu-item"
                 :class="{ active: child.key === activePage }"
-                @click="$emit('navigate', child.key)"
+                @click="handleNavigateItem(child.key)"
               >
                 <component v-if="child.icon" :is="child.icon" class="submenu-icon-svg" />
                 <span v-else class="submenu-dot"></span>
@@ -83,7 +83,7 @@
           class="rail-link"
           :class="{ active: item.key === activePage, muted: item.disabled }"
           :disabled="item.disabled"
-          @click="$emit('navigate', item.key)"
+          @click="handleNavigateItem(item.key)"
           :title="isCollapsed ? item.label : ''"
         >
           <component v-if="item.icon" :is="item.icon" class="nav-icon-svg" />
@@ -197,7 +197,7 @@ const props = defineProps({
   },
 });
 
-defineEmits(["exit", "navigate"]);
+const emit = defineEmits(["exit", "navigate"]);
 
 const isCollapsed = ref(false);
 const isSidebarTransitioning = ref(false);
@@ -231,6 +231,7 @@ const navItemsConfig = computed(() => {
       icon: FolderKanban,
       children: [
         { key: "requirements-collection", label: "需求采集", icon: Sparkles },
+        { key: "multimodal-ingestion", label: "多模态采集", icon: Sparkles },
         { key: "requirements", label: "需求工程管理", icon: FileText },
         { key: "requirements-session", label: "会话需求", icon: Layers },
         { key: "requirements-analysis", label: "需求分析", icon: BarChart3 },
@@ -252,6 +253,7 @@ const navItemsConfig = computed(() => {
       icon: FolderKanban,
       children: [
         { key: "requirements-collection", label: "需求采集", icon: Sparkles },
+        { key: "multimodal-ingestion", label: "多模态采集", icon: Sparkles },
         { key: "requirements", label: "需求工程管理", icon: FileText },
         { key: "requirements-session", label: "会话需求", icon: Layers },
         { key: "requirements-analysis", label: "需求分析", icon: BarChart3 },
@@ -338,7 +340,7 @@ const expandedMenus = ref(getInitialExpandedMenus());
 // 当 activePage 是子菜单项时，自动展开父菜单（但不会自动收缩已展开的菜单）
 watch(() => props.activePage, (newPage) => {
   // 检查是否是 project-management 的子项，如果是则自动展开（不在子项时不自动收缩）
-  const projectChildren = ['requirements-collection', 'requirements', 'requirements-session', 'requirements-analysis'];
+  const projectChildren = ['requirements-collection', 'multimodal-ingestion', 'requirements', 'requirements-session', 'requirements-analysis'];
   if (projectChildren.includes(newPage) && !isCollapsed.value) {
     expandedMenus.value['project-management'] = true;
   }
@@ -395,12 +397,26 @@ const getIconColor = (key) => {
     reviews: "#a85424",
     reports: "#1b2730",
     "requirements-collection": "#8b5cf6",
+    "multimodal-ingestion": "#0f766e",
     requirements: "#c4692f",
     "requirements-session": "#5d6b76",
     "requirements-analysis": "#c4692f",
     "requirement-replay": "#5d6b76",
   };
   return colors[key] || "#9eabb4";
+};
+
+const directRouteMap = {
+  'multimodal-ingestion': 'beta-multimodal-ingestion',
+};
+
+const handleNavigateItem = (key) => {
+  const directRoute = directRouteMap[key];
+  if (directRoute) {
+    router.push({ name: directRoute });
+    return;
+  }
+  emit('navigate', key);
 };
 
 // 切换菜单展开状态

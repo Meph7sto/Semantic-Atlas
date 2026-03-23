@@ -35,6 +35,7 @@ import ProductManageView from '../views/beta/ProductManageView.vue'
 import AccountView from '../views/beta/AccountView.vue'
 import UserManageView from '../views/beta/UserManageView.vue'
 import TopologyEditorView from '../views/beta/TopologyEditorView.vue'
+import MultimodalIngestionView from '../views/beta/MultimodalIngestionView.vue'
 import AsrTranscription from '../views/alpha/AsrTranscription.vue'
 import AsrTranscriptionView from '../views/beta/AsrTranscriptionView.vue'
 
@@ -114,6 +115,12 @@ const router = createRouter({
                     path: 'requirements-collection',
                     name: 'beta-requirements-collection',
                     component: RequirementsCollectionView,
+                    meta: { requiresAuth: true }
+                },
+                {
+                    path: 'multimodal-ingestion',
+                    name: 'beta-multimodal-ingestion',
+                    component: MultimodalIngestionView,
                     meta: { requiresAuth: true }
                 },
 
