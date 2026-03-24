@@ -206,7 +206,7 @@ superspec commit --summary "Add traceability coverage analysis" --next $'Impleme
 - Modify: `backend_business/api/routers/schemas/manage_schemas.py`
 - Test: `backend_business/tests/` relevant service and API tests
 
-- [ ] **Step 1: Write failing impact tests**
+- [x] **Step 1: Write failing impact tests**
 
 Cover:
 - compare to branch base milestone
@@ -215,14 +215,14 @@ Cover:
 - descendant propagation
 - affected test case detection
 
-- [ ] **Step 2: Implement impact comparison target resolution**
+- [x] **Step 2: Implement impact comparison target resolution**
 
 Resolve comparison target in this order when requested:
 - explicit milestone
 - baseline
 - branch base milestone
 
-- [ ] **Step 3: Implement `create_traceability_impact_report`**
+- [x] **Step 3: Implement `create_traceability_impact_report`**
 
 Use existing milestone comparison and relationship traversal to compute:
 - diff summary
@@ -233,16 +233,16 @@ Use existing milestone comparison and relationship traversal to compute:
 - related audits
 - risk flags
 
-- [ ] **Step 4: Persist the report into the existing impact-report table**
+- [x] **Step 4: Persist the report into the existing impact-report table**
 
 Store the computed summary and detail JSON instead of the current placeholder payload.
 
-- [ ] **Step 5: Run targeted tests**
+- [x] **Step 5: Run targeted tests**
 
 Run: `pytest backend_business/tests -k "traceability and impact" -q`
 Expected: impact calculation and persistence tests pass
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend_business/services/requirements_manage_service.py backend_business/api/routers/manage.py backend_business/api/routers/schemas/manage_schemas.py backend_business/tests

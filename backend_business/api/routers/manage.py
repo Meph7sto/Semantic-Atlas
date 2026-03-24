@@ -1484,7 +1484,16 @@ def create_traceability_impact(
     branch_project_id = _get_project_id_by_branch(req.branch_id)
     if not branch_project_id or branch_project_id != project_id:
         raise ErrorResponse("分支不存在", 404)
-    return _service.create_impact_report(req.branch_id, actor)
+    try:
+        return _service.create_traceability_impact_report(
+            project_id=project_id,
+            branch_id=req.branch_id,
+            created_by=actor,
+            compare_to=req.compare_to,
+            milestone_id=req.milestone_id,
+        )
+    except ValueError as e:
+        raise ErrorResponse(str(e), 400)
 
 
 @router.get("/projects/{project_id}/traceability/risk")
