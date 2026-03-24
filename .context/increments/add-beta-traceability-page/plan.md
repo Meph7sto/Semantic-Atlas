@@ -127,7 +127,7 @@ superspec commit --summary "Add traceability API contracts" --next $'Implement s
 - Modify: `backend_business/api/routers/manage.py`
 - Test: `backend_business/tests/` relevant service and API tests
 
-- [ ] **Step 1: Write failing tests for overview and matrix**
+- [x] **Step 1: Write failing tests for overview and matrix**
 
 Add tests covering:
 - branch list and selected branch context
@@ -136,7 +136,7 @@ Add tests covering:
 - test-link hydration
 - change-set and audit aggregation
 
-- [ ] **Step 2: Add focused helper methods**
+- [x] **Step 2: Add focused helper methods**
 
 Implement small internal helpers for:
 - resolving branch head milestone
@@ -144,16 +144,16 @@ Implement small internal helpers for:
 - indexing requirement-to-test relationships
 - collecting related change sets and audits
 
-- [ ] **Step 3: Implement `get_traceability_overview` and `get_traceability_matrix`**
+- [x] **Step 3: Implement `get_traceability_overview` and `get_traceability_matrix`**
 
 Return page-ready payloads without changing existing list and detail methods.
 
-- [ ] **Step 4: Run targeted tests**
+- [x] **Step 4: Run targeted tests**
 
 Run: `pytest backend_business/tests -k "traceability and (overview or matrix)" -q`
 Expected: tests pass for the new aggregation behavior
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend_business/services/requirements_manage_service.py backend_business/api/routers/manage.py backend_business/tests

@@ -2283,6 +2283,191 @@ class RequirementsManageService:
         roots.sort(key=lambda x: x.get("order_index", 0))
         return roots
 
+    def _find_project_baseline(self, project_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT milestone_id, project_id, name, description, message,
+                           milestone_type, is_baseline, sprint, version, tags, created_by,
+                           created_at::text AS created_at, metadata
+                    FROM manage_milestones
+                    WHERE project_id = %s AND is_baseline = TRUE
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (project_id,),
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
+
+    def _load_requirement_test_links(self, project_id: str) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT l.requirement_id, l.test_case_id, l.link_type, l.created_at::text AS created_at
+                    FROM manage_requirement_test_links l
+                    JOIN manage_requirements r ON r.req_id = l.requirement_id
+                    WHERE r.project_id = %s
+                    ORDER BY l.created_at DESC
+                    """,
+                    (project_id,),
+                )
+                return [dict(row) for row in cur.fetchall()]
+
+    @staticmethod
+    def _index_traceability_records(
+        items: List[Dict[str, Any]], key: str
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        result: Dict[str, List[Dict[str, Any]]] = {}
+        for item in items:
+            ref = item.get(key)
+            if not ref:
+                continue
+            result.setdefault(ref, []).append(item)
+        return result
+
+    @staticmethod
+    def _enrich_traceability_tree(
+        tree: List[Dict[str, Any]],
+        link_map: Dict[str, List[Dict[str, Any]]],
+        change_map: Dict[str, List[Dict[str, Any]]],
+        audit_map: Dict[str, List[Dict[str, Any]]],
+    ) -> List[Dict[str, Any]]:
+        def enrich(node: Dict[str, Any]) -> Dict[str, Any]:
+            requirement = dict(node.get("requirement") or {})
+            req_id = requirement.get("req_id") or requirement.get("requirement_id")
+            children = [enrich(child) for child in node.get("children", [])]
+            links = link_map.get(req_id, [])
+            changes = change_map.get(req_id, [])
+            audits = audit_map.get(req_id, [])
+            requirement["traceability"] = {
+                "test_case_count": len(links),
+                "test_case_ids": [link.get("test_case_id") for link in links],
+                "change_count": len(changes),
+                "audit_count": len(audits),
+                "has_coverage": len(links) > 0,
+            }
+            return {
+                "requirement": requirement,
+                "children": children,
+                "traceability": requirement["traceability"],
+            }
+
+        return [enrich(root) for root in tree]
+
+    def _resolve_traceability_branch(
+        self, project_id: str, branch_id: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        branches = self.list_branches(project_id)
+        if not branches:
+            return branches, None
+        if branch_id:
+            selected = next(
+                (branch for branch in branches if branch.get("ref_id") == branch_id),
+                None,
+            )
+            if not selected:
+                raise ValueError("分支不存在")
+            return branches, selected
+        return branches, branches[0]
+
+    def _build_traceability_branch_context(
+        self, project_id: str, branch: Optional[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        if not branch:
+            return None
+
+        head_milestone = (
+            self.get_milestone(branch["head_milestone_id"], include_nodes=False)
+            if branch.get("head_milestone_id")
+            else None
+        )
+        base_milestone = (
+            self.get_milestone(branch["base_milestone_id"], include_nodes=False)
+            if branch.get("base_milestone_id")
+            else None
+        )
+        baseline = self._find_project_baseline(project_id)
+        return {
+            "branch": branch,
+            "head_milestone": head_milestone,
+            "base_milestone": base_milestone,
+            "baseline_milestone": baseline,
+        }
+
+    def get_traceability_overview(
+        self, project_id: str, branch_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError("项目不存在")
+
+        branches, selected_branch = self._resolve_traceability_branch(project_id, branch_id)
+        branch_context = self._build_traceability_branch_context(project_id, selected_branch)
+        head_milestone = (branch_context or {}).get("head_milestone")
+        node_count = len((self.get_milestone(head_milestone["milestone_id"]) or {}).get("nodes", [])) if head_milestone else 0
+        test_cases = self.list_test_cases(project_id)
+        changes = self.list_change_sets(selected_branch["ref_id"]) if selected_branch else []
+        audits = self.list_audit_logs(project_id, limit=200)
+
+        return {
+            "project": project,
+            "branches": branches,
+            "selected_branch_id": selected_branch.get("ref_id") if selected_branch else None,
+            "selected_branch": selected_branch,
+            "branch_context": branch_context,
+            "summary": {
+                "requirement_count": node_count,
+                "test_case_count": len(test_cases),
+                "change_count": len(changes),
+                "audit_count": len(audits),
+            },
+        }
+
+    def get_traceability_matrix(
+        self, project_id: str, branch_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError("项目不存在")
+
+        branches, selected_branch = self._resolve_traceability_branch(project_id, branch_id)
+        branch_context = self._build_traceability_branch_context(project_id, selected_branch)
+        test_cases = self.list_test_cases(project_id)
+        test_links = self._load_requirement_test_links(project_id)
+        changes = self.list_change_sets(selected_branch["ref_id"]) if selected_branch else []
+        audits = self.list_audit_logs(project_id, limit=200)
+
+        requirement_tree: List[Dict[str, Any]] = []
+        if branch_context and branch_context.get("head_milestone"):
+            milestone = self.get_milestone(
+                branch_context["head_milestone"]["milestone_id"],
+                include_nodes=True,
+            )
+            snapshot_nodes = (milestone or {}).get("nodes", [])
+            requirement_tree = self._build_tree_from_snapshot(snapshot_nodes)
+            requirement_tree = self._enrich_traceability_tree(
+                requirement_tree,
+                self._index_traceability_records(test_links, "requirement_id"),
+                self._index_traceability_records(changes, "requirement_id"),
+                self._index_traceability_records(audits, "target_id"),
+            )
+
+        return {
+            "project": project,
+            "project_id": project_id,
+            "branch_id": selected_branch.get("ref_id") if selected_branch else None,
+            "branches": branches,
+            "requirements": requirement_tree,
+            "test_cases": test_cases,
+            "test_links": test_links,
+            "changes": changes,
+            "audits": audits,
+            "branch_context": branch_context,
+        }
+
     def add_change_set(
         self,
         branch_id: str,

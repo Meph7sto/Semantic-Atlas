@@ -1440,21 +1440,10 @@ def get_traceability_overview(
     current_user: Optional[dict] = Depends(get_current_user),
 ):
     _require_project_access(project_id, current_user)
-    project = _service.get_project(project_id)
-    if not project:
-        raise ErrorResponse("Project not found", 404)
-
-    branches = _service.list_branches(project_id)
-    selected_branch_id = branch_id or (branches[0]["ref_id"] if branches else None)
-    return {
-        "project": project,
-        "branches": branches,
-        "selected_branch_id": selected_branch_id,
-        "selected_branch": next(
-            (branch for branch in branches if branch.get("ref_id") == selected_branch_id),
-            None,
-        ),
-    }
+    try:
+        return _service.get_traceability_overview(project_id, branch_id=branch_id)
+    except ValueError as e:
+        raise ErrorResponse(str(e), 404)
 
 
 @router.get("/projects/{project_id}/traceability/matrix")
@@ -1464,16 +1453,10 @@ def get_traceability_matrix(
     current_user: Optional[dict] = Depends(get_current_user),
 ):
     _require_project_access(project_id, current_user)
-    return {
-        "project_id": project_id,
-        "branch_id": branch_id,
-        "requirements": [],
-        "test_cases": [],
-        "test_links": [],
-        "changes": [],
-        "audits": [],
-        "branch_context": None,
-    }
+    try:
+        return _service.get_traceability_matrix(project_id, branch_id=branch_id)
+    except ValueError as e:
+        raise ErrorResponse(str(e), 404)
 
 
 @router.get("/projects/{project_id}/traceability/coverage")
