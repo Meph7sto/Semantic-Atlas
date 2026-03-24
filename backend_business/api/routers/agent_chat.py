@@ -109,13 +109,16 @@ def update_session(
     if payload.title is None and payload.prompt_payload_format is None and payload.context_mode is None:
         raise ErrorResponse("至少提供一个可更新字段", 400)
     try:
-        return requirement_agent_chat_service.update_session(
-            session_id=session_id,
-            user_id=current_user["user_id"],
-            title=payload.title,
-            prompt_payload_format=payload.prompt_payload_format,
-            context_mode=payload.context_mode,
-        )
+        kwargs = {
+            "session_id": session_id,
+            "user_id": current_user["user_id"],
+            "title": payload.title,
+        }
+        if payload.prompt_payload_format is not None:
+            kwargs["prompt_payload_format"] = payload.prompt_payload_format
+        if payload.context_mode is not None:
+            kwargs["context_mode"] = payload.context_mode
+        return requirement_agent_chat_service.update_session(**kwargs)
     except Exception as exc:
         raise ErrorResponse(str(exc), 500)
 

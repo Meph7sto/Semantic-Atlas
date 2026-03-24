@@ -333,3 +333,20 @@ class MergeBranchesRequest(BaseModel):
     source_branch: str = Field(min_length=1, description="源分支")
     target_branch: str = Field(min_length=1, description="目标分支")
     message: str = Field(default="", description="合并消息")
+
+
+# ========================
+# Traceability Schemas
+# ========================
+
+class CreateTraceabilityImpactRequest(BaseModel):
+    """创建追踪影响分析请求"""
+    branch_id: str = Field(min_length=1, description="分支ID")
+    compare_to: str = Field(
+        default="baseline",
+        description="比较目标类型: baseline/base/milestone",
+    )
+    milestone_id: Optional[str] = Field(
+        None,
+        description="当 compare_to=milestone 时使用的里程碑ID",
+    )

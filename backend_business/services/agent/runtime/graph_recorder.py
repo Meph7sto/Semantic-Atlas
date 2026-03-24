@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import inspect
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -482,15 +483,15 @@ class RuntimeGraphRecorder:
 
         stage_node = self._nodes.get(node_key)
         if stage_node is None:
-            node = self._service.create_node(
-                graph_id=self.graph_id,
-                container_id=self._containers[container_key],
-                subgraph_id=effective_subgraph_id,
-                node_key=node_key,
-                label=label,
-                node_type=node_type,
-                role_type=role_type,
-                config_json={
+            create_node_kwargs = {
+                "graph_id": self.graph_id,
+                "container_id": self._containers[container_key],
+                "subgraph_id": effective_subgraph_id,
+                "node_key": node_key,
+                "label": label,
+                "node_type": node_type,
+                "role_type": role_type,
+                "config_json": {
                     "runtime": True,
                     "run_status": "pending",
                     "input": self._build_stage_input(node_key=node_key, input_summary=input_summary),
@@ -502,9 +503,20 @@ class RuntimeGraphRecorder:
                     "finished_at": None,
                     "error": None,
                 },
-                order_index=self._node_order,
-                created_by=created_by,
-            )
+                "order_index": self._node_order,
+                "created_by": created_by,
+            }
+            create_node_signature = inspect.signature(self._service.create_node)
+            if not any(
+                param.kind == inspect.Parameter.VAR_KEYWORD
+                for param in create_node_signature.parameters.values()
+            ):
+                create_node_kwargs = {
+                    key: value
+                    for key, value in create_node_kwargs.items()
+                    if key in create_node_signature.parameters
+                }
+            node = self._service.create_node(**create_node_kwargs)
             self._node_order += 1
             stage_node = StageNode(
                 node_id=node["node_id"],

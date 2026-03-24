@@ -6,6 +6,7 @@ FastAPI 错误处理工具
 from typing import Any, Dict
 
 from fastapi import HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -34,7 +35,7 @@ async def validation_error_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
     """保留显式校验异常处理器，语义与 FastAPI 默认 422 保持一致。"""
-    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
 
 
 async def error_response_handler(request: Request, exc: Exception) -> JSONResponse:

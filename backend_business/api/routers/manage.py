@@ -38,6 +38,7 @@ from backend_business.api.routers.schemas.manage_schemas import (
     AddChangeSetRequest,
     CreateMergeRequest,
     MergeBranchesRequest,
+    CreateTraceabilityImpactRequest,
 )
 
 router = APIRouter(prefix="/api/v2/manage", tags=["manage"])
@@ -1426,3 +1427,83 @@ def list_audits(
     """
     _require_project_access(project_id, current_user)
     return {"logs": _service.list_audit_logs(project_id, limit=limit)}
+
+
+# ========================
+# Traceability
+# ========================
+
+@router.get("/projects/{project_id}/traceability/overview")
+def get_traceability_overview(
+    project_id: str,
+    branch_id: Optional[str] = Query(None),
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    _require_project_access(project_id, current_user)
+    try:
+        return _service.get_traceability_overview(project_id, branch_id=branch_id)
+    except ValueError as e:
+        raise ErrorResponse(str(e), 404)
+
+
+@router.get("/projects/{project_id}/traceability/matrix")
+def get_traceability_matrix(
+    project_id: str,
+    branch_id: Optional[str] = Query(None),
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    _require_project_access(project_id, current_user)
+    try:
+        return _service.get_traceability_matrix(project_id, branch_id=branch_id)
+    except ValueError as e:
+        raise ErrorResponse(str(e), 404)
+
+
+@router.get("/projects/{project_id}/traceability/coverage")
+def get_traceability_coverage(
+    project_id: str,
+    branch_id: Optional[str] = Query(None),
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    _require_project_access(project_id, current_user)
+    try:
+        return _service.get_traceability_coverage(project_id, branch_id=branch_id)
+    except ValueError as e:
+        raise ErrorResponse(str(e), 404)
+
+
+@router.post("/projects/{project_id}/traceability/impact")
+def create_traceability_impact(
+    project_id: str,
+    req: CreateTraceabilityImpactRequest,
+    request: Request,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    actor = _get_actor(request, current_user)
+    _require_project_edit(project_id, current_user)
+    branch_project_id = _get_project_id_by_branch(req.branch_id)
+    if not branch_project_id or branch_project_id != project_id:
+        raise ErrorResponse("分支不存在", 404)
+    try:
+        return _service.create_traceability_impact_report(
+            project_id=project_id,
+            branch_id=req.branch_id,
+            created_by=actor,
+            compare_to=req.compare_to,
+            milestone_id=req.milestone_id,
+        )
+    except ValueError as e:
+        raise ErrorResponse(str(e), 400)
+
+
+@router.get("/projects/{project_id}/traceability/risk")
+def get_traceability_risk(
+    project_id: str,
+    branch_id: Optional[str] = Query(None),
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    _require_project_access(project_id, current_user)
+    try:
+        return _service.get_traceability_risk(project_id, branch_id=branch_id)
+    except ValueError as e:
+        raise ErrorResponse(str(e), 404)

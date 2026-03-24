@@ -2283,6 +2283,635 @@ class RequirementsManageService:
         roots.sort(key=lambda x: x.get("order_index", 0))
         return roots
 
+    def _find_project_baseline(self, project_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT milestone_id, project_id, name, description, message,
+                           milestone_type, is_baseline, sprint, version, tags, created_by,
+                           created_at::text AS created_at, metadata
+                    FROM manage_milestones
+                    WHERE project_id = %s AND is_baseline = TRUE
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (project_id,),
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
+
+    def _load_requirement_test_links(self, project_id: str) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT l.requirement_id, l.test_case_id, l.link_type, l.created_at::text AS created_at
+                    FROM manage_requirement_test_links l
+                    JOIN manage_requirements r ON r.req_id = l.requirement_id
+                    WHERE r.project_id = %s
+                    ORDER BY l.created_at DESC
+                    """,
+                    (project_id,),
+                )
+                return [dict(row) for row in cur.fetchall()]
+
+    @staticmethod
+    def _index_traceability_records(
+        items: List[Dict[str, Any]], key: str
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        result: Dict[str, List[Dict[str, Any]]] = {}
+        for item in items:
+            ref = item.get(key)
+            if not ref:
+                continue
+            result.setdefault(ref, []).append(item)
+        return result
+
+    @staticmethod
+    def _enrich_traceability_tree(
+        tree: List[Dict[str, Any]],
+        link_map: Dict[str, List[Dict[str, Any]]],
+        change_map: Dict[str, List[Dict[str, Any]]],
+        audit_map: Dict[str, List[Dict[str, Any]]],
+    ) -> List[Dict[str, Any]]:
+        def enrich(node: Dict[str, Any]) -> Dict[str, Any]:
+            requirement = dict(node.get("requirement") or {})
+            req_id = requirement.get("req_id") or requirement.get("requirement_id")
+            children = [enrich(child) for child in node.get("children", [])]
+            links = link_map.get(req_id, [])
+            changes = change_map.get(req_id, [])
+            audits = audit_map.get(req_id, [])
+            requirement["traceability"] = {
+                "test_case_count": len(links),
+                "test_case_ids": [link.get("test_case_id") for link in links],
+                "change_count": len(changes),
+                "audit_count": len(audits),
+                "has_coverage": len(links) > 0,
+            }
+            return {
+                "requirement": requirement,
+                "children": children,
+                "traceability": requirement["traceability"],
+            }
+
+        return [enrich(root) for root in tree]
+
+    def _resolve_traceability_branch(
+        self, project_id: str, branch_id: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        branches = self.list_branches(project_id)
+        if not branches:
+            return branches, None
+        if branch_id:
+            selected = next(
+                (branch for branch in branches if branch.get("ref_id") == branch_id),
+                None,
+            )
+            if not selected:
+                raise ValueError("分支不存在")
+            return branches, selected
+        return branches, branches[0]
+
+    def _build_traceability_branch_context(
+        self, project_id: str, branch: Optional[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        if not branch:
+            return None
+
+        head_milestone = (
+            self.get_milestone(branch["head_milestone_id"], include_nodes=False)
+            if branch.get("head_milestone_id")
+            else None
+        )
+        base_milestone = (
+            self.get_milestone(branch["base_milestone_id"], include_nodes=False)
+            if branch.get("base_milestone_id")
+            else None
+        )
+        baseline = self._find_project_baseline(project_id)
+        return {
+            "branch": branch,
+            "head_milestone": head_milestone,
+            "base_milestone": base_milestone,
+            "baseline_milestone": baseline,
+        }
+
+    def get_traceability_overview(
+        self, project_id: str, branch_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError("项目不存在")
+
+        branches, selected_branch = self._resolve_traceability_branch(project_id, branch_id)
+        branch_context = self._build_traceability_branch_context(project_id, selected_branch)
+        head_milestone = (branch_context or {}).get("head_milestone")
+        node_count = len((self.get_milestone(head_milestone["milestone_id"]) or {}).get("nodes", [])) if head_milestone else 0
+        test_cases = self.list_test_cases(project_id)
+        changes = self.list_change_sets(selected_branch["ref_id"]) if selected_branch else []
+        audits = self.list_audit_logs(project_id, limit=200)
+
+        return {
+            "project": project,
+            "branches": branches,
+            "selected_branch_id": selected_branch.get("ref_id") if selected_branch else None,
+            "selected_branch": selected_branch,
+            "branch_context": branch_context,
+            "summary": {
+                "requirement_count": node_count,
+                "test_case_count": len(test_cases),
+                "change_count": len(changes),
+                "audit_count": len(audits),
+            },
+        }
+
+    def get_traceability_matrix(
+        self, project_id: str, branch_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError("项目不存在")
+
+        branches, selected_branch = self._resolve_traceability_branch(project_id, branch_id)
+        branch_context = self._build_traceability_branch_context(project_id, selected_branch)
+        test_cases = self.list_test_cases(project_id)
+        test_links = self._load_requirement_test_links(project_id)
+        changes = self.list_change_sets(selected_branch["ref_id"]) if selected_branch else []
+        audits = self.list_audit_logs(project_id, limit=200)
+
+        requirement_tree: List[Dict[str, Any]] = []
+        if branch_context and branch_context.get("head_milestone"):
+            milestone = self.get_milestone(
+                branch_context["head_milestone"]["milestone_id"],
+                include_nodes=True,
+            )
+            snapshot_nodes = (milestone or {}).get("nodes", [])
+            requirement_tree = self._build_tree_from_snapshot(snapshot_nodes)
+            requirement_tree = self._enrich_traceability_tree(
+                requirement_tree,
+                self._index_traceability_records(test_links, "requirement_id"),
+                self._index_traceability_records(changes, "requirement_id"),
+                self._index_traceability_records(audits, "target_id"),
+            )
+
+        return {
+            "project": project,
+            "project_id": project_id,
+            "branch_id": selected_branch.get("ref_id") if selected_branch else None,
+            "branches": branches,
+            "requirements": requirement_tree,
+            "test_cases": test_cases,
+            "test_links": test_links,
+            "changes": changes,
+            "audits": audits,
+            "branch_context": branch_context,
+        }
+
+    def get_traceability_coverage(
+        self, project_id: str, branch_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError("项目不存在")
+
+        branches, selected_branch = self._resolve_traceability_branch(project_id, branch_id)
+        branch_context = self._build_traceability_branch_context(project_id, selected_branch)
+        test_links = self._load_requirement_test_links(project_id)
+        link_map = self._index_traceability_records(test_links, "requirement_id")
+        changes = self.list_change_sets(selected_branch["ref_id"]) if selected_branch else []
+
+        requirements: List[Dict[str, Any]]
+        if branch_context and branch_context.get("head_milestone"):
+            milestone = self.get_milestone(
+                branch_context["head_milestone"]["milestone_id"],
+                include_nodes=True,
+            )
+            requirements = [
+                dict(node.get("snapshot_data") or {})
+                for node in (milestone or {}).get("nodes", [])
+            ]
+        else:
+            requirements = self.list_requirements(project_id)
+
+        requirements = [req for req in requirements if req.get("req_id")]
+        requirement_map = {req["req_id"]: req for req in requirements}
+        orphan_requirements = [
+            req
+            for req in requirements
+            if req.get("status") == "in_progress" and not link_map.get(req["req_id"])
+        ]
+        unlinked_changes = [
+            change
+            for change in changes
+            if not change.get("requirement_id")
+            or change.get("requirement_id") not in requirement_map
+        ]
+
+        total_requirements = len(requirements)
+        covered_requirements = len(
+            [req for req in requirements if link_map.get(req["req_id"])]
+        )
+        in_progress_requirements = len(
+            [req for req in requirements if req.get("status") == "in_progress"]
+        )
+        coverage_rate = (
+            round(covered_requirements / total_requirements, 4)
+            if total_requirements
+            else 0.0
+        )
+
+        return {
+            "project": project,
+            "project_id": project_id,
+            "branch_id": selected_branch.get("ref_id") if selected_branch else None,
+            "branches": branches,
+            "branch_context": branch_context,
+            "coverage_summary": {
+                "total_requirements": total_requirements,
+                "covered_requirements": covered_requirements,
+                "in_progress_requirements": in_progress_requirements,
+                "orphan_requirements": len(orphan_requirements),
+                "unlinked_changes": len(unlinked_changes),
+                "coverage_rate": coverage_rate,
+            },
+            "orphan_requirements": orphan_requirements,
+            "unlinked_changes": unlinked_changes,
+        }
+
+    def _resolve_traceability_impact_target(
+        self,
+        project_id: str,
+        branch_context: Optional[Dict[str, Any]],
+        compare_to: str = "baseline",
+        milestone_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        compare_key = (compare_to or "baseline").strip().lower()
+        if compare_key == "milestone" and milestone_id:
+            milestone = self.get_milestone(milestone_id, include_nodes=False)
+            if milestone and milestone.get("project_id") == project_id:
+                return milestone
+            raise ValueError("比较里程碑不存在")
+
+        if compare_key == "baseline":
+            baseline = self._find_project_baseline(project_id)
+            if baseline:
+                return baseline
+
+        if compare_key in {"baseline", "base"}:
+            return (branch_context or {}).get("base_milestone")
+
+        raise ValueError("compare_to 必须是 baseline、base 或 milestone")
+
+    def _find_project_id_by_branch_id(self, branch_id: str) -> Optional[str]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT project_id
+                    FROM manage_branch_refs
+                    WHERE ref_id = %s
+                    """,
+                    (branch_id,),
+                )
+                row = cur.fetchone()
+                return row[0] if row else None
+
+    def _ensure_manage_branch_record(
+        self, project_id: str, branch: Optional[Dict[str, Any]]
+    ) -> str:
+        if not branch:
+            raise ValueError("分支不存在")
+
+        branch_ref_id = branch.get("ref_id")
+        branch_name = branch.get("branch_name") or branch.get("ref_name")
+        if not branch_ref_id or not branch_name:
+            raise ValueError("分支信息不完整")
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT branch_id
+                    FROM manage_branches
+                    WHERE branch_id = %s
+                    """,
+                    (branch_ref_id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    return row["branch_id"]
+
+                cur.execute(
+                    """
+                    SELECT branch_id
+                    FROM manage_branches
+                    WHERE project_id = %s AND name = %s
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (project_id, branch_name),
+                )
+                row = cur.fetchone()
+                if row:
+                    return row["branch_id"]
+
+                base_milestone_id = branch.get("base_milestone_id") or branch.get(
+                    "milestone_id"
+                )
+                if not base_milestone_id:
+                    raise ValueError("分支缺少基准里程碑，无法写入影响分析记录")
+
+                metadata = {
+                    "source": "traceability_branch_backfill",
+                    "head_milestone_id": branch.get("head_milestone_id")
+                    or branch.get("milestone_id")
+                    or base_milestone_id,
+                }
+                cur.execute(
+                    """
+                    INSERT INTO manage_branches (
+                        branch_id, project_id, base_milestone_id, name, status, created_by, created_at, updated_at, metadata
+                    )
+                    VALUES (%s, %s, %s, %s, 'active', %s, NOW(), NOW(), %s::jsonb)
+                    ON CONFLICT (branch_id) DO NOTHING
+                    RETURNING branch_id
+                    """,
+                    (
+                        branch_ref_id,
+                        project_id,
+                        base_milestone_id,
+                        branch_name,
+                        branch.get("created_by"),
+                        json.dumps(metadata),
+                    ),
+                )
+                row = cur.fetchone()
+                if row:
+                    return row["branch_id"]
+                return branch_ref_id
+
+    def create_traceability_impact_report(
+        self,
+        project_id: str,
+        branch_id: str,
+        created_by: str,
+        compare_to: str = "baseline",
+        milestone_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError("项目不存在")
+
+        _, selected_branch = self._resolve_traceability_branch(project_id, branch_id)
+        if not selected_branch:
+            raise ValueError("分支不存在")
+        persisted_branch_id = self._ensure_manage_branch_record(project_id, selected_branch)
+
+        branch_context = self._build_traceability_branch_context(project_id, selected_branch)
+        head_milestone = (branch_context or {}).get("head_milestone")
+        if not head_milestone:
+            raise ValueError("分支尚未指向可分析的里程碑")
+
+        compare_milestone = self._resolve_traceability_impact_target(
+            project_id,
+            branch_context,
+            compare_to=compare_to,
+            milestone_id=milestone_id,
+        )
+        compare_target = {
+            "compare_to": compare_to,
+            "milestone": compare_milestone,
+        }
+
+        diff_summary: Dict[str, Any] = {
+            "added": 0,
+            "deleted": 0,
+            "modified": 0,
+            "moved": 0,
+            "total": 0,
+        }
+        changed_requirements: List[Dict[str, Any]] = []
+        affected_descendants: List[Dict[str, Any]] = []
+        affected_test_cases: List[Dict[str, Any]] = []
+        related_changes: List[Dict[str, Any]] = []
+        related_audits: List[Dict[str, Any]] = []
+        risk_flags: List[str] = []
+        status = "ready"
+
+        if not compare_milestone:
+            status = "unavailable"
+            risk_flags.append("missing_compare_target")
+        else:
+            diff = self.compare_milestones(
+                compare_milestone["milestone_id"],
+                head_milestone["milestone_id"],
+            )
+            diff_summary = diff.get("summary", diff_summary)
+
+            current_milestone = self.get_milestone(head_milestone["milestone_id"], include_nodes=True)
+            current_nodes = (current_milestone or {}).get("nodes", [])
+            current_tree = self._build_tree_from_snapshot(current_nodes)
+            current_map = {
+                (node.get("snapshot_data") or {}).get("req_id") or node.get("requirement_id"): dict(node.get("snapshot_data") or {})
+                for node in current_nodes
+            }
+
+            changed_ids = []
+            for key in ("added", "modified", "moved", "deleted"):
+                changed_ids.extend(diff.get(key, []))
+            changed_ids = sorted({req_id for req_id in changed_ids if req_id})
+
+            changed_requirements = [
+                {
+                    "requirement_id": req_id,
+                    "current": current_map.get(req_id),
+                    "change_types": diff.get("change_map", {}).get(req_id, []),
+                }
+                for req_id in changed_ids
+            ]
+
+            descendant_ids = set()
+            for req_id in changed_ids:
+                descendant_ids.update(self._collect_descendants(current_tree, req_id))
+            descendant_ids = {
+                req_id for req_id in descendant_ids if req_id and req_id not in set(changed_ids)
+            }
+            affected_descendants = [
+                current_map[req_id]
+                for req_id in sorted(descendant_ids)
+                if req_id in current_map
+            ]
+
+            all_affected_ids = set(changed_ids) | set(descendant_ids)
+            test_links = self._load_requirement_test_links(project_id)
+            relevant_links = [
+                link for link in test_links if link.get("requirement_id") in all_affected_ids
+            ]
+            test_case_ids = {link.get("test_case_id") for link in relevant_links if link.get("test_case_id")}
+            test_case_map = {
+                test_case["test_case_id"]: test_case
+                for test_case in self.list_test_cases(project_id)
+            }
+            affected_test_cases = [
+                test_case_map[test_case_id]
+                for test_case_id in sorted(test_case_ids)
+                if test_case_id in test_case_map
+            ]
+
+            branch_changes = self.list_change_sets(branch_id)
+            related_changes = [
+                change for change in branch_changes if change.get("requirement_id") in all_affected_ids
+            ]
+            related_audits = [
+                audit
+                for audit in self.list_audit_logs(project_id, limit=200)
+                if audit.get("target_id") in all_affected_ids
+            ]
+
+            uncovered_impacted = [
+                req_id
+                for req_id in all_affected_ids
+                if not any(link.get("requirement_id") == req_id for link in relevant_links)
+            ]
+            if uncovered_impacted:
+                risk_flags.append("impacted_requirements_without_tests")
+            if diff_summary.get("deleted"):
+                risk_flags.append("deleted_requirements_detected")
+            if diff_summary.get("moved"):
+                risk_flags.append("structure_changes_detected")
+
+        report_id = str(uuid.uuid4())
+        detail = {
+            "status": status,
+            "project_id": project_id,
+            "branch": selected_branch,
+            "branch_context": branch_context,
+            "compare_target": compare_target,
+            "diff_summary": diff_summary,
+            "changed_requirements": changed_requirements,
+            "affected_descendants": affected_descendants,
+            "affected_test_cases": affected_test_cases,
+            "related_changes": related_changes,
+            "related_audits": related_audits,
+            "risk_flags": risk_flags,
+            "created_at": _utc_now_iso(),
+        }
+        summary = (
+            f"影响需求 {len(changed_requirements)} 项，波及测试 {len(affected_test_cases)} 项"
+            if status == "ready"
+            else "缺少比较目标，无法完成影响分析"
+        )
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    INSERT INTO manage_impact_reports (report_id, branch_id, summary, detail_json, status, created_by, created_at)
+                    VALUES (%s, %s, %s, %s::jsonb, %s, %s, NOW())
+                    RETURNING report_id, branch_id, summary, detail_json, status, created_by, created_at::text AS created_at
+                    """,
+                    (
+                        report_id,
+                        persisted_branch_id,
+                        summary,
+                        json.dumps(detail),
+                        status,
+                        created_by,
+                    ),
+                )
+                return dict(cur.fetchone())
+
+    def get_traceability_risk(
+        self, project_id: str, branch_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError("项目不存在")
+
+        branches, selected_branch = self._resolve_traceability_branch(project_id, branch_id)
+        branch_context = self._build_traceability_branch_context(project_id, selected_branch)
+        test_links = self._load_requirement_test_links(project_id)
+        link_map = self._index_traceability_records(test_links, "requirement_id")
+        changes = self.list_change_sets(selected_branch["ref_id"]) if selected_branch else []
+        audits = self.list_audit_logs(project_id, limit=200)
+        change_map = self._index_traceability_records(changes, "requirement_id")
+        audit_map = self._index_traceability_records(audits, "target_id")
+
+        requirements: List[Dict[str, Any]]
+        if branch_context and branch_context.get("head_milestone"):
+            milestone = self.get_milestone(
+                branch_context["head_milestone"]["milestone_id"],
+                include_nodes=True,
+            )
+            requirements = [
+                dict(node.get("snapshot_data") or {})
+                for node in (milestone or {}).get("nodes", [])
+                if (node.get("snapshot_data") or {}).get("req_id")
+            ]
+        else:
+            requirements = self.list_requirements(project_id)
+
+        status_distribution: Dict[str, int] = {}
+        risk_rows: List[Dict[str, Any]] = []
+        uncovered_in_progress: List[Dict[str, Any]] = []
+
+        for requirement in requirements:
+            req_id = requirement.get("req_id")
+            status = requirement.get("status") or "unknown"
+            status_distribution[status] = status_distribution.get(status, 0) + 1
+            link_count = len(link_map.get(req_id, []))
+            change_count = len(change_map.get(req_id, []))
+            audit_count = len(audit_map.get(req_id, []))
+            risk_score = change_count + audit_count + (2 if status == "in_progress" and link_count == 0 else 0)
+            row = {
+                "requirement_id": req_id,
+                "title": requirement.get("title"),
+                "status": status,
+                "test_case_count": link_count,
+                "change_count": change_count,
+                "audit_count": audit_count,
+                "risk_score": risk_score,
+            }
+            risk_rows.append(row)
+            if status == "in_progress" and link_count == 0:
+                uncovered_in_progress.append(row)
+
+        frequently_changed_requirements = sorted(
+            [row for row in risk_rows if row.get("change_count", 0) > 0],
+            key=lambda item: (-item.get("change_count", 0), item.get("requirement_id") or ""),
+        )[:10]
+
+        active_audit_targets = sorted(
+            [
+                {
+                    "target_id": target_id,
+                    "audit_count": len(items),
+                    "latest_audit": items[0] if items else None,
+                }
+                for target_id, items in audit_map.items()
+            ],
+            key=lambda item: (-item.get("audit_count", 0), item.get("target_id") or ""),
+        )[:10]
+
+        high_risk_chains = sorted(
+            [row for row in risk_rows if row.get("risk_score", 0) > 0],
+            key=lambda item: (-item.get("risk_score", 0), item.get("requirement_id") or ""),
+        )[:10]
+
+        return {
+            "project": project,
+            "project_id": project_id,
+            "branch_id": selected_branch.get("ref_id") if selected_branch else None,
+            "branches": branches,
+            "branch_context": branch_context,
+            "status_distribution": status_distribution,
+            "uncovered_in_progress": uncovered_in_progress,
+            "frequently_changed_requirements": frequently_changed_requirements,
+            "active_audit_targets": active_audit_targets,
+            "high_risk_chains": high_risk_chains,
+        }
+
     def add_change_set(
         self,
         branch_id: str,
@@ -2330,31 +2959,15 @@ class RequirementsManageService:
                 return [dict(row) for row in cur.fetchall()]
 
     def create_impact_report(self, branch_id: str, created_by: str) -> Dict[str, Any]:
-        report_id = str(uuid.uuid4())
-        summary = "影响分析算法尚未实现，已预留接口"
-        detail = {
-            "status": "pending",
-            "note": "impact analysis placeholder",
-            "created_at": _utc_now_iso(),
-        }
-        with self._connect() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(
-                    """
-                    INSERT INTO manage_impact_reports (report_id, branch_id, summary, detail_json, status, created_by, created_at)
-                    VALUES (%s, %s, %s, %s::jsonb, %s, %s, NOW())
-                    RETURNING report_id, branch_id, summary, detail_json, status, created_by, created_at::text AS created_at
-                    """,
-                    (
-                        report_id,
-                        branch_id,
-                        summary,
-                        json.dumps(detail),
-                        "pending",
-                        created_by,
-                    ),
-                )
-                return dict(cur.fetchone())
+        project_id = self._find_project_id_by_branch_id(branch_id)
+        if not project_id:
+            raise ValueError("分支不存在")
+        return self.create_traceability_impact_report(
+            project_id=project_id,
+            branch_id=branch_id,
+            created_by=created_by,
+            compare_to="baseline",
+        )
 
     def create_merge_request(
         self, branch_id: str, target_milestone_id: str, created_by: str
