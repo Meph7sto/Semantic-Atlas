@@ -43,6 +43,17 @@ _TYPE_SPECIFIC_STATUS_TRANSITIONS = {
     "low_level": _REQUIREMENT_STATUS_TRANSITIONS,
     "task": _REQUIREMENT_STATUS_TRANSITIONS,
 }
+_ALLOWED_DEFECT_SEVERITIES = ("critical", "high", "medium", "low")
+_ALLOWED_DEFECT_PRIORITIES = ("P0", "P1", "P2", "P3")
+_ALLOWED_DEFECT_STATUSES = (
+    "open",
+    "in_progress",
+    "resolved",
+    "verified",
+    "closed",
+    "rejected",
+)
+_DEFECT_UNRESOLVED_STATUSES = {"open", "in_progress", "resolved"}
 
 
 def normalize_priority(priority: Any, allow_none: bool = True) -> Optional[str]:
@@ -84,6 +95,51 @@ def normalize_requirement_status(
         return normalized
 
     raise ValueError(f"status 必须是: {', '.join(_ALLOWED_REQUIREMENT_STATUSES)}")
+
+
+def normalize_defect_severity(value: Any, allow_none: bool = True) -> Optional[str]:
+    if value is None:
+        if allow_none:
+            return None
+        raise ValueError(f"severity 必须是: {', '.join(_ALLOWED_DEFECT_SEVERITIES)}")
+    text = str(value).strip().lower()
+    if not text:
+        if allow_none:
+            return None
+        raise ValueError(f"severity 必须是: {', '.join(_ALLOWED_DEFECT_SEVERITIES)}")
+    if text in _ALLOWED_DEFECT_SEVERITIES:
+        return text
+    raise ValueError(f"severity 必须是: {', '.join(_ALLOWED_DEFECT_SEVERITIES)}")
+
+
+def normalize_defect_priority(value: Any, allow_none: bool = True) -> Optional[str]:
+    if value is None:
+        if allow_none:
+            return None
+        raise ValueError(f"priority 必须是: {', '.join(_ALLOWED_DEFECT_PRIORITIES)}")
+    text = str(value).strip().upper()
+    if not text:
+        if allow_none:
+            return None
+        raise ValueError(f"priority 必须是: {', '.join(_ALLOWED_DEFECT_PRIORITIES)}")
+    if text in _ALLOWED_DEFECT_PRIORITIES:
+        return text
+    raise ValueError(f"priority 必须是: {', '.join(_ALLOWED_DEFECT_PRIORITIES)}")
+
+
+def normalize_defect_status(value: Any, allow_none: bool = True) -> Optional[str]:
+    if value is None:
+        if allow_none:
+            return None
+        raise ValueError(f"status 必须是: {', '.join(_ALLOWED_DEFECT_STATUSES)}")
+    text = str(value).strip().lower()
+    if not text:
+        if allow_none:
+            return None
+        raise ValueError(f"status 必须是: {', '.join(_ALLOWED_DEFECT_STATUSES)}")
+    if text in _ALLOWED_DEFECT_STATUSES:
+        return text
+    raise ValueError(f"status 必须是: {', '.join(_ALLOWED_DEFECT_STATUSES)}")
 
 
 class RequirementsManageService:
@@ -501,6 +557,60 @@ class RequirementsManageService:
                 row = cur.fetchone()
                 return dict(row) if row else None
 
+    @staticmethod
+    def _resolve_defect_current_assignee(
+        *,
+        status: str,
+        dev_assignee: Optional[str],
+        tester_assignee: Optional[str],
+        current_assignee: Optional[str],
+    ) -> str:
+        explicit = str(current_assignee or "").strip()
+        if explicit:
+            return explicit
+        if status in {"open", "in_progress"}:
+            return str(dev_assignee or "").strip()
+        if status == "resolved":
+            return str(tester_assignee or "").strip()
+        return ""
+
+    def _count_unresolved_defects(
+        self,
+        requirement_id: str,
+        conn: Optional[psycopg2.extensions.connection] = None,
+    ) -> int:
+        owns_connection = conn is None
+        if owns_connection:
+            conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM manage_defects
+                    WHERE requirement_id = %s
+                      AND status = ANY(%s)
+                    """,
+                    (requirement_id, list(_DEFECT_UNRESOLVED_STATUSES)),
+                )
+                row = cur.fetchone()
+            return int((row or [0])[0] or 0)
+        finally:
+            if owns_connection and conn is not None:
+                conn.close()
+
+    def _ensure_requirement_deliverable(
+        self,
+        requirement_id: str,
+        target_status: str,
+        conn: Optional[psycopg2.extensions.connection] = None,
+    ) -> None:
+        if target_status not in {"confirmed", "completed"}:
+            return
+        unresolved = self._count_unresolved_defects(requirement_id, conn=conn)
+        if unresolved > 0:
+            raise ValueError("该需求仍有关联未解决缺陷，不能标记为已确认/已完成")
+
     def update_requirement(
         self, req_id: str, fields: Dict[str, Any], updated_by: str = ""
     ) -> Dict[str, Any]:
@@ -543,6 +653,11 @@ class RequirementsManageService:
                         row["status"],
                         updates["status"],
                         row.get("requirement_type"),
+                    )
+                    self._ensure_requirement_deliverable(
+                        req_id,
+                        updates["status"],
+                        conn=conn,
                     )
 
                 set_clauses = []
@@ -609,6 +724,11 @@ class RequirementsManageService:
                     if row["req_id"] in low_level_ids:
                         self._validate_status_transition(
                             row["status"], status, row.get("requirement_type")
+                        )
+                        self._ensure_requirement_deliverable(
+                            row["req_id"],
+                            status,
+                            conn=conn,
                         )
 
                 cur.execute(
@@ -759,6 +879,284 @@ class RequirementsManageService:
 
         found = dfs({"requirement": {"req_id": ""}, "children": tree})
         return found
+
+    # ----------------------
+    # Defects
+    # ----------------------
+    def list_defects(
+        self,
+        project_id: str,
+        requirement_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        params: List[Any] = [project_id]
+        requirement_clause = ""
+        if requirement_id:
+            requirement_clause = "AND d.requirement_id = %s"
+            params.append(requirement_id)
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    f"""
+                    SELECT d.defect_id, d.project_id, d.requirement_id, r.title AS requirement_title,
+                           d.title, d.reproduce_steps, d.severity, d.priority, d.status,
+                           d.reporter, d.dev_assignee, d.tester_assignee, d.current_assignee,
+                           d.created_by, d.created_at::text AS created_at,
+                           d.updated_by, d.updated_at::text AS updated_at
+                    FROM manage_defects d
+                    JOIN manage_requirements r ON r.req_id = d.requirement_id
+                    WHERE d.project_id = %s
+                      {requirement_clause}
+                    ORDER BY d.created_at DESC
+                    """,
+                    params,
+                )
+                return [dict(row) for row in cur.fetchall()]
+
+    def get_defect(self, defect_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT d.defect_id, d.project_id, d.requirement_id, r.title AS requirement_title,
+                           d.title, d.reproduce_steps, d.severity, d.priority, d.status,
+                           d.reporter, d.dev_assignee, d.tester_assignee, d.current_assignee,
+                           d.created_by, d.created_at::text AS created_at,
+                           d.updated_by, d.updated_at::text AS updated_at
+                    FROM manage_defects d
+                    JOIN manage_requirements r ON r.req_id = d.requirement_id
+                    WHERE d.defect_id = %s
+                    """,
+                    (defect_id,),
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
+
+    def create_defect(
+        self,
+        project_id: str,
+        requirement_id: str,
+        title: str,
+        reproduce_steps: str,
+        severity: str = "medium",
+        priority: str = "P2",
+        status: str = "open",
+        reporter: str = "",
+        dev_assignee: str = "",
+        tester_assignee: str = "",
+        current_assignee: str = "",
+        created_by: str = "",
+    ) -> Dict[str, Any]:
+        defect_id = str(uuid.uuid4())
+        title = str(title or "").strip()
+        reproduce_steps = str(reproduce_steps or "").strip()
+        if not title:
+            raise ValueError("缺陷标题不能为空")
+        if not reproduce_steps:
+            raise ValueError("复现步骤不能为空")
+
+        severity = normalize_defect_severity(severity, allow_none=False)
+        priority = normalize_defect_priority(priority, allow_none=False)
+        status = normalize_defect_status(status, allow_none=False)
+        dev_assignee = str(dev_assignee or "").strip()
+        tester_assignee = str(tester_assignee or "").strip()
+        reporter = str(reporter or "").strip()
+        current_assignee = self._resolve_defect_current_assignee(
+            status=status,
+            dev_assignee=dev_assignee,
+            tester_assignee=tester_assignee,
+            current_assignee=current_assignee,
+        )
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT req_id, project_id
+                    FROM manage_requirements
+                    WHERE req_id = %s AND deleted = FALSE
+                    """,
+                    (requirement_id,),
+                )
+                requirement = cur.fetchone()
+                if not requirement:
+                    raise ValueError("关联需求不存在")
+                if requirement["project_id"] != project_id:
+                    raise ValueError("关联需求不属于当前项目")
+
+                cur.execute(
+                    """
+                    INSERT INTO manage_defects (
+                        defect_id, project_id, requirement_id, title, reproduce_steps,
+                        severity, priority, status, reporter, dev_assignee, tester_assignee,
+                        current_assignee, created_by, created_at, updated_by, updated_at
+                    )
+                    VALUES (
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s,
+                        %s, %s, NOW(), %s, NOW()
+                    )
+                    """,
+                    (
+                        defect_id,
+                        project_id,
+                        requirement_id,
+                        title,
+                        reproduce_steps,
+                        severity,
+                        priority,
+                        status,
+                        reporter,
+                        dev_assignee,
+                        tester_assignee,
+                        current_assignee,
+                        created_by,
+                        created_by,
+                    ),
+                )
+            conn.commit()
+        return self.get_defect(defect_id) or {}
+
+    def update_defect(
+        self, defect_id: str, fields: Dict[str, Any], updated_by: str = ""
+    ) -> Dict[str, Any]:
+        allowed = {
+            "title",
+            "reproduce_steps",
+            "requirement_id",
+            "severity",
+            "priority",
+            "status",
+            "reporter",
+            "dev_assignee",
+            "tester_assignee",
+            "current_assignee",
+        }
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            raise ValueError("没有可更新字段")
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT defect_id, project_id, requirement_id, title, reproduce_steps,
+                           severity, priority, status, reporter, dev_assignee, tester_assignee,
+                           current_assignee
+                    FROM manage_defects
+                    WHERE defect_id = %s
+                    """,
+                    (defect_id,),
+                )
+                existing = cur.fetchone()
+                if not existing:
+                    raise ValueError("缺陷不存在")
+
+                if "title" in updates:
+                    updates["title"] = str(updates["title"] or "").strip()
+                    if not updates["title"]:
+                        raise ValueError("缺陷标题不能为空")
+                if "reproduce_steps" in updates:
+                    updates["reproduce_steps"] = str(
+                        updates["reproduce_steps"] or ""
+                    ).strip()
+                    if not updates["reproduce_steps"]:
+                        raise ValueError("复现步骤不能为空")
+                if "severity" in updates:
+                    updates["severity"] = normalize_defect_severity(
+                        updates["severity"], allow_none=False
+                    )
+                if "priority" in updates:
+                    updates["priority"] = normalize_defect_priority(
+                        updates["priority"], allow_none=False
+                    )
+                if "status" in updates:
+                    updates["status"] = normalize_defect_status(
+                        updates["status"], allow_none=False
+                    )
+                if "dev_assignee" in updates:
+                    updates["dev_assignee"] = str(updates["dev_assignee"] or "").strip()
+                if "tester_assignee" in updates:
+                    updates["tester_assignee"] = str(
+                        updates["tester_assignee"] or ""
+                    ).strip()
+                if "reporter" in updates:
+                    updates["reporter"] = str(updates["reporter"] or "").strip()
+                if "current_assignee" in updates:
+                    updates["current_assignee"] = str(
+                        updates["current_assignee"] or ""
+                    ).strip()
+
+                if "requirement_id" in updates:
+                    requirement_id = str(updates["requirement_id"] or "").strip()
+                    if not requirement_id:
+                        raise ValueError("关联需求不能为空")
+                    cur.execute(
+                        """
+                        SELECT req_id, project_id
+                        FROM manage_requirements
+                        WHERE req_id = %s AND deleted = FALSE
+                        """,
+                        (requirement_id,),
+                    )
+                    requirement = cur.fetchone()
+                    if not requirement:
+                        raise ValueError("关联需求不存在")
+                    if requirement["project_id"] != existing["project_id"]:
+                        raise ValueError("关联需求不属于当前项目")
+                    updates["requirement_id"] = requirement_id
+
+                next_status = updates.get("status", existing["status"])
+                next_dev = updates.get("dev_assignee", existing["dev_assignee"])
+                next_tester = updates.get(
+                    "tester_assignee", existing["tester_assignee"]
+                )
+                explicit_current = updates.get("current_assignee")
+                if (
+                    "status" in updates
+                    or "dev_assignee" in updates
+                    or "tester_assignee" in updates
+                    or "current_assignee" in updates
+                ):
+                    updates["current_assignee"] = self._resolve_defect_current_assignee(
+                        status=next_status,
+                        dev_assignee=next_dev,
+                        tester_assignee=next_tester,
+                        current_assignee=explicit_current,
+                    )
+
+                set_clauses = []
+                values: List[Any] = []
+                for key, value in updates.items():
+                    set_clauses.append(f"{key} = %s")
+                    values.append(value)
+                set_clauses.append("updated_by = %s")
+                values.append(updated_by)
+                set_clauses.append("updated_at = NOW()")
+                values.append(defect_id)
+
+                cur.execute(
+                    f"""
+                    UPDATE manage_defects
+                    SET {", ".join(set_clauses)}
+                    WHERE defect_id = %s
+                    """,
+                    values,
+                )
+            conn.commit()
+        return self.get_defect(defect_id) or {}
+
+    def delete_defect(self, defect_id: str) -> int:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM manage_defects
+                    WHERE defect_id = %s
+                    """,
+                    (defect_id,),
+                )
+                return cur.rowcount
 
     # ----------------------
     # Import from Session

@@ -588,9 +588,12 @@ const editRequirement = ref({
 
 // Status management
 const requirementStatuses = [
-  { id: 'backlog', name: '待处理', color: 'zinc' },
+  { id: 'draft', name: '待处理', color: 'zinc' },
+  { id: 'under_review', name: '审核中', color: 'amber' },
+  { id: 'confirmed', name: '已确认', color: 'sky' },
   { id: 'in_progress', name: '进行中', color: 'blue' },
-  { id: 'completed', name: '已完成', color: 'emerald' }
+  { id: 'completed', name: '已完成', color: 'emerald' },
+  { id: 'archived', name: '已归档', color: 'slate' },
 ]
 const requirementStatusMap = ref({})
 const backlogRequirements = ref([])
@@ -648,7 +651,7 @@ const filteredRequirements = computed(() => {
         ...r, id,
         level: normalizeLevel(r.level || r.category),
         statement: r.text || r.statement || r.title || '',
-        status: requirementStatusMap.value[id] || 'backlog',
+        status: requirementStatusMap.value[id] || r.status || 'draft',
       }
     }),
     ...lowLevelRequirements.value.map(r => {
@@ -656,7 +659,7 @@ const filteredRequirements = computed(() => {
       return {
         ...r, id, level: 'L4',
         statement: r.text || r.statement || r.shall_statement || '',
-        status: requirementStatusMap.value[id] || 'backlog',
+        status: requirementStatusMap.value[id] || r.status || 'draft',
       }
     }),
   ]
@@ -742,8 +745,11 @@ function getStatusColorClass(statusId, variant = 'bg') {
   const color = requirementStatuses.find(s => s.id === statusId)?.color || 'zinc'
   const colorMap = {
     zinc: { bg: 'bg-zinc-100', text: 'text-zinc-700' },
+    amber: { bg: 'bg-amber-100', text: 'text-amber-700' },
+    sky: { bg: 'bg-sky-100', text: 'text-sky-700' },
     blue: { bg: 'bg-blue-100', text: 'text-blue-700' },
-    emerald: { bg: 'bg-emerald-100', text: 'text-emerald-700' }
+    emerald: { bg: 'bg-emerald-100', text: 'text-emerald-700' },
+    slate: { bg: 'bg-slate-100', text: 'text-slate-700' },
   }
   return colorMap[color]?.[variant] || colorMap.zinc[variant]
 }
@@ -763,16 +769,13 @@ function getLevelBadgeClass(level) {
   }[level] || 'bg-zinc-100 text-zinc-700 border-zinc-200'
 }
 
-function mapManageStatusToLocal(status) {
-  switch (status) {
-    case 'completed': return 'completed'
-    case 'in_progress': case 'under_review': case 'confirmed': return 'in_progress'
-    case 'archived': return 'completed'
-    default: return 'backlog'
-  }
+function getKanbanBucket(status) {
+  if (status === 'completed' || status === 'archived') return 'completed'
+  if (status === 'in_progress') return 'in_progress'
+  return 'backlog'
 }
 
-function mapLocalStatusToManage(status) {
+function mapKanbanBucketToManage(status) {
   switch (status) {
     case 'completed': return 'completed'
     case 'in_progress': return 'in_progress'
@@ -796,9 +799,17 @@ function toggleColumn(key) {
   else tableVisibleColumns.value.push(key)
 }
 
-function updateRequirementStatus(reqId, newStatus) {
-  requirementStatusMap.value[reqId] = newStatus
-  persistStatusToDb({ id: reqId, req_id: reqId }, newStatus)
+async function updateRequirementStatus(reqId, newStatus) {
+  const previousStatus = requirementStatusMap.value[reqId] || 'draft'
+  if (previousStatus === newStatus) return
+  try {
+    const updated = await manageApi.updateRequirement(reqId, { status: newStatus })
+    requirementStatusMap.value[reqId] = updated?.status || newStatus
+    await loadRequirements()
+  } catch (err) {
+    requirementStatusMap.value[reqId] = previousStatus
+    alert('更新需求状态失败: ' + (err?.response?.data?.detail || err?.message || '未知错误'))
+  }
 }
 
 function handleNodeHover(req) { hoveredNode.value = req }
@@ -888,9 +899,9 @@ async function submitEditRequirement() {
 // Kanban drag
 function syncRequirementLists() {
   const all = filteredRequirements.value
-  backlogRequirements.value = all.filter(r => r.status === 'backlog')
+  backlogRequirements.value = all.filter(r => getKanbanBucket(r.status) === 'backlog')
   inProgressRequirements.value = all.filter(r => r.status === 'in_progress')
-  completedRequirements.value = all.filter(r => r.status === 'completed')
+  completedRequirements.value = all.filter(r => getKanbanBucket(r.status) === 'completed')
 }
 
 function onDragChange(evt, targetStatus) {
@@ -915,9 +926,13 @@ async function persistStatusToDb(item, targetStatus) {
   const manageReqId = resolveManageReqId(item)
   if (!manageReqId) return
   try {
-    await manageApi.updateRequirement(manageReqId, { status: mapLocalStatusToManage(targetStatus) })
+    const updated = await manageApi.updateRequirement(manageReqId, { status: mapKanbanBucketToManage(targetStatus) })
+    requirementStatusMap.value[manageReqId] = updated?.status || mapKanbanBucketToManage(targetStatus)
+    await loadRequirements()
   } catch (err) {
     console.warn('同步状态到数据库失败', err)
+    alert('同步需求状态失败: ' + (err?.response?.data?.detail || err?.message || '未知错误'))
+    await loadRequirements()
   }
 }
 
@@ -956,7 +971,7 @@ async function loadManageRequirementMap() {
     manageStatusMap.value = statusMap
     managePriorityMap.value = priorityMap
     statusMap.forEach((status, key) => {
-      requirementStatusMap.value[key] = mapManageStatusToLocal(status)
+      requirementStatusMap.value[key] = status || 'draft'
     })
   } catch (err) {
     console.warn('加载管理需求映射失败', err)
@@ -1055,4 +1070,3 @@ onMounted(async () => {
   if (selectedProjectId.value) await loadRequirements()
 })
 </script>
-

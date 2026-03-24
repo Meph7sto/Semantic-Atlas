@@ -200,6 +200,41 @@ def init_project_schema(cur):
 
     cur.execute(
         """
+        CREATE TABLE IF NOT EXISTS manage_defects (
+            defect_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL REFERENCES manage_projects(project_id) ON DELETE CASCADE,
+            requirement_id TEXT NOT NULL REFERENCES manage_requirements(req_id) ON DELETE CASCADE,
+            title TEXT NOT NULL,
+            reproduce_steps TEXT NOT NULL DEFAULT '',
+            severity TEXT NOT NULL DEFAULT 'medium' CHECK (severity IN ('critical', 'high', 'medium', 'low')),
+            priority TEXT NOT NULL DEFAULT 'P2' CHECK (priority IN ('P0', 'P1', 'P2', 'P3')),
+            status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'resolved', 'verified', 'closed', 'rejected')),
+            reporter TEXT,
+            dev_assignee TEXT,
+            tester_assignee TEXT,
+            current_assignee TEXT,
+            created_by TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_by TEXT,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_manage_defects_project ON manage_defects(project_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_manage_defects_requirement ON manage_defects(requirement_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_manage_defects_status ON manage_defects(status)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_manage_defects_current_assignee ON manage_defects(current_assignee)"
+    )
+
+    cur.execute(
+        """
         CREATE TABLE IF NOT EXISTS manage_milestones (
             milestone_id TEXT PRIMARY KEY,
             project_id TEXT NOT NULL REFERENCES manage_projects(project_id) ON DELETE CASCADE,

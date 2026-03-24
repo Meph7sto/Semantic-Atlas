@@ -1,9 +1,11 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { manageApi } from '@/api/project'
 import { Plus, RefreshCw, GitBranch, Flag, Layers, ClipboardList } from 'lucide-vue-next'
 import MilestoneGraph from '@/components/charts/MilestoneGraph.vue'
 import RequirementTree from '@/components/charts/RequirementTree.vue'
+import { useAlphaDefects } from '@/composables/useAlphaDefects'
 
 const projects = ref([])
 const selectedProjectId = ref('')
@@ -17,6 +19,7 @@ const reqError = ref('')
 const isLoadingReqs = ref(false)
 const showTree = ref(true)
 const requirementHover = ref(null)
+const selectedRequirement = ref(null)
 const isPlanningMode = ref(false)
 const filterStatus = ref('')
 const filterType = ref('')
@@ -111,8 +114,53 @@ const listColumns = ref([
 
 const selectedColumnKeys = ref(['title', 'requirement_type', 'source_level', 'status', 'priority'])
 
+const route = useRoute()
+const router = useRouter()
 const selectedProject = computed(() => projects.value.find(p => p.project_id === selectedProjectId.value) || null)
 const branchOptions = computed(() => branches.value.filter(b => b.ref_name !== 'main'))
+const {
+  defectsByRequirementId,
+  unresolvedForRequirement,
+  reload: reloadDefects,
+  error: defectsError,
+} = useAlphaDefects(selectedProjectId)
+
+const canPromoteToAccepted = (req) => {
+  const reqId = req?.req_id || req?.id
+  if (!reqId) return true
+  return unresolvedForRequirement(reqId).length === 0
+}
+
+const requirementDetail = computed(() => selectedRequirement.value || requirementHover.value)
+
+const linkedDefectsForHover = computed(() => {
+  const reqId = requirementDetail.value?.req_id || requirementDetail.value?.id
+  if (!reqId) return []
+  return defectsByRequirementId.value.get(reqId) || []
+})
+
+const unresolvedLinkedDefectsForHover = computed(() => {
+  const reqId = requirementDetail.value?.req_id || requirementDetail.value?.id
+  if (!reqId) return []
+  return unresolvedForRequirement(reqId)
+})
+
+const gotoDefectsWithRequirement = () => {
+  const req = requirementDetail.value || {}
+  const reqId = req.req_id || req.id || ''
+  const reqTitle = req.title || req.text || ''
+  const targetRoute = String(route.name || '').startsWith('beta-') ? 'beta-defects' : 'alpha-defects'
+  router.push({
+    name: targetRoute,
+    query: {
+      project_id: selectedProjectId.value || '',
+      requirement_id: reqId,
+      focus_requirement_id: reqId,
+      requirement_title: reqTitle,
+      return_route: String(route.name || ''),
+    },
+  })
+}
 
 const getLevelFromReq = (req = {}) => {
   if (req.source_level) return req.source_level
@@ -252,10 +300,14 @@ const handleListSprintToggle = async (req) => {
   try {
     const nextStatus = getNextSprintStatus(req.status)
     if (nextStatus === req.status) return
+    if ((nextStatus === 'confirmed' || nextStatus === 'completed') && !canPromoteToAccepted(req)) {
+      reqError.value = '该需求仍有关联未解决缺陷，不能标记为已确认/已完成'
+      return
+    }
     await manageApi.updateRequirement(req.req_id || req.id, { status: nextStatus })
     await loadRequirements()
   } catch (err) {
-    reqError.value = '更新冲刺状态失败'
+    reqError.value = err?.message || '更新冲刺状态失败'
   }
 }
 
@@ -283,11 +335,16 @@ const findNodeById = (nodes, targetId) => {
 }
 
 const handleNodeClick = async (req) => {
+  selectedRequirement.value = req
   if (!isPlanningMode.value) return
   try {
     if (req.requirement_type === 'low_level') {
       const nextStatus = getNextSprintStatus(req.status)
       if (nextStatus === req.status) return
+      if ((nextStatus === 'confirmed' || nextStatus === 'completed') && !canPromoteToAccepted(req)) {
+        reqError.value = '该需求仍有关联未解决缺陷，不能标记为已确认/已完成'
+        return
+      }
       await manageApi.updateRequirement(req.req_id || req.id, { status: nextStatus })
       await loadRequirements()
       return
@@ -301,8 +358,13 @@ const handleNodeClick = async (req) => {
       await loadRequirements()
     }
   } catch (err) {
-    reqError.value = '更新冲刺状态失败'
+    reqError.value = err?.message || '更新冲刺状态失败'
   }
+}
+
+const openRequirementDetail = (req) => {
+  selectedRequirement.value = req
+  requirementHover.value = req
 }
 
 
@@ -555,10 +617,35 @@ async function loadAudits() {
 
 watch(selectedProjectId, async () => {
   if (!selectedProjectId.value) return
-  await Promise.all([loadRequirements(), loadMilestones(), loadMilestoneGraph(), loadBranches(), loadAudits()])
+  try {
+    await Promise.all([reloadDefects(), loadRequirements(), loadMilestones(), loadMilestoneGraph(), loadBranches(), loadAudits()])
+  } catch {
+    // leave detailed errors to existing UI messages
+  }
 })
 
-onMounted(loadProjects)
+watch(requirements, () => {
+  const focusId = String(route.query.focus_requirement_id || '')
+  if (!focusId) return
+  const matched = requirements.value.find((item) => (item.req_id || item.id) === focusId)
+  if (matched) {
+    requirementHover.value = matched
+    selectedRequirement.value = matched
+  }
+})
+
+onMounted(async () => {
+  await loadProjects()
+  const qProjectId = String(route.query.project_id || '')
+  if (qProjectId) {
+    selectedProjectId.value = qProjectId
+  }
+  try {
+    await reloadDefects()
+  } catch {
+    // surfaced by composable error
+  }
+})
 </script>
 
 <template>
@@ -669,6 +756,8 @@ onMounted(loadProjects)
 
           <p v-if="reqError" class="text-xs text-red-600">{{ reqError }}</p>
 
+          <p v-if="defectsError" class="text-xs text-red-600">{{ defectsError }}</p>
+
           <div v-if="showTree" class="border border-zinc-200 rounded-lg p-3 space-y-3">
             <div class="text-xs text-zinc-500">顶层需求树（L1/L2/L3）</div>
             <RequirementTree :tree-data="topLevelRequirementTrees" @hover="(req) => (requirementHover = req)" @click-node="handleNodeClick" />
@@ -701,7 +790,7 @@ onMounted(loadProjects)
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="req in filteredRequirements" :key="req.req_id" class="border-b border-zinc-100 hover:bg-zinc-50">
+                  <tr v-for="req in filteredRequirements" :key="req.req_id" class="border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer" @click="openRequirementDetail(req)">
                     <td class="px-2 py-2 font-mono text-[10px] text-zinc-400">{{ req.req_id }}</td>
                     <td class="px-2 py-2">
                       <button
@@ -726,15 +815,44 @@ onMounted(loadProjects)
             </div>
           </div>
 
-          <div v-if="requirementHover" class="text-xs text-zinc-600 border border-zinc-200 rounded-lg p-3 bg-zinc-50">
-            <div class="font-medium text-zinc-800">悬浮需求</div>
-            <div>标题: {{ requirementHover.title || requirementHover.text }}</div>
-            <div>类型: {{ requirementHover.requirement_type || '-' }}</div>
-            <div>级别: {{ requirementHover.source_level || '-' }}</div>
-            <div>状态: {{ requirementHover.status || '-' }}</div>
-            <div>优先级: {{ requirementHover.priority || '-' }}</div>
-            <div>负责人: {{ requirementHover.assignee || '-' }}</div>
-            <div>截止: {{ requirementHover.due_date || '-' }}</div>
+          <div v-if="requirementDetail" class="text-xs text-zinc-600 border border-zinc-200 rounded-lg p-3 bg-zinc-50">
+            <div class="font-medium text-zinc-800">需求详情</div>
+            <div>标题: {{ requirementDetail.title || requirementDetail.text }}</div>
+            <div>类型: {{ requirementDetail.requirement_type || '-' }}</div>
+            <div>级别: {{ requirementDetail.source_level || '-' }}</div>
+            <div>状态: {{ requirementDetail.status || '-' }}</div>
+            <div>优先级: {{ requirementDetail.priority || '-' }}</div>
+            <div>负责人: {{ requirementDetail.assignee || '-' }}</div>
+            <div>截止: {{ requirementDetail.due_date || '-' }}</div>
+            <div class="mt-2 pt-2 border-t border-zinc-200">
+              <div class="font-medium text-zinc-800">关联缺陷</div>
+              <div>总数: {{ linkedDefectsForHover.length }}</div>
+              <div>
+                未解决:
+                <span :class="unresolvedLinkedDefectsForHover.length ? 'text-red-600 font-medium' : 'text-emerald-600 font-medium'">
+                  {{ unresolvedLinkedDefectsForHover.length }}
+                </span>
+              </div>
+              <div v-if="linkedDefectsForHover.length" class="mt-1 max-h-24 overflow-auto space-y-1">
+                <div
+                  v-for="item in linkedDefectsForHover.slice(0, 5)"
+                  :key="item.defect_id"
+                  class="text-[11px] bg-white border border-zinc-200 rounded px-2 py-1"
+                >
+                  <span class="font-mono text-zinc-500">{{ item.defect_id }}</span>
+                  <span class="mx-1">·</span>
+                  <span>{{ item.title }}</span>
+                  <span class="mx-1">·</span>
+                  <span>{{ item.status }}</span>
+                </div>
+              </div>
+              <button
+                class="mt-2 inline-flex items-center gap-1 rounded border border-zinc-300 px-2 py-1 text-[11px] text-zinc-700 hover:bg-zinc-100"
+                @click="gotoDefectsWithRequirement"
+              >
+                提交/查看该需求缺陷
+              </button>
+            </div>
           </div>
         </section>
 
@@ -975,5 +1093,3 @@ onMounted(loadProjects)
     </div>
   </div>
 </template>
-
-

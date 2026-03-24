@@ -21,6 +21,7 @@ import RequirementAgentChat from '../views/alpha/RequirementAgentChat.vue'
 import ConflictAgentChat from '../views/alpha/ConflictAgentChat.vue'
 import SessionControllerAgentChat from '../views/alpha/SessionControllerAgentChat.vue'
 import ImageCaptionPreview from '../views/alpha/ImageCaptionPreview.vue'
+import DefectsWorkbench from '../views/alpha/DefectsWorkbench.vue'
 
 // Main views (migrated from frontend_ref)
 import LoginView from '../views/beta/LoginView.vue'
@@ -37,6 +38,7 @@ import AccountView from '../views/beta/AccountView.vue'
 import UserManageView from '../views/beta/UserManageView.vue'
 import TopologyEditorView from '../views/beta/TopologyEditorView.vue'
 import MultimodalIngestionView from '../views/beta/MultimodalIngestionView.vue'
+import DefectsView from '../views/beta/DefectsView.vue'
 import AsrTranscription from '../views/alpha/AsrTranscription.vue'
 import AsrTranscriptionView from '../views/beta/AsrTranscriptionView.vue'
 import ReviewView from '../views/beta/ReviewView.vue'
@@ -127,6 +129,12 @@ const router = createRouter({
                     meta: { requiresAuth: true }
                 },
 
+                {
+                    path: 'defects',
+                    name: 'beta-defects',
+                    component: DefectsView,
+                    meta: { requiresAuth: true }
+                },
                 {
                     path: 'asr',
                     name: 'beta-asr',
@@ -225,6 +233,11 @@ const router = createRouter({
                     name: 'requirements-manage-table',
                     component: RequirementsManageTableDebug,
                     meta: { keepAlive: true }
+                },
+                {
+                    path: 'defects',
+                    name: 'alpha-defects',
+                    component: DefectsWorkbench
                 },
                 {
                     path: 'traceability',

@@ -29,6 +29,12 @@ api.interceptors.response.use(
                 window.location.href = '/beta/login'
             }
         }
+        const detail = err.response?.data?.detail
+        if (typeof detail === 'string' && detail.trim()) {
+            err.message = detail
+        } else if (Array.isArray(detail) && detail.length > 0) {
+            err.message = detail.map((item) => item?.msg || JSON.stringify(item)).join('; ')
+        }
         return Promise.reject(err)
     }
 )
