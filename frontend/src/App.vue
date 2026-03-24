@@ -2,6 +2,10 @@
 import { ref, computed } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import AlphaSidebar from '@/components/alpha/AlphaSidebar.vue'
+import SessionAssistantPanel from '@/components/beta/SessionAssistantPanel.vue'
+import { useAuthStore } from '@/stores/auth.js'
+
+const authStore = useAuthStore()
 
 const route = useRoute()
 
@@ -31,6 +35,7 @@ const isSidebarOpen = ref(true)
         :key="viewRoute.fullPath"
       />
     </RouterView>
+    <SessionAssistantPanel v-if="authStore.isAuthenticated" />
   </div>
 
   <!-- Guide route: Full-screen without sidebar -->
