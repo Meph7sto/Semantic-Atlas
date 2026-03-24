@@ -1466,20 +1466,10 @@ def get_traceability_coverage(
     current_user: Optional[dict] = Depends(get_current_user),
 ):
     _require_project_access(project_id, current_user)
-    return {
-        "project_id": project_id,
-        "branch_id": branch_id,
-        "coverage_summary": {
-            "total_requirements": 0,
-            "covered_requirements": 0,
-            "in_progress_requirements": 0,
-            "orphan_requirements": 0,
-            "unlinked_changes": 0,
-            "coverage_rate": 0.0,
-        },
-        "orphan_requirements": [],
-        "unlinked_changes": [],
-    }
+    try:
+        return _service.get_traceability_coverage(project_id, branch_id=branch_id)
+    except ValueError as e:
+        raise ErrorResponse(str(e), 404)
 
 
 @router.post("/projects/{project_id}/traceability/impact")

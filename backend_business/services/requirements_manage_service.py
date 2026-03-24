@@ -2468,6 +2468,77 @@ class RequirementsManageService:
             "branch_context": branch_context,
         }
 
+    def get_traceability_coverage(
+        self, project_id: str, branch_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError("项目不存在")
+
+        branches, selected_branch = self._resolve_traceability_branch(project_id, branch_id)
+        branch_context = self._build_traceability_branch_context(project_id, selected_branch)
+        test_links = self._load_requirement_test_links(project_id)
+        link_map = self._index_traceability_records(test_links, "requirement_id")
+        changes = self.list_change_sets(selected_branch["ref_id"]) if selected_branch else []
+
+        requirements: List[Dict[str, Any]]
+        if branch_context and branch_context.get("head_milestone"):
+            milestone = self.get_milestone(
+                branch_context["head_milestone"]["milestone_id"],
+                include_nodes=True,
+            )
+            requirements = [
+                dict(node.get("snapshot_data") or {})
+                for node in (milestone or {}).get("nodes", [])
+            ]
+        else:
+            requirements = self.list_requirements(project_id)
+
+        requirements = [req for req in requirements if req.get("req_id")]
+        requirement_map = {req["req_id"]: req for req in requirements}
+        orphan_requirements = [
+            req
+            for req in requirements
+            if req.get("status") == "in_progress" and not link_map.get(req["req_id"])
+        ]
+        unlinked_changes = [
+            change
+            for change in changes
+            if not change.get("requirement_id")
+            or change.get("requirement_id") not in requirement_map
+        ]
+
+        total_requirements = len(requirements)
+        covered_requirements = len(
+            [req for req in requirements if link_map.get(req["req_id"])]
+        )
+        in_progress_requirements = len(
+            [req for req in requirements if req.get("status") == "in_progress"]
+        )
+        coverage_rate = (
+            round(covered_requirements / total_requirements, 4)
+            if total_requirements
+            else 0.0
+        )
+
+        return {
+            "project": project,
+            "project_id": project_id,
+            "branch_id": selected_branch.get("ref_id") if selected_branch else None,
+            "branches": branches,
+            "branch_context": branch_context,
+            "coverage_summary": {
+                "total_requirements": total_requirements,
+                "covered_requirements": covered_requirements,
+                "in_progress_requirements": in_progress_requirements,
+                "orphan_requirements": len(orphan_requirements),
+                "unlinked_changes": len(unlinked_changes),
+                "coverage_rate": coverage_rate,
+            },
+            "orphan_requirements": orphan_requirements,
+            "unlinked_changes": unlinked_changes,
+        }
+
     def add_change_set(
         self,
         branch_id: str,

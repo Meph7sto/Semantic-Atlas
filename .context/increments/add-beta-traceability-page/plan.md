@@ -167,7 +167,7 @@ superspec commit --summary "Add traceability overview and matrix aggregation" --
 - Modify: `backend_business/api/routers/manage.py`
 - Test: `backend_business/tests/` relevant service and API tests
 
-- [ ] **Step 1: Write failing tests for orphan requirement and unlinked change detection**
+- [x] **Step 1: Write failing tests for orphan requirement and unlinked change detection**
 
 Cover:
 - `in_progress` requirement with no test link
@@ -175,23 +175,23 @@ Cover:
 - change set with missing requirement reference
 - change set with null requirement reference
 
-- [ ] **Step 2: Implement `get_traceability_coverage`**
+- [x] **Step 2: Implement `get_traceability_coverage`**
 
 Return:
 - coverage summary
 - orphan requirements
 - unlinked changes
 
-- [ ] **Step 3: Wire the coverage endpoint**
+- [x] **Step 3: Wire the coverage endpoint**
 
 Expose the service result through the additive router endpoint.
 
-- [ ] **Step 4: Run targeted tests**
+- [x] **Step 4: Run targeted tests**
 
 Run: `pytest backend_business/tests -k "traceability and coverage" -q`
 Expected: coverage-specific tests pass
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend_business/services/requirements_manage_service.py backend_business/api/routers/manage.py backend_business/tests
