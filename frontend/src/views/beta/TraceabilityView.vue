@@ -20,7 +20,9 @@
           </div>
           <div class="page-actions">
             <button type="button" class="action-btn white" @click="refreshContext">刷新上下文</button>
-            <button type="button" class="action-btn brown">触发影响分析</button>
+            <button type="button" class="action-btn brown" :disabled="triggeringImpact || !selectedBranchId" @click="triggerImpactAnalysis()">
+              {{ triggeringImpact ? '分析中…' : '触发影响分析' }}
+            </button>
           </div>
         </section>
 
@@ -34,6 +36,25 @@
               <span class="chip-neutral small">
                 {{ selectedProject?.name || '未选择项目' }} / {{ selectedBranch?.branch_name || '未选择分支' }}
               </span>
+            </div>
+
+            <div v-if="overview?.summary" class="traceability-summary">
+              <div class="traceability-summary-card">
+                <span>需求快照</span>
+                <strong>{{ overview.summary.requirement_count }}</strong>
+              </div>
+              <div class="traceability-summary-card">
+                <span>测试用例</span>
+                <strong>{{ overview.summary.test_case_count }}</strong>
+              </div>
+              <div class="traceability-summary-card">
+                <span>变更集</span>
+                <strong>{{ overview.summary.change_count }}</strong>
+              </div>
+              <div class="traceability-summary-card">
+                <span>审计事件</span>
+                <strong>{{ overview.summary.audit_count }}</strong>
+              </div>
             </div>
 
             <div class="traceability-toolbar">
@@ -76,7 +97,7 @@
             </div>
 
             <div class="traceability-panel">
-              <template v-if="loadingProjects">
+              <template v-if="loadingProjects || loadingOverview">
                 <div class="traceability-state">正在加载追踪工作台上下文…</div>
               </template>
               <template v-else-if="!selectedProjectId">
@@ -86,14 +107,34 @@
                 <div class="traceability-state">当前项目暂无分支，请先创建分支后再进入追踪页。</div>
               </template>
               <template v-else>
-                <div class="traceability-placeholder">
+                <TraceabilityMatrixPanel
+                  v-if="activeTab === 'matrix'"
+                  :data="matrixData"
+                  :loading="loadingPanel"
+                />
+                <TraceabilityCoveragePanel
+                  v-else-if="activeTab === 'coverage'"
+                  :data="coverageData"
+                  :loading="loadingPanel"
+                />
+                <TraceabilityImpactPanel
+                  v-else-if="activeTab === 'impact'"
+                  :data="impactData"
+                  :loading="loadingPanel && !impactData"
+                  :triggering="triggeringImpact"
+                  @trigger="triggerImpactAnalysis"
+                />
+                <TraceabilityRiskPanel
+                  v-else-if="activeTab === 'risk'"
+                  :data="riskData"
+                  :loading="loadingPanel"
+                />
+                <div v-else class="traceability-placeholder">
                   <div>
                     <p class="card-kicker">Active Tab</p>
                     <h3 class="section-title">{{ activeTabLabel }}</h3>
                   </div>
-                  <p>
-                    页面骨架已就绪。后续 task 会分别接入追溯矩阵、覆盖检查、影响分析和风险透视的真实聚合数据。
-                  </p>
+                  <p>当前标签的真实面板会在后续 task 中接入。</p>
                 </div>
               </template>
             </div>
@@ -107,6 +148,10 @@
 <script setup>
 import { computed } from 'vue'
 import Sidebar from '../../components/beta/Sidebar.vue'
+import TraceabilityMatrixPanel from '../../components/beta/traceability/TraceabilityMatrixPanel.vue'
+import TraceabilityCoveragePanel from '../../components/beta/traceability/TraceabilityCoveragePanel.vue'
+import TraceabilityImpactPanel from '../../components/beta/traceability/TraceabilityImpactPanel.vue'
+import TraceabilityRiskPanel from '../../components/beta/traceability/TraceabilityRiskPanel.vue'
 import { useBetaNavigation, useBetaSidebarProps } from '@/composables/useBetaNavigation'
 import { useTraceabilityWorkbench } from '@/composables/useTraceabilityWorkbench'
 
@@ -115,17 +160,26 @@ const { roleType, roleLabel, timestamp, notificationCount } = useBetaSidebarProp
 const {
   activeTab,
   branches,
+  coverageData,
   errorMessage,
+  impactData,
+  loadingOverview,
+  loadingPanel,
   loadingBranches,
   loadingProjects,
+  matrixData,
+  overview,
   projects,
   refreshContext,
+  riskData,
   selectedBranch,
   selectedBranchId,
   selectedProject,
   selectedProjectId,
   selectTab,
   tabs,
+  triggerImpactAnalysis,
+  triggeringImpact,
 } = useTraceabilityWorkbench()
 
 const activeTabLabel = computed(() =>
@@ -143,6 +197,28 @@ const activeTabLabel = computed(() =>
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 260px));
   gap: 16px;
+}
+
+.traceability-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.traceability-summary-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid rgba(28, 40, 52, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.traceability-summary-card span {
+  color: rgba(28, 40, 52, 0.62);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .traceability-field {
@@ -196,6 +272,7 @@ const activeTabLabel = computed(() =>
 }
 
 @media (max-width: 900px) {
+  .traceability-summary,
   .traceability-toolbar {
     grid-template-columns: 1fr;
   }

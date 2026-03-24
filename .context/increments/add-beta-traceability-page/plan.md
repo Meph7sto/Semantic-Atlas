@@ -328,7 +328,7 @@ superspec commit --summary "Add frontend traceability API bindings" --next $'Imp
 - Create: `frontend/src/components/beta/traceability/TraceabilityCoveragePanel.vue`
 - Optional Create: shared traceability panel components
 
-- [ ] **Step 1: Write the failing UI expectations**
+- [x] **Step 1: Write the failing UI expectations**
 
 Cover:
 - tab rendering
@@ -337,7 +337,7 @@ Cover:
 - coverage cards
 - orphan and unlinked-change lists
 
-- [ ] **Step 2: Build the matrix panel**
+- [x] **Step 2: Build the matrix panel**
 
 Render:
 - hierarchical requirement rows
@@ -346,19 +346,19 @@ Render:
 - change and audit counts
 - selection detail panel
 
-- [ ] **Step 3: Build the coverage panel**
+- [x] **Step 3: Build the coverage panel**
 
 Render:
 - summary cards
 - orphan requirements list
 - unlinked changes list
 
-- [ ] **Step 4: Verify build**
+- [x] **Step 4: Verify build**
 
 Run: `npm run build`
 Expected: matrix and coverage UI compiles cleanly
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/views/beta/TraceabilityView.vue frontend/src/components/beta/traceability
