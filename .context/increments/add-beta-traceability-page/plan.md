@@ -52,7 +52,7 @@ superspec commit --summary "Add beta traceability navigation entry" --next $'Bui
 - Check: `frontend/src/views/beta/ProductManageView.vue`
 - Check: `frontend/src/views/beta/RequirementsView.vue`
 
-- [ ] **Step 1: Write the failing UI target**
+- [x] **Step 1: Write the failing UI target**
 
 Define the page shell requirements:
 - Beta layout
@@ -61,7 +61,7 @@ Define the page shell requirements:
 - tab state
 - loading and empty states
 
-- [ ] **Step 2: Add the composable skeleton**
+- [x] **Step 2: Add the composable skeleton**
 
 Create a composable to manage:
 - selected project
@@ -69,16 +69,16 @@ Create a composable to manage:
 - active tab
 - loading and error state
 
-- [ ] **Step 3: Add the new view**
+- [x] **Step 3: Add the new view**
 
 Create `TraceabilityView.vue` using current Beta layout classes and wire it to the composable.
 
-- [ ] **Step 4: Verify the page compiles**
+- [x] **Step 4: Verify the page compiles**
 
 Run: `npm run build`
 Expected: frontend build passes with the new page shell
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/views/beta/TraceabilityView.vue frontend/src/composables/useTraceabilityWorkbench.js
