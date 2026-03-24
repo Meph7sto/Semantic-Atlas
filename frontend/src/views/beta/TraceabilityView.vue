@@ -27,7 +27,7 @@
         </section>
 
         <section class="grid" data-animate style="--delay: 0.1s">
-          <div class="card traceability-shell">
+          <div class="card wide traceability-shell">
             <div class="card-header no-border">
               <div>
                 <p class="card-kicker">Traceability Context</p>

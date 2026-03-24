@@ -2577,6 +2577,80 @@ class RequirementsManageService:
                 row = cur.fetchone()
                 return row[0] if row else None
 
+    def _ensure_manage_branch_record(
+        self, project_id: str, branch: Optional[Dict[str, Any]]
+    ) -> str:
+        if not branch:
+            raise ValueError("分支不存在")
+
+        branch_ref_id = branch.get("ref_id")
+        branch_name = branch.get("branch_name") or branch.get("ref_name")
+        if not branch_ref_id or not branch_name:
+            raise ValueError("分支信息不完整")
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT branch_id
+                    FROM manage_branches
+                    WHERE branch_id = %s
+                    """,
+                    (branch_ref_id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    return row["branch_id"]
+
+                cur.execute(
+                    """
+                    SELECT branch_id
+                    FROM manage_branches
+                    WHERE project_id = %s AND name = %s
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (project_id, branch_name),
+                )
+                row = cur.fetchone()
+                if row:
+                    return row["branch_id"]
+
+                base_milestone_id = branch.get("base_milestone_id") or branch.get(
+                    "milestone_id"
+                )
+                if not base_milestone_id:
+                    raise ValueError("分支缺少基准里程碑，无法写入影响分析记录")
+
+                metadata = {
+                    "source": "traceability_branch_backfill",
+                    "head_milestone_id": branch.get("head_milestone_id")
+                    or branch.get("milestone_id")
+                    or base_milestone_id,
+                }
+                cur.execute(
+                    """
+                    INSERT INTO manage_branches (
+                        branch_id, project_id, base_milestone_id, name, status, created_by, created_at, updated_at, metadata
+                    )
+                    VALUES (%s, %s, %s, %s, 'active', %s, NOW(), NOW(), %s::jsonb)
+                    ON CONFLICT (branch_id) DO NOTHING
+                    RETURNING branch_id
+                    """,
+                    (
+                        branch_ref_id,
+                        project_id,
+                        base_milestone_id,
+                        branch_name,
+                        branch.get("created_by"),
+                        json.dumps(metadata),
+                    ),
+                )
+                row = cur.fetchone()
+                if row:
+                    return row["branch_id"]
+                return branch_ref_id
+
     def create_traceability_impact_report(
         self,
         project_id: str,
@@ -2592,6 +2666,7 @@ class RequirementsManageService:
         _, selected_branch = self._resolve_traceability_branch(project_id, branch_id)
         if not selected_branch:
             raise ValueError("分支不存在")
+        persisted_branch_id = self._ensure_manage_branch_record(project_id, selected_branch)
 
         branch_context = self._build_traceability_branch_context(project_id, selected_branch)
         head_milestone = (branch_context or {}).get("head_milestone")
@@ -2738,7 +2813,7 @@ class RequirementsManageService:
                     """,
                     (
                         report_id,
-                        branch_id,
+                        persisted_branch_id,
                         summary,
                         json.dumps(detail),
                         status,

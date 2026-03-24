@@ -1,7 +1,7 @@
 <template>
-  <div class="matrix-panel">
-    <div class="matrix-toolbar">
-      <label class="matrix-filter">
+  <div class="trace-matrix-panel">
+    <div class="trace-matrix-toolbar">
+      <label class="trace-matrix-filter">
         <span>状态筛选</span>
         <select v-model="statusFilter" class="select-clean">
           <option value="">全部状态</option>
@@ -14,73 +14,93 @@
         </select>
       </label>
 
-      <label class="matrix-filter matrix-filter--search">
+      <label class="trace-matrix-filter trace-matrix-filter--search">
         <span>关键词</span>
         <input v-model="keyword" type="text" class="search-input full-width" placeholder="搜索需求标题 / ID" />
       </label>
     </div>
 
-    <div v-if="loading" class="matrix-state">正在加载追溯矩阵…</div>
-    <div v-else-if="!flattenedRows.length" class="matrix-state">当前分支没有可展示的需求快照。</div>
-    <div v-else class="matrix-layout">
-      <div class="matrix-table">
-        <div class="matrix-header">
-          <span>需求</span>
-          <span>状态</span>
-          <span>测试</span>
-          <span>变更</span>
-          <span>审计</span>
-        </div>
-        <button
-          v-for="row in flattenedRows"
-          :key="row.requirement.req_id"
-          type="button"
-          class="matrix-row"
-          :class="{ active: row.requirement.req_id === selectedRequirementId }"
-          @click="selectedRequirementId = row.requirement.req_id"
-        >
-          <div class="matrix-title-cell" :style="{ '--depth': row.depth }">
-            <strong>{{ row.requirement.title || row.requirement.req_id }}</strong>
-            <span class="matrix-subtitle">{{ row.requirement.req_id }}</span>
-          </div>
-          <span>{{ row.requirement.status || '-' }}</span>
-          <span>{{ row.traceability.test_case_count }}</span>
-          <span>{{ row.traceability.change_count }}</span>
-          <span>{{ row.traceability.audit_count }}</span>
-        </button>
-      </div>
+    <div v-if="loading" class="trace-matrix-state">正在加载追溯矩阵…</div>
+    <div v-else-if="!flattenedRows.length" class="trace-matrix-state">当前分支没有可展示的需求快照。</div>
+    <div v-else class="trace-matrix-stack">
+      <div class="trace-matrix-table">
+        <table class="trace-matrix-native-table">
+          <colgroup>
+            <col class="trace-matrix-col-title" />
+            <col class="trace-matrix-col-meta" />
+            <col class="trace-matrix-col-flag" />
+            <col class="trace-matrix-col-flag" />
+            <col class="trace-matrix-col-flag" />
+          </colgroup>
+          <thead>
+            <tr class="trace-matrix-header-row">
+              <th scope="col">需求</th>
+              <th scope="col" class="trace-matrix-column-label">状态</th>
+              <th scope="col" class="trace-matrix-column-label">测试</th>
+              <th scope="col" class="trace-matrix-column-label">变更</th>
+              <th scope="col" class="trace-matrix-column-label">审计</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template v-for="row in flattenedRows" :key="row.requirement.req_id">
+              <tr
+                class="trace-matrix-data-row"
+                :class="{ active: row.requirement.req_id === selectedRequirementId }"
+                tabindex="0"
+                @click="toggleRequirement(row.requirement.req_id)"
+                @keydown.enter.prevent="toggleRequirement(row.requirement.req_id)"
+                @keydown.space.prevent="toggleRequirement(row.requirement.req_id)"
+              >
+                <td>
+                  <div class="trace-matrix-title-cell" :style="{ '--depth': row.depth }">
+                    <strong>{{ row.requirement.title || row.requirement.req_id }}</strong>
+                    <span class="trace-matrix-subtitle">{{ row.requirement.req_id }}</span>
+                  </div>
+                </td>
+                <td class="trace-matrix-column-value">{{ row.requirement.status || '-' }}</td>
+                <td class="trace-matrix-column-value">{{ toBooleanLabel(row.traceability.test_case_count) }}</td>
+                <td class="trace-matrix-column-value">{{ toBooleanLabel(row.traceability.change_count) }}</td>
+                <td class="trace-matrix-column-value">{{ toBooleanLabel(row.traceability.audit_count) }}</td>
+              </tr>
+              <tr v-if="row.requirement.req_id === selectedRequirementId" class="trace-matrix-inline-detail-row">
+                <td colspan="5" class="trace-matrix-inline-detail-cell">
+                  <div class="trace-matrix-detail trace-matrix-detail--inline">
+                    <div class="trace-matrix-detail-card">
+                      <p class="card-kicker">Requirement Detail</p>
+                      <h3 class="section-title">{{ row.requirement.title || row.requirement.req_id }}</h3>
+                      <p>{{ row.requirement.description || '暂无描述' }}</p>
+                    </div>
 
-      <div class="matrix-detail">
-        <template v-if="selectedRequirement">
-          <div class="detail-card">
-            <p class="card-kicker">Requirement Detail</p>
-            <h3 class="section-title">{{ selectedRequirement.title || selectedRequirement.req_id }}</h3>
-            <p>{{ selectedRequirement.description || '暂无描述' }}</p>
-          </div>
+                    <div class="trace-matrix-detail-grid">
+                      <div class="trace-matrix-detail-card">
+                        <p class="card-kicker">Traceability</p>
+                        <div class="trace-matrix-detail-list">
+                          <span>状态：{{ row.requirement.status || '-' }}</span>
+                          <span>测试绑定：{{ toBooleanLabel(row.traceability.test_case_count) }}</span>
+                          <span>关联变更：{{ toBooleanLabel(row.traceability.change_count) }}</span>
+                          <span>关联审计：{{ toBooleanLabel(row.traceability.audit_count) }}</span>
+                        </div>
+                      </div>
 
-          <div class="detail-grid">
-            <div class="detail-card">
-              <p class="card-kicker">Traceability</p>
-              <div class="detail-list">
-                <span>状态：{{ selectedRequirement.status || '-' }}</span>
-                <span>测试绑定：{{ selectedTraceability.test_case_count }}</span>
-                <span>关联变更：{{ selectedTraceability.change_count }}</span>
-                <span>关联审计：{{ selectedTraceability.audit_count }}</span>
-              </div>
-            </div>
-
-            <div class="detail-card">
-              <p class="card-kicker">Bound Tests</p>
-              <div class="detail-list">
-                <span v-for="testCase in selectedTests" :key="testCase.test_case_id">
-                  {{ testCase.title || testCase.test_case_id }}
-                </span>
-                <span v-if="!selectedTests.length">暂无测试绑定</span>
-              </div>
-            </div>
-          </div>
-        </template>
-        <div v-else class="matrix-state">选择一条需求以查看右侧追踪明细。</div>
+                      <div class="trace-matrix-detail-card">
+                        <p class="card-kicker">Bound Tests</p>
+                        <div class="trace-matrix-detail-list">
+                          <span
+                            v-for="testCase in getTestsForTraceability(row.traceability)"
+                            :key="testCase.test_case_id"
+                          >
+                            {{ testCase.title || testCase.test_case_id }}
+                          </span>
+                          <span v-if="!getTestsForTraceability(row.traceability).length">暂无测试绑定</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -130,49 +150,44 @@ const flattenedRows = computed(() => {
   return rows
 })
 
-const selectedRequirement = computed(() =>
-  flattenedRows.value.find((row) => row.requirement.req_id === selectedRequirementId.value)?.requirement || null,
-)
-
-const selectedTraceability = computed(() =>
-  flattenedRows.value.find((row) => row.requirement.req_id === selectedRequirementId.value)?.traceability || {
-    test_case_count: 0,
-    change_count: 0,
-    audit_count: 0,
-    test_case_ids: [],
-  },
-)
-
-const selectedTests = computed(() =>
-  (selectedTraceability.value.test_case_ids || [])
+function getTestsForTraceability(traceability) {
+  return (traceability?.test_case_ids || [])
     .map((id) => testCaseMap.value[id])
-    .filter(Boolean),
-)
+    .filter(Boolean)
+}
+
+function toggleRequirement(reqId) {
+  selectedRequirementId.value = selectedRequirementId.value === reqId ? '' : reqId
+}
+
+function toBooleanLabel(value) {
+  return Number(value) > 0 ? 'True' : 'False'
+}
 
 watch(flattenedRows, (rows) => {
   if (!rows.length) {
     selectedRequirementId.value = ''
     return
   }
-  if (!rows.some((row) => row.requirement.req_id === selectedRequirementId.value)) {
-    selectedRequirementId.value = rows[0].requirement.req_id
+  if (selectedRequirementId.value && !rows.some((row) => row.requirement.req_id === selectedRequirementId.value)) {
+    selectedRequirementId.value = ''
   }
 }, { immediate: true })
 </script>
 
 <style scoped>
-.matrix-panel {
+.trace-matrix-panel {
   display: grid;
   gap: 18px;
 }
 
-.matrix-toolbar {
+.trace-matrix-toolbar {
   display: grid;
   grid-template-columns: 180px minmax(0, 1fr);
   gap: 14px;
 }
 
-.matrix-filter {
+.trace-matrix-filter {
   display: grid;
   gap: 8px;
   font-size: 12px;
@@ -181,34 +196,46 @@ watch(flattenedRows, (rows) => {
   letter-spacing: 0.08em;
 }
 
-.matrix-filter--search {
+.trace-matrix-filter--search {
   min-width: 0;
 }
 
-.matrix-layout {
+.trace-matrix-stack {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.8fr);
   gap: 18px;
 }
 
-.matrix-table,
-.matrix-detail,
-.detail-card {
+.trace-matrix-table,
+.trace-matrix-detail,
+.trace-matrix-detail-card {
   border: 1px solid rgba(28, 40, 52, 0.1);
   border-radius: 20px;
   background: rgba(255, 255, 255, 0.92);
 }
 
-.matrix-header,
-.matrix-row {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) 120px 80px 80px 80px;
-  gap: 12px;
-  align-items: center;
-  padding: 14px 16px;
+.trace-matrix-table {
+  overflow: hidden;
 }
 
-.matrix-header {
+.trace-matrix-native-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.trace-matrix-col-title {
+  width: 58%;
+}
+
+.trace-matrix-col-meta {
+  width: 12%;
+}
+
+.trace-matrix-col-flag {
+  width: 10%;
+}
+
+.trace-matrix-header-row {
   font-size: 12px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -216,74 +243,121 @@ watch(flattenedRows, (rows) => {
   border-bottom: 1px solid rgba(28, 40, 52, 0.08);
 }
 
-.matrix-row {
-  width: 100%;
-  border: none;
-  border-bottom: 1px solid rgba(28, 40, 52, 0.06);
-  background: transparent;
+.trace-matrix-header-row th,
+.trace-matrix-data-row td {
+  padding: 14px 16px;
+  vertical-align: top;
+}
+
+.trace-matrix-header-row th:first-child {
   text-align: left;
+}
+
+.trace-matrix-data-row {
+  border-bottom: 1px solid rgba(28, 40, 52, 0.06);
   cursor: pointer;
 }
 
-.matrix-row:last-child {
+.trace-matrix-data-row:last-child {
   border-bottom: none;
 }
 
-.matrix-row.active {
+.trace-matrix-data-row.active {
   background: rgba(28, 40, 52, 0.06);
 }
 
-.matrix-title-cell {
+.trace-matrix-data-row:focus-visible {
+  outline: 2px solid rgba(28, 40, 52, 0.26);
+  outline-offset: -2px;
+}
+
+.trace-matrix-title-cell {
   display: grid;
   gap: 4px;
+  min-width: 0;
   padding-left: calc(var(--depth, 0) * 16px);
 }
 
-.matrix-subtitle {
-  font-size: 12px;
-  color: rgba(28, 40, 52, 0.54);
+.trace-matrix-title-cell strong {
+  line-height: 1.5;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
-.matrix-detail {
+.trace-matrix-subtitle {
+  font-size: 12px;
+  color: rgba(28, 40, 52, 0.54);
+  word-break: break-all;
+}
+
+.trace-matrix-column-label,
+.trace-matrix-column-value {
+  text-align: center;
+}
+
+.trace-matrix-column-label {
+  white-space: nowrap;
+}
+
+.trace-matrix-column-value {
+  padding-top: 1px;
+  white-space: nowrap;
+}
+
+.trace-matrix-detail {
   padding: 18px;
   display: grid;
   gap: 14px;
 }
 
-.detail-grid {
+.trace-matrix-detail--inline {
+  padding: 0;
+}
+
+.trace-matrix-inline-detail-row {
+  background: rgba(28, 40, 52, 0.03);
+}
+
+.trace-matrix-inline-detail-cell {
+  padding: 0;
+  border-bottom: 1px solid rgba(28, 40, 52, 0.06);
+}
+
+.trace-matrix-detail-grid {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
 
-.detail-card {
+.trace-matrix-detail-card {
   padding: 16px;
 }
 
-.detail-list {
+.trace-matrix-detail-list {
   display: grid;
   gap: 8px;
   color: rgba(28, 40, 52, 0.74);
 }
 
-.matrix-state {
+.trace-matrix-state {
   color: rgba(28, 40, 52, 0.72);
 }
 
-@media (max-width: 1100px) {
-  .matrix-layout {
-    grid-template-columns: 1fr;
-  }
-}
-
 @media (max-width: 780px) {
-  .matrix-toolbar {
+  .trace-matrix-toolbar {
     grid-template-columns: 1fr;
   }
 
-  .matrix-header,
-  .matrix-row {
-    grid-template-columns: minmax(0, 1.6fr) repeat(4, minmax(56px, 1fr));
-    font-size: 12px;
+  .trace-matrix-table {
+    overflow-x: auto;
+  }
+
+  .trace-matrix-native-table {
+    min-width: 620px;
+  }
+
+  .trace-matrix-detail-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>
