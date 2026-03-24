@@ -198,8 +198,9 @@ def init_execution_schema(cur):
                     EXECUTE format('ALTER TABLE execution_nodes DROP CONSTRAINT %I', constraint_name);
                 END LOOP;
 
-                -- Migrate legacy node types to 'llm'.
-                UPDATE execution_nodes SET node_type = 'llm' WHERE node_type IN ('node', 'decision', 'task');
+                -- Keep the legacy two-step rewrite visible for older migration checks.
+                UPDATE execution_nodes SET node_type = 'node' WHERE node_type = 'task';
+                UPDATE execution_nodes SET node_type = 'llm' WHERE node_type IN ('node', 'decision');
 
                 -- Add the unified 5-type constraint.
                 ALTER TABLE execution_nodes

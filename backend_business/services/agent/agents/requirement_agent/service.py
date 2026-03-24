@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from collections.abc import Generator
 from typing import Any
@@ -77,6 +78,16 @@ class RequirementAgentChatService:
                 )
         return hydrated
 
+    @staticmethod
+    def _call_compatible(method: Any, /, **kwargs: Any) -> Any:
+        signature = inspect.signature(method)
+        if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()):
+            return method(**kwargs)
+        compatible_kwargs = {
+            key: value for key, value in kwargs.items() if key in signature.parameters
+        }
+        return method(**compatible_kwargs)
+
     def _resolve_session_graph_target(
         self,
         *,
@@ -116,18 +127,25 @@ class RequirementAgentChatService:
     ) -> dict[str, Any]:
         if not self.chat_storage:
             raise RuntimeError("AI chat storage not initialized")
-        session = self.chat_storage.get_or_create_session(user_id=user_id, project_id=project_id, agent_type=self.AGENT_TYPE)
+        session = self._call_compatible(
+            self.chat_storage.get_or_create_session,
+            user_id=user_id,
+            project_id=project_id,
+            agent_type=self.AGENT_TYPE,
+        )
         if prompt_payload_format:
             normalized_format = normalize_prompt_payload_format(prompt_payload_format)
             if session.get("prompt_payload_format") != normalized_format:
-                self.chat_storage.update_session(
+                self._call_compatible(
+                    self.chat_storage.update_session,
                     session_id=session["session_id"],
                     prompt_payload_format=normalized_format,
                 )
                 session["prompt_payload_format"] = normalized_format
         if context_mode and context_mode in ("full", "incremental", "scratchpad"):
             if session.get("context_mode") != context_mode:
-                self.chat_storage.update_session(
+                self._call_compatible(
+                    self.chat_storage.update_session,
                     session_id=session["session_id"],
                     context_mode=context_mode,
                 )
@@ -147,7 +165,8 @@ class RequirementAgentChatService:
             raise RuntimeError("AI chat storage not initialized")
         normalized_format = normalize_prompt_payload_format(prompt_payload_format)
         normalized_context_mode = context_mode if context_mode in ("full", "incremental", "scratchpad") else "full"
-        session = self.chat_storage.create_session(
+        session = self._call_compatible(
+            self.chat_storage.create_session,
             user_id=user_id,
             project_id=project_id,
             title=title,
@@ -175,12 +194,15 @@ class RequirementAgentChatService:
         normalized_context_mode = None
         if context_mode is not None:
             normalized_context_mode = context_mode if context_mode in ("full", "incremental", "scratchpad") else "full"
-        self.chat_storage.update_session(
-            session_id=session_id,
-            title=title,
-            prompt_payload_format=normalized_format if prompt_payload_format is not None else ...,
-            context_mode=normalized_context_mode if context_mode is not None else ...,
-        )
+        update_kwargs: dict[str, Any] = {
+            "session_id": session_id,
+            "title": title,
+        }
+        if prompt_payload_format is not None:
+            update_kwargs["prompt_payload_format"] = normalized_format
+        if context_mode is not None:
+            update_kwargs["context_mode"] = normalized_context_mode
+        self._call_compatible(self.chat_storage.update_session, **update_kwargs)
         current = self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
         return self._hydrate_session_graph(current)
 
@@ -193,7 +215,8 @@ class RequirementAgentChatService:
     ) -> list[dict[str, Any]]:
         if not self.chat_storage:
             raise RuntimeError("AI chat storage not initialized")
-        sessions = self.chat_storage.list_sessions(
+        sessions = self._call_compatible(
+            self.chat_storage.list_sessions,
             user_id=user_id,
             project_id=project_id,
             limit=limit,
