@@ -17,27 +17,27 @@
 - Modify: `frontend/src/components/beta/Sidebar.vue`
 - Check: `frontend/src/composables/useBetaNavigation.js`
 
-- [ ] **Step 1: Inspect the current Beta route and sidebar keys**
+- [x] **Step 1: Inspect the current Beta route and sidebar keys**
 
 Run: `rg -n "beta-|activePage|navItemsConfig|Sidebar" frontend/src/router/index.js frontend/src/components/beta frontend/src/composables --glob '*.*'`
 Expected: existing route names and sidebar navigation keys are visible
 
-- [ ] **Step 2: Write the failing expectation**
+- [x] **Step 2: Write the failing expectation**
 
 Document the intended new route and sidebar key:
 - route name for Beta traceability page
 - sidebar label for the new workbench
 
-- [ ] **Step 3: Add the new route and sidebar entry**
+- [x] **Step 3: Add the new route and sidebar entry**
 
 Implement a new Beta route that points to `TraceabilityView.vue` and add one sidebar navigation item without changing unrelated menu behavior.
 
-- [ ] **Step 4: Verify route wiring**
+- [x] **Step 4: Verify route wiring**
 
 Run: `rg -n "traceability" frontend/src/router/index.js frontend/src/components/beta/Sidebar.vue`
 Expected: the new Beta route and sidebar entry are both present
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/router/index.js frontend/src/components/beta/Sidebar.vue

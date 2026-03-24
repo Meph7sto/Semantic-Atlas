@@ -28,6 +28,7 @@ const ROUTE_NAME_TO_PAGE_KEY = Object.freeze({
   'beta-defects': 'defects',
   'beta-user-manage': 'user-management',
   'beta-account': 'account',
+  'beta-traceability': 'tracking',
   'beta-reviews': 'reviews',
 })
 
@@ -43,6 +44,7 @@ const PAGE_KEY_TO_ROUTE_NAME = Object.freeze({
   'defects': 'beta-defects',
   'user-management': 'beta-user-manage',
   'account': 'beta-account',
+  'tracking': 'beta-traceability',
   'reviews': 'beta-reviews',
 })
 

@@ -43,6 +43,7 @@ import AsrTranscription from '../views/alpha/AsrTranscription.vue'
 import AsrTranscriptionView from '../views/beta/AsrTranscriptionView.vue'
 import ReviewView from '../views/beta/ReviewView.vue'
 import MyFilesView from '../views/beta/MyFilesView.vue'
+import TraceabilityView from '../views/beta/TraceabilityView.vue'
 
 // Guide view
 import GuideView from '../views/GuideView.vue'
@@ -167,6 +168,12 @@ const router = createRouter({
                     name: 'beta-topology-editor',
                     component: TopologyEditorView,
                     meta: { requiresAuth: true, keepAlive: true }
+                },
+                {
+                    path: 'traceability',
+                    name: 'beta-traceability',
+                    component: TraceabilityView,
+                    meta: { requiresAuth: true }
                 },
                 {
                     path: 'reviews',
