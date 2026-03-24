@@ -2747,6 +2747,96 @@ class RequirementsManageService:
                 )
                 return dict(cur.fetchone())
 
+    def get_traceability_risk(
+        self, project_id: str, branch_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError("项目不存在")
+
+        branches, selected_branch = self._resolve_traceability_branch(project_id, branch_id)
+        branch_context = self._build_traceability_branch_context(project_id, selected_branch)
+        test_links = self._load_requirement_test_links(project_id)
+        link_map = self._index_traceability_records(test_links, "requirement_id")
+        changes = self.list_change_sets(selected_branch["ref_id"]) if selected_branch else []
+        audits = self.list_audit_logs(project_id, limit=200)
+        change_map = self._index_traceability_records(changes, "requirement_id")
+        audit_map = self._index_traceability_records(audits, "target_id")
+
+        requirements: List[Dict[str, Any]]
+        if branch_context and branch_context.get("head_milestone"):
+            milestone = self.get_milestone(
+                branch_context["head_milestone"]["milestone_id"],
+                include_nodes=True,
+            )
+            requirements = [
+                dict(node.get("snapshot_data") or {})
+                for node in (milestone or {}).get("nodes", [])
+                if (node.get("snapshot_data") or {}).get("req_id")
+            ]
+        else:
+            requirements = self.list_requirements(project_id)
+
+        status_distribution: Dict[str, int] = {}
+        risk_rows: List[Dict[str, Any]] = []
+        uncovered_in_progress: List[Dict[str, Any]] = []
+
+        for requirement in requirements:
+            req_id = requirement.get("req_id")
+            status = requirement.get("status") or "unknown"
+            status_distribution[status] = status_distribution.get(status, 0) + 1
+            link_count = len(link_map.get(req_id, []))
+            change_count = len(change_map.get(req_id, []))
+            audit_count = len(audit_map.get(req_id, []))
+            risk_score = change_count + audit_count + (2 if status == "in_progress" and link_count == 0 else 0)
+            row = {
+                "requirement_id": req_id,
+                "title": requirement.get("title"),
+                "status": status,
+                "test_case_count": link_count,
+                "change_count": change_count,
+                "audit_count": audit_count,
+                "risk_score": risk_score,
+            }
+            risk_rows.append(row)
+            if status == "in_progress" and link_count == 0:
+                uncovered_in_progress.append(row)
+
+        frequently_changed_requirements = sorted(
+            [row for row in risk_rows if row.get("change_count", 0) > 0],
+            key=lambda item: (-item.get("change_count", 0), item.get("requirement_id") or ""),
+        )[:10]
+
+        active_audit_targets = sorted(
+            [
+                {
+                    "target_id": target_id,
+                    "audit_count": len(items),
+                    "latest_audit": items[0] if items else None,
+                }
+                for target_id, items in audit_map.items()
+            ],
+            key=lambda item: (-item.get("audit_count", 0), item.get("target_id") or ""),
+        )[:10]
+
+        high_risk_chains = sorted(
+            [row for row in risk_rows if row.get("risk_score", 0) > 0],
+            key=lambda item: (-item.get("risk_score", 0), item.get("requirement_id") or ""),
+        )[:10]
+
+        return {
+            "project": project,
+            "project_id": project_id,
+            "branch_id": selected_branch.get("ref_id") if selected_branch else None,
+            "branches": branches,
+            "branch_context": branch_context,
+            "status_distribution": status_distribution,
+            "uncovered_in_progress": uncovered_in_progress,
+            "frequently_changed_requirements": frequently_changed_requirements,
+            "active_audit_targets": active_audit_targets,
+            "high_risk_chains": high_risk_chains,
+        }
+
     def add_change_set(
         self,
         branch_id: str,

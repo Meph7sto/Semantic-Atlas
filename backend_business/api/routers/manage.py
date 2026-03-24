@@ -1503,12 +1503,7 @@ def get_traceability_risk(
     current_user: Optional[dict] = Depends(get_current_user),
 ):
     _require_project_access(project_id, current_user)
-    return {
-        "project_id": project_id,
-        "branch_id": branch_id,
-        "status_distribution": {},
-        "uncovered_in_progress": [],
-        "frequently_changed_requirements": [],
-        "active_audit_targets": [],
-        "high_risk_chains": [],
-    }
+    try:
+        return _service.get_traceability_risk(project_id, branch_id=branch_id)
+    except ValueError as e:
+        raise ErrorResponse(str(e), 404)

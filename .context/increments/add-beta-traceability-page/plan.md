@@ -256,7 +256,7 @@ superspec commit --summary "Implement real traceability impact reports" --next $
 - Modify: `backend_business/api/routers/manage.py`
 - Test: `backend_business/tests/` relevant service and API tests
 
-- [ ] **Step 1: Write failing tests for risk summaries**
+- [x] **Step 1: Write failing tests for risk summaries**
 
 Cover:
 - requirement status distribution
@@ -264,20 +264,20 @@ Cover:
 - frequently changed requirements
 - recently active audit targets
 
-- [ ] **Step 2: Implement `get_traceability_risk`**
+- [x] **Step 2: Implement `get_traceability_risk`**
 
 Aggregate risk-oriented summaries using already-computed traceability data where possible.
 
-- [ ] **Step 3: Wire the risk endpoint**
+- [x] **Step 3: Wire the risk endpoint**
 
 Return a page-ready management summary payload.
 
-- [ ] **Step 4: Run targeted tests**
+- [x] **Step 4: Run targeted tests**
 
 Run: `pytest backend_business/tests -k "traceability and risk" -q`
 Expected: risk tests pass
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend_business/services/requirements_manage_service.py backend_business/api/routers/manage.py backend_business/tests
