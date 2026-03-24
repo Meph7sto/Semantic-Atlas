@@ -68,6 +68,7 @@ class RuntimeGraphRecorder:
         self._container_config_map = {cfg.container_key: cfg for cfg in container_configs}
         self._containers: dict[str, str] = {}
         self._nodes: dict[str, StageNode] = {}
+        self._node_edge_ids: dict[str, list[str]] = {}
         self._seed_context_entries: list[dict[str, Any]] = []
         self._historical_node_context: list[dict[str, Any]] = []
         self._last_node_id: str | None = None
@@ -263,7 +264,7 @@ class RuntimeGraphRecorder:
         if child_stage.container_id == parent_stage.container_id:
             return
 
-        self._service.create_edge(
+        edge = self._service.create_edge(
             graph_id=self.graph_id,
             source_node_id=child_stage.node_id,
             target_node_id=parent_stage.node_id,
@@ -274,6 +275,8 @@ class RuntimeGraphRecorder:
             created_by=created_by,
         )
         self._edge_order += 1
+        self._node_edge_ids.setdefault(child_node_key, []).append(edge["edge_id"])
+        self._node_edge_ids.setdefault(parent_node_key, []).append(edge["edge_id"])
 
     def _ensure_containers(self, user_id: str) -> None:
         for order_index, container_config in enumerate(self._container_configs):
@@ -513,6 +516,7 @@ class RuntimeGraphRecorder:
                 subgraph_id=effective_subgraph_id,
             )
             self._nodes[node_key] = stage_node
+            self._node_edge_ids.setdefault(node_key, [])
 
             if self._last_node_id and edge_type_from_previous:
                 # Auto-detect same-container edges: use "seq" for intra-container flow
@@ -525,7 +529,7 @@ class RuntimeGraphRecorder:
                     if last_stage and last_stage.container_id == stage_node.container_id:
                         actual_edge_type = "seq"
 
-                self._service.create_edge(
+                edge = self._service.create_edge(
                     graph_id=self.graph_id,
                     source_node_id=self._last_node_id,
                     target_node_id=stage_node.node_id,
@@ -536,6 +540,7 @@ class RuntimeGraphRecorder:
                     created_by=created_by,
                 )
                 self._edge_order += 1
+                self._node_edge_ids.setdefault(node_key, []).append(edge["edge_id"])
 
         self._update_stage_config(
             stage_node=stage_node,
@@ -656,3 +661,66 @@ class RuntimeGraphRecorder:
             status="suspended",
             updated_by=created_by,
         )
+
+    def build_stage_event_data(
+        self,
+        node_key: str,
+        *,
+        status: str,
+        **extra: Any,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "graph_id": self.graph_id,
+            "node_key": node_key,
+            "status": status,
+        }
+        node = self._build_node_snapshot(node_key)
+        if node:
+            payload["node"] = node
+        edges = self._build_edge_snapshots(node_key)
+        if edges:
+            payload["edges"] = edges
+        payload.update(extra)
+        return payload
+
+    def build_tool_result_event_data(
+        self,
+        node_key: str,
+        *,
+        tool: str,
+        tool_call_id: str,
+        result: Any,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "graph_id": self.graph_id,
+            "node_key": node_key,
+            "tool": tool,
+            "tool_call_id": tool_call_id,
+            "result": result,
+        }
+        node = self._build_node_snapshot(node_key)
+        if node:
+            payload["node"] = node
+        return payload
+
+    def _build_node_snapshot(self, node_key: str) -> dict[str, Any] | None:
+        stage_node = self._nodes.get(node_key)
+        if stage_node is None:
+            return None
+        return self._service.get_node(stage_node.node_id)
+
+    def _build_edge_snapshots(self, node_key: str) -> list[dict[str, Any]]:
+        get_edge = getattr(self._service, "get_edge", None)
+        if not callable(get_edge):
+            return []
+        edge_ids = self._node_edge_ids.get(node_key) or []
+        edges: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for edge_id in edge_ids:
+            if edge_id in seen:
+                continue
+            seen.add(edge_id)
+            edge = get_edge(edge_id)
+            if edge:
+                edges.append(edge)
+        return edges

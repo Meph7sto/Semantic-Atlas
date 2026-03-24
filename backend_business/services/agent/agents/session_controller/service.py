@@ -421,11 +421,10 @@ class SessionControllerService:
             )
             yield {
                 "event": "stage",
-                "data": {
-                    "graph_id": recorder.graph_id,
-                    "node_key": recorder.stage_node_key("user_input"),
-                    "status": "succeeded",
-                },
+                "data": recorder.build_stage_event_data(
+                    recorder.stage_node_key("user_input"),
+                    status="succeeded",
+                ),
             }
 
             # Stage 2: Tool loop (intent + dispatch)
@@ -464,11 +463,10 @@ class SessionControllerService:
             )
             yield {
                 "event": "stage",
-                "data": {
-                    "graph_id": recorder.graph_id,
-                    "node_key": recorder.stage_node_key("conductor_reply"),
-                    "status": "running",
-                },
+                "data": recorder.build_stage_event_data(
+                    recorder.stage_node_key("conductor_reply"),
+                    status="running",
+                ),
             }
 
             final_system_prompt = (
@@ -509,11 +507,10 @@ class SessionControllerService:
             )
             yield {
                 "event": "stage",
-                "data": {
-                    "graph_id": recorder.graph_id,
-                    "node_key": recorder.stage_node_key("conductor_reply"),
-                    "status": "succeeded",
-                },
+                "data": recorder.build_stage_event_data(
+                    recorder.stage_node_key("conductor_reply"),
+                    status="succeeded",
+                ),
             }
 
             meta_patch = {

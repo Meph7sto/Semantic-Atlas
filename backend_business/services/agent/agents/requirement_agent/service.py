@@ -460,6 +460,35 @@ class RequirementAgentChatService:
         tool-loop nodes directly into its own execution graph rather than
         creating a separate child graph.
         """
+        gen = self.stream_inline_tool_loop(
+            recorder=recorder,
+            user_id=user_id,
+            user_message=user_message,
+            project_id=project_id,
+            requirement_id=requirement_id,
+            container_key=container_key,
+            node_key_prefix=node_key_prefix,
+        )
+        result: dict[str, Any] | None = None
+        try:
+            while True:
+                next(gen)
+        except StopIteration as stop:
+            result = stop.value or {}
+        return result
+
+    def stream_inline_tool_loop(
+        self,
+        *,
+        recorder: Any,
+        user_id: str,
+        user_message: str,
+        project_id: str,
+        requirement_id: str | None = None,
+        container_key: str = "requirement_agent",
+        node_key_prefix: str = "requirement_agent",
+    ) -> Generator[dict[str, Any], None, dict[str, Any]]:
+        """Stream inline tool-loop events within an external recorder."""
         runner = RequirementAgentToolLoopRunner(
             ai_proxy_client=self.ai_proxy,
             tools=self.tools,
@@ -470,7 +499,7 @@ class RequirementAgentChatService:
             stage_container_key=container_key,
             node_key_prefix=node_key_prefix,
         )
-        gen = runner.run(
+        result = yield from runner.run(
             recorder=recorder,
             user_id=user_id,
             user_message=user_message,
@@ -480,13 +509,6 @@ class RequirementAgentChatService:
             prompt_payload_format=DEFAULT_PROMPT_PAYLOAD_FORMAT,
             context_mode="full",
         )
-        result: dict[str, Any] | None = None
-        try:
-            while True:
-                next(gen)
-        except StopIteration as stop:
-            result = stop.value or {}
-
         context = result.get("context") or {}
         return {
             "status": "success",

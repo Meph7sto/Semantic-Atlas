@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -18,6 +19,14 @@ class ToolExecutorProtocol(Protocol):
         ...
 
     def execute(self, tool_name: str, arguments: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def execute_streaming(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> Generator[dict[str, Any], None, dict[str, Any]]:
         ...
 
 
@@ -185,6 +194,68 @@ class ToolLoopRunner:
         self.scratchpad = scratchpad
         self.enable_complete_phase = enable_complete_phase
 
+    def _execute_tool_with_streaming_support(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> Generator[dict[str, Any], None, dict[str, Any]]:
+        execute_streaming = getattr(self.tool_executor, "execute_streaming", None)
+        if callable(execute_streaming):
+            execution = execute_streaming(tool_name, arguments, context)
+        else:
+            execution = self.tool_executor.execute(tool_name, arguments, context)
+
+        if inspect.isgenerator(execution):
+            result: dict[str, Any] | None = None
+            try:
+                while True:
+                    yield next(execution)
+            except StopIteration as stop:
+                result = stop.value or {}
+            return result
+
+        return execution
+
+    @staticmethod
+    def _build_stage_event_payload(recorder: Any, node_key: str, *, status: str, **extra: Any) -> dict[str, Any]:
+        builder = getattr(recorder, "build_stage_event_data", None)
+        if callable(builder):
+            return builder(node_key, status=status, **extra)
+        payload = {
+            "graph_id": recorder.graph_id,
+            "node_key": node_key,
+            "status": status,
+        }
+        payload.update(extra)
+        return payload
+
+    @staticmethod
+    def _build_tool_result_event_payload(
+        recorder: Any,
+        node_key: str,
+        *,
+        tool: str,
+        tool_call_id: str,
+        result: Any,
+    ) -> dict[str, Any]:
+        builder = getattr(recorder, "build_tool_result_event_data", None)
+        if callable(builder):
+            return builder(
+                node_key,
+                tool=tool,
+                tool_call_id=tool_call_id,
+                result=result,
+            )
+        return {
+            "graph_id": recorder.graph_id,
+            "node_key": node_key,
+            "tool": tool,
+            "tool_call_id": tool_call_id,
+            "result": result,
+        }
+
     def run(
         self,
         *,
@@ -241,11 +312,11 @@ class ToolLoopRunner:
             )
             yield {
                 "event": "stage",
-                "data": {
-                    "graph_id": recorder.graph_id,
-                    "node_key": node_key,
-                    "status": "running",
-                },
+                "data": self._build_stage_event_payload(
+                    recorder,
+                    node_key,
+                    status="running",
+                ),
             }
 
             tools_list = self.tool_executor.get_tools_list()
@@ -362,12 +433,12 @@ class ToolLoopRunner:
                             )
                             yield {
                                 "event": "stage",
-                                "data": {
-                                    "graph_id": recorder.graph_id,
-                                    "node_key": node_key,
-                                    "status": "succeeded",
-                                    "phase_completed": True,
-                                },
+                                "data": self._build_stage_event_payload(
+                                    recorder,
+                                    node_key,
+                                    status="succeeded",
+                                    phase_completed=True,
+                                ),
                             }
                             return ToolLoopResult(
                                 tool_loop_reply=conclusion or assistant_content,
@@ -390,7 +461,11 @@ class ToolLoopRunner:
                             )
                             tool_result = {"ok": True, "message": "已写入 Scratchpad"}
                         else:
-                            tool_result = self.tool_executor.execute(tool_name, arguments, normalized_context)
+                            tool_result = yield from self._execute_tool_with_streaming_support(
+                                tool_name=tool_name,
+                                arguments=arguments,
+                                context=normalized_context,
+                            )
                     except Exception as exc:
                         tool_result = {
                             "error": str(exc),
@@ -435,13 +510,13 @@ class ToolLoopRunner:
                     )
                     yield {
                         "event": "tool_result",
-                        "data": {
-                            "graph_id": recorder.graph_id,
-                            "node_key": node_key,
-                            "tool": tool_name,
-                            "tool_call_id": tool_call_id,
-                            "result": tool_result,
-                        },
+                        "data": self._build_tool_result_event_payload(
+                            recorder,
+                            node_key,
+                            tool=tool_name,
+                            tool_call_id=tool_call_id,
+                            result=tool_result,
+                        ),
                     }
 
                 self._complete_round_and_patch_meta(
@@ -453,11 +528,11 @@ class ToolLoopRunner:
                 )
                 yield {
                     "event": "stage",
-                    "data": {
-                        "graph_id": recorder.graph_id,
-                        "node_key": node_key,
-                        "status": "succeeded",
-                    },
+                    "data": self._build_stage_event_payload(
+                        recorder,
+                        node_key,
+                        status="succeeded",
+                    ),
                 }
                 continue
 
@@ -481,11 +556,11 @@ class ToolLoopRunner:
                 )
             yield {
                 "event": "stage",
-                "data": {
-                    "graph_id": recorder.graph_id,
-                    "node_key": node_key,
-                    "status": "succeeded",
-                },
+                "data": self._build_stage_event_payload(
+                    recorder,
+                    node_key,
+                    status="succeeded",
+                ),
             }
             return ToolLoopResult(
                 tool_loop_reply=assistant_content,

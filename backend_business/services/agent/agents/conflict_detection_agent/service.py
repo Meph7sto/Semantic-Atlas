@@ -413,6 +413,33 @@ class ConflictDetectionAgentService:
         agent's tool-loop nodes directly into its own execution graph rather
         than creating a separate child graph.
         """
+        gen = self.stream_inline_tool_loop(
+            recorder=recorder,
+            user_id=user_id,
+            user_message=user_message,
+            project_id=project_id,
+            container_key=container_key,
+            node_key_prefix=node_key_prefix,
+        )
+        result: dict[str, Any] | None = None
+        try:
+            while True:
+                next(gen)
+        except StopIteration as stop:
+            result = stop.value or {}
+        return result
+
+    def stream_inline_tool_loop(
+        self,
+        *,
+        recorder: Any,
+        user_id: str,
+        user_message: str,
+        project_id: str,
+        container_key: str = "conflict_detection",
+        node_key_prefix: str = "conflict_agent",
+    ) -> Generator[dict[str, Any], None, dict[str, Any]]:
+        """Stream inline tool-loop events within an external recorder."""
         runner = ConflictDetectionToolLoopRunner(
             ai_proxy_client=self.ai_proxy,
             tools=self.tools,
@@ -422,20 +449,13 @@ class ConflictDetectionAgentService:
             stage_container_key=container_key,
             node_key_prefix=node_key_prefix,
         )
-        gen = runner.run(
+        result = yield from runner.run(
             recorder=recorder,
             user_id=user_id,
             user_message=user_message,
             project_id=project_id,
             session_id="",
         )
-        result: dict[str, Any] | None = None
-        try:
-            while True:
-                next(gen)
-        except StopIteration as stop:
-            result = stop.value or {}
-
         return {
             "status": "success",
             "tool_loop_reply": result.get("tool_loop_reply", ""),

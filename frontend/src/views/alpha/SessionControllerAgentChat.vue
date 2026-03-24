@@ -174,6 +174,83 @@ const ensureDraftAssistant = () => {
   return draft
 }
 
+const rebuildMergedGraphDetail = () => {
+  graphDetail.value = buildMergedSessionGraphDetail({
+    session_id: sessionId.value,
+    active_graph_id: activeGraphId.value,
+    graphs: sessionGraphChain.value
+  })
+}
+
+const upsertById = (items, idKey, nextItem) => {
+  if (!nextItem?.[idKey]) return items
+  const index = items.findIndex((item) => item?.[idKey] === nextItem[idKey])
+  if (index >= 0) {
+    const nextItems = [...items]
+    nextItems[index] = {
+      ...nextItems[index],
+      ...nextItem
+    }
+    return nextItems
+  }
+  return [...items, nextItem]
+}
+
+const applyGraphIncrementalPayload = (payload, graphStatus = null) => {
+  const targetGraphId = payload?.graph_id
+  if (!targetGraphId) return false
+
+  const index = sessionGraphChain.value.findIndex((detail) => detail?.graph?.graph_id === targetGraphId)
+  if (index < 0) return false
+
+  const currentDetail = sessionGraphChain.value[index] || {}
+  const nextDetail = {
+    ...currentDetail,
+    graph: currentDetail.graph ? { ...currentDetail.graph } : null,
+    containers: [...(currentDetail.containers || [])],
+    subgraphs: [...(currentDetail.subgraphs || [])],
+    nodes: [...(currentDetail.nodes || [])],
+    edges: [...(currentDetail.edges || [])]
+  }
+
+  if (nextDetail.graph) {
+    nextDetail.graph = {
+      ...nextDetail.graph,
+      status: graphStatus || nextDetail.graph.status,
+      meta_json: {
+        ...(nextDetail.graph.meta_json || {}),
+        current_node_key: payload.node_key || nextDetail.graph.meta_json?.current_node_key || null
+      }
+    }
+  }
+
+  if (payload.node) {
+    nextDetail.nodes = upsertById(nextDetail.nodes, 'node_id', payload.node)
+    nextDetail.nodes.sort((a, b) => {
+      const orderDiff = Number(a?.order_index || 0) - Number(b?.order_index || 0)
+      if (orderDiff !== 0) return orderDiff
+      return String(a?.created_at || '').localeCompare(String(b?.created_at || ''))
+    })
+  }
+
+  if (Array.isArray(payload.edges)) {
+    payload.edges.forEach((edge) => {
+      nextDetail.edges = upsertById(nextDetail.edges, 'edge_id', edge)
+    })
+    nextDetail.edges.sort((a, b) => {
+      const orderDiff = Number(a?.order_index || 0) - Number(b?.order_index || 0)
+      if (orderDiff !== 0) return orderDiff
+      return String(a?.created_at || '').localeCompare(String(b?.created_at || ''))
+    })
+  }
+
+  const nextChain = [...sessionGraphChain.value]
+  nextChain[index] = nextDetail
+  sessionGraphChain.value = nextChain
+  rebuildMergedGraphDetail()
+  return true
+}
+
 const refreshSessionGraphChain = async (targetSessionId = sessionId.value) => {
   if (!targetSessionId) {
     sessionGraphChain.value = []
@@ -381,6 +458,7 @@ const consumeSSEStream = async (stream) => {
             active_graph_id: payload.graph_id,
             updated_at: new Date().toISOString()
           })
+          applyGraphIncrementalPayload(payload, 'succeeded')
           await refreshSessionGraphChain(sessionId.value)
         }
       } else if (eventName === 'stage' || eventName === 'tool_call' || eventName === 'tool_result') {
@@ -390,7 +468,11 @@ const consumeSSEStream = async (stream) => {
             active_graph_id: payload.graph_id,
             updated_at: new Date().toISOString()
           })
-          await refreshSessionGraphChain(sessionId.value)
+          const graphStatus = eventName === 'stage' && payload.status === 'failed' ? 'failed' : 'running'
+          const patched = applyGraphIncrementalPayload(payload, graphStatus)
+          if (!patched && eventName === 'stage') {
+            await refreshSessionGraphChain(sessionId.value)
+          }
         }
       } else if (eventName === 'error') {
         errorMessage.value = payload.error || '处理失败'
@@ -400,6 +482,7 @@ const consumeSSEStream = async (stream) => {
             active_graph_id: payload.graph_id,
             updated_at: new Date().toISOString()
           })
+          applyGraphIncrementalPayload(payload, 'failed')
           await refreshSessionGraphChain(sessionId.value)
         }
       }

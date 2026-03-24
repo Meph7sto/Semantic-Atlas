@@ -16,6 +16,7 @@ if ROOT_DIR not in sys.path:
 from backend_business.services.agent.agents.session_controller.tools import (  # noqa: E402
     SessionControllerTools,
 )
+from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner  # noqa: E402
 
 
 class _FakeRequirementsService:
@@ -57,6 +58,27 @@ class _FakeRecorder:
 
     def restore_stage_cursor(self, *, node_key, updated_by=""):
         self.restored.append({"node_key": node_key, "updated_by": updated_by})
+
+    def record_tool_call_result(self, node_key, *, created_by, tool_name, request_payload, result_payload):
+        pass
+
+    def build_stage_event_data(self, node_key, *, status, **extra):
+        payload = {
+            "graph_id": self.graph_id,
+            "node_key": node_key,
+            "status": status,
+        }
+        payload.update(extra)
+        return payload
+
+    def build_tool_result_event_data(self, node_key, *, tool, tool_call_id, result):
+        return {
+            "graph_id": self.graph_id,
+            "node_key": node_key,
+            "tool": tool,
+            "tool_call_id": tool_call_id,
+            "result": result,
+        }
 
 
 class _FakeRequirementAgentService:
@@ -103,6 +125,30 @@ class _FakeRequirementAgentService:
         )
         return dict(self._inline_result)
 
+    def stream_inline_tool_loop(
+        self, *, recorder, user_id, user_message, project_id,
+        requirement_id=None, container_key="requirement_agent",
+        node_key_prefix="requirement_agent",
+    ):
+        result = self.run_inline_tool_loop(
+            recorder=recorder,
+            user_id=user_id,
+            user_message=user_message,
+            project_id=project_id,
+            requirement_id=requirement_id,
+            container_key=container_key,
+            node_key_prefix=node_key_prefix,
+        )
+        yield {
+            "event": "stage",
+            "data": {
+                "graph_id": recorder.graph_id,
+                "node_key": recorder.stage_node_key(f"{node_key_prefix}_tool_loop_round_1"),
+                "status": "succeeded",
+            },
+        }
+        return result
+
 
 class _FakeConflictAgentService:
     """Fake that exposes run_inline_tool_loop."""
@@ -138,6 +184,28 @@ class _FakeConflictAgentService:
             output_summary={"reply": "检测完成"},
         )
         return {"status": "success", "tool_loop_reply": "检测完成"}
+
+    def stream_inline_tool_loop(
+        self, *, recorder, user_id, user_message, project_id,
+        container_key="conflict_detection", node_key_prefix="conflict_agent",
+    ):
+        result = self.run_inline_tool_loop(
+            recorder=recorder,
+            user_id=user_id,
+            user_message=user_message,
+            project_id=project_id,
+            container_key=container_key,
+            node_key_prefix=node_key_prefix,
+        )
+        yield {
+            "event": "stage",
+            "data": {
+                "graph_id": recorder.graph_id,
+                "node_key": recorder.stage_node_key(f"{node_key_prefix}_tool_loop_round_1"),
+                "status": "succeeded",
+            },
+        }
+        return result
 
 
 def _make_tools():
@@ -239,6 +307,43 @@ def test_invoke_requirement_agent_passes_correct_params_to_inline():
     assert call["node_key_prefix"] == "req_agent_1"
 
 
+def test_streaming_invoke_requirement_agent_yields_nested_stage_events():
+    tools = _make_tools()
+    recorder = _FakeRecorder()
+    context = {
+        "project_id": "p-3",
+        "user_id": "u-3",
+        "graph_id": recorder.graph_id,
+        "_graph_recorder": recorder,
+        "_active_stage_node_key": "turn_1__session_controller_tool_loop_round_1",
+        "tool_results": [],
+        "dispatched_agents": [],
+    }
+
+    gen = tools.execute_streaming(
+        "invoke_requirement_agent",
+        {"task_description": "读取 REQ-3", "requirement_id": "REQ-3"},
+        context,
+    )
+
+    events = []
+    result = None
+    try:
+        while True:
+            events.append(next(gen))
+    except StopIteration as stop:
+        result = stop.value
+
+    assert result["status"] == "success"
+    assert [event["data"]["node_key"] for event in events] == [
+        "turn_1__req_agent_1_start",
+        "turn_1__req_agent_1_tool_loop_round_1",
+        "turn_1__req_agent_1_end",
+    ]
+    assert all(event["event"] == "stage" for event in events)
+    assert all(event["data"]["status"] == "succeeded" for event in events)
+
+
 def test_invoke_conflict_detection_records_expanded_nodes():
     """Conflict detection inline call should produce start + tool_loop + end nodes."""
     tools = _make_tools()
@@ -284,6 +389,9 @@ def test_invoke_requirement_agent_handles_inline_error():
     """If the inline tool loop raises, proper error nodes and return edges are recorded."""
     class _FailingService:
         def run_inline_tool_loop(self, **kwargs):
+            raise RuntimeError("LLM 连接失败")
+
+        def stream_inline_tool_loop(self, **kwargs):
             raise RuntimeError("LLM 连接失败")
 
     tools = SessionControllerTools(
@@ -342,3 +450,94 @@ def test_no_recorder_returns_error():
 
     assert result["status"] == "error"
     assert "recorder" in result["error"].lower()
+
+
+def test_tool_loop_runner_forwards_streaming_tool_events():
+    class _PromptBuilder:
+        def build_system_prompt(self, *, context):
+            return "system"
+
+        def build_user_message(self, *, user_message, context):
+            return user_message
+
+        def build_round_input_summary(self, *, round_index, messages, context):
+            return {"round": round_index}
+
+    class _AIProxy:
+        def __init__(self):
+            self.calls = 0
+
+        def chat_completion_with_tools(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    "content": "",
+                    "finish_reason": "tool_calls",
+                    "tool_calls": [
+                        {
+                            "id": "tool-1",
+                            "function": {
+                                "name": "invoke_requirement_agent",
+                                "arguments": "{\"task_description\":\"读取 REQ-9\"}",
+                            },
+                        }
+                    ],
+                }
+            return {
+                "content": "完成",
+                "finish_reason": "stop",
+                "tool_calls": [],
+            }
+
+    tools = _make_tools()
+    runner = ToolLoopRunner(
+        ai_proxy_client=_AIProxy(),
+        tool_executor=tools,
+        prompt_builder=_PromptBuilder(),
+        max_tool_call_rounds=2,
+        stage_container_key="conductor",
+        stage_node_key_builder=lambda round_index: f"session_controller_tool_loop_round_{round_index}",
+        stage_label_builder=lambda round_index: f"Tool Loop Round {round_index}",
+    )
+    recorder = _FakeRecorder()
+    context = {
+        "project_id": "p-9",
+        "user_id": "u-9",
+        "session_id": "s-9",
+        "graph_id": recorder.graph_id,
+        "_graph_recorder": recorder,
+        "tool_results": [],
+        "dispatched_agents": [],
+    }
+
+    events = []
+    gen = runner.run(
+        recorder=recorder,
+        user_id="u-9",
+        user_message="帮我看 REQ-9",
+        context=context,
+    )
+
+    result = None
+    try:
+        while True:
+            events.append(next(gen))
+    except StopIteration as stop:
+        result = stop.value
+
+    stage_events = [
+        event for event in events
+        if event["event"] == "stage"
+        and event["data"]["node_key"] in {
+            "turn_1__req_agent_1_start",
+            "turn_1__req_agent_1_tool_loop_round_1",
+            "turn_1__req_agent_1_end",
+        }
+    ]
+
+    assert [event["data"]["node_key"] for event in stage_events] == [
+        "turn_1__req_agent_1_start",
+        "turn_1__req_agent_1_tool_loop_round_1",
+        "turn_1__req_agent_1_end",
+    ]
+    assert result.tool_loop_reply == "完成"
