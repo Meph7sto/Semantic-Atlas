@@ -38,10 +38,14 @@ def _uniq(xs: list[str]) -> list[str]:
 async def upload_file(
     file: UploadFile = File(...),
     description: str = Form(default=""),
+    folder: str = Form(default=""),
+    import_time: str = Form(default=""),
+    capture_time: str = Form(default=""),
     current_user: dict = Depends(get_current_user),
 ):
     """
     通用文件上传端点（供移动端使用）。
+    可选 folder 参数指定子文件夹。
     """
     user_id = current_user["user_id"]
 
@@ -53,6 +57,9 @@ async def upload_file(
             content=content,
             description=description,
             content_type=file.content_type,
+            folder=folder.strip() if folder else "",
+            import_time=import_time,
+            capture_time=capture_time,
         )
 
         return {
@@ -62,6 +69,7 @@ async def upload_file(
             "originalFilename": saved_file["originalFilename"],
             "fileSize": saved_file["fileSize"],
             "uploadTime": saved_file["uploadTime"],
+            "folder": saved_file.get("folder", ""),
         }
     except ErrorResponse:
         raise
@@ -70,7 +78,7 @@ async def upload_file(
 
 
 @router.get("/uploads")
-def list_uploaded_files(current_user: dict = Depends(get_current_user)):
+async def list_uploaded_files(current_user: dict = Depends(get_current_user)):
     """
     获取已上传文件列表。
     """
@@ -84,8 +92,38 @@ def list_uploaded_files(current_user: dict = Depends(get_current_user)):
     }
 
 
+@router.get("/folders")
+async def list_user_folders(current_user: dict = Depends(get_current_user)):
+    """
+    获取用户的文件夹列表。
+    """
+    user_id = current_user["user_id"]
+    folders = file_service.list_user_folders(user_id)
+    return {
+        "success": True,
+        "folders": folders,
+    }
+
+
+@router.get("/folders/{folder_name}/files")
+async def list_folder_files(
+    folder_name: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    获取指定文件夹内的文件列表。
+    """
+    user_id = current_user["user_id"]
+    files = file_service.list_folder_files(user_id, folder_name)
+    return {
+        "success": True,
+        "files": files,
+        "total": len(files),
+    }
+
+
 @router.get("/uploads/{filename}")
-def download_uploaded_file(
+async def download_uploaded_file(
     filename: str,
     download: bool = Query(default=False),
     current_user: dict = Depends(get_current_user),
@@ -112,7 +150,7 @@ def download_uploaded_file(
 
 
 @router.delete("/uploads/{filename}")
-def delete_uploaded_file(
+async def delete_uploaded_file(
     filename: str,
     current_user: dict = Depends(get_current_user),
 ):
@@ -133,7 +171,7 @@ def delete_uploaded_file(
 
 
 @router.get("/admin/uploads")
-def list_all_user_files(current_user: dict = Depends(require_admin)):
+async def list_all_user_files(current_user: dict = Depends(require_admin)):
     """
     管理员获取所有用户上传的文件列表，按用户分组。
     """
@@ -146,6 +184,66 @@ def list_all_user_files(current_user: dict = Depends(require_admin)):
         "total": total_files,
         "userCount": len(files_by_user),
     }
+
+
+@router.get("/admin/uploads/tree")
+async def list_all_user_file_tree(current_user: dict = Depends(require_admin)):
+    """
+    管理员按用户 -> 文件夹 -> 文件结构查看上传内容。
+    """
+    users = file_service.list_all_users_file_tree()
+    return {
+        "success": True,
+        "users": users,
+        "userCount": len(users),
+        "total": sum(user.get("totalFiles", 0) for user in users),
+    }
+
+
+@router.get("/admin/uploads/content")
+async def preview_or_download_user_file(
+    user_id: str = Query(...),
+    path: str = Query(...),
+    download: bool = Query(default=False),
+    current_user: dict = Depends(require_admin),
+):
+    """
+    管理员按用户和相对路径预览/下载文件。
+    """
+    _ = current_user
+    file_path, mime, safe_filename = file_service.resolve_user_file_by_relative_path(
+        user_id, path
+    )
+    if download:
+        return FileResponse(
+            path=file_path,
+            media_type=mime,
+            filename=safe_filename.rsplit("/", 1)[-1],
+            content_disposition_type="attachment",
+        )
+    return FileResponse(path=file_path, media_type=mime)
+
+
+@router.delete("/admin/uploads/content")
+async def delete_user_file_by_path(
+    user_id: str = Query(...),
+    path: str = Query(...),
+    current_user: dict = Depends(require_admin),
+):
+    """
+    管理员按用户和相对路径删除文件。
+    """
+    _ = current_user
+    try:
+        file_service.delete_user_file_by_relative_path(user_id, path)
+        return {
+            "success": True,
+            "message": "File deleted successfully",
+        }
+    except ErrorResponse:
+        raise
+    except Exception as exc:
+        raise ErrorResponse(f"Failed to delete file: {str(exc)}", 500)
 
 
 @router.post("/upload_csv")
@@ -200,7 +298,7 @@ async def upload_csv(
 
 
 @router.get("/download_result")
-def download_result(record_id: int = Query(alias="id")):
+async def download_result(record_id: int = Query(alias="id")):
     """
     下载某条分析记录的 output_json（作为 .json 文件）。
     GET /api/v2/download_result?id=123
