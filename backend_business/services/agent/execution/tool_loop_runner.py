@@ -224,6 +224,7 @@ class ToolLoopRunner:
                 context=normalized_context,
             )
             node_key = recorder.stage_node_key(self.stage_node_key_builder(round_index))
+            normalized_context["_active_stage_node_key"] = node_key
             recorder.start_stage(
                 node_key=node_key,
                 label=recorder.stage_label(self.stage_label_builder(round_index)),

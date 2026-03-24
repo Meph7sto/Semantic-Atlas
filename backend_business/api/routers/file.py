@@ -92,8 +92,45 @@ async def list_uploaded_files(current_user: dict = Depends(get_current_user)):
     }
 
 
+@router.get("/uploads/tree")
+async def list_user_file_tree(current_user: dict = Depends(get_current_user)):
+    """
+    获取当前用户的文件树结构（文件夹 -> 文件）。
+    """
+    user_id = current_user["user_id"]
+    tree = file_service.list_user_file_tree(user_id)
+    return {
+        "success": True,
+        **tree,
+    }
+
+
+@router.get("/uploads/content")
+async def preview_or_download_my_file(
+    path: str = Query(...),
+    download: bool = Query(default=False),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    通过相对路径预览或下载当前用户自己的文件。
+    """
+    user_id = current_user["user_id"]
+    file_path, mime, safe_filename = file_service.resolve_user_file_by_relative_path(
+        user_id, path
+    )
+    if download:
+        return FileResponse(
+            path=file_path,
+            media_type=mime,
+            filename=safe_filename.rsplit("/", 1)[-1],
+            content_disposition_type="attachment",
+        )
+    return FileResponse(path=file_path, media_type=mime)
+
+
 @router.get("/folders")
 async def list_user_folders(current_user: dict = Depends(get_current_user)):
+
     """
     获取用户的文件夹列表。
     """

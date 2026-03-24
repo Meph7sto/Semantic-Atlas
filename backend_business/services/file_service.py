@@ -496,6 +496,55 @@ class FileService:
 
         return users
 
+    def list_user_file_tree(self, user_id: str) -> dict[str, Any]:
+        """
+        获取指定用户的文件树（文件夹 -> 文件结构）。
+        返回: { folders, rootFiles, folderCount, totalFiles }
+        """
+        user_dir_path = self._get_user_folder(user_id)
+
+        root_files: list[dict[str, Any]] = []
+        folders_map: dict[str, dict[str, Any]] = {}
+
+        for file_path in self._iter_files(user_dir_path, recursive=True):
+            relative_path = os.path.relpath(file_path, user_dir_path).replace(os.sep, "/")
+            file_info = self._apply_relative_location(
+                self._build_file_info(file_path, os.path.basename(file_path)),
+                relative_path,
+            )
+            file_info["userId"] = user_id
+
+            folder_path = file_info.get("folder", "")
+            if folder_path:
+                folder_entry = folders_map.setdefault(
+                    folder_path,
+                    {
+                        "name": folder_path.rsplit("/", 1)[-1],
+                        "path": folder_path,
+                        "fileCount": 0,
+                        "files": [],
+                    },
+                )
+                folder_entry["files"].append(file_info)
+                folder_entry["fileCount"] += 1
+            else:
+                root_files.append(file_info)
+
+        folders = list(folders_map.values())
+        for folder in folders:
+            folder["files"].sort(key=lambda x: x["uploadTime"], reverse=True)
+        folders.sort(key=lambda x: x["path"])
+        root_files.sort(key=lambda x: x["uploadTime"], reverse=True)
+
+        total_files = len(root_files) + sum(f["fileCount"] for f in folders)
+
+        return {
+            "folders": folders,
+            "rootFiles": root_files,
+            "folderCount": len(folders),
+            "totalFiles": total_files,
+        }
+
     def list_user_folders(self, user_id: str) -> list[dict[str, Any]]:
         """
         列出用户上传目录中的所有子文件夹。

@@ -217,6 +217,19 @@
               </section>
 
             </div>
+
+              <!-- 我的文件入口 -->
+              <section class="card form-card my-files-entry" @click="goToMyFiles">
+                <div class="card-header">
+                  <FolderOpenIcon class="card-header-icon" />
+                  <h2 class="card-title">我的文件</h2>
+                </div>
+                <p class="form-hint" style="margin-top: 0; margin-bottom: 14px">浏览您通过移动端上传的所有文件，按文件夹归类展示</p>
+                <div class="form-actions">
+                  <button class="btn btn-primary" type="button" @click.stop="goToMyFiles">进入我的文件</button>
+                </div>
+              </section>
+
           </div>
         </div>
       </main>
@@ -226,12 +239,15 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { User as UserIcon, Lock as LockIcon, Eye as EyeIcon, EyeOff as EyeOffIcon } from 'lucide-vue-next'
+import { User as UserIcon, Lock as LockIcon, Eye as EyeIcon, EyeOff as EyeOffIcon, FolderOpen as FolderOpenIcon } from 'lucide-vue-next'
+import { useRouter } from 'vue-router'
 import { authApi } from '@/api/auth'
 import Sidebar from '@/components/beta/Sidebar.vue'
 import { useBetaNavigation } from '@/composables/useBetaNavigation'
 
 const { activePage, handleNavigate } = useBetaNavigation('account')
+const router = useRouter()
+const goToMyFiles = () => router.push({ name: 'beta-my-files' })
 
 // ---- 用户资料状态 ----
 const profile = reactive({
@@ -829,6 +845,17 @@ onMounted(() => {
 
 .save-msg.success { color: #059669; }
 .save-msg.error   { color: #ef4444; }
+
+/* ---- 我的文件入口 ---- */
+.my-files-entry {
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.my-files-entry:hover {
+  border-color: var(--accent, #2f8f89);
+  box-shadow: 0 0 0 2px rgba(47, 143, 137, 0.1);
+}
 
 /* ---- 响应式 ---- */
 @media (max-width: 700px) {

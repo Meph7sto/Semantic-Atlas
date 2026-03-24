@@ -19,6 +19,7 @@ import ActorVisualTester from '../views/alpha/ActorVisualTester.vue'
 import RequirementReplay from '../views/alpha/RequirementReplay.vue'
 import RequirementAgentChat from '../views/alpha/RequirementAgentChat.vue'
 import ConflictAgentChat from '../views/alpha/ConflictAgentChat.vue'
+import SessionControllerAgentChat from '../views/alpha/SessionControllerAgentChat.vue'
 import ImageCaptionPreview from '../views/alpha/ImageCaptionPreview.vue'
 
 // Main views (migrated from frontend_ref)
@@ -39,6 +40,7 @@ import MultimodalIngestionView from '../views/beta/MultimodalIngestionView.vue'
 import AsrTranscription from '../views/alpha/AsrTranscription.vue'
 import AsrTranscriptionView from '../views/beta/AsrTranscriptionView.vue'
 import ReviewView from '../views/beta/ReviewView.vue'
+import MyFilesView from '../views/beta/MyFilesView.vue'
 
 // Guide view
 import GuideView from '../views/GuideView.vue'
@@ -163,6 +165,12 @@ const router = createRouter({
                     name: 'beta-reviews',
                     component: ReviewView,
                     meta: { requiresAuth: true }
+                },
+                {
+                    path: 'my-files',
+                    name: 'beta-my-files',
+                    component: MyFilesView,
+                    meta: { requiresAuth: true }
                 }
             ]
         },
@@ -242,6 +250,11 @@ const router = createRouter({
                     path: 'requirement-agent',
                     name: 'requirement-agent',
                     component: RequirementAgentChat
+                },
+                {
+                    path: 'session-controller',
+                    name: 'session-controller',
+                    component: SessionControllerAgentChat
                 },
                 {
                     path: 'message-push',

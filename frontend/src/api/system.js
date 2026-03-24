@@ -145,4 +145,22 @@ export const fileApi = {
         })
         return `/api/v2/admin/uploads/content?${params.toString()}`
     },
+
+    async listMyTree() {
+        const resp = await api.get('/uploads/tree')
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.message || 'Failed to list file tree')
+        }
+        return resp.data
+    },
+
+    downloadMy(relativePath) {
+        const params = new URLSearchParams({ path: relativePath, download: 'true' })
+        window.open(`/api/v2/uploads/content?${params.toString()}`, '_blank')
+    },
+
+    getMyPreviewUrl(relativePath) {
+        const params = new URLSearchParams({ path: relativePath })
+        return `/api/v2/uploads/content?${params.toString()}`
+    },
 }

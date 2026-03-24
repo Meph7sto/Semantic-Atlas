@@ -225,6 +225,24 @@ class RuntimeGraphRecorder:
     def last_node_key(self) -> str | None:
         return self._last_node_key
 
+    def restore_stage_cursor(self, *, node_key: str, updated_by: str = "") -> None:
+        """Restore the recorder cursor to an existing stage node.
+
+        This is useful when a helper creates temporary child-container nodes
+        during a parent LLM round but the main control flow should continue
+        from the parent stage afterwards.
+        """
+        stage_node = self._nodes.get(node_key)
+        if stage_node is None:
+            raise KeyError(f"node_key 未记录: {node_key}")
+        self._last_node_id = stage_node.node_id
+        self._last_node_key = stage_node.node_key
+        self._service.patch_graph_meta(
+            self.graph_id,
+            {"current_node_key": stage_node.node_key},
+            updated_by=updated_by,
+        )
+
     def _ensure_containers(self, user_id: str) -> None:
         for order_index, container_config in enumerate(self._container_configs):
             container_key = container_config.container_key
