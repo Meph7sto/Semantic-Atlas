@@ -291,7 +291,7 @@ superspec commit --summary "Add traceability risk summaries" --next $'Connect th
 - Modify: `frontend/src/composables/useTraceabilityWorkbench.js`
 - Test: frontend tests if present
 
-- [ ] **Step 1: Write the failing client expectations**
+- [x] **Step 1: Write the failing client expectations**
 
 Define client methods for:
 - overview
@@ -300,20 +300,20 @@ Define client methods for:
 - impact
 - risk
 
-- [ ] **Step 2: Add API calls**
+- [x] **Step 2: Add API calls**
 
 Implement additive client methods that follow current `manageApi` error-handling style.
 
-- [ ] **Step 3: Wire composable fetch flows**
+- [x] **Step 3: Wire composable fetch flows**
 
 Load shared context and tab-specific payloads without coupling to other pages.
 
-- [ ] **Step 4: Verify frontend build**
+- [x] **Step 4: Verify frontend build**
 
 Run: `npm run build`
 Expected: the API additions compile cleanly
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/api/project.js frontend/src/composables/useTraceabilityWorkbench.js

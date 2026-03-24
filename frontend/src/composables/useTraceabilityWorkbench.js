@@ -11,7 +11,15 @@ export function useTraceabilityWorkbench() {
   const activeTab = ref(DEFAULT_TAB)
   const loadingProjects = ref(false)
   const loadingBranches = ref(false)
+  const loadingOverview = ref(false)
+  const loadingPanel = ref(false)
+  const triggeringImpact = ref(false)
   const errorMessage = ref('')
+  const overview = ref(null)
+  const matrixData = ref(null)
+  const coverageData = ref(null)
+  const impactData = ref(null)
+  const riskData = ref(null)
 
   const tabs = [
     { key: 'matrix', label: '追溯矩阵' },
@@ -66,6 +74,63 @@ export function useTraceabilityWorkbench() {
     }
   }
 
+  async function loadOverview(projectId = selectedProjectId.value, branchId = selectedBranchId.value) {
+    if (!projectId || !branchId) {
+      overview.value = null
+      return
+    }
+    loadingOverview.value = true
+    errorMessage.value = ''
+    try {
+      overview.value = await manageApi.getTraceabilityOverview(projectId, branchId)
+    } catch (error) {
+      console.error('Failed to load traceability overview:', error)
+      errorMessage.value = error.message || '加载追踪总览失败'
+    } finally {
+      loadingOverview.value = false
+    }
+  }
+
+  async function loadActiveTabData() {
+    if (!selectedProjectId.value || !selectedBranchId.value) return
+    loadingPanel.value = true
+    errorMessage.value = ''
+    try {
+      if (activeTab.value === 'matrix') {
+        matrixData.value = await manageApi.getTraceabilityMatrix(selectedProjectId.value, selectedBranchId.value)
+      } else if (activeTab.value === 'coverage') {
+        coverageData.value = await manageApi.getTraceabilityCoverage(selectedProjectId.value, selectedBranchId.value)
+      } else if (activeTab.value === 'risk') {
+        riskData.value = await manageApi.getTraceabilityRisk(selectedProjectId.value, selectedBranchId.value)
+      }
+    } catch (error) {
+      console.error('Failed to load traceability tab data:', error)
+      errorMessage.value = error.message || '加载追踪面板失败'
+    } finally {
+      loadingPanel.value = false
+    }
+  }
+
+  async function triggerImpactAnalysis(compareTo = 'baseline', milestoneId = null) {
+    if (!selectedProjectId.value || !selectedBranchId.value) return null
+    triggeringImpact.value = true
+    errorMessage.value = ''
+    try {
+      impactData.value = await manageApi.createTraceabilityImpact(selectedProjectId.value, {
+        branch_id: selectedBranchId.value,
+        compare_to: compareTo,
+        milestone_id: milestoneId,
+      })
+      return impactData.value
+    } catch (error) {
+      console.error('Failed to create traceability impact report:', error)
+      errorMessage.value = error.message || '触发影响分析失败'
+      return null
+    } finally {
+      triggeringImpact.value = false
+    }
+  }
+
   function selectTab(tabKey) {
     activeTab.value = tabKey
   }
@@ -74,6 +139,8 @@ export function useTraceabilityWorkbench() {
     await loadProjects()
     if (selectedProjectId.value) {
       await loadBranches(selectedProjectId.value)
+      await loadOverview(selectedProjectId.value, selectedBranchId.value)
+      await loadActiveTabData()
     }
   }
 
@@ -85,6 +152,23 @@ export function useTraceabilityWorkbench() {
     await loadBranches(projectId)
   })
 
+  watch([selectedProjectId, selectedBranchId], async ([projectId, branchId]) => {
+    if (!projectId || !branchId) {
+      overview.value = null
+      matrixData.value = null
+      coverageData.value = null
+      impactData.value = null
+      riskData.value = null
+      return
+    }
+    await loadOverview(projectId, branchId)
+    await loadActiveTabData()
+  })
+
+  watch(activeTab, async () => {
+    await loadActiveTabData()
+  })
+
   onMounted(async () => {
     await refreshContext()
   })
@@ -93,9 +177,16 @@ export function useTraceabilityWorkbench() {
     activeTab,
     branches,
     errorMessage,
+    coverageData,
+    impactData,
     loadingBranches,
+    loadingOverview,
+    loadingPanel,
     loadingProjects,
+    matrixData,
     projects,
+    overview,
+    riskData,
     selectedBranch,
     selectedBranchId,
     selectedProject,
@@ -103,5 +194,7 @@ export function useTraceabilityWorkbench() {
     selectTab,
     refreshContext,
     tabs,
+    triggerImpactAnalysis,
+    triggeringImpact,
   }
 }

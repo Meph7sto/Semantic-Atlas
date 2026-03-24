@@ -204,4 +204,42 @@ export const manageApi = {
         if (resp.data?.error) throw new Error(resp.data.error)
         return resp.data
     },
+
+    async getTraceabilityOverview(projectId, branchId) {
+        const resp = await api.get(`/manage/projects/${encodeURIComponent(projectId)}/traceability/overview`, {
+            params: branchId ? { branch_id: branchId } : undefined,
+        })
+        if (resp.data?.error) throw new Error(resp.data.error)
+        return resp.data
+    },
+
+    async getTraceabilityMatrix(projectId, branchId) {
+        const resp = await api.get(`/manage/projects/${encodeURIComponent(projectId)}/traceability/matrix`, {
+            params: branchId ? { branch_id: branchId } : undefined,
+        })
+        if (resp.data?.error) throw new Error(resp.data.error)
+        return resp.data
+    },
+
+    async getTraceabilityCoverage(projectId, branchId) {
+        const resp = await api.get(`/manage/projects/${encodeURIComponent(projectId)}/traceability/coverage`, {
+            params: branchId ? { branch_id: branchId } : undefined,
+        })
+        if (resp.data?.error) throw new Error(resp.data.error)
+        return resp.data
+    },
+
+    async createTraceabilityImpact(projectId, payload) {
+        const resp = await api.post(`/manage/projects/${encodeURIComponent(projectId)}/traceability/impact`, payload)
+        if (resp.data?.error) throw new Error(resp.data.error)
+        return resp.data
+    },
+
+    async getTraceabilityRisk(projectId, branchId) {
+        const resp = await api.get(`/manage/projects/${encodeURIComponent(projectId)}/traceability/risk`, {
+            params: branchId ? { branch_id: branchId } : undefined,
+        })
+        if (resp.data?.error) throw new Error(resp.data.error)
+        return resp.data
+    },
 }
