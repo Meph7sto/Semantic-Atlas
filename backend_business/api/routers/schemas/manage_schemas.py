@@ -17,6 +17,16 @@ _ALLOWED_REQUIREMENT_STATUSES = (
 )
 _ALLOWED_REQUIREMENT_STATUS_SET = set(_ALLOWED_REQUIREMENT_STATUSES)
 _REQUIREMENT_STATUS_ALIASES = {"backlog": "draft"}
+_ALLOWED_DEFECT_SEVERITIES = ("critical", "high", "medium", "low")
+_ALLOWED_DEFECT_PRIORITIES = ("P0", "P1", "P2", "P3")
+_ALLOWED_DEFECT_STATUSES = (
+    "open",
+    "in_progress",
+    "resolved",
+    "verified",
+    "closed",
+    "rejected",
+)
 
 
 def normalize_requirement_status(status: Any, allow_none: bool = True) -> Optional[str]:
@@ -40,6 +50,51 @@ def normalize_requirement_status(status: Any, allow_none: bool = True) -> Option
         return normalized
 
     raise ValueError(f"status 必须是: {', '.join(_ALLOWED_REQUIREMENT_STATUSES)}")
+
+
+def normalize_defect_severity(value: Any, allow_none: bool = True) -> Optional[str]:
+    if value is None:
+        if allow_none:
+            return None
+        raise ValueError(f"severity 必须是: {', '.join(_ALLOWED_DEFECT_SEVERITIES)}")
+    text = str(value).strip().lower()
+    if not text:
+        if allow_none:
+            return None
+        raise ValueError(f"severity 必须是: {', '.join(_ALLOWED_DEFECT_SEVERITIES)}")
+    if text in _ALLOWED_DEFECT_SEVERITIES:
+        return text
+    raise ValueError(f"severity 必须是: {', '.join(_ALLOWED_DEFECT_SEVERITIES)}")
+
+
+def normalize_defect_priority(value: Any, allow_none: bool = True) -> Optional[str]:
+    if value is None:
+        if allow_none:
+            return None
+        raise ValueError(f"priority 必须是: {', '.join(_ALLOWED_DEFECT_PRIORITIES)}")
+    text = str(value).strip().upper()
+    if not text:
+        if allow_none:
+            return None
+        raise ValueError(f"priority 必须是: {', '.join(_ALLOWED_DEFECT_PRIORITIES)}")
+    if text in _ALLOWED_DEFECT_PRIORITIES:
+        return text
+    raise ValueError(f"priority 必须是: {', '.join(_ALLOWED_DEFECT_PRIORITIES)}")
+
+
+def normalize_defect_status(value: Any, allow_none: bool = True) -> Optional[str]:
+    if value is None:
+        if allow_none:
+            return None
+        raise ValueError(f"status 必须是: {', '.join(_ALLOWED_DEFECT_STATUSES)}")
+    text = str(value).strip().lower()
+    if not text:
+        if allow_none:
+            return None
+        raise ValueError(f"status 必须是: {', '.join(_ALLOWED_DEFECT_STATUSES)}")
+    if text in _ALLOWED_DEFECT_STATUSES:
+        return text
+    raise ValueError(f"status 必须是: {', '.join(_ALLOWED_DEFECT_STATUSES)}")
 
 
 # ========================
@@ -130,6 +185,62 @@ class BulkUpdateStatusRequest(BaseModel):
     @classmethod
     def validate_status(cls, v):
         return normalize_requirement_status(v, allow_none=False)
+
+
+class CreateDefectRequest(BaseModel):
+    requirement_id: str = Field(min_length=1, description="关联需求ID")
+    title: str = Field(min_length=1, description="缺陷标题")
+    reproduce_steps: str = Field(default="", description="复现步骤")
+    severity: str = Field(default="medium", description="严重程度")
+    priority: str = Field(default="P2", description="处理优先级")
+    status: str = Field(default="open", description="缺陷状态")
+    reporter: Optional[str] = Field(None, description="报告人")
+    dev_assignee: Optional[str] = Field(None, description="开发指派")
+    tester_assignee: Optional[str] = Field(None, description="测试验证指派")
+    current_assignee: Optional[str] = Field(None, description="当前处理人")
+
+    @field_validator("severity")
+    @classmethod
+    def validate_defect_severity(cls, v):
+        return normalize_defect_severity(v, allow_none=False)
+
+    @field_validator("priority")
+    @classmethod
+    def validate_defect_priority(cls, v):
+        return normalize_defect_priority(v, allow_none=False)
+
+    @field_validator("status")
+    @classmethod
+    def validate_defect_status(cls, v):
+        return normalize_defect_status(v, allow_none=False)
+
+
+class UpdateDefectRequest(BaseModel):
+    title: Optional[str] = None
+    reproduce_steps: Optional[str] = None
+    requirement_id: Optional[str] = None
+    severity: Optional[str] = None
+    priority: Optional[str] = None
+    status: Optional[str] = None
+    reporter: Optional[str] = None
+    dev_assignee: Optional[str] = None
+    tester_assignee: Optional[str] = None
+    current_assignee: Optional[str] = None
+
+    @field_validator("severity")
+    @classmethod
+    def validate_defect_severity(cls, v):
+        return normalize_defect_severity(v, allow_none=False)
+
+    @field_validator("priority")
+    @classmethod
+    def validate_defect_priority(cls, v):
+        return normalize_defect_priority(v, allow_none=False)
+
+    @field_validator("status")
+    @classmethod
+    def validate_defect_status(cls, v):
+        return normalize_defect_status(v, allow_none=False)
 
 
 class MoveRequirementRequest(BaseModel):

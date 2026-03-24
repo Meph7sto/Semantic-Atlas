@@ -22,6 +22,8 @@ from backend_business.api.routers.schemas.manage_schemas import (
     CreateRequirementRequest,
     UpdateRequirementRequest,
     BulkUpdateStatusRequest,
+    CreateDefectRequest,
+    UpdateDefectRequest,
     MoveRequirementRequest,
     ImportRequirementsRequest,
     # Test Case schemas
@@ -588,6 +590,128 @@ def bulk_update_requirement_status(
         detail={"status": req.status, "transitions": transitions, **result},
     )
     return result
+
+
+@router.get("/projects/{project_id}/defects")
+def list_defects(
+    project_id: str,
+    requirement_id: Optional[str] = Query(None),
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    _require_project_access(project_id, current_user)
+    return {
+        "defects": _service.list_defects(
+            project_id=project_id,
+            requirement_id=requirement_id,
+        )
+    }
+
+
+@router.get("/requirements/{req_id}/defects")
+def list_requirement_defects(
+    req_id: str,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    req_item = _service.get_requirement(req_id)
+    if not req_item:
+        raise ErrorResponse("需求不存在", 404)
+    _require_project_access(req_item["project_id"], current_user)
+    return {
+        "defects": _service.list_defects(
+            project_id=req_item["project_id"],
+            requirement_id=req_id,
+        )
+    }
+
+
+@router.post("/projects/{project_id}/defects")
+def create_defect(
+    project_id: str,
+    req: CreateDefectRequest,
+    request: Request,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    actor = _get_actor(request, current_user)
+    _require_project_edit(project_id, current_user)
+    try:
+        defect = _service.create_defect(
+            project_id=project_id,
+            requirement_id=req.requirement_id,
+            title=req.title,
+            reproduce_steps=req.reproduce_steps,
+            severity=req.severity,
+            priority=req.priority,
+            status=req.status,
+            reporter=req.reporter or "",
+            dev_assignee=req.dev_assignee or "",
+            tester_assignee=req.tester_assignee or "",
+            current_assignee=req.current_assignee or "",
+            created_by=actor,
+        )
+    except ValueError as e:
+        raise ErrorResponse(str(e), 400)
+    _service.add_audit_log(
+        project_id=project_id,
+        actor=actor,
+        action="create",
+        target_type="defect",
+        target_id=defect["defect_id"],
+        detail=defect,
+    )
+    return defect
+
+
+@router.patch("/defects/{defect_id}")
+def update_defect(
+    defect_id: str,
+    req: UpdateDefectRequest,
+    request: Request,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    actor = _get_actor(request, current_user)
+    defect_before = _service.get_defect(defect_id)
+    if not defect_before:
+        raise ErrorResponse("缺陷不存在", 404)
+    _require_project_edit(defect_before["project_id"], current_user)
+    update_data = req.model_dump(exclude_unset=True)
+    try:
+        defect = _service.update_defect(defect_id, update_data, updated_by=actor)
+    except ValueError as e:
+        raise ErrorResponse(str(e), 400)
+    _service.add_audit_log(
+        project_id=defect["project_id"],
+        actor=actor,
+        action="update",
+        target_type="defect",
+        target_id=defect_id,
+        detail={"before": defect_before, "after": defect},
+    )
+    return defect
+
+
+@router.delete("/defects/{defect_id}")
+def delete_defect(
+    defect_id: str,
+    request: Request,
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    actor = _get_actor(request, current_user)
+    defect = _service.get_defect(defect_id)
+    if not defect:
+        raise ErrorResponse("缺陷不存在", 404)
+    _require_project_edit(defect["project_id"], current_user)
+    deleted = _service.delete_defect(defect_id)
+    if deleted == 0:
+        raise ErrorResponse("缺陷不存在", 404)
+    _service.add_audit_log(
+        project_id=defect["project_id"],
+        actor=actor,
+        action="delete",
+        target_type="defect",
+        target_id=defect_id,
+        detail=defect,
+    )
+    return {"deleted": deleted}
 
 
 @router.post("/requirements/{req_id}/move")

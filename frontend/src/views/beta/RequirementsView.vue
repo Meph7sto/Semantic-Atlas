@@ -34,7 +34,15 @@
             <button
               type="button"
               class="session-clear"
-              title="查看 session 原始需求"
+              title="返回需求工程管理"
+              @click="gotoRequirementsWorkbench"
+            >
+              返回需求工程管理
+            </button>
+            <button
+              type="button"
+              class="session-clear"
+              title="查看会话需求"
               @click="router.push({ name: 'beta-requirements-session' })"
             >
               查看会话需求
@@ -338,6 +346,9 @@
 
         <!-- 内容区域 -->
         <section class="requirements-content" data-animate style="--delay: 0.15s">
+          <p v-if="defectsError" class="mb-3 text-xs text-rose-600">
+            缺陷数据加载失败：{{ defectsError }}
+          </p>
           <!-- 加载状态 -->
           <div v-if="isLoading" class="loading-state">
             <Loader2 class="animate-spin" />
@@ -369,21 +380,46 @@
               @hover="handleNodeHover"
               @click-node="handleNodeClick"
             />
-            <!-- 悬浮详情 -->
-            <div v-if="hoveredNode" class="hover-detail-panel">
-              <div class="detail-title">{{ hoveredNode.title || hoveredNode.text }}</div>
+            <!-- 需求详情 -->
+            <div v-if="requirementDetail" class="hover-detail-panel">
+              <div class="detail-title">{{ requirementDetail.title || requirementDetail.text || requirementDetail.statement }}</div>
               <div class="detail-row">
                 <span class="detail-label">类型:</span>
-                <span class="detail-value">{{ getTypeLabel(hoveredNode.requirement_type) }}</span>
+                <span class="detail-value">{{ getTypeLabel(requirementDetail.requirement_type) }}</span>
               </div>
               <div class="detail-row">
                 <span class="detail-label">状态:</span>
-                <span class="detail-value">{{ hoveredNode.status || '-' }}</span>
+                <span class="detail-value">{{ getStatusName(requirementDetail.status) }}</span>
               </div>
               <div class="detail-row">
                 <span class="detail-label">优先级:</span>
-                <span class="detail-value">{{ hoveredNode.priority || '-' }}</span>
+                <span class="detail-value">{{ requirementDetail.priority || '-' }}</span>
               </div>
+              <div class="detail-row">
+                <span class="detail-label">关联缺陷:</span>
+                <span class="detail-value">{{ requirementDetailDefects.length }}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">未解决:</span>
+                <span class="detail-value" :class="requirementDetailUnresolvedDefects.length ? 'text-red-600' : 'text-emerald-600'">
+                  {{ requirementDetailUnresolvedDefects.length }}
+                </span>
+              </div>
+              <div v-if="requirementDetailDefects.length" class="mt-3 space-y-1.5">
+                <div
+                  v-for="item in requirementDetailDefects.slice(0, 5)"
+                  :key="item.defect_id"
+                  class="rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-2"
+                >
+                  <div class="text-[11px] font-medium text-zinc-800">{{ item.title }}</div>
+                  <div class="mt-1 text-[11px] text-zinc-500">
+                    {{ item.status || '-' }} / {{ item.severity || '-' }} / {{ item.current_assignee || '未指派' }}
+                  </div>
+                </div>
+              </div>
+              <button type="button" class="hover-defect-btn" @click="gotoDefectsWithRequirement">
+                提交/查看该需求缺陷
+              </button>
             </div>
           </div>
 
@@ -449,7 +485,7 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="req in tableRequirements" :key="req.id || req.req_id">
+                  <tr v-for="req in tableRequirements" :key="req.id || req.req_id" class="cursor-pointer" @click="openRequirementDetail(req)">
                     <td v-if="tableVisibleColumns.includes('name')">
                       <p class="cell-title">{{ req.title || req.text || req.statement }}</p>
                     </td>
@@ -496,7 +532,7 @@
                         type="button"
                         class="edit-btn"
                         title="编辑需求"
-                        @click="openEditRequirementModal(req)"
+                        @click.stop="openEditRequirementModal(req)"
                       >
                         <Pencil class="w-3.5 h-3.5" />
                       </button>
@@ -513,6 +549,41 @@
 
             <div class="table-footer">
               共 {{ tableRequirements.length }} 条
+            </div>
+
+            <div v-if="requirementDetail" class="mx-4 mb-4 rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="text-sm font-semibold text-zinc-900">{{ requirementDetail.title || requirementDetail.text || requirementDetail.statement }}</div>
+                  <div class="mt-2 flex flex-wrap gap-3 text-xs text-zinc-600">
+                    <span>类型：{{ getTypeLabel(requirementDetail.requirement_type) }}</span>
+                    <span>层级：{{ requirementDetail.level || requirementDetail.category || '-' }}</span>
+                    <span>状态：{{ getStatusName(requirementDetail.status) }}</span>
+                    <span>优先级：{{ requirementDetail.priority || '-' }}</span>
+                  </div>
+                </div>
+                <button type="button" class="hover-defect-btn" @click="gotoDefectsWithRequirement">
+                  查看关联缺陷
+                </button>
+              </div>
+              <div class="mt-3 flex gap-4 text-xs">
+                <span class="text-zinc-600">总缺陷：<strong class="text-zinc-900">{{ requirementDetailDefects.length }}</strong></span>
+                <span :class="requirementDetailUnresolvedDefects.length ? 'text-red-600' : 'text-emerald-600'">
+                  未解决：<strong>{{ requirementDetailUnresolvedDefects.length }}</strong>
+                </span>
+              </div>
+              <div v-if="requirementDetailDefects.length" class="mt-3 space-y-2">
+                <div
+                  v-for="item in requirementDetailDefects.slice(0, 5)"
+                  :key="item.defect_id"
+                  class="rounded-xl border border-zinc-200 bg-white px-3 py-2"
+                >
+                  <div class="text-sm font-medium text-zinc-800">{{ item.title }}</div>
+                  <div class="mt-1 text-xs text-zinc-500">
+                    {{ item.status || '-' }} / {{ item.severity || '-' }} / {{ item.priority || '-' }} / {{ item.current_assignee || '未指派' }}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -681,7 +752,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/auth.js";
 import draggable from "vuedraggable";
 import Sidebar from "../../components/beta/Sidebar.vue";
@@ -689,13 +760,20 @@ import RequirementTree from "../../components/charts/RequirementTree.vue";
 import { manageApi } from "@/api/project";
 import { Loader2, FileText, RefreshCw, Briefcase, Users, Layout, Layers, Circle, Clock, CheckCircle, GripVertical, Search, Filter, ChevronDown, ChevronUp, CheckCircle2, Plus, X, Pencil, Download, Upload } from "lucide-vue-next";
 import { useBetaNavigation, useBetaSidebarProps } from "@/composables/useBetaNavigation";
+import { useAlphaDefects } from "@/composables/useAlphaDefects";
 
 const router = useRouter();
+const route = useRoute();
 const authStore = useAuthStore();
 
 // 侧边栏状态
 const { activePage, handleNavigate, handleExit } = useBetaNavigation("requirements");
 const { roleType, roleLabel, timestamp, notificationCount } = useBetaSidebarProps();
+
+function hasPermission(permission) {
+  if (!selectedProjectId.value) return false;
+  return authStore.hasPermission(selectedProjectId.value, permission);
+}
 
 // 数据状态
 const isLoading = ref(false);
@@ -715,6 +793,15 @@ const sessionMismatch = ref(false); // session 与项目不一致
 const isExporting = ref(false); // 导出状态
 const isImporting = ref(false); // 导入状态
 const csvFileInputRef = ref(null); // 导入文件input引用
+
+const {
+  defectsByRequirementId,
+  unresolvedForRequirement,
+  reload: reloadDefects,
+  error: defectsError,
+} = useAlphaDefects(selectedProjectId);
+
+const selectedRequirement = ref(null);
 
 // 新增需求相关状态
 const showAddRequirementModal = ref(false);
@@ -880,6 +967,14 @@ async function submitEditRequirement() {
 
   isEditSubmitting.value = true;
   try {
+    if (editRequirement.value.status === 'completed' || editRequirement.value.status === 'confirmed') {
+      const target = findRequirementById(editRequirementId.value) || { req_id: editRequirementId.value, id: editRequirementId.value };
+      if (!canMarkAsCompleted(target)) {
+        alert('该需求仍有关联未解决缺陷，不能标记为已确认/已完成');
+        return;
+      }
+    }
+
     const payload = {
       title: editRequirement.value.title.trim(),
       description: editRequirement.value.description.trim(),
@@ -953,13 +1048,22 @@ function useProjectSession() {
 
 // 需求状态定义
 const requirementStatuses = [
-  { id: 'backlog', name: '待处理', color: 'zinc' },
+  { id: 'draft', name: '待处理', color: 'zinc' },
+  { id: 'under_review', name: '审核中', color: 'amber' },
+  { id: 'confirmed', name: '已确认', color: 'sky' },
   { id: 'in_progress', name: '进行中', color: 'blue' },
-  { id: 'completed', name: '已完成', color: 'emerald' }
+  { id: 'completed', name: '已完成', color: 'emerald' },
+  { id: 'archived', name: '已归档', color: 'slate' },
+];
+
+const kanbanBuckets = [
+  { id: 'backlog', name: '待处理' },
+  { id: 'in_progress', name: '进行中' },
+  { id: 'completed', name: '已完成' },
 ];
 
 // 需求状态管理（卡片拖拽视图）
-const requirementStatusMap = ref({}); // { reqId: 'backlog' | 'in_progress' | 'completed' }
+const requirementStatusMap = ref({}); // { reqId: real manage status }
 const backlogRequirements = ref([]);
 const inProgressRequirements = ref([]);
 const completedRequirements = ref([]);
@@ -992,38 +1096,42 @@ function getStatusColorClass(statusId, variant = 'bg') {
   const color = status?.color || 'zinc';
   const colorMap = {
     zinc: { bg: 'bg-zinc-100', text: 'text-zinc-700', border: 'border-zinc-200', dot: 'bg-zinc-400' },
+    amber: { bg: 'bg-amber-100', text: 'text-amber-700', border: 'border-amber-200', dot: 'bg-amber-500' },
+    sky: { bg: 'bg-sky-100', text: 'text-sky-700', border: 'border-sky-200', dot: 'bg-sky-500' },
     blue: { bg: 'bg-blue-100', text: 'text-blue-700', border: 'border-blue-200', dot: 'bg-blue-500' },
-    emerald: { bg: 'bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-200', dot: 'bg-emerald-500' }
+    emerald: { bg: 'bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-200', dot: 'bg-emerald-500' },
+    slate: { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-200', dot: 'bg-slate-500' },
   };
   return colorMap[color]?.[variant] || colorMap.zinc[variant];
 }
 
-function mapManageStatusToLocal(status) {
+function getKanbanBucket(status) {
   switch (status) {
     case 'completed':
+    case 'archived':
       return 'completed';
     case 'in_progress':
     case 'under_review':
     case 'confirmed':
       return 'in_progress';
-    case 'archived':
-      return 'completed';
     case 'draft':
     default:
       return 'backlog';
   }
 }
 
-function mapLocalStatusToManage(status) {
-  switch (status) {
-    case 'completed':
-      return 'completed';
-    case 'in_progress':
-      return 'in_progress';
-    case 'backlog':
-    default:
-      return 'draft';
+function mapKanbanBucketToManage(bucket, currentStatus) {
+  if (bucket === 'completed') return 'completed';
+  if (bucket === 'in_progress') {
+    if (currentStatus === 'completed' || currentStatus === 'archived') {
+      return 'confirmed';
+    }
+    return 'in_progress';
   }
+  if (currentStatus === 'completed' || currentStatus === 'archived' || currentStatus === 'confirmed') {
+    return 'under_review';
+  }
+  return 'draft';
 }
 
 async function ensureProjectId() {
@@ -1066,10 +1174,6 @@ async function loadManageRequirementMap() {
     manageStatusMap.value = statusMap;
     managePriorityMap.value = priorityMap;
 
-    // 同步数据库状态到本地状态映射
-    statusMap.forEach((status, key) => {
-      requirementStatusMap.value[key] = mapManageStatusToLocal(status);
-    });
   } catch (err) {
     console.warn('加载管理需求映射失败，状态同步将不可用', err);
   }
@@ -1141,6 +1245,9 @@ function handleAnalysisCompleted(event) {
 watch(selectedProjectId, async (val) => {
   if (val) {
     localStorage.setItem('lastProjectId', val);
+    try {
+      await reloadDefects();
+    } catch (_) {}
     window.dispatchEvent(new CustomEvent('project-changed', { detail: { projectId: val } }));
     try {
       await authStore.loadProjectContext(val);
@@ -1155,9 +1262,14 @@ watch(selectedProjectId, async (val) => {
     }
     // 切换项目后立刻刷新（确保需求数据/映射与项目一致）
     await loadRequirements();
+    focusRequirementFromRoute();
   } else {
     projectSessionId.value = '';
     sessionMismatch.value = false;
+    selectedRequirement.value = null;
+    try {
+      await reloadDefects();
+    } catch (_) {}
     window.dispatchEvent(new CustomEvent('project-changed', { detail: { projectId: '' } }));
   }
 });
@@ -1173,6 +1285,13 @@ watch(sessionId, (newVal) => {
     loadRequirements();
   }
 });
+
+watch(
+  () => route.query.focus_requirement_id,
+  () => {
+    focusRequirementFromRoute();
+  }
+);
 
 // 层级标签配置
 const levelTabs = [
@@ -1193,7 +1312,7 @@ const filteredRequirements = computed(() => {
         id,
         level: normalizeLevel(r.level || r.category),
         statement: r.text || r.statement || r.title || '',
-        status: requirementStatusMap.value[id] || 'backlog',
+        status: requirementStatusMap.value[id] || r.status || 'draft',
       };
     }),
     ...lowLevelRequirements.value.map(r => {
@@ -1203,7 +1322,7 @@ const filteredRequirements = computed(() => {
         id,
         level: 'L4',
         statement: r.text || r.statement || r.shall_statement || '',
-        status: requirementStatusMap.value[id] || 'backlog',
+        status: requirementStatusMap.value[id] || r.status || 'draft',
       };
     }),
   ];
@@ -1346,13 +1465,9 @@ function getLevelClass(level) {
 }
 
 function getStatusClass(status) {
-  if (!status || status === 'backlog') return 'status-pending';
-  if (status === 'completed') return 'status-completed';
-  if (status === 'in_progress') return 'status-active';
-  // 兼容旧格式
-  const s = status.toLowerCase();
-  if (s.includes('complet') || s.includes('done') || s.includes('已完成')) return 'status-completed';
-  if (s.includes('progress') || s.includes('active') || s.includes('进行中')) return 'status-active';
+  if (!status || status === 'draft') return 'status-pending';
+  if (status === 'completed' || status === 'archived') return 'status-completed';
+  if (status === 'in_progress' || status === 'under_review' || status === 'confirmed') return 'status-active';
   return 'status-pending';
 }
 
@@ -1380,9 +1495,30 @@ function toggleColumn(key) {
   }
 }
 
-function updateRequirementStatus(reqId, newStatus) {
-  requirementStatusMap.value[reqId] = newStatus;
-  persistStatusToDb({ id: reqId, req_id: reqId }, newStatus);
+async function updateRequirementStatus(reqId, newStatus) {
+  const target = findRequirementById(reqId) || { req_id: reqId, id: reqId };
+  if ((newStatus === 'completed' || newStatus === 'confirmed') && !canMarkAsCompleted(target)) {
+    alert('该需求仍有关联未解决缺陷，不能标记为已确认/已完成');
+    return;
+  }
+
+  const manageReqId = resolveManageReqId(target);
+  if (!manageReqId) {
+    alert('无法关联到项目需求，请刷新后重试');
+    return;
+  }
+
+  try {
+    isSyncingStatus.value = true;
+    await manageApi.updateRequirement(manageReqId, { status: newStatus });
+    requirementStatusMap.value[reqId] = newStatus;
+    requirementStatusMap.value[manageReqId] = newStatus;
+    await loadRequirements();
+  } catch (err) {
+    alert('更新需求状态失败: ' + (err?.response?.data?.detail || err?.message || '未知错误'));
+  } finally {
+    isSyncingStatus.value = false;
+  }
 }
 
 // 获取层级标签样式
@@ -1399,18 +1535,17 @@ function getLevelBadgeClass(level) {
 // 同步需求到各状态列表（从 filteredRequirements 读取，确保状态一致）
 function syncRequirementLists() {
   const all = filteredRequirements.value;
-  backlogRequirements.value = all.filter(r => r.status === 'backlog');
-  inProgressRequirements.value = all.filter(r => r.status === 'in_progress');
-  completedRequirements.value = all.filter(r => r.status === 'completed');
+  backlogRequirements.value = all.filter(r => getKanbanBucket(r.status) === 'backlog');
+  inProgressRequirements.value = all.filter(r => getKanbanBucket(r.status) === 'in_progress');
+  completedRequirements.value = all.filter(r => getKanbanBucket(r.status) === 'completed');
 }
 
 // 拖拽改变状态处理
-function onDragChange(evt, targetStatus) {
+async function onDragChange(evt, targetStatus) {
   if (evt.added) {
     const item = evt.added.element;
     if (item && item.id) {
-      requirementStatusMap.value[item.id] = targetStatus;
-      persistStatusToDb(item, targetStatus);
+      await persistStatusToDb(item, targetStatus);
     }
   }
 }
@@ -1432,15 +1567,116 @@ function resolveManageReqId(item) {
   return candidates[0] || '';
 }
 
+function getRequirementKeyCandidates(item) {
+  const manageId = resolveManageReqId(item);
+  return [
+    item?.manage_req_id,
+    item?.req_id,
+    item?.id,
+    item?.source_req_id,
+    item?.source_top_id,
+    manageId,
+  ].filter(Boolean);
+}
+
+function findRequirementById(reqId) {
+  const all = [...highLevelRequirements.value, ...lowLevelRequirements.value];
+  return all.find((item) => {
+    const candidates = getRequirementKeyCandidates(item);
+    return candidates.includes(reqId);
+  }) || null;
+}
+
+function unresolvedDefectsForRequirement(item) {
+  const candidates = getRequirementKeyCandidates(item);
+  for (const key of candidates) {
+    const list = unresolvedForRequirement(key);
+    if (list.length > 0) return list;
+  }
+  return [];
+}
+
+function allDefectsForRequirement(item) {
+  const candidates = getRequirementKeyCandidates(item);
+  const result = [];
+  const seen = new Set();
+  candidates.forEach((key) => {
+    const list = defectsByRequirementId.value.get(key) || [];
+    list.forEach((d) => {
+      if (seen.has(d.defect_id)) return;
+      seen.add(d.defect_id);
+      result.push(d);
+    });
+  });
+  return result;
+}
+
+const requirementDetail = computed(() => selectedRequirement.value || hoveredNode.value);
+
+const requirementDetailDefects = computed(() => {
+  if (!requirementDetail.value) return [];
+  return allDefectsForRequirement(requirementDetail.value);
+});
+
+const requirementDetailUnresolvedDefects = computed(() => {
+  if (!requirementDetail.value) return [];
+  return unresolvedDefectsForRequirement(requirementDetail.value);
+});
+
+const hoveredNodeDefects = computed(() => {
+  if (!hoveredNode.value) return [];
+  return allDefectsForRequirement(hoveredNode.value);
+});
+
+const hoveredNodeUnresolvedDefects = computed(() => {
+  if (!hoveredNode.value) return [];
+  return unresolvedDefectsForRequirement(hoveredNode.value);
+});
+
+function canMarkAsCompleted(item) {
+  return unresolvedDefectsForRequirement(item).length === 0;
+}
+
+function gotoDefectsWithRequirement() {
+  const req = requirementDetail.value;
+  if (!req) return;
+  const reqId = (req.req_id || req.id || resolveManageReqId(req) || '').toString();
+  if (!reqId) return;
+  const reqTitle = req.title || req.text || req.statement || '';
+  router.push({
+    name: 'beta-defects',
+    query: {
+      project_id: selectedProjectId.value || '',
+      requirement_id: reqId,
+      focus_requirement_id: reqId,
+      requirement_title: reqTitle,
+      return_route: String(route.name || 'beta-requirements-overview'),
+    },
+  });
+}
+
 async function persistStatusToDb(item, targetStatus) {
+  const nextStatus = mapKanbanBucketToManage(targetStatus, item?.status);
+  if ((nextStatus === 'completed' || nextStatus === 'confirmed') && !canMarkAsCompleted(item)) {
+    alert('该需求仍有关联未解决缺陷，不能标记为已确认/已完成');
+    syncRequirementLists();
+    return;
+  }
   const manageReqId = resolveManageReqId(item);
-  if (!manageReqId) return;
-  const statusPayload = mapLocalStatusToManage(targetStatus);
+  if (!manageReqId) {
+    syncRequirementLists();
+    return;
+  }
   try {
     isSyncingStatus.value = true;
-    await manageApi.updateRequirement(manageReqId, { status: statusPayload });
+    await manageApi.updateRequirement(manageReqId, { status: nextStatus });
+    requirementStatusMap.value[item.id] = nextStatus;
+    requirementStatusMap.value[manageReqId] = nextStatus;
+    await loadRequirements();
   } catch (err) {
     console.warn('同步状态到数据库失败', err);
+    alert('更新需求状态失败: ' + (err?.response?.data?.detail || err?.message || '未知错误'));
+    syncRequirementLists();
   } finally {
     isSyncingStatus.value = false;
   }
@@ -1457,11 +1693,43 @@ function handleNodeHover(req) {
 }
 
 function handleNodeClick(req) {
-  console.log('Clicked:', req);
+  selectedRequirement.value = req;
 }
 
 function viewDetail(req) {
-  console.log('View detail:', req);
+  selectedRequirement.value = req;
+}
+
+function openRequirementDetail(req) {
+  selectedRequirement.value = req;
+}
+
+function gotoRequirementsWorkbench() {
+  const req = selectedRequirement.value;
+  const reqId = String(
+    req?.req_id ||
+    req?.id ||
+    route.query.focus_requirement_id ||
+    route.query.requirement_id ||
+    '',
+  ).trim();
+  router.push({
+    name: 'beta-requirements',
+    query: {
+      project_id: selectedProjectId.value || String(route.query.project_id || ''),
+      ...(reqId ? { focus_requirement_id: reqId } : {}),
+    },
+  });
+}
+
+function focusRequirementFromRoute() {
+  const focusId = String(route.query.focus_requirement_id || '').trim();
+  if (!focusId) return;
+  const matched = findRequirementById(focusId);
+  if (matched) {
+    hoveredNode.value = matched;
+    selectedRequirement.value = matched;
+  }
 }
 
 async function refreshData() {
@@ -1853,6 +2121,7 @@ async function loadRequirements() {
 
     // 同步 manage_requirements 状态映射
     await loadManageRequirementMap();
+    focusRequirementFromRoute();
     
   } catch (err) {
     console.error('加载需求失败:', err);
@@ -1982,6 +2251,9 @@ onMounted(async () => {
   }
 
   // 初始加载
+  try {
+    await reloadDefects();
+  } catch (_) {}
   loadRequirements();
 });
 
@@ -2215,6 +2487,21 @@ onUnmounted(() => {
 .detail-value {
   color: var(--ink-950);
   font-weight: 500;
+}
+
+.hover-defect-btn {
+  margin-top: 8px;
+  width: 100%;
+  border: 1px solid rgba(28, 40, 52, 0.2);
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--ink-950);
+  font-size: 12px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.hover-defect-btn:hover {
+  background: rgba(28, 40, 52, 0.06);
 }
 
 /* 表格视图 */
@@ -2862,5 +3149,3 @@ onUnmounted(() => {
   border-color: rgba(28, 40, 52, 0.3);
 }
 </style>
-
-

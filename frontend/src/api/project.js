@@ -62,6 +62,38 @@ export const manageApi = {
         return resp.data
     },
 
+    async listDefects(projectId, { requirementId } = {}) {
+        const resp = await api.get(`/manage/projects/${encodeURIComponent(projectId)}/defects`, {
+            params: requirementId ? { requirement_id: requirementId } : undefined,
+        })
+        if (resp.data?.error) throw new Error(resp.data.error)
+        return resp.data
+    },
+
+    async listRequirementDefects(reqId) {
+        const resp = await api.get(`/manage/requirements/${encodeURIComponent(reqId)}/defects`)
+        if (resp.data?.error) throw new Error(resp.data.error)
+        return resp.data
+    },
+
+    async createDefect(projectId, payload) {
+        const resp = await api.post(`/manage/projects/${encodeURIComponent(projectId)}/defects`, payload)
+        if (resp.data?.error) throw new Error(resp.data.error)
+        return resp.data
+    },
+
+    async updateDefect(defectId, payload) {
+        const resp = await api.patch(`/manage/defects/${encodeURIComponent(defectId)}`, payload)
+        if (resp.data?.error) throw new Error(resp.data.error)
+        return resp.data
+    },
+
+    async deleteDefect(defectId) {
+        const resp = await api.delete(`/manage/defects/${encodeURIComponent(defectId)}`)
+        if (resp.data?.error) throw new Error(resp.data.error)
+        return resp.data
+    },
+
     async moveRequirement(reqId, payload) {
         const resp = await api.post(`/manage/requirements/${encodeURIComponent(reqId)}/move`, payload)
         if (resp.data?.error) throw new Error(resp.data.error)
@@ -173,4 +205,3 @@ export const manageApi = {
         return resp.data
     },
 }
-
