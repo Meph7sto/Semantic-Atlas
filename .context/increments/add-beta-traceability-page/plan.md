@@ -92,7 +92,7 @@ superspec commit --summary "Create the beta traceability page shell" --next $'Ad
 - Modify: `backend_business/api/routers/manage.py`
 - Test: `backend_business/tests/` relevant manage router tests
 
-- [ ] **Step 1: Write failing API contract expectations**
+- [x] **Step 1: Write failing API contract expectations**
 
 Define request and response needs for:
 - matrix
@@ -100,20 +100,20 @@ Define request and response needs for:
 - impact
 - risk
 
-- [ ] **Step 2: Add request schemas for traceability impact parameters**
+- [x] **Step 2: Add request schemas for traceability impact parameters**
 
 Add minimal new Pydantic models for traceability impact comparison inputs and optional branch selection query parameters if needed.
 
-- [ ] **Step 3: Add router declarations**
+- [x] **Step 3: Add router declarations**
 
 Add route signatures and permission checks in `manage.py` without implementing the full service logic yet.
 
-- [ ] **Step 4: Verify imports and router load**
+- [x] **Step 4: Verify imports and router load**
 
 Run: `pytest backend_business/tests -q`
 Expected: schema and router import errors are resolved
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend_business/api/routers/schemas/manage_schemas.py backend_business/api/routers/manage.py backend_business/tests
