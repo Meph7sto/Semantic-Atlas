@@ -372,7 +372,7 @@ superspec commit --summary "Build the traceability matrix and coverage tabs" --n
 - Create: `frontend/src/components/beta/traceability/TraceabilityImpactPanel.vue`
 - Create: `frontend/src/components/beta/traceability/TraceabilityRiskPanel.vue`
 
-- [ ] **Step 1: Write the failing UI expectations**
+- [x] **Step 1: Write the failing UI expectations**
 
 Cover:
 - impact trigger
@@ -380,7 +380,7 @@ Cover:
 - impact result rendering
 - risk summary rendering
 
-- [ ] **Step 2: Build the impact panel**
+- [x] **Step 2: Build the impact panel**
 
 Render:
 - diff summary cards
@@ -388,7 +388,7 @@ Render:
 - affected test lists
 - related change and audit evidence
 
-- [ ] **Step 3: Build the risk panel**
+- [x] **Step 3: Build the risk panel**
 
 Render:
 - status distribution
@@ -396,12 +396,12 @@ Render:
 - high-risk chains
 - active audit targets
 
-- [ ] **Step 4: Verify build**
+- [x] **Step 4: Verify build**
 
 Run: `npm run build`
 Expected: impact and risk tabs compile cleanly
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/views/beta/TraceabilityView.vue frontend/src/components/beta/traceability
