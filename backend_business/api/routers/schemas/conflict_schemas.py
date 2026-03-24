@@ -15,7 +15,7 @@ class ConflictCheckRequest(BaseModel):
 
     requirement_a: NonEmptyStr
     requirement_b: NonEmptyStr
-    use_thinking_mode: bool = False
+    use_thinking_mode: bool = True
     save_to_db: bool = False
     session_id: str | None = None
 

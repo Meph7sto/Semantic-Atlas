@@ -11,7 +11,7 @@ class ChatService:
         prompt: str,
         system_prompt: str = "",
         max_new_tokens: int = 512,
-        use_thinking_mode: bool = False,
+        use_thinking_mode: bool = True,
         use_async_client: bool = False,
     ):
         """

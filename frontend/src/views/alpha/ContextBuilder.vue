@@ -429,7 +429,7 @@ const matrixRelationFilter = ref('all')
 const matrixShowStrength = ref(true)
 const matrixLoading = ref(false)
 const matrixError = ref('')
-const useThinking = ref(false)
+const useThinking = ref(true)
 const copyStatusText = ref('复制')
 
 const relationLabels = {

@@ -87,7 +87,7 @@ export const conflictApi = {
     },
 
     // 冲突检测（统一走业务后端 FastAPI，不再前端直连 inference）
-    async streamCheck(requirementA, requirementB, useThinking = false) {
+    async streamCheck(requirementA, requirementB, useThinking = true) {
         const response = await fetch('/api/v2/conflict/stream_check', {
             method: 'POST',
             headers: {

@@ -22,7 +22,7 @@ class _StubAIProxy:
         self,
         requirement_a: str,
         requirement_b: str,
-        use_thinking_mode: bool = False,
+        use_thinking_mode: bool = True,
     ):
         self.calls.append((requirement_a, requirement_b, use_thinking_mode))
         if self.should_raise:
@@ -37,7 +37,7 @@ class _StubAIProxy:
         self,
         requirement_a: str,
         requirement_b: str,
-        use_thinking_mode: bool = False,
+        use_thinking_mode: bool = True,
     ):
         self.calls.append((requirement_a, requirement_b, use_thinking_mode))
         yield b'{"type":"token","content":"hello"}\n'
@@ -97,7 +97,7 @@ async def test_check_conflict_success_and_db_save(fastapi_client):
     assert body["record_id"] == 102
     assert body["data"]["is_conflict"] is True
 
-    assert stub_ai.calls == [("A", "B", False)]
+    assert stub_ai.calls == [("A", "B", True)]
     assert stub_db.saved[0]["session_id"] == "s-1"
     assert stub_db.saved[0]["conflicts"][0]["requirement_a"] == "A"
 
@@ -149,7 +149,7 @@ async def test_check_conflict_batch_success(fastapi_client):
     assert body["total"] == 2
     assert body["record_ids"] == [102]
     assert len(body["data"]) == 2
-    assert stub_ai.calls == [("a1", "b1", False), ("a2", "b2", False)]
+    assert stub_ai.calls == [("a1", "b1", True), ("a2", "b2", True)]
     assert len(stub_db.saved[0]["conflicts"]) == 2
 
 
@@ -200,4 +200,3 @@ async def test_stream_check_conflict_success_with_thinking_mode(fastapi_client):
     assert '{"type":"token","content":"hello"}' in response.text
     assert '{"type":"result","data":{"is_conflict":true,"raw_response":"hello"}}' in response.text
     assert stub_ai.calls == [("a", "b", True)]
-

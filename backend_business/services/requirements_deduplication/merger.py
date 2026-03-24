@@ -96,7 +96,7 @@ class RequirementMerger:
     使用 Tool Call 让 LLM 判断是否合并，并生成合并文本
     """
 
-    def __init__(self, model_name: str = "deepseek-chat"):
+    def __init__(self, model_name: str = "deepseek-reasoner"):
         self.model_name = model_name
 
     def decide_merge(

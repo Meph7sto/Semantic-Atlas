@@ -13,6 +13,7 @@ const {
   sessionId,
   messages,
   inputMessage,
+  useThinkingMode,
   isSending,
   isLoadingProjects,
   isLoadingSessions,
@@ -186,6 +187,21 @@ const handleKeydown = (event) => {
       <div class="panel-footer">
         <div v-if="errorMessage" class="error-bar">
           {{ errorMessage }}
+        </div>
+        <div class="footer-toolbar">
+          <label class="thinking-toggle">
+            <input
+              v-model="useThinkingMode"
+              type="checkbox"
+              class="thinking-toggle-input"
+            />
+            <span class="thinking-toggle-track">
+              <span class="thinking-toggle-thumb" />
+            </span>
+            <span class="thinking-toggle-label">
+              {{ useThinkingMode ? 'Reasoner' : 'Chat' }}
+            </span>
+          </label>
         </div>
         <div class="input-wrapper">
           <textarea
@@ -537,6 +553,63 @@ const handleKeydown = (event) => {
 
 .input-wrapper:focus-within {
   border-color: #2f8f89;
+}
+
+.footer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin-bottom: 8px;
+}
+
+.thinking-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.thinking-toggle-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.thinking-toggle-track {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  border-radius: 999px;
+  background: #d1d5db;
+  transition: background 0.15s ease;
+}
+
+.thinking-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.2);
+  transition: transform 0.15s ease;
+}
+
+.thinking-toggle-input:checked + .thinking-toggle-track {
+  background: #2f8f89;
+}
+
+.thinking-toggle-input:checked + .thinking-toggle-track .thinking-toggle-thumb {
+  transform: translateX(16px);
+}
+
+.thinking-toggle-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #5d6b76;
+  letter-spacing: 0.02em;
 }
 
 .message-input {

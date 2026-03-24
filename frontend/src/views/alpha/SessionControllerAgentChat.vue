@@ -27,6 +27,7 @@ const selectedProjectId = ref('')
 const sessionId = ref('')
 const messages = ref([])
 const inputMessage = ref('')
+const useThinkingMode = ref(true)
 const isSending = ref(false)
 const isLoadingProjects = ref(false)
 const isLoadingSessions = ref(false)
@@ -423,7 +424,8 @@ const sendMessage = async () => {
     const stream = await sessionControllerChatApi.streamMessage({
       sessionId: sessionId.value,
       projectId: selectedProjectId.value,
-      message
+      message,
+      useThinkingMode: useThinkingMode.value
     })
     inputMessage.value = ''
     appendTimeline('submit', { message })
@@ -619,6 +621,25 @@ onMounted(async () => {
           <div class="shrink-0 border-t border-stone-200 bg-stone-50/50 px-5 py-4 backdrop-blur-md">
             <div v-if="errorMessage" class="mb-3 border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
               {{ errorMessage }}
+            </div>
+            <div class="mb-3 flex items-center justify-between">
+              <label class="inline-flex items-center gap-3 text-xs font-medium text-stone-600">
+                <input
+                  v-model="useThinkingMode"
+                  type="checkbox"
+                  class="peer sr-only"
+                >
+                <span
+                  class="relative h-5 w-9 transition"
+                  :class="useThinkingMode ? 'bg-stone-900' : 'bg-stone-300'"
+                >
+                  <span
+                    class="absolute left-0.5 top-0.5 h-4 w-4 bg-white shadow-sm transition-transform"
+                    :class="useThinkingMode ? 'translate-x-4' : 'translate-x-0'"
+                  />
+                </span>
+                <span>{{ useThinkingMode ? 'Reasoner 模式' : 'Chat 模式' }}</span>
+              </label>
             </div>
             <div class="border border-stone-300 bg-white p-2">
               <textarea

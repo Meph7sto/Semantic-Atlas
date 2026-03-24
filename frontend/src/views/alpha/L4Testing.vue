@@ -31,7 +31,7 @@ const generationNotice = ref('')
 const validationWarning = ref('')
 const generationResults = ref([])
 const kbVersion = ref('')
-const useReasoningModel = ref(false)
+const useReasoningModel = ref(true)
 
 const config = ref({
   top_k_pattern: 5,
@@ -607,4 +607,3 @@ watch(reqLevelFilter, () => {
   background: #d4d4d8;
 }
 </style>
-

@@ -35,6 +35,7 @@ class ConflictService:
         self,
         requirement_a: str,
         requirement_b: str,
+        use_thinking_mode: bool = True,
     ) -> ConflictCheckResponse:
         """
         专门分析两个需求是否存在潜在冲突
@@ -53,7 +54,8 @@ class ConflictService:
         answer = self.model_engine.generate(
             prompt=prompt,
             system_prompt=SYSTEM_PROMPT_CONFLICT,
-            max_new_tokens=2048
+            max_new_tokens=2048,
+            model="deepseek-reasoner" if use_thinking_mode else None,
         )
         
         # 鲁棒的解析逻辑
@@ -80,7 +82,7 @@ class ConflictService:
         self,
         requirement_a: str,
         requirement_b: str,
-        use_thinking_mode: bool = False,
+        use_thinking_mode: bool = True,
     ):
         """
         流式分析两个需求是否存在潜在冲突

@@ -500,7 +500,7 @@ class AiChatService:
         user_id: str,
         user_content: str,
         system_prompt: Optional[str] = None,
-        use_thinking_mode: bool = False,
+        use_thinking_mode: bool = True,
     ) -> Dict[str, Any]:
         """
         Send a user message and get AI reply.
@@ -600,7 +600,7 @@ class AiChatService:
         user_id: str,
         user_content: str,
         system_prompt: Optional[str] = None,
-        use_thinking_mode: bool = False,
+        use_thinking_mode: bool = True,
     ) -> Generator[str, None, None]:
         """
         Send a user message and stream the AI reply.

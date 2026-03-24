@@ -45,7 +45,7 @@ class Tool(BaseModel):
 
 class ChatCompletionRequest(BaseModel):
     messages: List[ChatMessage] = Field(..., description="List of messages")
-    model: str = Field(default="deepseek-chat", description="Model name")
+    model: str = Field(default="deepseek-reasoner", description="Model name")
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(default=2000, ge=1, le=8000)
 
@@ -55,7 +55,7 @@ class ChatCompletionWithToolsRequest(BaseModel):
 
     messages: List[ChatMessage] = Field(..., description="List of messages")
     tools: List[Dict[str, Any]] = Field(..., description="List of tool definitions")
-    model: str = Field(default="deepseek-chat", description="Model name")
+    model: str = Field(default="deepseek-reasoner", description="Model name")
     temperature: Optional[float] = Field(default=0.3, ge=0.0, le=2.0)
     max_tokens: int = Field(default=4096, ge=1, le=8000)
     tool_choice: Optional[str] = Field(

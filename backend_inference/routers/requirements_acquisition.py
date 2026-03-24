@@ -18,7 +18,7 @@ class ExtractionRequest(BaseModel):
     text: str
     chunk_size: Optional[int] = 3600
     overlap: Optional[int] = 500
-    clean_model: Optional[str] = "deepseek-chat"
+    clean_model: Optional[str] = "deepseek-reasoner"
     extract_model: Optional[str] = "deepseek-reasoner"
 
 class RequirementItemModel(BaseModel):
@@ -60,4 +60,3 @@ async def extract_requirements(request: ExtractionRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-

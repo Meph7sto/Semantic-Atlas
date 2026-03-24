@@ -31,7 +31,7 @@ class RequirementsDeduplicationService:
         self,
         dsn: str,
         similarity_threshold: float = 0.85,
-        default_model: str = "deepseek-chat",
+        default_model: str = "deepseek-reasoner",
     ):
         """
         初始化去重服务

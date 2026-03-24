@@ -5,7 +5,7 @@ import { Play, CheckCircle2, AlertCircle, Sparkles } from 'lucide-vue-next'
 
 const reqA = ref('')
 const reqB = ref('')
-const useThinking = ref(false)
+const useThinking = ref(true)
 const isLoading = ref(false)
 const result = ref(null) 
 
@@ -204,4 +204,3 @@ const detectConflict = async () => {
 <style scoped>
 /* Scoped styles overrides if needed, but Tailwind handles most */
 </style>
-

@@ -28,6 +28,7 @@ class SessionControllerMessageRequest(BaseModel):
 
     project_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
+    use_thinking_mode: bool = True
 
     @field_validator("project_id", "message")
     @classmethod
@@ -188,6 +189,7 @@ def stream_message(
                 user_id=current_user["user_id"],
                 project_id=payload.project_id,
                 user_message=payload.message,
+                use_thinking_mode=payload.use_thinking_mode,
             ):
                 yield _sse_event(event["event"], event.get("data", {}))
         except Exception as exc:

@@ -196,7 +196,7 @@ class L4GenerationService:
 
     def __init__(self):
         self._kb_service = None
-        self._model_id = "deepseek-chat"
+        self._model_id = "deepseek-reasoner"
 
     def _get_kb_service(self):
         """获取 KB Service"""

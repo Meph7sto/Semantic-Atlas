@@ -163,7 +163,7 @@ export function useCollectionPipeline() {
         mock_llm: options.mock_llm,
         enable_parallel_windows: options.enable_parallel_windows,
         max_concurrent_windows: options.max_concurrent_windows,
-        llm_model: 'deepseek-chat',
+        llm_model: 'deepseek-reasoner',
       },
     }
 
@@ -235,7 +235,7 @@ export function useCollectionPipeline() {
       anchor_strategy: 'informative',
       r: 2,
       adaptive_retry_r2: true,
-      model: 'deepseek-chat',
+      model: 'deepseek-reasoner',
       use_toolcall: true,
       max_spans_per_bundle: 12,
       token_limit: 1500,
@@ -325,7 +325,7 @@ export function useCollectionPipeline() {
       requirements,
       {
         config: { top_k_pattern: 5, top_k_spec: 3, top_k_nfr: 3, max_l4_per_top_req: 5, min_l4_per_top_req: 1, confidence_threshold: 0.6 },
-        model: 'deepseek-chat',
+        model: 'deepseek-reasoner',
         forceRegenerate: false,
       }
     )
@@ -445,4 +445,3 @@ export function useCollectionPipeline() {
     goToRequirements,
   }
 }
-

@@ -28,7 +28,7 @@ class _StubAIProxy:
         text: str,
         chunk_size: int = 3600,
         overlap: int = 500,
-        clean_model: str = "deepseek-chat",
+        clean_model: str = "deepseek-reasoner",
         extract_model: str = "deepseek-reasoner",
     ):
         self.extract_calls.append(

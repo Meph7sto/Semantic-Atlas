@@ -66,13 +66,14 @@ export const sessionControllerChatApi = {
     return resp.data
   },
 
-  async streamMessage({ sessionId, projectId, message }) {
+  async streamMessage({ sessionId, projectId, message, useThinkingMode = true }) {
     const response = await fetch(`/api/v2/session-controller/sessions/${encodeURIComponent(sessionId)}/messages/stream`, {
       method: 'POST',
       headers: buildAuthHeaders(),
       body: JSON.stringify({
         project_id: projectId,
-        message
+        message,
+        use_thinking_mode: useThinkingMode,
       })
     })
 

@@ -44,7 +44,7 @@ class BuildContextOptions(BaseModel):
     token_limit_per_bundle: int = Field(default=4000, ge=1)
     mock_llm: bool = False
     llm_model: Optional[str] = None
-    use_thinking_mode: bool = False
+    use_thinking_mode: bool = True
     enable_parallel_windows: bool = False
     max_concurrent_windows: int = Field(default=5, ge=1)
 

@@ -245,7 +245,7 @@ class AIProxy:
         self,
         requirement_a: str,
         requirement_b: str,
-        use_thinking_mode: bool = False,
+        use_thinking_mode: bool = True,
     ) -> Dict[str, Any]:
         """
         可选：业务层也可代理冲突检测（不改变原冲突代码）。
@@ -266,7 +266,7 @@ class AIProxy:
         self,
         requirement_a: str,
         requirement_b: str,
-        use_thinking_mode: bool = False,
+        use_thinking_mode: bool = True,
     ) -> Generator[bytes, None, None]:
         """
         冲突检测流式代理。
@@ -292,7 +292,7 @@ class AIProxy:
         text: str,
         chunk_size: int = 3600,
         overlap: int = 500,
-        clean_model: str = "deepseek-chat",
+        clean_model: str = "deepseek-reasoner",
         extract_model: str = "deepseek-reasoner",
     ) -> Dict[str, Any]:
         """
@@ -315,7 +315,7 @@ class AIProxy:
     def chat_completion(
         self,
         messages: List[Dict[str, str]],
-        model: str = "deepseek-chat",
+        model: str = "deepseek-reasoner",
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
@@ -349,7 +349,7 @@ class AIProxy:
         self,
         messages: List[Dict[str, Any]],
         tools: List[Dict[str, Any]],
-        model: str = "deepseek-chat",
+        model: str = "deepseek-reasoner",
         temperature: float = 0.3,
         max_tokens: Optional[int] = None,
         tool_choice: Optional[str] = None,
@@ -396,7 +396,7 @@ class AIProxy:
         self,
         messages: List[Dict[str, Any]],
         tools: List[Dict[str, Any]],
-        model: str = "deepseek-chat",
+        model: str = "deepseek-reasoner",
         temperature: float = 0.3,
         max_tokens: Optional[int] = None,
         tool_choice: Optional[str] = None,

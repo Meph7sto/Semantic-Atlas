@@ -84,7 +84,7 @@ class L4RequirementsMixin:
         try:
             response = ai_proxy.chat_completion(
                 messages=[{"role": "user", "content": prompt}],
-                model="deepseek-chat",
+                model="deepseek-reasoner",
                 temperature=0,
                 max_tokens=10,
             )

@@ -74,7 +74,7 @@ class RequirementClassificationEngine:
         self.chutes_api_token = chutes_api_token
         self.deepseek_api_url = deepseek_api_url or ""
         self.deepseek_api_key = deepseek_api_key
-        self.deepseek_model = deepseek_model or "deepseek-chat"
+        self.deepseek_model = deepseek_model or "deepseek-reasoner"
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model: Optional[AutoModelForSequenceClassification] = None
         self.tokenizer: Optional[AutoTokenizer] = None

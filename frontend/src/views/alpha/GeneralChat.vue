@@ -4,7 +4,7 @@ import { chatApi } from '@/api/chat'
 import { MessageSquare, Send, Sparkles } from 'lucide-vue-next'
 
 const question = ref('')
-const useThinking = ref(false)
+const useThinking = ref(true)
 const useAsyncClient = ref(false)
 const isLoading = ref(false)
 const result = ref(null)
@@ -161,4 +161,3 @@ const askQuestion = async () => {
     </div>
   </div>
 </template>
-

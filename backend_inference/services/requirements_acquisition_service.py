@@ -281,7 +281,7 @@ class RequirementsAcquisitionService:
     def process(
         self,
         raw_text: str,
-        clean_model: str = "deepseek-chat",
+        clean_model: str = "deepseek-reasoner",
         extract_model: str = "deepseek-reasoner",
         on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> RequirementGroup:
@@ -342,7 +342,7 @@ class RequirementsAcquisitionService:
                                     target_dict[k] = parsed
             
             # Context summary for next extraction chunk
-            sum_res = call_openai_json(self.client, build_summary_prompt(chunk), "deepseek-chat", self.temperature)
+            sum_res = call_openai_json(self.client, build_summary_prompt(chunk), "deepseek-reasoner", self.temperature)
             previous_summary = sum_res.get("short_summary", "")
             _emit_progress(on_progress, {"stage": "extract", "current": idx, "total": len(extract_chunks)})
 

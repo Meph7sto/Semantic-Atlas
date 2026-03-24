@@ -287,6 +287,7 @@ class SessionControllerService:
         prompt: str,
         system_prompt: str,
         max_new_tokens: int = 1200,
+        use_thinking_mode: bool = True,
     ) -> Generator[dict[str, Any], None, str]:
         inference_base = settings.INFERENCE_BASE_URL.rstrip("/")
         response = requests.post(
@@ -295,7 +296,7 @@ class SessionControllerService:
                 "prompt": prompt,
                 "system_prompt": system_prompt,
                 "max_new_tokens": max_new_tokens,
-                "use_thinking_mode": False,
+                "use_thinking_mode": use_thinking_mode,
                 "use_async_client": False,
             },
             stream=True,
@@ -352,6 +353,7 @@ class SessionControllerService:
         user_id: str,
         project_id: str,
         user_message: str,
+        use_thinking_mode: bool = True,
     ) -> Generator[dict[str, Any], None, None]:
         if not self.chat_storage:
             raise RuntimeError("AI chat storage not initialized")
@@ -484,6 +486,7 @@ class SessionControllerService:
             stream = self._stream_llm_reply(
                 prompt=final_prompt,
                 system_prompt=final_system_prompt,
+                use_thinking_mode=use_thinking_mode,
             )
             while True:
                 try:

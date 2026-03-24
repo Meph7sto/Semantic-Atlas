@@ -45,7 +45,7 @@ def detect_duplicates(req: DetectDuplicatesRequest):
         "level": "L1" | "L2" | "L3",      # Optional, filter by level
         "with_llm_decision": true,         # Optional, default true
         "auto_merge": false,               # Optional, default false
-        "model": "deepseek-chat",          # Optional
+        "model": "deepseek-reasoner",      # Optional
         "threshold": 0.85,                 # Optional, similarity threshold
         "max_concurrent": 5                # Optional, max concurrent LLM calls
     }
@@ -197,7 +197,7 @@ def regenerate_llm_decision(req: RegenerateLLMDecisionRequest):
     {
         "session_id": "xxx",          # Required
         "req_ids": ["id1", "id2"],    # Required, at least 2
-        "model": "deepseek-chat"      # Optional
+        "model": "deepseek-reasoner"  # Optional
     }
 
     Returns:

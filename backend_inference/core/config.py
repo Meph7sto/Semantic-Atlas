@@ -53,7 +53,7 @@ class Settings:
     )
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-    DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+    DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-reasoner")
 
     # OpenAI / Compatibility config
     # 显式优先读取 OPENAI_API_KEY，如果没有设置，则回退使用 DEEPSEEK_API_KEY

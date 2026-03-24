@@ -347,7 +347,7 @@ class ConflictDetectionAgentService:
                 "prompt": prompt,
                 "system_prompt": system_prompt,
                 "max_new_tokens": max_new_tokens,
-                "use_thinking_mode": False,
+                "use_thinking_mode": True,
                 "use_async_client": False,
             },
             stream=True,

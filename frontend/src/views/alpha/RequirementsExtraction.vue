@@ -22,7 +22,7 @@ const form = ref({
   maxR: 2, // 1 or 2
   adaptiveRetryR2: true, // r>=2 时：先 r=1，不足再 r=2
   useToolcall: true,
-  model: 'deepseek-chat',
+  model: 'deepseek-reasoner',
   maxSpansPerBundle: 12,
   tokenLimit: 1500, // null/0 表示不限制
   topM2Hop: 5,
@@ -803,5 +803,4 @@ onMounted(async () => {
     </div>
   </div>
 </template>
-
 

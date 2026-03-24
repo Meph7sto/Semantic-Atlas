@@ -50,6 +50,7 @@ export function useSessionAssistant() {
   const sessionId = ref('')
   const messages = ref([])
   const inputMessage = ref('')
+  const useThinkingMode = ref(true)
   const isSending = ref(false)
   const isLoadingProjects = ref(false)
   const isLoadingSessions = ref(false)
@@ -459,6 +460,7 @@ export function useSessionAssistant() {
         sessionId: sessionId.value,
         projectId: selectedProjectId.value,
         message,
+        useThinkingMode: useThinkingMode.value,
       })
       inputMessage.value = ''
       appendTimeline('submit', { message })
@@ -498,6 +500,7 @@ export function useSessionAssistant() {
     sessionId,
     messages,
     inputMessage,
+    useThinkingMode,
     isSending,
     isLoadingProjects,
     isLoadingSessions,

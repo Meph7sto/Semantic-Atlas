@@ -4,7 +4,7 @@ import { api } from './request'
 export const chatApi = {
     async streamAsk(
         prompt,
-        useThinking = false,
+        useThinking = true,
         useAsyncClient = false,
         maxNewTokens = 800,
         systemPrompt = ''
