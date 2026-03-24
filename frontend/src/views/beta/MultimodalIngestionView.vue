@@ -539,40 +539,46 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* ── 媒体采集 shell ── */
 .media-shell {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
+/* ── Tab 切换 ── */
 .media-tabs {
   display: inline-flex;
-  gap: 8px;
+  gap: 4px;
   width: fit-content;
-  padding: 6px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+  padding: 4px;
+  border: 1px solid rgba(28, 40, 52, 0.12);
+  background: rgba(255, 255, 255, 0.95);
 }
 
 .media-tab {
   border: 0;
-  border-radius: 10px;
+  border-radius: 0;
   background: transparent;
-  color: #52606d;
+  color: rgba(28, 40, 52, 0.6);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
-  padding: 10px 16px;
-  transition: background-color 0.2s ease, color 0.2s ease;
+  padding: 8px 16px;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .media-tab.active {
-  background: #111827;
+  background: var(--ink-950, #1b2730);
   color: #fff;
 }
 
+.media-tab:not(.active):hover {
+  background: rgba(28, 40, 52, 0.05);
+  color: var(--ink-950, #1b2730);
+}
+
+/* ── Panel ── */
 .media-panel {
   display: flex;
   flex-direction: column;
@@ -584,37 +590,38 @@ onBeforeUnmount(() => {
 .card-subtle h4,
 .preview-block h4 {
   margin: 0;
+  font-size: 14px;
+  color: var(--ink-950, #1b2730);
 }
 
 .media-section-header p,
 .hint,
 .empty-text,
 .field small {
-  color: #64748b;
+  color: rgba(28, 40, 52, 0.55);
+  font-size: 13px;
 }
 
-.card-block,
-.card-subtle {
-  background: rgba(255, 255, 255, 0.88);
-  border: 1px solid #e4e9ef;
-  border-radius: 16px;
-  padding: 18px;
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.05);
-}
-
+/* ── 卡片 ── */
 .card-block {
+  background: #fdfcf9;
+  border: 1px solid rgba(28, 40, 52, 0.08);
+  padding: 18px;
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
 .card-subtle {
+  background: rgba(28, 40, 52, 0.03);
+  border: 1px solid rgba(28, 40, 52, 0.06);
+  padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  background: #f8fafc;
 }
 
+/* ── 表单 ── */
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -629,30 +636,56 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 14px;
+  font-size: 13px;
+}
+
+.field > span {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(28, 40, 52, 0.5);
 }
 
 .input {
   width: 100%;
-  border: 1px solid #d6dee8;
-  border-radius: 12px;
+  border: 1px solid rgba(28, 40, 52, 0.12);
+  border-radius: 0;
   background: #fff;
-  padding: 10px 12px;
-  font-size: 14px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--ink-950, #1b2730);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.input:focus {
+  border-color: rgba(47, 143, 137, 0.5);
 }
 
 .textarea {
   resize: vertical;
 }
 
+/* ── 按钮 ── */
 .action-btn {
-  border: 1px solid transparent;
-  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(28, 40, 52, 0.15);
+  border-radius: 0;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
-  padding: 10px 14px;
-  transition: all 0.2s ease;
+  padding: 6px 14px;
+  background: #fff;
+  color: rgba(28, 40, 52, 0.7);
+  transition: all 0.15s ease;
+}
+
+.action-btn:hover {
+  background: rgba(28, 40, 52, 0.04);
+  color: var(--ink-950, #1b2730);
 }
 
 .action-btn:disabled {
@@ -660,22 +693,31 @@ onBeforeUnmount(() => {
   opacity: 0.5;
 }
 
+/* dark → beta brown（主操作） */
 .action-btn.dark {
-  background: #111827;
+  background: var(--accent, #c4692f);
   color: #fff;
+  border-color: var(--accent, #c4692f);
 }
 
+.action-btn.dark:hover:not(:disabled) {
+  background: var(--accent-strong, #a85424);
+  border-color: var(--accent-strong, #a85424);
+}
+
+/* light → beta ghost */
 .action-btn.light {
   background: #fff;
-  border-color: #d6dee8;
-  color: #334155;
+  border-color: rgba(28, 40, 52, 0.15);
+  color: rgba(28, 40, 52, 0.7);
 }
 
 .action-btn.tiny {
-  padding: 6px 10px;
-  font-size: 12px;
+  padding: 4px 10px;
+  font-size: 11px;
 }
 
+/* ── 信息卡片 ── */
 .info-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -683,22 +725,26 @@ onBeforeUnmount(() => {
 }
 
 .info-card {
-  border: 1px solid #e4e9ef;
-  border-radius: 12px;
-  background: #f8fafc;
+  border: 1px solid rgba(28, 40, 52, 0.08);
+  background: rgba(28, 40, 52, 0.03);
   padding: 12px;
 }
 
 .info-label {
-  color: #64748b;
-  font-size: 12px;
+  color: rgba(28, 40, 52, 0.5);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .info-value {
   margin-top: 6px;
-  color: #1e293b;
+  color: var(--ink-950, #1b2730);
+  font-size: 13px;
 }
 
+/* ── 预览块 ── */
 .preview-block {
   display: flex;
   flex-direction: column;
@@ -708,12 +754,12 @@ onBeforeUnmount(() => {
 .preview-box {
   max-height: 220px;
   overflow: auto;
-  border: 1px solid #e4e9ef;
-  border-radius: 12px;
-  background: #f8fafc;
+  border: 1px solid rgba(28, 40, 52, 0.1);
+  background: rgba(28, 40, 52, 0.02);
   padding: 12px;
   white-space: pre-wrap;
-  color: #334155;
+  color: rgba(28, 40, 52, 0.85);
+  font-size: 13px;
 }
 
 .preformatted {
@@ -724,6 +770,7 @@ onBeforeUnmount(() => {
   font-family: Consolas, 'Courier New', monospace;
 }
 
+/* ── 工具栏行 ── */
 .checkbox-row,
 .toolbar-row,
 .upload-row {
@@ -740,6 +787,7 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 
+/* ── 表格 ── */
 .table-wrap {
   overflow-x: auto;
 }
@@ -753,14 +801,23 @@ onBeforeUnmount(() => {
 .data-table th,
 .data-table td {
   padding: 10px 12px;
-  border: 1px solid #e8edf3;
+  border: 1px solid rgba(28, 40, 52, 0.08);
   text-align: left;
   vertical-align: top;
+  font-size: 13px;
 }
 
 .data-table th {
-  background: #f8fafc;
+  background: rgba(28, 40, 52, 0.03);
+  font-size: 11px;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(28, 40, 52, 0.6);
+}
+
+.data-table tbody tr:hover {
+  background: rgba(28, 40, 52, 0.02);
 }
 
 .actions {
@@ -769,56 +826,62 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
+/* ── 状态标签 ── */
 .status-pill {
   display: inline-block;
-  padding: 4px 8px;
-  border-radius: 999px;
-  font-size: 12px;
+  padding: 2px 8px;
+  font-size: 11px;
   font-weight: 600;
 }
 
 .status-pill.success {
-  background: #ecfdf5;
-  color: #047857;
+  background: rgba(47, 143, 137, 0.12);
+  color: #2f8f89;
+  border: 1px solid rgba(47, 143, 137, 0.25);
 }
 
 .status-pill.danger {
-  background: #fef2f2;
-  color: #b91c1c;
+  background: rgba(196, 91, 96, 0.12);
+  color: #c45b60;
+  border: 1px solid rgba(196, 91, 96, 0.25);
 }
 
 .status-pill.info {
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: rgba(28, 40, 52, 0.08);
+  color: rgba(28, 40, 52, 0.7);
+  border: 1px solid rgba(28, 40, 52, 0.12);
 }
 
 .status-pill.muted {
-  background: #f1f5f9;
-  color: #64748b;
+  background: rgba(28, 40, 52, 0.05);
+  color: rgba(28, 40, 52, 0.45);
+  border: 1px solid rgba(28, 40, 52, 0.08);
 }
 
+/* ── 消息提示 ── */
 .message {
-  border-radius: 12px;
-  padding: 12px 14px;
-  font-size: 14px;
+  padding: 10px 14px;
+  font-size: 13px;
+  border: 1px solid;
 }
 
 .message.success {
-  border: 1px solid #a7f3d0;
-  background: #ecfdf5;
-  color: #047857;
+  background: rgba(47, 143, 137, 0.08);
+  border-color: rgba(47, 143, 137, 0.25);
+  color: #2f8f89;
 }
 
 .message.error {
-  border: 1px solid #fecaca;
-  background: #fef2f2;
-  color: #b91c1c;
+  background: rgba(196, 91, 96, 0.08);
+  border-color: rgba(196, 91, 96, 0.25);
+  color: #c45b60;
 }
 
+/* ── 详情抽屉 ── */
 .drawer-mask {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.28);
+  background: rgba(28, 40, 52, 0.25);
   z-index: 70;
 }
 
@@ -830,9 +893,9 @@ onBeforeUnmount(() => {
   height: 100vh;
   overflow-y: auto;
   z-index: 80;
-  background: #f8fafc;
-  border-left: 1px solid #d6dee8;
-  box-shadow: -12px 0 32px rgba(15, 23, 42, 0.12);
+  background: #fdfcf9;
+  border-left: 1px solid rgba(28, 40, 52, 0.12);
+  box-shadow: -8px 0 24px rgba(28, 40, 52, 0.1);
   padding: 24px;
 }
 
@@ -842,6 +905,8 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(28, 40, 52, 0.08);
 }
 
 .drawer-actions {
@@ -849,6 +914,7 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
+/* ── 响应式 ── */
 @media (max-width: 1024px) {
   .form-grid,
   .form-grid.triple,

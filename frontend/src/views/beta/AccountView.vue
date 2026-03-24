@@ -491,8 +491,6 @@ onMounted(() => {
 .avatar-card {
   width: 210px;
   flex-shrink: 0;
-  position: sticky;
-  top: 20px;
 }
 
 .avatar-area {
