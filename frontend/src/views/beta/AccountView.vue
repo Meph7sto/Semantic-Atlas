@@ -226,33 +226,12 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
 import { User as UserIcon, Lock as LockIcon, Eye as EyeIcon, EyeOff as EyeOffIcon } from 'lucide-vue-next'
 import { authApi } from '@/api/auth'
 import Sidebar from '@/components/beta/Sidebar.vue'
+import { useBetaNavigation } from '@/composables/useBetaNavigation'
 
-const router = useRouter()
-const route = useRoute()
-
-const activePage = 'account'
-
-const pageKeyToRouteName = {
-  'dashboard': 'beta-dashboard',
-  'project-management': 'beta-project',
-  'requirements': 'beta-requirements',
-  'requirements-session': 'beta-requirements-session',
-  'requirements-analysis': 'beta-requirements-analysis',
-  'requirements-collection': 'beta-requirements-collection',
-  'products': 'beta-products',
-  'user-management': 'beta-user-manage',
-}
-
-const handleNavigate = (page) => {
-  const target = pageKeyToRouteName[page]
-  if (target && target !== route.name) {
-    router.push({ name: target })
-  }
-}
+const { activePage, handleNavigate } = useBetaNavigation('account')
 
 // ---- 用户资料状态 ----
 const profile = reactive({

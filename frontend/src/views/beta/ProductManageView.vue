@@ -93,8 +93,6 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
 import Sidebar from '../../components/beta/Sidebar.vue'
 import ProductListSection from '../../components/beta/product/ProductListSection.vue'
 import ProductDetailPanel from '../../components/beta/product/ProductDetailPanel.vue'
@@ -104,46 +102,10 @@ import ProjectFormModal from '../../components/beta/product/ProjectFormModal.vue
 import { useProducts } from '../../composables/useProducts'
 import { useProductDetail } from '../../composables/useProductDetail'
 import { useProjects } from '../../composables/useProjects'
+import { useBetaNavigation, useBetaSidebarProps } from '@/composables/useBetaNavigation'
 
-const router = useRouter()
-const route = useRoute()
-
-// Sidebar
-const roleType = ref('unified_admin')
-const roleLabel = ref('管理员')
-const timestamp = ref(new Date().toLocaleString())
-const notificationCount = ref(3)
-
-const routeNameToPageKey = {
-  'beta-dashboard': 'dashboard',
-  'beta-project': 'project-management',
-  'beta-requirements': 'requirements',
-  'beta-requirements-session': 'requirements-session',
-  'beta-requirements-analysis': 'requirements-analysis',
-  'beta-requirements-collection': 'requirements-collection',
-  'beta-products': 'products',
-  'beta-user-manage': 'user-management',
-}
-
-const pageKeyToRouteName = {
-  'dashboard': 'beta-dashboard',
-  'project-management': 'beta-project',
-  'requirements': 'beta-requirements',
-  'requirements-session': 'beta-requirements-session',
-  'requirements-analysis': 'beta-requirements-analysis',
-  'requirements-collection': 'beta-requirements-collection',
-  'products': 'beta-products',
-  'user-management': 'beta-user-manage',
-}
-
-const activePage = computed(() => routeNameToPageKey[route.name] || 'products')
-
-const handleNavigate = (page) => {
-  const target = pageKeyToRouteName[page]
-  if (target && target !== route.name) router.push({ name: target })
-}
-
-const handleExit = () => router.push({ name: 'beta-login' })
+const { activePage, handleNavigate, handleExit } = useBetaNavigation('products')
+const { roleType, roleLabel, timestamp, notificationCount } = useBetaSidebarProps()
 
 // Composables
 const {

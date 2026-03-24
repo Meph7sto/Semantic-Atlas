@@ -273,33 +273,17 @@
 
 <script setup>
 import { ref, reactive, computed, watch, nextTick, onMounted } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { useRouter } from 'vue-router'
 import Sidebar from '@/components/beta/Sidebar.vue'
 import { authApi } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth.js'
+import { useBetaNavigation } from '@/composables/useBetaNavigation'
 
 const router = useRouter()
-const route = useRoute()
 const authStore = useAuthStore()
 
-const activePage = 'user-management'
+const { activePage, handleNavigate } = useBetaNavigation('user-management')
 const activeTab = ref('users')
-
-const pageKeyToRouteName = {
-  dashboard: 'beta-dashboard',
-  'project-management': 'beta-project',
-  requirements: 'beta-requirements',
-  'requirements-session': 'beta-requirements-session',
-  'requirements-analysis': 'beta-requirements-analysis',
-  'requirements-collection': 'beta-requirements-collection',
-  products: 'beta-products',
-  'user-management': 'beta-user-manage',
-}
-
-const handleNavigate = (page) => {
-  const target = pageKeyToRouteName[page]
-  if (target && target !== route.name) router.push({ name: target })
-}
 
 const users = ref([])
 const loading = ref(false)

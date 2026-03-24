@@ -38,6 +38,7 @@ import TopologyEditorView from '../views/beta/TopologyEditorView.vue'
 import MultimodalIngestionView from '../views/beta/MultimodalIngestionView.vue'
 import AsrTranscription from '../views/alpha/AsrTranscription.vue'
 import AsrTranscriptionView from '../views/beta/AsrTranscriptionView.vue'
+import ReviewView from '../views/beta/ReviewView.vue'
 
 // Guide view
 import GuideView from '../views/GuideView.vue'
@@ -156,6 +157,12 @@ const router = createRouter({
                     name: 'beta-topology-editor',
                     component: TopologyEditorView,
                     meta: { requiresAuth: true, keepAlive: true }
+                },
+                {
+                    path: 'reviews',
+                    name: 'beta-reviews',
+                    component: ReviewView,
+                    meta: { requiresAuth: true }
                 }
             ]
         },

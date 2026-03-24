@@ -9,6 +9,7 @@ import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import Response
 
 
 from backend_business.api.http.errors import (
@@ -32,6 +33,9 @@ class _StubFileService:
         content: bytes,
         description: str,
         content_type: str | None = None,
+        folder: str = "",
+        import_time: str = "",
+        capture_time: str = "",
     ):
         self.save_calls.append(
             {
@@ -39,6 +43,9 @@ class _StubFileService:
                 "original_filename": original_filename,
                 "description": description,
                 "content_type": content_type,
+                "folder": folder,
+                "import_time": import_time,
+                "capture_time": capture_time,
                 "size": len(content),
             }
         )
@@ -47,6 +54,10 @@ class _StubFileService:
             "originalFilename": original_filename,
             "fileSize": len(content),
             "uploadTime": "2026-03-09T00:00:00",
+            "folder": folder,
+            "relativePath": f"{folder}/u1_file.txt" if folder else "u1_file.txt",
+            "importTime": import_time or None,
+            "captureTime": capture_time or None,
         }
 
     def list_uploaded_files(self, user_id: str):
@@ -57,14 +68,47 @@ class _StubFileService:
         _ = user_id, filename
         return str(self._sample_file_path), "text/plain", "download.txt"
 
+    def resolve_user_file_by_relative_path(self, user_id: str, relative_path: str):
+        _ = user_id, relative_path
+        return str(self._sample_file_path), "text/plain", relative_path
+
     def delete_uploaded_file(self, user_id: str, filename: str):
         self.delete_calls.append((user_id, filename))
+
+    def delete_user_file_by_relative_path(self, user_id: str, relative_path: str):
+        self.delete_calls.append((user_id, relative_path))
 
     def list_all_users_files(self):
         return {
             "u1": [{"filename": "u1_file.txt"}],
             "u2": [{"filename": "u2_file.txt"}, {"filename": "u2_file2.txt"}],
         }
+
+    def list_all_users_file_tree(self):
+        return [
+            {
+                "userId": "u1",
+                "folders": [
+                    {
+                        "name": "相册A",
+                        "path": "相册A",
+                        "fileCount": 1,
+                        "files": [
+                            {
+                                "filename": "u1_file.txt",
+                                "originalFilename": "demo.txt",
+                                "relativePath": "相册A/u1_file.txt",
+                                "folder": "相册A",
+                                "uploadTime": "2026-03-09T00:00:00",
+                            }
+                        ],
+                    }
+                ],
+                "rootFiles": [],
+                "folderCount": 1,
+                "totalFiles": 1,
+            }
+        ]
 
 
 class _StubAIProxy:
@@ -118,15 +162,42 @@ async def fastapi_client(monkeypatch, tmp_path):
     monkeypatch.setattr(file_router, "ai_proxy", stub_ai_proxy)
     monkeypatch.setattr(file_router, "db_service", stub_db)
 
+    def _stub_file_response(
+        path: str,
+        media_type: str | None = None,
+        filename: str | None = None,
+        content_disposition_type: str | None = None,
+        **_: Any,
+    ) -> Response:
+        headers: dict[str, str] = {}
+        if filename and content_disposition_type:
+            headers["content-disposition"] = (
+                f'{content_disposition_type}; filename="{filename}"'
+            )
+        return Response(
+            content=Path(path).read_bytes(),
+            media_type=media_type,
+            headers=headers,
+        )
+
+    monkeypatch.setattr(file_router, "FileResponse", _stub_file_response)
+
     app = build_test_app(file_router.router)
-    app.dependency_overrides[file_router.get_current_user] = lambda: {
-        "user_id": "u1",
-        "role": "member",
-    }
-    app.dependency_overrides[file_router.require_admin] = lambda: {
-        "user_id": "admin-1",
-        "role": "admin",
-    }
+
+    async def _mock_current_user():
+        return {
+            "user_id": "u1",
+            "role": "member",
+        }
+
+    async def _mock_admin_user():
+        return {
+            "user_id": "admin-1",
+            "role": "admin",
+        }
+
+    app.dependency_overrides[file_router.get_current_user] = _mock_current_user
+    app.dependency_overrides[file_router.require_admin] = _mock_admin_user
 
     async with async_client(app) as client:
         yield client, stub_file_service, stub_ai_proxy, stub_db
@@ -137,13 +208,21 @@ async def test_upload_and_list_contract(fastapi_client):
 
     upload_resp = await client.post(
         "/api/v2/upload",
-        data={"description": "demo file"},
+        data={
+            "description": "demo file",
+            "folder": "相册A",
+            "import_time": "1710000000000",
+            "capture_time": "1700000000000",
+        },
         files={"file": ("demo.txt", b"abc", "text/plain")},
     )
     assert upload_resp.status_code == 200
     assert upload_resp.json()["success"] is True
     assert stub_file_service.save_calls[0]["user_id"] == "u1"
     assert stub_file_service.save_calls[0]["description"] == "demo file"
+    assert stub_file_service.save_calls[0]["folder"] == "相册A"
+    assert stub_file_service.save_calls[0]["import_time"] == "1710000000000"
+    assert stub_file_service.save_calls[0]["capture_time"] == "1700000000000"
 
     list_resp = await client.get("/api/v2/uploads")
     assert list_resp.status_code == 200
@@ -174,6 +253,39 @@ async def test_download_delete_and_admin_list_contract(fastapi_client):
     assert admin_resp.status_code == 200
     assert admin_resp.json()["userCount"] == 2
     assert admin_resp.json()["total"] == 3
+
+
+async def test_admin_tree_and_path_access_contract(fastapi_client):
+    client, stub_file_service, _, _ = fastapi_client
+
+    tree_resp = await client.get("/api/v2/admin/uploads/tree")
+    assert tree_resp.status_code == 200
+    tree_body = tree_resp.json()
+    assert tree_body["success"] is True
+    assert tree_body["userCount"] == 1
+    assert tree_body["users"][0]["folders"][0]["path"] == "相册A"
+
+    preview_resp = await client.get(
+        "/api/v2/admin/uploads/content",
+        params={"user_id": "u1", "path": "相册A/u1_file.txt"},
+    )
+    assert preview_resp.status_code == 200
+    assert preview_resp.text == "hello-download"
+
+    download_resp = await client.get(
+        "/api/v2/admin/uploads/content",
+        params={"user_id": "u1", "path": "相册A/u1_file.txt", "download": "true"},
+    )
+    assert download_resp.status_code == 200
+    assert "attachment" in download_resp.headers.get("content-disposition", "")
+
+    delete_resp = await client.delete(
+        "/api/v2/admin/uploads/content",
+        params={"user_id": "u1", "path": "相册A/u1_file.txt"},
+    )
+    assert delete_resp.status_code == 200
+    assert delete_resp.json()["success"] is True
+    assert ("u1", "相册A/u1_file.txt") in stub_file_service.delete_calls
 
 
 async def test_upload_csv_success_and_download_result_contract(fastapi_client):

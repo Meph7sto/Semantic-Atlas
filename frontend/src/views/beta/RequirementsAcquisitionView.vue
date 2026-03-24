@@ -152,17 +152,11 @@
 
 <script setup>
 import { computed, ref } from "vue";
-import { useRouter } from "vue-router";
 import Sidebar from "../../components/beta/Sidebar.vue";
+import { useBetaNavigation, useBetaSidebarProps } from "@/composables/useBetaNavigation";
 
-const router = useRouter();
-
-// 侧边栏状态
-const roleType = ref("unified_admin");
-const roleLabel = ref("管理员");
-const timestamp = ref(new Date().toLocaleString());
-const notificationCount = ref(3);
-const activePage = ref("requirements-acquisition");
+const { activePage, handleNavigate, handleExit } = useBetaNavigation("requirements-acquisition");
+const { roleType, roleLabel, timestamp, notificationCount } = useBetaSidebarProps();
 
 // Phase 1 解析状态（复用 TranscriptIngestion.vue）
 const sessionId = ref('');
@@ -329,24 +323,6 @@ async function ingestTranscript() {
   }
 }
 
-// 导航处理
-function handleNavigate(page) {
-  activePage.value = page;
-  const routes = {
-    "dashboard": "main-dashboard",
-    "project-management": "main-project",
-    "requirements": "main-requirements",
-    "requirements-analysis": "main-requirements-analysis",
-    "requirements-acquisition": "main-requirements-acquisition",
-  };
-  if (routes[page]) {
-    router.push({ name: routes[page] });
-  }
-}
-
-function handleExit() {
-  router.push({ name: "main-login" });
-}
 </script>
 
 <style scoped>

@@ -681,90 +681,21 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
-import { useRouter, useRoute } from "vue-router";
+import { useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/auth.js";
 import draggable from "vuedraggable";
 import Sidebar from "../../components/beta/Sidebar.vue";
 import RequirementTree from "../../components/charts/RequirementTree.vue";
 import { manageApi } from "@/api/project";
 import { Loader2, FileText, RefreshCw, Briefcase, Users, Layout, Layers, Circle, Clock, CheckCircle, GripVertical, Search, Filter, ChevronDown, ChevronUp, CheckCircle2, Plus, X, Pencil, Download, Upload } from "lucide-vue-next";
+import { useBetaNavigation, useBetaSidebarProps } from "@/composables/useBetaNavigation";
 
 const router = useRouter();
-const route = useRoute();
 const authStore = useAuthStore();
 
 // 侧边栏状态
-const roleType = computed(() => {
-  const role = authStore.systemIdentity || authStore.systemRole
-  const roleMap = {
-    'SYS_ADMIN': 'unified_admin',
-    'SYS_USER': 'unified_member',
-    'SYS_CLIENT': 'unified_client',
-    'SYS_CONTRACTOR': 'unified_contractor',
-    'admin': 'unified_admin',
-    'member': 'unified_member',
-    'viewer': 'unified_viewer'
-  }
-  return roleMap[role] || 'unified_member'
-})
-
-const roleLabel = computed(() => authStore.user?.display_name || authStore.user?.username || roleType.value)
-const timestamp = ref(new Date().toLocaleString());
-const notificationCount = ref(3);
-
-// ========================
-// 权限检查辅助函数
-// ========================
-
-/**
- * 检查当前项目是否有指定权限
- */
-const hasPermission = (permission) => {
-  return authStore.hasPermission(selectedProjectId.value, permission)
-}
-
-/**
- * 检查当前项目是否有任一权限
- */
-const hasAnyPermission = (permissions) => {
-  return authStore.hasAnyPermission(selectedProjectId.value, permissions)
-}
-
-/**
- * 检查当前项目是否有指定角色
- */
-const hasRole = (role) => {
-  return authStore.hasRole(selectedProjectId.value, role)
-}
-
-/**
- * 获取系统级身份
- */
-const systemIdentity = computed(() => authStore.systemIdentity)
-
-const routeNameToPageKey = {
-  "beta-dashboard": "dashboard",
-  "beta-products": "products",
-  "beta-project": "project-management",
-  "beta-requirements": "requirements",
-  "beta-requirements-session": "requirements-session",
-  "beta-requirements-analysis": "requirements-analysis",
-  "beta-requirements-collection": "requirements-collection",
-  "beta-user-manage": "user-management",
-};
-
-const pageKeyToRouteName = {
-  "dashboard": "beta-dashboard",
-  "products": "beta-products",
-  "project-management": "beta-project",
-  "requirements": "beta-requirements",
-  "requirements-session": "beta-requirements-session",
-  "requirements-analysis": "beta-requirements-analysis",
-  "requirements-collection": "beta-requirements-collection",
-  "user-management": "beta-user-manage",
-};
-
-const activePage = computed(() => routeNameToPageKey[route.name] || "requirements");
+const { activePage, handleNavigate, handleExit } = useBetaNavigation("requirements");
+const { roleType, roleLabel, timestamp, notificationCount } = useBetaSidebarProps();
 
 // 数据状态
 const isLoading = ref(false);
@@ -2024,22 +1955,6 @@ function buildTreeWithRelations(highReqs, lowReqs, relations) {
   return roots;
 }
 
-// 导航处理
-function handleNavigate(page) {
-  const target = pageKeyToRouteName[page];
-  if (target && target !== route.name) {
-    router.push({ name: target });
-  }
-}
-
-async function handleExit() {
-  try {
-    await authStore.logout()
-  } catch (e) {
-    console.error('Failed to logout:', e);
-  }
-  router.push({ name: "beta-login" });
-}
 
 onMounted(async () => {
   // 监听来自需求分析界面的事件

@@ -91,6 +91,14 @@ export const fileApi = {
         return resp.data
     },
 
+    async listTree() {
+        const resp = await api.get('/admin/uploads/tree')
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.message || 'Failed to list file tree')
+        }
+        return resp.data
+    },
+
     download(filename) {
         // 直接打开下载链接
         window.open(`/api/v2/uploads/${encodeURIComponent(filename)}?download=true`, '_blank')
@@ -106,5 +114,35 @@ export const fileApi = {
 
     getPreviewUrl(filename) {
         return `/api/v2/uploads/${encodeURIComponent(filename)}`
+    },
+
+    downloadAdmin(userId, relativePath) {
+        const params = new URLSearchParams({
+            user_id: userId,
+            path: relativePath,
+            download: 'true',
+        })
+        window.open(`/api/v2/admin/uploads/content?${params.toString()}`, '_blank')
+    },
+
+    async deleteAdmin(userId, relativePath) {
+        const resp = await api.delete('/admin/uploads/content', {
+            params: {
+                user_id: userId,
+                path: relativePath,
+            },
+        })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.message || 'Failed to delete file')
+        }
+        return resp.data
+    },
+
+    getAdminPreviewUrl(userId, relativePath) {
+        const params = new URLSearchParams({
+            user_id: userId,
+            path: relativePath,
+        })
+        return `/api/v2/admin/uploads/content?${params.toString()}`
     },
 }

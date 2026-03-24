@@ -302,48 +302,15 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth.js'
 import Sidebar from '../../components/beta/Sidebar.vue'
+import { useBetaNavigation, useBetaSidebarProps } from '@/composables/useBetaNavigation'
 import { visionApi } from '@/api'
 import { asrApi } from '@/api/asr'
 
-const router = useRouter()
-const authStore = useAuthStore()
+const { activePage, handleNavigate, handleExit } = useBetaNavigation('multimodal-ingestion')
+const { currentUser, roleType, roleLabel, timestamp, notificationCount } = useBetaSidebarProps()
 
-const activePage = 'multimodal-ingestion'
 const activeTab = ref('vision')
-const timestamp = ref(new Date().toLocaleString())
-const notificationCount = ref(3)
-
-const currentUser = computed(() => authStore.user)
-const roleType = computed(() => {
-  const role = authStore.systemIdentity || authStore.systemRole
-  const roleMap = {
-    SYS_ADMIN: 'unified_admin',
-    SYS_USER: 'unified_member',
-    SYS_CLIENT: 'unified_client',
-    SYS_CONTRACTOR: 'unified_contractor',
-    admin: 'unified_admin',
-    member: 'unified_member',
-    viewer: 'unified_viewer',
-  }
-  return roleMap[role] || 'unified_member'
-})
-const roleLabel = computed(() => currentUser.value?.display_name || currentUser.value?.username || roleType.value)
-
-function handleNavigate() {
-  // 新页面导航由 Sidebar 内部处理，这里保留兼容事件接口。
-}
-
-const handleExit = async () => {
-  try {
-    await authStore.logout()
-  } catch (error) {
-    console.error('Failed to logout:', error)
-  }
-  router.push({ name: 'beta-login' })
-}
 
 const visionPrompt = ref('请详细描述图片内容，并总结关键信息。')
 const visionSpeaker = ref('vision_agent')

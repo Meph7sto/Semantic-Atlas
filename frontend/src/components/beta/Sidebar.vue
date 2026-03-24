@@ -406,16 +406,7 @@ const getIconColor = (key) => {
   return colors[key] || "#9eabb4";
 };
 
-const directRouteMap = {
-  'multimodal-ingestion': 'beta-multimodal-ingestion',
-};
-
 const handleNavigateItem = (key) => {
-  const directRoute = directRouteMap[key];
-  if (directRoute) {
-    router.push({ name: directRoute });
-    return;
-  }
   emit('navigate', key);
 };
 

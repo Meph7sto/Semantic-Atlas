@@ -148,8 +148,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { Loader2, FileText, RefreshCw, Database, Plus } from 'lucide-vue-next'
 import Sidebar from '../../components/beta/Sidebar.vue'
 import SessionHeaderBar from '../../components/beta/session/SessionHeaderBar.vue'
@@ -161,41 +161,11 @@ import TableViewSection from '../../components/beta/session/TableViewSection.vue
 import KanbanViewSection from '../../components/beta/session/KanbanViewSection.vue'
 import { useSessionRequirements } from '../../composables/useSessionRequirements'
 import { useRequirementModals } from '../../composables/useRequirementModals'
+import { useBetaNavigation, useBetaSidebarProps } from '@/composables/useBetaNavigation'
 
 const router = useRouter()
-const route = useRoute()
-
-// 侧边栏状态
-const roleType = ref('unified_admin')
-const roleLabel = ref('管理员')
-const timestamp = ref(new Date().toLocaleString())
-const notificationCount = ref(3)
-
-const routeNameToPageKey = {
-  'beta-dashboard': 'dashboard',
-  'beta-products': 'products',
-  'beta-project': 'project-management',
-  'beta-requirements': 'requirements',
-  'beta-requirements-session': 'requirements-session',
-  'beta-requirements-analysis': 'requirements-analysis',
-  'beta-requirements-collection': 'requirements-collection',
-
-  'beta-asr': 'asr-transcription',
-  'beta-user-manage': 'user-management',
-}
-
-const pageKeyToRouteName = {
-  'dashboard': 'beta-dashboard',
-  'products': 'beta-products',
-  'project-management': 'beta-project',
-  'requirements': 'beta-requirements',
-  'requirements-session': 'beta-requirements-session',
-  'requirements-analysis': 'beta-requirements-analysis',
-  'requirements-collection': 'beta-requirements-collection',
-  'user-management': 'beta-user-manage',
-}
-
-const activePage = computed(() => routeNameToPageKey[route.name] || 'requirements-session')
+const { activePage, handleNavigate, handleExit } = useBetaNavigation('requirements-session')
+const { roleType, roleLabel, timestamp, notificationCount } = useBetaSidebarProps()
 
 // 需求数据与会话状态
 const {
@@ -241,14 +211,6 @@ function handleImportToManage() {
   importSessionRequirementsToManage(router)
 }
 
-function handleNavigate(page) {
-  const target = pageKeyToRouteName[page]
-  if (target && target !== route.name) router.push({ name: target })
-}
-
-function handleExit() {
-  router.push({ name: 'beta-login' })
-}
 
 onMounted(async () => {
   window.addEventListener('session-changed', handleSessionChanged)
