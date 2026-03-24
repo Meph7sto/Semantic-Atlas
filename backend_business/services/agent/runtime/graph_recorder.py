@@ -243,6 +243,38 @@ class RuntimeGraphRecorder:
             updated_by=updated_by,
         )
 
+    def create_return_edge(
+        self,
+        *,
+        child_node_key: str,
+        parent_node_key: str,
+        created_by: str,
+    ) -> None:
+        """Create a return edge from child agent node back to parent node.
+
+        Per the architecture doc, call and return edges come in pairs to
+        form a complete cross-container invocation closure.  This method
+        is a no-op when both nodes reside in the same container.
+        """
+        child_stage = self._nodes.get(child_node_key)
+        parent_stage = self._nodes.get(parent_node_key)
+        if child_stage is None or parent_stage is None:
+            return
+        if child_stage.container_id == parent_stage.container_id:
+            return
+
+        self._service.create_edge(
+            graph_id=self.graph_id,
+            source_node_id=child_stage.node_id,
+            target_node_id=parent_stage.node_id,
+            edge_type="return",
+            label="return",
+            config_json={"runtime": True, "cross_container_return": True},
+            order_index=self._edge_order,
+            created_by=created_by,
+        )
+        self._edge_order += 1
+
     def _ensure_containers(self, user_id: str) -> None:
         for order_index, container_config in enumerate(self._container_configs):
             container_key = container_config.container_key

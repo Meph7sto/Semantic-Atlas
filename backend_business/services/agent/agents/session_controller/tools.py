@@ -257,86 +257,100 @@ class SessionControllerTools:
         user_id = context.get("user_id", "")
         project_id = context.get("project_id", "")
         self._mark_dispatched_agent(context, "requirement_agent")
-        child_stage = self._start_child_agent_stage(
-            context=context,
-            agent_key="requirement_agent",
-            agent_label="Requirement Agent",
-            task_description=task_description,
+
+        recorder = context.get("_graph_recorder")
+        parent_node_key = str(context.get("_active_stage_node_key") or "").strip()
+
+        if recorder is None or not parent_node_key:
+            return {"status": "error", "error": "No graph recorder available for inline execution"}
+
+        tool_results = context.get("tool_results") or []
+        sequence = len(tool_results) + 1
+        node_key_prefix = f"req_agent_{sequence}"
+
+        # 1. Start node with call edge (cross-container boundary)
+        start_node_key = recorder.stage_node_key(f"{node_key_prefix}_start")
+        recorder.start_stage(
+            node_key=start_node_key,
+            label=recorder.stage_label(f"Requirement Agent #{sequence}"),
+            node_type="start",
+            role_type="agent",
+            container_key="requirement_agent",
+            created_by=user_id,
+            input_summary={
+                "task_description": task_description,
+                "requirement_id": requirement_id,
+                "delegated_by": parent_node_key,
+            },
+            edge_type_from_previous="call",
+        )
+        recorder.complete_stage(
+            start_node_key,
+            created_by=user_id,
+            output_summary={"accepted": True},
         )
 
+        # 2. Run tool loop inline — nodes write into parent graph's requirement_agent container
         try:
-            sub_session = self._requirement_agent_service.create_session(
+            loop_result = self._requirement_agent_service.run_inline_tool_loop(
+                recorder=recorder,
                 user_id=user_id,
-                project_id=project_id,
-                title=f"[子任务] {task_description[:50]}",
-            )
-            sub_session_id = sub_session["session_id"]
-        except Exception as exc:
-            logger.warning("创建需求管理子会话失败: %s", exc)
-            self._complete_child_agent_stage(
-                context=context,
-                child_stage=child_stage,
-                success=False,
-                output_summary={"status": "error", "error": f"创建子会话失败: {exc}"},
-            )
-            return {"status": "error", "error": f"创建子会话失败: {exc}"}
-
-        reply_text = ""
-        result_data: dict[str, Any] = {}
-        try:
-            for event in self._requirement_agent_service.stream_requirement_agent_reply(
-                session_id=sub_session_id,
-                user_id=user_id,
-                project_id=project_id,
                 user_message=task_description,
+                project_id=project_id,
                 requirement_id=requirement_id,
-            ):
-                event_name = event.get("event", "")
-                event_data = event.get("data", {}) or {}
-                if event_name == "result":
-                    result_data = event_data
-                elif event_name == "assistant_message":
-                    reply_text = event_data.get("content", "")
-                elif event_name == "error":
-                    self._complete_child_agent_stage(
-                        context=context,
-                        child_stage=child_stage,
-                        success=False,
-                        output_summary={
-                            "status": "error",
-                            "error": event_data.get("error", "需求管理 Agent 返回错误"),
-                            "sub_graph_id": result_data.get("graph_id"),
-                        },
-                    )
-                    return {
-                        "status": "error",
-                        "error": event_data.get("error", "需求管理 Agent 返回错误"),
-                    }
-        except Exception as exc:
-            logger.warning("调用需求管理 Agent 失败: %s", exc, exc_info=True)
-            self._complete_child_agent_stage(
-                context=context,
-                child_stage=child_stage,
-                success=False,
-                output_summary={"status": "error", "error": f"需求管理 Agent 执行失败: {exc}"},
+                container_key="requirement_agent",
+                node_key_prefix=node_key_prefix,
             )
+        except Exception as exc:
+            logger.warning("需求管理 Agent 内联执行失败: %s", exc, exc_info=True)
+            end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
+            recorder.start_stage(
+                node_key=end_node_key,
+                label=recorder.stage_label(f"Requirement Agent #{sequence} End"),
+                node_type="end",
+                role_type="agent",
+                container_key="requirement_agent",
+                created_by=user_id,
+                input_summary={"error": str(exc)},
+                edge_type_from_previous="seq",
+            )
+            recorder.complete_stage(
+                end_node_key, created_by=user_id,
+                output_summary={"error": str(exc)}, success=False, error=str(exc),
+            )
+            recorder.create_return_edge(
+                child_node_key=end_node_key, parent_node_key=parent_node_key, created_by=user_id,
+            )
+            recorder.restore_stage_cursor(node_key=parent_node_key, updated_by=user_id)
             return {"status": "error", "error": f"需求管理 Agent 执行失败: {exc}"}
 
-        response = {
-            "status": "success",
-            "reply": reply_text,
-            "sub_graph_id": result_data.get("graph_id"),
-            "mode": result_data.get("mode"),
-            "resolved_requirement_id": result_data.get("resolved_requirement_id"),
-            "write_result": result_data.get("write_result"),
-        }
-        self._complete_child_agent_stage(
-            context=context,
-            child_stage=child_stage,
-            success=True,
-            output_summary=response,
+        # 3. End node + return edge (cross-container boundary)
+        end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
+        recorder.start_stage(
+            node_key=end_node_key,
+            label=recorder.stage_label(f"Requirement Agent #{sequence} End"),
+            node_type="end",
+            role_type="agent",
+            container_key="requirement_agent",
+            created_by=user_id,
+            input_summary={"tool_loop_reply": loop_result.get("tool_loop_reply")},
+            edge_type_from_previous="seq",
         )
-        return response
+        recorder.complete_stage(
+            end_node_key, created_by=user_id,
+            output_summary=loop_result,
+        )
+        recorder.create_return_edge(
+            child_node_key=end_node_key, parent_node_key=parent_node_key, created_by=user_id,
+        )
+        recorder.restore_stage_cursor(node_key=parent_node_key, updated_by=user_id)
+
+        return {
+            "status": "success",
+            "reply": loop_result.get("tool_loop_reply", ""),
+            "resolved_requirement_id": loop_result.get("resolved_requirement_id"),
+            "write_result": loop_result.get("write_result"),
+        }
 
     def _execute_invoke_conflict_detection(
         self,
@@ -350,82 +364,96 @@ class SessionControllerTools:
         user_id = context.get("user_id", "")
         project_id = context.get("project_id", "")
         self._mark_dispatched_agent(context, "conflict_detection")
-        child_stage = self._start_child_agent_stage(
-            context=context,
-            agent_key="conflict_detection",
-            agent_label="Conflict Detection Agent",
-            task_description=task_description,
+
+        recorder = context.get("_graph_recorder")
+        parent_node_key = str(context.get("_active_stage_node_key") or "").strip()
+
+        if recorder is None or not parent_node_key:
+            return {"status": "error", "error": "No graph recorder available for inline execution"}
+
+        tool_results = context.get("tool_results") or []
+        sequence = len(tool_results) + 1
+        node_key_prefix = f"conflict_agent_{sequence}"
+
+        # 1. Start node with call edge (cross-container boundary)
+        start_node_key = recorder.stage_node_key(f"{node_key_prefix}_start")
+        recorder.start_stage(
+            node_key=start_node_key,
+            label=recorder.stage_label(f"Conflict Detection #{sequence}"),
+            node_type="start",
+            role_type="agent",
+            container_key="conflict_detection",
+            created_by=user_id,
+            input_summary={
+                "task_description": task_description,
+                "delegated_by": parent_node_key,
+            },
+            edge_type_from_previous="call",
+        )
+        recorder.complete_stage(
+            start_node_key,
+            created_by=user_id,
+            output_summary={"accepted": True},
         )
 
+        # 2. Run tool loop inline
         try:
-            sub_session = self._conflict_agent_service.create_session(
+            loop_result = self._conflict_agent_service.run_inline_tool_loop(
+                recorder=recorder,
                 user_id=user_id,
-                project_id=project_id,
-                title=f"[子任务] {task_description[:50]}",
-            )
-            sub_session_id = sub_session["session_id"]
-        except Exception as exc:
-            logger.warning("创建冲突检测子会话失败: %s", exc)
-            self._complete_child_agent_stage(
-                context=context,
-                child_stage=child_stage,
-                success=False,
-                output_summary={"status": "error", "error": f"创建子会话失败: {exc}"},
-            )
-            return {"status": "error", "error": f"创建子会话失败: {exc}"}
-
-        reply_text = ""
-        result_data: dict[str, Any] = {}
-        try:
-            for event in self._conflict_agent_service.stream_conflict_agent_reply(
-                session_id=sub_session_id,
-                user_id=user_id,
-                project_id=project_id,
                 user_message=task_description,
-            ):
-                event_name = event.get("event", "")
-                event_data = event.get("data", {}) or {}
-                if event_name == "result":
-                    result_data = event_data
-                elif event_name == "assistant_message":
-                    reply_text = event_data.get("content", "")
-                elif event_name == "error":
-                    self._complete_child_agent_stage(
-                        context=context,
-                        child_stage=child_stage,
-                        success=False,
-                        output_summary={
-                            "status": "error",
-                            "error": event_data.get("error", "冲突检测 Agent 返回错误"),
-                            "sub_graph_id": result_data.get("graph_id"),
-                        },
-                    )
-                    return {
-                        "status": "error",
-                        "error": event_data.get("error", "冲突检测 Agent 返回错误"),
-                    }
-        except Exception as exc:
-            logger.warning("调用冲突检测 Agent 失败: %s", exc, exc_info=True)
-            self._complete_child_agent_stage(
-                context=context,
-                child_stage=child_stage,
-                success=False,
-                output_summary={"status": "error", "error": f"冲突检测 Agent 执行失败: {exc}"},
+                project_id=project_id,
+                container_key="conflict_detection",
+                node_key_prefix=node_key_prefix,
             )
+        except Exception as exc:
+            logger.warning("冲突检测 Agent 内联执行失败: %s", exc, exc_info=True)
+            end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
+            recorder.start_stage(
+                node_key=end_node_key,
+                label=recorder.stage_label(f"Conflict Detection #{sequence} End"),
+                node_type="end",
+                role_type="agent",
+                container_key="conflict_detection",
+                created_by=user_id,
+                input_summary={"error": str(exc)},
+                edge_type_from_previous="seq",
+            )
+            recorder.complete_stage(
+                end_node_key, created_by=user_id,
+                output_summary={"error": str(exc)}, success=False, error=str(exc),
+            )
+            recorder.create_return_edge(
+                child_node_key=end_node_key, parent_node_key=parent_node_key, created_by=user_id,
+            )
+            recorder.restore_stage_cursor(node_key=parent_node_key, updated_by=user_id)
             return {"status": "error", "error": f"冲突检测 Agent 执行失败: {exc}"}
 
-        response = {
-            "status": "success",
-            "reply": reply_text,
-            "sub_graph_id": result_data.get("graph_id"),
-        }
-        self._complete_child_agent_stage(
-            context=context,
-            child_stage=child_stage,
-            success=True,
-            output_summary=response,
+        # 3. End node + return edge (cross-container boundary)
+        end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
+        recorder.start_stage(
+            node_key=end_node_key,
+            label=recorder.stage_label(f"Conflict Detection #{sequence} End"),
+            node_type="end",
+            role_type="agent",
+            container_key="conflict_detection",
+            created_by=user_id,
+            input_summary={"tool_loop_reply": loop_result.get("tool_loop_reply")},
+            edge_type_from_previous="seq",
         )
-        return response
+        recorder.complete_stage(
+            end_node_key, created_by=user_id,
+            output_summary=loop_result,
+        )
+        recorder.create_return_edge(
+            child_node_key=end_node_key, parent_node_key=parent_node_key, created_by=user_id,
+        )
+        recorder.restore_stage_cursor(node_key=parent_node_key, updated_by=user_id)
+
+        return {
+            "status": "success",
+            "reply": loop_result.get("tool_loop_reply", ""),
+        }
 
     @staticmethod
     def _mark_dispatched_agent(context: dict[str, Any], agent_key: str) -> None:
@@ -433,67 +461,3 @@ class SessionControllerTools:
         if agent_key not in dispatched:
             dispatched.append(agent_key)
 
-    def _start_child_agent_stage(
-        self,
-        *,
-        context: dict[str, Any],
-        agent_key: str,
-        agent_label: str,
-        task_description: str,
-    ) -> dict[str, Any] | None:
-        recorder = context.get("_graph_recorder")
-        parent_node_key = str(context.get("_active_stage_node_key") or "").strip()
-        user_id = str(context.get("user_id") or "")
-        if recorder is None or not parent_node_key:
-            return None
-
-        tool_results = context.get("tool_results") or []
-        sequence = len(tool_results) + 1
-        child_node_key = f"{parent_node_key}__delegate_{agent_key}_{sequence}"
-        child_label = f"{agent_label} Delegate #{sequence}"
-        recorder.start_stage(
-            node_key=child_node_key,
-            label=child_label,
-            node_type="llm",
-            role_type="agent",
-            container_key=agent_key,
-            created_by=user_id,
-            input_summary={
-                "task_description": task_description,
-                "delegated_by": parent_node_key,
-                "agent": agent_key,
-            },
-            edge_type_from_previous="call",
-        )
-        return {
-            "node_key": child_node_key,
-            "parent_node_key": parent_node_key,
-        }
-
-    def _complete_child_agent_stage(
-        self,
-        *,
-        context: dict[str, Any],
-        child_stage: dict[str, Any] | None,
-        success: bool,
-        output_summary: dict[str, Any],
-    ) -> None:
-        if not child_stage:
-            return
-        recorder = context.get("_graph_recorder")
-        user_id = str(context.get("user_id") or "")
-        if recorder is None:
-            return
-
-        error_text = None if success else str(output_summary.get("error") or "delegated agent failed")
-        recorder.complete_stage(
-            child_stage["node_key"],
-            created_by=user_id,
-            output_summary=output_summary,
-            success=success,
-            error=error_text,
-        )
-        recorder.restore_stage_cursor(
-            node_key=child_stage["parent_node_key"],
-            updated_by=user_id,
-        )

@@ -443,6 +443,58 @@ class RequirementAgentChatService:
             context_mode=context_mode,
         )
 
+    def run_inline_tool_loop(
+        self,
+        *,
+        recorder: Any,
+        user_id: str,
+        user_message: str,
+        project_id: str,
+        requirement_id: str | None = None,
+        container_key: str = "requirement_agent",
+        node_key_prefix: str = "requirement_agent",
+    ) -> dict[str, Any]:
+        """Run tool loop inline within an external recorder (no child graph).
+
+        This allows the Session Controller to embed the requirement agent's
+        tool-loop nodes directly into its own execution graph rather than
+        creating a separate child graph.
+        """
+        runner = RequirementAgentToolLoopRunner(
+            ai_proxy_client=self.ai_proxy,
+            tools=self.tools,
+            execution_graph_service=self.execution_graph_service,
+            actor_manager_getter=self._get_actor_manager,
+            prompt_builder=self.prompt_builder,
+            max_tool_call_rounds=self.MAX_TOOL_CALL_ROUNDS,
+            stage_container_key=container_key,
+            node_key_prefix=node_key_prefix,
+        )
+        gen = runner.run(
+            recorder=recorder,
+            user_id=user_id,
+            user_message=user_message,
+            project_id=project_id,
+            requirement_id=requirement_id,
+            session_id="",
+            prompt_payload_format=DEFAULT_PROMPT_PAYLOAD_FORMAT,
+            context_mode="full",
+        )
+        result: dict[str, Any] | None = None
+        try:
+            while True:
+                next(gen)
+        except StopIteration as stop:
+            result = stop.value or {}
+
+        context = result.get("context") or {}
+        return {
+            "status": "success",
+            "tool_loop_reply": result.get("tool_loop_reply", ""),
+            "resolved_requirement_id": context.get("resolved_requirement_id"),
+            "write_result": context.get("last_write_result"),
+        }
+
     def stream_requirement_agent_reply(
         self,
         *,

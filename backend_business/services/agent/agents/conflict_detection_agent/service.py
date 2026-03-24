@@ -397,6 +397,50 @@ class ConflictDetectionAgentService:
             session_id=session_id,
         )
 
+    def run_inline_tool_loop(
+        self,
+        *,
+        recorder: Any,
+        user_id: str,
+        user_message: str,
+        project_id: str,
+        container_key: str = "conflict_detection",
+        node_key_prefix: str = "conflict_agent",
+    ) -> dict[str, Any]:
+        """Run tool loop inline within an external recorder (no child graph).
+
+        This allows the Session Controller to embed the conflict detection
+        agent's tool-loop nodes directly into its own execution graph rather
+        than creating a separate child graph.
+        """
+        runner = ConflictDetectionToolLoopRunner(
+            ai_proxy_client=self.ai_proxy,
+            tools=self.tools,
+            execution_graph_service=self.execution_graph_service,
+            prompt_builder=self.prompt_builder,
+            max_tool_call_rounds=self.MAX_TOOL_CALL_ROUNDS,
+            stage_container_key=container_key,
+            node_key_prefix=node_key_prefix,
+        )
+        gen = runner.run(
+            recorder=recorder,
+            user_id=user_id,
+            user_message=user_message,
+            project_id=project_id,
+            session_id="",
+        )
+        result: dict[str, Any] | None = None
+        try:
+            while True:
+                next(gen)
+        except StopIteration as stop:
+            result = stop.value or {}
+
+        return {
+            "status": "success",
+            "tool_loop_reply": result.get("tool_loop_reply", ""),
+        }
+
     def stream_conflict_agent_reply(
         self,
         *,

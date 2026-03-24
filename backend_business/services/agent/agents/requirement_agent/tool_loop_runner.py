@@ -64,6 +64,8 @@ class RequirementAgentToolLoopRunner:
         actor_manager_getter: Any,
         prompt_builder: RequirementAgentPromptBuilder,
         max_tool_call_rounds: int,
+        stage_container_key: str = "requirements_agent",
+        node_key_prefix: str = "requirements_agent",
     ) -> None:
         self._ai_proxy_client = ai_proxy_client
         self._tools = tools
@@ -71,6 +73,8 @@ class RequirementAgentToolLoopRunner:
         self._actor_manager_getter = actor_manager_getter
         self._prompt_builder = prompt_builder
         self._max_tool_call_rounds = max_tool_call_rounds
+        self._stage_container_key = stage_container_key
+        self._node_key_prefix = node_key_prefix
 
     def run(
         self,
@@ -121,13 +125,14 @@ class RequirementAgentToolLoopRunner:
         }
 
         # Build ToolLoopRunner with optional scratchpad
+        node_key_prefix = self._node_key_prefix
         runner = ToolLoopRunner(
             ai_proxy_client=self._ai_proxy_client,
             tool_executor=self._tools,
             prompt_builder=_RequirementToolLoopPromptAdapter(self._prompt_builder),
             max_tool_call_rounds=self._max_tool_call_rounds,
-            stage_container_key="requirements_agent",
-            stage_node_key_builder=lambda round_index: f"requirements_agent_tool_loop_round_{round_index}",
+            stage_container_key=self._stage_container_key,
+            stage_node_key_builder=lambda round_index: f"{node_key_prefix}_tool_loop_round_{round_index}",
             stage_label_builder=lambda round_index: f"Tool Loop Round {round_index}",
             actor_manager_getter=self._actor_manager_getter,
             graph_meta_patcher=lambda graph_id, meta_patch, updated_by: self._execution_graph_service.patch_graph_meta(

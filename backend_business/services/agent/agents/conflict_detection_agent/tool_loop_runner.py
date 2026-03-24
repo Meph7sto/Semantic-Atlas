@@ -22,22 +22,16 @@ class ConflictDetectionToolLoopRunner:
         execution_graph_service: ExecutionGraphService,
         prompt_builder: ConflictDetectionPromptBuilder,
         max_tool_call_rounds: int,
+        stage_container_key: str = "conflict_detection_agent",
+        node_key_prefix: str = "conflict_agent",
     ) -> None:
-        self._runner = ToolLoopRunner(
-            ai_proxy_client=ai_proxy_client,
-            tool_executor=tools,
-            prompt_builder=prompt_builder,
-            max_tool_call_rounds=max_tool_call_rounds,
-            stage_container_key="conflict_detection_agent",
-            stage_node_key_builder=lambda round_index: f"conflict_agent_tool_loop_round_{round_index}",
-            stage_label_builder=lambda round_index: f"Tool Loop Round {round_index}",
-            graph_meta_patcher=lambda graph_id, meta_patch, updated_by: execution_graph_service.patch_graph_meta(
-                graph_id,
-                meta_patch,
-                updated_by=updated_by,
-            ),
-            graph_meta_patch_builder=lambda context: {},
-        )
+        self._ai_proxy_client = ai_proxy_client
+        self._tools = tools
+        self._execution_graph_service = execution_graph_service
+        self._prompt_builder = prompt_builder
+        self._max_tool_call_rounds = max_tool_call_rounds
+        self._stage_container_key = stage_container_key
+        self._node_key_prefix = node_key_prefix
 
     def run(
         self,
@@ -55,7 +49,23 @@ class ConflictDetectionToolLoopRunner:
             "graph_id": recorder.graph_id,
             "tool_results": [],
         }
-        result = yield from self._runner.run(
+        node_key_prefix = self._node_key_prefix
+        runner = ToolLoopRunner(
+            ai_proxy_client=self._ai_proxy_client,
+            tool_executor=self._tools,
+            prompt_builder=self._prompt_builder,
+            max_tool_call_rounds=self._max_tool_call_rounds,
+            stage_container_key=self._stage_container_key,
+            stage_node_key_builder=lambda round_index: f"{node_key_prefix}_tool_loop_round_{round_index}",
+            stage_label_builder=lambda round_index: f"Tool Loop Round {round_index}",
+            graph_meta_patcher=lambda graph_id, meta_patch, updated_by: self._execution_graph_service.patch_graph_meta(
+                graph_id,
+                meta_patch,
+                updated_by=updated_by,
+            ),
+            graph_meta_patch_builder=lambda context: {},
+        )
+        result = yield from runner.run(
             recorder=recorder,
             user_id=user_id,
             user_message=user_message,
