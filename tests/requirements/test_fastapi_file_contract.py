@@ -58,6 +58,7 @@ class _StubFileService:
             "relativePath": f"{folder}/u1_file.txt" if folder else "u1_file.txt",
             "importTime": import_time or None,
             "captureTime": capture_time or None,
+            "checksum": "stub-checksum",
         }
 
     def list_uploaded_files(self, user_id: str):
@@ -223,6 +224,7 @@ async def test_upload_and_list_contract(fastapi_client):
     assert stub_file_service.save_calls[0]["folder"] == "相册A"
     assert stub_file_service.save_calls[0]["import_time"] == "1710000000000"
     assert stub_file_service.save_calls[0]["capture_time"] == "1700000000000"
+    assert upload_resp.json()["checksum"] == "stub-checksum"
 
     list_resp = await client.get("/api/v2/uploads")
     assert list_resp.status_code == 200

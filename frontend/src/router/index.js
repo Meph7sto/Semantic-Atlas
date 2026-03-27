@@ -44,6 +44,7 @@ import AsrTranscriptionView from '../views/beta/AsrTranscriptionView.vue'
 import ReviewView from '../views/beta/ReviewView.vue'
 import MyFilesView from '../views/beta/MyFilesView.vue'
 import TraceabilityView from '../views/beta/TraceabilityView.vue'
+import ReportView from '../views/beta/ReportView.vue'
 
 // Guide view
 import GuideView from '../views/GuideView.vue'
@@ -185,6 +186,12 @@ const router = createRouter({
                     path: 'my-files',
                     name: 'beta-my-files',
                     component: MyFilesView,
+                    meta: { requiresAuth: true }
+                },
+                {
+                    path: 'reports',
+                    name: 'beta-reports',
+                    component: ReportView,
                     meta: { requiresAuth: true }
                 }
             ]

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import uuid
@@ -139,6 +140,10 @@ class FileService:
     def _metadata_path(file_path: str) -> str:
         return f"{file_path}{METADATA_SUFFIX}"
 
+    @staticmethod
+    def _calculate_checksum(content: bytes) -> str:
+        return hashlib.sha256(content).hexdigest()
+
     def _read_metadata(self, file_path: str) -> dict[str, Any]:
         metadata_path = self._metadata_path(file_path)
         if not os.path.isfile(metadata_path):
@@ -230,6 +235,7 @@ class FileService:
             "relativePath": metadata.get("relativePath") or filename,
             "importTime": metadata.get("importTime"),
             "captureTime": metadata.get("captureTime"),
+            "checksum": metadata.get("checksum"),
         }
         self._uploaded_files_cache[cache_key] = file_info
         return dict(file_info)
@@ -295,6 +301,7 @@ class FileService:
         file_size = os.path.getsize(file_path)
         upload_time = datetime.now(timezone.utc).isoformat()
         relative_path = f"{safe_folder}/{saved_filename}" if safe_folder else saved_filename
+        checksum = self._calculate_checksum(content)
         metadata = {
             "originalFilename": original_filename,
             "fileSize": file_size,
@@ -306,6 +313,7 @@ class FileService:
             "relativePath": relative_path,
             "importTime": self._normalize_timestamp(import_time),
             "captureTime": self._normalize_timestamp(capture_time),
+            "checksum": checksum,
             "userId": self._normalize_user_id(user_id),
         }
         self._write_metadata(file_path, metadata)
@@ -322,6 +330,7 @@ class FileService:
             "relativePath": relative_path,
             "importTime": metadata["importTime"],
             "captureTime": metadata["captureTime"],
+            "checksum": checksum,
         }
         self._uploaded_files_cache[os.path.abspath(file_path)] = file_info
         return dict(file_info)

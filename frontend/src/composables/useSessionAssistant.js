@@ -63,6 +63,7 @@ export function useSessionAssistant() {
   const selectedCanvasId = ref(null)
   const draftAssistantId = ref(null)
   const lastDispatchedAgents = ref([])
+  const autoCreatingProjectIds = new Set()
 
   // ---- 派生状态 ----
 
@@ -270,6 +271,7 @@ export function useSessionAssistant() {
       if (!sessions.value.length) {
         sessionId.value = ''
         resetSessionView()
+        await ensureSessionForProject(selectedProjectId.value)
         return
       }
 
@@ -298,14 +300,14 @@ export function useSessionAssistant() {
 
   // ---- 会话 CRUD ----
 
-  const createSession = async () => {
-    if (!selectedProjectId.value) return
+  const createSessionForProject = async (projectId, title = null) => {
+    if (!projectId) return null
     isCreatingSession.value = true
     errorMessage.value = ''
     try {
       const session = await sessionControllerChatApi.createSession(
-        selectedProjectId.value,
-        generateSessionTitle(),
+        projectId,
+        title || generateSessionTitle(),
       )
       sessions.value = [
         session,
@@ -314,12 +316,27 @@ export function useSessionAssistant() {
         ),
       ]
       await loadSessionContent(session)
+      return session
     } catch (err) {
       errorMessage.value = err?.message || '新建会话失败'
+      return null
     } finally {
       isCreatingSession.value = false
     }
   }
+
+  const ensureSessionForProject = async (projectId) => {
+    if (!projectId || autoCreatingProjectIds.has(projectId)) return null
+    autoCreatingProjectIds.add(projectId)
+    try {
+      return await createSessionForProject(projectId)
+    } finally {
+      autoCreatingProjectIds.delete(projectId)
+    }
+  }
+
+  const createSession = async () =>
+    createSessionForProject(selectedProjectId.value)
 
   const handleSelectSession = async (session) => {
     if (!session?.session_id) return

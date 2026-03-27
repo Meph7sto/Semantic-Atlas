@@ -70,6 +70,7 @@ async def upload_file(
             "fileSize": saved_file["fileSize"],
             "uploadTime": saved_file["uploadTime"],
             "folder": saved_file.get("folder", ""),
+            "checksum": saved_file.get("checksum"),
         }
     except ErrorResponse:
         raise

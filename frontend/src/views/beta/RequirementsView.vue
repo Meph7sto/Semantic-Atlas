@@ -502,7 +502,7 @@
                     <td v-if="tableVisibleColumns.includes('status')">
                       <select
                         :value="req.status"
-                        @change="updateRequirementStatus(req.id || req.req_id, $event.target.value)"
+                        @change="updateRequirementStatus(req.id || req.req_id, $event.target.value, $event)"
                         class="cell-status"
                         :class="getStatusColorClass(req.status, 'bg')"
                       >
@@ -1495,16 +1495,23 @@ function toggleColumn(key) {
   }
 }
 
-async function updateRequirementStatus(reqId, newStatus) {
+async function updateRequirementStatus(reqId, newStatus, event) {
   const target = findRequirementById(reqId) || { req_id: reqId, id: reqId };
+  const originalStatus = target.status || 'draft';
   if ((newStatus === 'completed' || newStatus === 'confirmed') && !canMarkAsCompleted(target)) {
     alert('该需求仍有关联未解决缺陷，不能标记为已确认/已完成');
+    if (event?.target) {
+      event.target.value = originalStatus;
+    }
     return;
   }
 
   const manageReqId = resolveManageReqId(target);
   if (!manageReqId) {
     alert('无法关联到项目需求，请刷新后重试');
+    if (event?.target) {
+      event.target.value = originalStatus;
+    }
     return;
   }
 
@@ -1516,6 +1523,9 @@ async function updateRequirementStatus(reqId, newStatus) {
     await loadRequirements();
   } catch (err) {
     alert('更新需求状态失败: ' + (err?.response?.data?.detail || err?.message || '未知错误'));
+    if (event?.target) {
+      event.target.value = originalStatus;
+    }
   } finally {
     isSyncingStatus.value = false;
   }
