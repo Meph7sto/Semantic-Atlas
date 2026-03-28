@@ -180,7 +180,7 @@ superspec commit --summary "Add requirement classification agent tools." --next 
 - Create: `backend_business/services/agent/agents/requirement_classification_agent/service.py`
 - Test: `tests/agent_chat/test_requirement_classification_agent_chat_service.py`
 
-- [ ] **Step 1: Write the failing service tests**
+- [x] **Step 1: Write the failing service tests**
 
 ```python
 def test_stream_classification_agent_reply_emits_graph_and_result_events():
@@ -214,12 +214,12 @@ def test_run_inline_tool_loop_returns_classification_summary():
     assert result["classification_result"]["level"] == "L2"
 ```
 
-- [ ] **Step 2: Run the service tests to verify they fail**
+- [x] **Step 2: Run the service tests to verify they fail**
 
 Run: `pytest tests/agent_chat/test_requirement_classification_agent_chat_service.py -v`
 Expected: FAIL because the package and service do not exist yet
 
-- [ ] **Step 3: Write the minimal service package**
+- [x] **Step 3: Write the minimal service package**
 
 ```python
 class RequirementClassificationAgentService:
@@ -248,12 +248,12 @@ Implementation notes:
 - Keep graph containers minimal: `human_input`, `conductor`, `requirement_classification_agent`.
 - Persist `classification_result` into graph meta for graph-chain replay.
 
-- [ ] **Step 4: Run the service tests to verify they pass**
+- [x] **Step 4: Run the service tests to verify they pass**
 
 Run: `pytest tests/agent_chat/test_requirement_classification_agent_chat_service.py -v`
 Expected: PASS for graph lifecycle, SSE, and inline execution cases
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tests/agent_chat/test_requirement_classification_agent_chat_service.py \
