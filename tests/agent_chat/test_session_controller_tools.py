@@ -208,11 +208,87 @@ class _FakeConflictAgentService:
         return result
 
 
+class _FakeRequirementClassificationAgentService:
+    """Fake that exposes run_inline_tool_loop for requirement classification."""
+
+    def __init__(self, *, inline_result=None):
+        self.inline_calls = []
+        self._inline_result = inline_result or {
+            "status": "success",
+            "tool_loop_reply": "已完成需求分类",
+            "resolved_requirement_id": "REQ-1",
+            "classification_result": {
+                "requirement_id": "REQ-1",
+                "level": "L2",
+                "requirement_nature": "functional",
+                "domain_tags": ["需求管理"],
+                "priority_suggestion": "P2",
+            },
+        }
+
+    def run_inline_tool_loop(
+        self, *, recorder, user_id, user_message, project_id,
+        requirement_id=None, container_key="requirement_classification_agent",
+        node_key_prefix="requirement_classification_agent",
+    ):
+        self.inline_calls.append({
+            "recorder": recorder,
+            "user_id": user_id,
+            "user_message": user_message,
+            "project_id": project_id,
+            "requirement_id": requirement_id,
+            "container_key": container_key,
+            "node_key_prefix": node_key_prefix,
+        })
+        node_key = recorder.stage_node_key(f"{node_key_prefix}_tool_loop_round_1")
+        recorder.start_stage(
+            node_key=node_key,
+            label=recorder.stage_label("Tool Loop Round 1"),
+            node_type="llm",
+            role_type="agent",
+            container_key=container_key,
+            created_by=user_id,
+            input_summary={"round": 1},
+            edge_type_from_previous="seq",
+        )
+        recorder.complete_stage(
+            node_key,
+            created_by=user_id,
+            output_summary={"reply": self._inline_result.get("tool_loop_reply")},
+        )
+        return dict(self._inline_result)
+
+    def stream_inline_tool_loop(
+        self, *, recorder, user_id, user_message, project_id,
+        requirement_id=None, container_key="requirement_classification_agent",
+        node_key_prefix="requirement_classification_agent",
+    ):
+        result = self.run_inline_tool_loop(
+            recorder=recorder,
+            user_id=user_id,
+            user_message=user_message,
+            project_id=project_id,
+            requirement_id=requirement_id,
+            container_key=container_key,
+            node_key_prefix=node_key_prefix,
+        )
+        yield {
+            "event": "stage",
+            "data": {
+                "graph_id": recorder.graph_id,
+                "node_key": recorder.stage_node_key(f"{node_key_prefix}_tool_loop_round_1"),
+                "status": "succeeded",
+            },
+        }
+        return result
+
+
 def _make_tools():
     return SessionControllerTools(
         requirements_service=_FakeRequirementsService(),
         requirement_agent_service=_FakeRequirementAgentService(),
         conflict_agent_service=_FakeConflictAgentService(),
+        requirement_classification_agent_service=_FakeRequirementClassificationAgentService(),
     )
 
 
@@ -280,6 +356,7 @@ def test_invoke_requirement_agent_passes_correct_params_to_inline():
         requirements_service=_FakeRequirementsService(),
         requirement_agent_service=fake_service,
         conflict_agent_service=_FakeConflictAgentService(),
+        requirement_classification_agent_service=_FakeRequirementClassificationAgentService(),
     )
     recorder = _FakeRecorder()
     context = {
@@ -385,6 +462,86 @@ def test_invoke_conflict_detection_records_expanded_nodes():
     assert recorder.return_edges[0]["parent_node_key"] == "turn_2__session_controller_tool_loop_round_1"
 
 
+def test_invoke_requirement_classification_agent_records_expanded_nodes():
+    tools = _make_tools()
+    recorder = _FakeRecorder()
+    context = {
+        "project_id": "p-1",
+        "user_id": "u-1",
+        "_graph_recorder": recorder,
+        "_active_stage_node_key": "turn_1__session_controller_tool_loop_round_1",
+        "tool_results": [],
+        "dispatched_agents": [],
+    }
+
+    result = tools.execute(
+        "invoke_requirement_classification_agent",
+        {"task_description": "分类 REQ-1", "requirement_id": "REQ-1"},
+        context,
+    )
+
+    assert result["status"] == "success"
+    assert result["resolved_requirement_id"] == "REQ-1"
+    assert result["classification_result"]["level"] == "L2"
+    assert context["dispatched_agents"] == ["requirement_classification_agent"]
+
+    assert len(recorder.started) == 3
+    start = recorder.started[0]
+    assert start["container_key"] == "requirement_classification_agent"
+    assert start["node_type"] == "start"
+    assert start["edge_type_from_previous"] == "call"
+    assert "classification_agent_1_start" in start["node_key"]
+
+    tool_loop = recorder.started[1]
+    assert tool_loop["container_key"] == "requirement_classification_agent"
+    assert tool_loop["node_type"] == "llm"
+
+    end = recorder.started[2]
+    assert end["container_key"] == "requirement_classification_agent"
+    assert end["node_type"] == "end"
+    assert "classification_agent_1_end" in end["node_key"]
+
+    assert len(recorder.return_edges) == 1
+    assert recorder.return_edges[0]["parent_node_key"] == "turn_1__session_controller_tool_loop_round_1"
+    assert recorder.restored == [
+        {"node_key": "turn_1__session_controller_tool_loop_round_1", "updated_by": "u-1"},
+    ]
+
+
+def test_invoke_requirement_classification_agent_passes_correct_params_to_inline():
+    fake_service = _FakeRequirementClassificationAgentService()
+    tools = SessionControllerTools(
+        requirements_service=_FakeRequirementsService(),
+        requirement_agent_service=_FakeRequirementAgentService(),
+        conflict_agent_service=_FakeConflictAgentService(),
+        requirement_classification_agent_service=fake_service,
+    )
+    recorder = _FakeRecorder()
+    context = {
+        "project_id": "p-2",
+        "user_id": "u-2",
+        "_graph_recorder": recorder,
+        "_active_stage_node_key": "turn_1__session_controller_tool_loop_round_1",
+        "tool_results": [],
+        "dispatched_agents": [],
+    }
+
+    tools.execute(
+        "invoke_requirement_classification_agent",
+        {"task_description": "分类 REQ-2", "requirement_id": "REQ-2"},
+        context,
+    )
+
+    assert len(fake_service.inline_calls) == 1
+    call = fake_service.inline_calls[0]
+    assert call["user_id"] == "u-2"
+    assert call["project_id"] == "p-2"
+    assert call["user_message"] == "分类 REQ-2"
+    assert call["requirement_id"] == "REQ-2"
+    assert call["container_key"] == "requirement_classification_agent"
+    assert call["node_key_prefix"] == "classification_agent_1"
+
+
 def test_invoke_requirement_agent_handles_inline_error():
     """If the inline tool loop raises, proper error nodes and return edges are recorded."""
     class _FailingService:
@@ -398,6 +555,7 @@ def test_invoke_requirement_agent_handles_inline_error():
         requirements_service=_FakeRequirementsService(),
         requirement_agent_service=_FailingService(),
         conflict_agent_service=_FakeConflictAgentService(),
+        requirement_classification_agent_service=_FakeRequirementClassificationAgentService(),
     )
     recorder = _FakeRecorder()
     context = {

@@ -336,7 +336,7 @@ superspec commit --summary "Expose the requirement classification agent router."
 - Modify: `backend_business/services/agent/agents/session_controller/runtime_graph_recorder.py`
 - Modify: `tests/agent_chat/test_session_controller_tools.py`
 
-- [ ] **Step 1: Write the failing session-controller tests**
+- [x] **Step 1: Write the failing session-controller tests**
 
 ```python
 def test_invoke_requirement_classification_agent_records_expanded_nodes():
@@ -360,12 +360,12 @@ def test_invoke_requirement_classification_agent_records_expanded_nodes():
     assert any("classification_agent_1_start" in item["node_key"] for item in recorder.started)
 ```
 
-- [ ] **Step 2: Run the session-controller tests to verify they fail**
+- [x] **Step 2: Run the session-controller tests to verify they fail**
 
 Run: `pytest tests/agent_chat/test_session_controller_tools.py -v`
 Expected: FAIL because the new tool and container do not exist
 
-- [ ] **Step 3: Implement minimal delegation support**
+- [x] **Step 3: Implement minimal delegation support**
 
 ```python
 {
@@ -392,12 +392,12 @@ Implementation notes:
 - Keep names explicit and additive.
 - Update the prompt builder so the controller knows classification must go through the new invoke tool.
 
-- [ ] **Step 4: Run the session-controller tests to verify they pass**
+- [x] **Step 4: Run the session-controller tests to verify they pass**
 
 Run: `pytest tests/agent_chat/test_session_controller_tools.py -v`
 Expected: PASS for all existing tests plus the new classification delegation path
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tests/agent_chat/test_session_controller_tools.py \
