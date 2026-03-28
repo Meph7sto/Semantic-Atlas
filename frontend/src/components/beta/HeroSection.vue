@@ -4,34 +4,57 @@
       <p class="eyebrow">项目仪表盘 · Overview</p>
       <h1>把「现在该做什么」放在第一屏。</h1>
       <p class="lead">
-        这里展示的是一个通用的概览页模型：项目健康摘要、我的待办、评审队列、流程进度、最近活动与风险提示。结构参考企业级项目管理工具（如 Jama Connect）的 Dashboard / My Work 思路，但内容保持中性占位。
+        项目健康摘要、需求状态分布、评审队列、缺陷跟踪、基线进度 — 所有关键指标的实时聚合。
       </p>
       <div class="hero-actions">
-        <button type="button" class="primary">进入我的待办</button>
-        <button type="button" class="ghost">查看评审中心</button>
-        <button type="button" class="ghost">打开追踪视图</button>
+        <button type="button" class="primary" @click="$emit('navigate', 'requirements')">进入需求管理</button>
+        <button type="button" class="ghost" @click="$emit('navigate', 'reviews')">查看评审中心</button>
+        <button type="button" class="ghost" @click="$emit('navigate', 'tracking')">打开追踪视图</button>
       </div>
       <div class="ribbon chips-row">
-        <span class="chip-status"><i class="dot success"></i> 门禁: 字段完整度 92%</span>
-        <span class="chip-status"><i class="dot warn"></i> 待澄清: 12</span>
-        <span class="chip-status"><i class="dot risk"></i> 风险: 3 个高优先级</span>
-        <span class="chip-status"><i class="dot info"></i> 最新基线: 2 小时前</span>
+        <span class="chip-status">
+          <i class="dot success"></i>
+          门禁: 字段完整度 {{ gateMetrics.completeness }}%
+        </span>
+        <span class="chip-status">
+          <i class="dot warn"></i>
+          待澄清: {{ gateMetrics.pendingClarification }}
+        </span>
+        <span class="chip-status">
+          <i class="dot risk"></i>
+          风险: {{ gateMetrics.highRiskCount }} 个高优先级
+        </span>
+        <span class="chip-status">
+          <i class="dot info"></i>
+          最新活动: {{ latestActivityLabel }}
+        </span>
       </div>
     </div>
 
-    <div class="stats-row">
+    <!-- 骨架屏 -->
+    <div v-if="loading" class="stats-row">
+      <div v-for="i in 4" :key="i" class="stat-box skeleton-box">
+        <div class="skeleton-line short"></div>
+        <div class="skeleton-line wide"></div>
+        <div class="skeleton-line medium"></div>
+      </div>
+    </div>
+
+    <!-- 真实数据 -->
+    <div v-else class="stats-row">
       <div class="stat-box">
         <div class="stat-header">
           <span>项目总览</span>
           <span class="tag">All</span>
         </div>
-        <div class="stat-number">2,138</div>
+        <div class="stat-number">{{ reqStats.total.toLocaleString() }}</div>
         <div class="stat-footer">
-          <span class="pill">草稿 148</span>
-          <span class="pill">待评审 63</span>
+          <span class="pill">草稿 {{ reqStats.draft }}</span>
+          <span class="pill">待评审 {{ reqStats.underReview }}</span>
         </div>
         <div class="stat-sub">
-          <span class="pill">已批准 1,790</span>
+          <span class="pill">已确认 {{ reqStats.confirmed }}</span>
+          <span class="pill">已完成 {{ reqStats.completed }}</span>
         </div>
       </div>
 
@@ -40,22 +63,22 @@
           <span>评审队列</span>
           <span class="tag">Review</span>
         </div>
-        <div class="stat-number">17</div>
+        <div class="stat-number">{{ reviewStats.total }}</div>
         <div class="stat-footer">
-          <span class="pill">即将到期 4</span>
-          <span class="pill">我参与 6</span>
+          <span class="pill">即将到期 {{ reviewStats.dueSoon }}</span>
+          <span class="pill">我参与 {{ reviewStats.myParticipation }}</span>
         </div>
       </div>
 
       <div class="stat-box">
         <div class="stat-header">
-          <span>澄清与问题</span>
-          <span class="tag">Q&A</span>
+          <span>缺陷跟踪</span>
+          <span class="tag">Defects</span>
         </div>
-        <div class="stat-number">12</div>
+        <div class="stat-number">{{ defectStats.total }}</div>
         <div class="stat-footer">
-          <span class="pill">超时 2</span>
-          <span class="pill">未分配 3</span>
+          <span class="pill" :class="{ 'pill-warn': defectStats.overdue > 0 }">超时 {{ defectStats.overdue }}</span>
+          <span class="pill">未分配 {{ defectStats.unassigned }}</span>
         </div>
       </div>
 
@@ -64,15 +87,50 @@
           <span>基线状态</span>
           <span class="tag">Baseline</span>
         </div>
-        <div class="stat-number">Ready</div>
+        <div class="stat-number">{{ baselineInfo.status }}</div>
         <div class="stat-footer">
-          <span class="pill">差异 28</span>
-          <span class="pill">候选 1</span>
+          <span class="pill">里程碑 {{ baselineInfo.diffCount }}</span>
+          <span class="pill">候选 {{ baselineInfo.candidateCount }}</span>
         </div>
       </div>
     </div>
   </section>
 </template>
+
+<script setup>
+defineProps({
+  reqStats: {
+    type: Object,
+    default: () => ({ total: 0, draft: 0, underReview: 0, confirmed: 0, inProgress: 0, completed: 0 }),
+  },
+  reviewStats: {
+    type: Object,
+    default: () => ({ total: 0, dueSoon: 0, myParticipation: 0 }),
+  },
+  defectStats: {
+    type: Object,
+    default: () => ({ total: 0, overdue: 0, unassigned: 0 }),
+  },
+  baselineInfo: {
+    type: Object,
+    default: () => ({ status: 'N/A', diffCount: 0, candidateCount: 0 }),
+  },
+  gateMetrics: {
+    type: Object,
+    default: () => ({ completeness: 0, pendingClarification: 0, highRiskCount: 0 }),
+  },
+  latestActivityLabel: {
+    type: String,
+    default: '—',
+  },
+  loading: {
+    type: Boolean,
+    default: false,
+  },
+})
+
+defineEmits(['navigate'])
+</script>
 
 <style scoped>
 .hero-overview {
@@ -175,6 +233,49 @@
   border-radius: 0;
   font-size: 12px;
   color: #666;
+}
+
+.pill-warn {
+  background: #fff5f5;
+  color: #c45b60;
+  border: 1px solid #f0c9ca;
+}
+
+/* 骨架屏 */
+.skeleton-box {
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.skeleton-line {
+  height: 16px;
+  background: #eee;
+  border-radius: 4px;
+}
+.skeleton-line.short { width: 60%; }
+.skeleton-line.wide { width: 40%; height: 32px; }
+.skeleton-line.medium { width: 80%; }
+
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* 按钮 */
+button.primary {
+  background: var(--accent, #c4692f);
+  color: white;
+  border: none;
+  padding: 8px 20px;
+  font-size: 13px;
+  cursor: pointer;
+}
+button.ghost {
+  background: white;
+  border: 1px solid rgba(28,40,52,0.15);
+  padding: 8px 20px;
+  font-size: 13px;
+  color: #5d6b76;
+  cursor: pointer;
 }
 
 @media (max-width: 1024px) {

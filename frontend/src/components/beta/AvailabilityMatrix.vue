@@ -4,121 +4,182 @@
       <div class="header-main">
         <p class="card-kicker">My Work</p>
         <h2>我的工作台</h2>
-        <p class="header-desc">概览页最关键的是把「人要做的事」放到最短路径：待办、待审、被@、需要补齐的条目。</p>
+        <p class="header-desc">把「人要做的事」放到最短路径：待办、待审、需要补齐的条目。</p>
       </div>
       <div class="header-actions">
-        <button type="button" class="filter-btn active">只看我负责</button>
-        <button type="button" class="filter-btn">只看今天到期</button>
-        <button type="button" class="filter-text">自定义</button>
+        <button
+          type="button"
+          class="filter-btn"
+          :class="{ active: filterMode === 'mine' }"
+          @click="filterMode = 'mine'"
+        >只看我负责</button>
+        <button
+          type="button"
+          class="filter-btn"
+          :class="{ active: filterMode === 'all' }"
+          @click="filterMode = 'all'"
+        >查看全部</button>
       </div>
     </div>
 
-    <div class="work-grid">
-      <!-- Left Column: My To-do -->
+    <!-- 骨架屏 -->
+    <div v-if="loading" class="work-grid">
       <div class="work-column">
         <h3 class="column-title">我的待办（To-do）</h3>
+        <div v-for="i in 2" :key="'skel-todo-'+i" class="task-card skeleton-card">
+          <div class="skeleton-line wide"></div>
+          <div class="skeleton-line medium"></div>
+          <div class="skeleton-line short"></div>
+        </div>
+      </div>
+      <div class="work-column">
+        <h3 class="column-title">评审任务（Reviews）</h3>
+        <div v-for="i in 2" :key="'skel-rev-'+i" class="task-card skeleton-card">
+          <div class="skeleton-line wide"></div>
+          <div class="skeleton-line medium"></div>
+          <div class="skeleton-line short"></div>
+        </div>
+      </div>
+    </div>
 
-        <div class="task-card">
-          <div class="task-header">
-            <h4>补齐关键字段：验收口径缺失（3 项）</h4>
-            <span class="status-tag pending">待补齐</span>
-          </div>
-          <div class="task-meta">
-            <span class="pill">来源：门禁</span>
-            <span class="pill">截止：今天 18:00</span>
-            <span class="pill highlight">优先级：P1</span>
-          </div>
-          <div class="task-actions">
-            <button class="btn-primary">立即处理</button>
-            <button class="btn-ghost">查看详情</button>
-          </div>
+    <!-- 真实数据 -->
+    <div v-else class="work-grid">
+      <!-- Left Column: My To-do -->
+      <div class="work-column">
+        <h3 class="column-title">我的待办（To-do）<span class="column-count">{{ displayedTodos.length }}</span></h3>
+
+        <div v-if="displayedTodos.length === 0" class="empty-hint">
+          <p>🎉 暂无待办事项</p>
         </div>
 
-        <div class="task-card">
+        <div v-for="item in displayedTodos" :key="item.req_id" class="task-card">
           <div class="task-header">
-            <h4>回答澄清：术语定义不一致（2 条）</h4>
-            <span class="status-tag block">阻塞</span>
+            <h4>{{ item.title || '(无标题)' }}</h4>
+            <span class="status-tag" :class="statusClass(item.status)">
+              {{ statusLabel(item.status) }}
+            </span>
           </div>
           <div class="task-meta">
-            <span class="pill">来源：Q&A</span>
-            <span class="pill">责任：你</span>
-            <span class="pill item-warn">超时：1 天</span>
+            <span class="pill">
+              优先级：{{ priorityLabel(item.priority) }}
+            </span>
+            <span v-if="item.due_date" class="pill" :class="{ 'item-warn': item.isOverdue }">
+              截止：{{ formatDate(item.due_date) }}
+            </span>
+            <span class="pill highlight">{{ item.priorityLabel }}</span>
           </div>
           <div class="task-actions">
-            <button class="btn-primary">去回答</button>
-            <button class="btn-ghost">分派</button>
-          </div>
-        </div>
-
-        <div class="task-card">
-          <div class="task-header">
-            <h4>更新追踪链接：上游变更影响待确认</h4>
-            <span class="status-tag confirm">待确认</span>
-          </div>
-          <div class="task-meta">
-            <span class="pill">来源：变更</span>
-            <span class="pill">影响链：4 节点</span>
-            <span class="pill">建议：做影响分析</span>
-          </div>
-          <div class="task-actions">
-            <button class="btn-ghost">打开追踪</button>
-            <button class="btn-ghost">标记完成</button>
+            <button class="btn-primary" @click="$emit('navigate', 'requirements')">查看详情</button>
           </div>
         </div>
       </div>
 
-      <!-- Right Column: My Reviews -->
+      <!-- Right Column: Reviews -->
       <div class="work-column">
-        <h3 class="column-title">我参与的评审（My Reviews）</h3>
+        <h3 class="column-title">评审任务（Reviews）<span class="column-count">{{ displayedReviews.length }}</span></h3>
 
-        <div class="task-card">
+        <div v-if="displayedReviews.length === 0" class="empty-hint">
+          <p>✅ 暂无待评审任务</p>
+        </div>
+
+        <div v-for="item in displayedReviews" :key="item.req_id" class="task-card">
           <div class="task-header">
-            <h4>评审：接口需求（第 2 轮）</h4>
+            <h4>{{ item.title || '(无标题)' }}</h4>
             <span class="status-tag pending">待审</span>
           </div>
           <div class="task-meta">
-            <span class="pill">到期：明天</span>
-            <span class="pill">参与：5 人</span>
+            <span v-if="item.due_date" class="pill">
+              到期：{{ formatDate(item.due_date) }}
+            </span>
+            <span v-if="item.dueSoonLabel" class="pill item-warn">
+              {{ item.dueSoonLabel }}
+            </span>
+            <span v-if="item.assignee" class="pill">
+              负责人：{{ item.assignee }}
+            </span>
           </div>
           <div class="task-actions">
-            <button class="btn-primary">进入评审</button>
-            <button class="btn-ghost">评论</button>
-          </div>
-        </div>
-
-        <div class="task-card">
-          <div class="task-header">
-            <h4>评审：安全与合规条款</h4>
-            <span class="status-tag ok">已提交意见</span>
-          </div>
-          <div class="task-meta">
-            <span class="pill">状态：等待决议</span>
-            <span class="pill">@你：1</span>
-          </div>
-          <div class="task-actions">
-            <button class="btn-ghost">查看差异</button>
-            <button class="btn-ghost">跟进</button>
-          </div>
-        </div>
-
-        <div class="task-card">
-          <div class="task-header">
-            <h4>评审：版本发布候选（Baseline Candidate）</h4>
-            <span class="status-tag confirm">需确认</span>
-          </div>
-          <div class="task-meta">
-            <span class="pill">差异：28</span>
-            <span class="pill">风险：3</span>
-          </div>
-          <div class="task-actions">
-            <button class="btn-primary">快速批准</button>
-            <button class="btn-ghost">请求修改</button>
+            <button class="btn-primary" @click="$emit('navigate', 'reviews')">进入评审</button>
           </div>
         </div>
       </div>
     </div>
   </div>
 </template>
+
+<script setup>
+import { ref, computed } from 'vue'
+
+const props = defineProps({
+  todos: {
+    type: Array,
+    default: () => [],
+  },
+  reviews: {
+    type: Array,
+    default: () => [],
+  },
+  loading: {
+    type: Boolean,
+    default: false,
+  },
+  currentUserId: {
+    type: String,
+    default: '',
+  },
+})
+
+defineEmits(['navigate'])
+
+const filterMode = ref('mine')
+
+const displayedTodos = computed(() => {
+  if (filterMode.value === 'mine' && props.currentUserId) {
+    return props.todos.filter(t => t.assignee === props.currentUserId)
+  }
+  return props.todos
+})
+
+const displayedReviews = computed(() => {
+  if (filterMode.value === 'mine' && props.currentUserId) {
+    return props.reviews.filter(r => r.assignee === props.currentUserId)
+  }
+  return props.reviews
+})
+
+function statusClass(status) {
+  const map = {
+    draft: 'pending',
+    in_progress: 'confirm',
+    under_review: 'pending',
+    confirmed: 'ok',
+    completed: 'ok',
+  }
+  return map[status] || ''
+}
+
+function statusLabel(status) {
+  const map = {
+    draft: '草稿',
+    in_progress: '进行中',
+    under_review: '待评审',
+    confirmed: '已确认',
+    completed: '已完成',
+  }
+  return map[status] || status || '—'
+}
+
+function priorityLabel(priority) {
+  const map = { high: '高', medium: '中', low: '低' }
+  return map[priority] || priority || '—'
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '—'
+  const d = new Date(dateStr)
+  return d.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+}
+</script>
 
 <style scoped>
 .my-work-card {
@@ -169,13 +230,6 @@
   border-color: #5d6b76;
   color: #1b2730;
 }
-.filter-text {
-  background: none;
-  border: none;
-  color: #9eabb4;
-  font-size: 12px;
-  cursor: pointer;
-}
 
 .work-grid {
   display: grid;
@@ -189,6 +243,18 @@
   font-family: serif;
   margin-bottom: 20px;
   color: #1b2730;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.column-count {
+  background: #eee;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-family: sans-serif;
+  font-weight: normal;
+  color: #5d6b76;
 }
 
 .task-card {
@@ -224,7 +290,7 @@
 }
 .status-tag.pending { background: #efe6d5; color: #8e7d5e; }
 .status-tag.block { background: #ebd5d5; color: #9c5e5e; }
-.status-tag.confirm { background: #efe6d5; color: #8e7d5e; }
+.status-tag.confirm { background: #e0ecf5; color: #456b8a; }
 .status-tag.ok { background: #dcece8; color: #5c8a82; }
 
 .task-meta {
@@ -258,14 +324,30 @@
   font-size: 12px;
   cursor: pointer;
 }
-.btn-ghost {
-  background: white;
-  border: 1px solid rgba(28, 40, 52, 0.2);
-  color: #5d6b76;
-  padding: 6px 16px;
-  border-radius: 0;
-  font-size: 12px;
-  cursor: pointer;
+
+.empty-hint {
+  padding: 32px 16px;
+  text-align: center;
+  color: #9eabb4;
+  font-size: 14px;
+}
+
+/* 骨架屏 */
+.skeleton-card {
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+.skeleton-line {
+  height: 14px;
+  background: #eee;
+  border-radius: 4px;
+}
+.skeleton-line.short { width: 40%; }
+.skeleton-line.wide { width: 90%; }
+.skeleton-line.medium { width: 65%; }
+
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 @media (max-width: 800px) {
