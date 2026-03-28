@@ -44,8 +44,14 @@ class ExtractL123Request(BaseModel):
     dedup_auto_merge: StrictBool = False
     dedup_threshold: float | None = None
     dedup_max_concurrent: int = Field(default=5, ge=1, le=10)
+    pairwise_dedup: StrictBool = False
+    pairwise_auto_apply: StrictBool = False
+    pairwise_max_pairs: int | None = Field(default=None, ge=1, le=5000)
     enable_parallel_windows: StrictBool = False
     max_concurrent_windows: int = Field(default=5, ge=1, le=10)
+    planner_connect_timeout_seconds: float | None = Field(default=None, ge=0.1, le=600)
+    planner_read_timeout_seconds: float | None = Field(default=None, ge=0.1, le=7200)
+    planner_max_retries: int | None = Field(default=None, ge=0, le=5)
 
     @field_validator("session_id", "model")
     @classmethod

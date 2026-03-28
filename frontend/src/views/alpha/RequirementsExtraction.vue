@@ -36,14 +36,24 @@ const form = ref({
   postDedup: false,
   dedupWithLLM: false,
   dedupAutoMerge: false,
-  dedupThreshold: 0.85
+  dedupThreshold: 0.85,
+  pairwiseDedup: false,
+  pairwiseAutoApply: false,
+  pairwiseMaxPairs: 120,
+  plannerConnectTimeoutSeconds: 30,
+  plannerReadTimeoutSeconds: 600,
+  plannerMaxRetries: 2
 })
 
 const isExtracting = ref(false)
 const extractionError = ref('')
 const extractionResult = ref(null)
+const extractionIssues = ref([])
+const progressEvents = ref([])
+const streamDeduplication = ref(null)
+const liveStats = ref(createInitialLiveStats())
 
-const deduplicationResult = computed(() => extractionResult.value?.deduplication || null)
+const deduplicationResult = computed(() => extractionResult.value?.deduplication || streamDeduplication.value || null)
 
 const reqLevelFilter = ref('') // '' | L1 | L2 | L3
 const reqPage = ref(1)
@@ -76,6 +86,208 @@ const canExtract = computed(() => {
   if (form.value.bundleStrategy === 'graph' && !contextRunId.value.trim()) return false
   return true
 })
+
+function createInitialLiveStats() {
+  return {
+    sessionId: '',
+    clearedBeforeExtract: 0,
+    totalSpans: 0,
+    totalAnchors: 0,
+    processedAnchors: 0,
+    inserted: 0,
+    duplicates: 0,
+    updated: 0,
+    errors: 0,
+    enableParallel: false,
+    maxConcurrent: 0,
+    historyAware: false,
+    plannerConnectTimeoutSeconds: null,
+    plannerReadTimeoutSeconds: null,
+    plannerMaxRetries: null,
+    finished: false,
+    dedupStarted: false,
+    dedupGroups: null
+  }
+}
+
+function resetExtractionFeedback(sid = '') {
+  extractionError.value = ''
+  extractionResult.value = null
+  extractionIssues.value = []
+  streamDeduplication.value = null
+  progressEvents.value = []
+  liveStats.value = {
+    ...createInitialLiveStats(),
+    sessionId: sid
+  }
+}
+
+function addProgressEvent(type, message, level = 'info') {
+  const now = new Date()
+  const time = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`
+  progressEvents.value.push({ type, message, time, level })
+  if (progressEvents.value.length > 400) {
+    progressEvents.value.shift()
+  }
+}
+
+function pushExtractionIssue(issue) {
+  extractionIssues.value.push(issue)
+}
+
+function clearProgressEvents() {
+  progressEvents.value = []
+}
+
+function buildExtractionResultSnapshot() {
+  return {
+    session_id: liveStats.value.sessionId,
+    total_spans: liveStats.value.totalSpans,
+    total_anchors: liveStats.value.totalAnchors,
+    bundles_processed: liveStats.value.processedAnchors,
+    cleared_before_extract: liveStats.value.clearedBeforeExtract,
+    total_inserted: liveStats.value.inserted,
+    total_duplicates: liveStats.value.duplicates,
+    total_updated: liveStats.value.updated,
+    errors: [...extractionIssues.value],
+    deduplication: streamDeduplication.value
+  }
+}
+
+function handleExtractionStreamEvent(eventName, eventData, sid) {
+  switch (eventName) {
+    case 'reset':
+      liveStats.value.clearedBeforeExtract = Number(eventData.cleared_before_extract) || 0
+      addProgressEvent('reset', `已清理历史 L1/L2/L3: ${liveStats.value.clearedBeforeExtract} 条`)
+      break
+
+    case 'init':
+      liveStats.value.sessionId = eventData.session_id || sid
+      liveStats.value.totalSpans = Number(eventData.total_spans) || 0
+      liveStats.value.enableParallel = !!eventData.enable_parallel
+      liveStats.value.maxConcurrent = Number(eventData.max_concurrent) || 0
+      liveStats.value.historyAware = !!eventData.history_aware
+      liveStats.value.plannerConnectTimeoutSeconds = eventData.planner_connect_timeout_seconds
+      liveStats.value.plannerReadTimeoutSeconds = eventData.planner_read_timeout_seconds
+      liveStats.value.plannerMaxRetries = eventData.planner_max_retries
+      addProgressEvent(
+        'init',
+        `初始化 | spans: ${liveStats.value.totalSpans} | 模式: ${liveStats.value.enableParallel ? `并行 x${liveStats.value.maxConcurrent}` : '串行'}${liveStats.value.historyAware ? ' | history aware' : ''} | timeout(connect/read)=${liveStats.value.plannerConnectTimeoutSeconds ?? '-'}s/${liveStats.value.plannerReadTimeoutSeconds ?? '-'}s | retries=${liveStats.value.plannerMaxRetries ?? '-'}`
+      )
+      break
+
+    case 'anchors_selected':
+      liveStats.value.totalAnchors = Number(eventData.total_anchors) || 0
+      addProgressEvent('anchors_selected', `选择锚点: ${liveStats.value.totalAnchors} 个`)
+      break
+
+    case 'parallel_batch_start':
+      addProgressEvent(
+        'parallel_batch_start',
+        `并行批次开始 | 总锚点: ${eventData.total_anchors} | 最大并发: ${eventData.max_concurrent}`
+      )
+      break
+
+    case 'anchor_start':
+      addProgressEvent('anchor_start', `开始处理锚点 #${eventData.anchor_idx}`)
+      break
+
+    case 'anchor_complete': {
+      liveStats.value.processedAnchors += 1
+      liveStats.value.inserted += Number(eventData.inserted) || 0
+      liveStats.value.duplicates += Number(eventData.duplicates) || 0
+      liveStats.value.updated += Number(eventData.updated) || 0
+
+      const status = eventData.status || 'unknown'
+      const detail = eventData.error ? ` | ${eventData.error}` : ''
+
+      if (status === 'success' || status === 'empty') {
+        addProgressEvent(
+          'anchor_complete',
+          `完成锚点 #${eventData.anchor_idx} | r=${eventData.r} | inserted=${eventData.inserted || 0} | duplicates=${eventData.duplicates || 0}${status === 'empty' ? ' | 无新增' : ''}`,
+          'success'
+        )
+      } else {
+        liveStats.value.errors += 1
+        pushExtractionIssue({
+          anchor_idx: eventData.anchor_idx,
+          anchor_span_id: eventData.anchor_span_id || '',
+          status,
+          error: eventData.error || status
+        })
+        addProgressEvent(
+          'anchor_complete',
+          `锚点 #${eventData.anchor_idx} 完成但状态异常 | status=${status}${detail}`,
+          'warning'
+        )
+      }
+      break
+    }
+
+    case 'anchor_error':
+      liveStats.value.errors += 1
+      pushExtractionIssue({
+        anchor_idx: eventData.anchor_idx,
+        error: eventData.error || 'unknown error'
+      })
+      addProgressEvent('anchor_error', `锚点 #${eventData.anchor_idx} 失败 | ${eventData.error}`, 'error')
+      break
+
+    case 'parallel_batch_complete':
+      addProgressEvent(
+        'parallel_batch_complete',
+        `并行处理结束 | 已处理锚点: ${eventData.total_anchors_processed}`
+      )
+      break
+
+    case 'final':
+      liveStats.value.totalAnchors = Number(eventData.total_anchors) || liveStats.value.totalAnchors
+      liveStats.value.processedAnchors = Number(eventData.bundles_processed) || liveStats.value.processedAnchors
+      liveStats.value.inserted = Number(eventData.total_inserted) || liveStats.value.inserted
+      liveStats.value.duplicates = Number(eventData.total_duplicates) || liveStats.value.duplicates
+      liveStats.value.updated = Number(eventData.total_updated) || liveStats.value.updated
+      liveStats.value.errors = Number(eventData.error_count) || liveStats.value.errors
+      liveStats.value.finished = true
+      extractionResult.value = buildExtractionResultSnapshot()
+      addProgressEvent(
+        'final',
+        `抽取完成 | bundles=${liveStats.value.processedAnchors} | inserted=${liveStats.value.inserted} | duplicates=${liveStats.value.duplicates} | errors=${liveStats.value.errors}`,
+        liveStats.value.errors > 0 ? 'warning' : 'success'
+      )
+      break
+
+    case 'dedup_start':
+      liveStats.value.dedupStarted = true
+      addProgressEvent('dedup_start', '开始执行抽取后去重')
+      break
+
+    case 'dedup_final':
+      liveStats.value.dedupGroups = Number(eventData?.total_duplicates) || 0
+      streamDeduplication.value = eventData || null
+      if (extractionResult.value) {
+        extractionResult.value = {
+          ...extractionResult.value,
+          deduplication: eventData || null
+        }
+      }
+      addProgressEvent(
+        'dedup_final',
+        `去重完成 | duplicate_groups=${eventData?.total_duplicates ?? 0}${eventData?.total_merged == null ? '' : ` | merged=${eventData.total_merged}`}${eventData?.pairwise ? ` | pairwise_related=${eventData.pairwise.related_pairs ?? 0}${eventData.pairwise.total_applied == null ? '' : ` | pairwise_applied=${eventData.pairwise.total_applied}`}` : ''}`,
+        (eventData?.total_duplicates ?? 0) > 0 ? 'warning' : 'success'
+      )
+      break
+
+    case 'error':
+      pushExtractionIssue({
+        error: eventData.message || '抽取失败'
+      })
+      addProgressEvent('error', eventData.message || '抽取失败', 'error')
+      break
+
+    default:
+      break
+  }
+}
 
 function normalizeKeywords(raw) {
   const text = (raw || '').trim()
@@ -182,9 +394,6 @@ async function refreshRequirements({ resetPage = false } = {}) {
 }
 
 async function startExtraction() {
-  extractionError.value = ''
-  extractionResult.value = null
-
   const sid = sessionId.value.trim()
   if (!sid) {
     extractionError.value = '请先填写 session_id'
@@ -196,12 +405,19 @@ async function startExtraction() {
   }
 
   isExtracting.value = true
+  resetExtractionFeedback(sid)
   try {
     if (form.value.dedupAutoMerge && !form.value.postDedup) {
       throw new Error('已选择“自动合并”，请先开启“抽取后去重”')
     }
     if (form.value.dedupAutoMerge && !form.value.dedupWithLLM) {
       form.value.dedupWithLLM = true
+    }
+    if (form.value.pairwiseAutoApply && !form.value.postDedup) {
+      throw new Error('已选择“2v2 自动应用”，请先开启“抽取后去重”')
+    }
+    if (form.value.pairwiseAutoApply && !form.value.pairwiseDedup) {
+      form.value.pairwiseDedup = true
     }
 
     const payload = {
@@ -225,13 +441,40 @@ async function startExtraction() {
       post_dedup: !!form.value.postDedup,
       dedup_with_llm: !!form.value.dedupWithLLM || !!form.value.dedupAutoMerge,
       dedup_auto_merge: !!form.value.dedupAutoMerge,
-      dedup_threshold: Number(form.value.dedupThreshold) || 0.85
+      dedup_threshold: Number(form.value.dedupThreshold) || 0.85,
+      pairwise_dedup: !!form.value.pairwiseDedup,
+      pairwise_auto_apply: !!form.value.pairwiseAutoApply,
+      pairwise_max_pairs: Number(form.value.pairwiseMaxPairs) || 120,
+      planner_connect_timeout_seconds: Number(form.value.plannerConnectTimeoutSeconds) || 30,
+      planner_read_timeout_seconds: Number(form.value.plannerReadTimeoutSeconds) || 600,
+      planner_max_retries: Math.max(0, Number(form.value.plannerMaxRetries) || 0)
     }
 
-    extractionResult.value = await requirementsL123Api.extract(payload)
+    let streamError = ''
+    let gotFinal = false
+    addProgressEvent('request', `提交抽取任务 | session=${sid}`)
+
+    await requirementsL123Api.extractStream(payload, (eventName, eventData) => {
+      handleExtractionStreamEvent(eventName, eventData, sid)
+      if (eventName === 'final') {
+        gotFinal = true
+      }
+      if (eventName === 'error') {
+        streamError = eventData?.message || '抽取失败'
+      }
+    })
+
+    if (streamError) {
+      throw new Error(streamError)
+    }
+    if (!gotFinal) {
+      throw new Error('Phase 3 流结束但未收到 final 事件')
+    }
+    extractionResult.value = buildExtractionResultSnapshot()
     await refreshRequirements({ resetPage: true })
   } catch (err) {
     extractionError.value = err?.message || '抽取失败'
+    addProgressEvent('error', extractionError.value, 'error')
   } finally {
     isExtracting.value = false
   }
@@ -396,6 +639,48 @@ onMounted(async () => {
                 </label>
               </div>
 
+              <div class="md:col-span-2 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
+                <div class="text-sm font-medium text-zinc-700">Planner 超时与重试</div>
+                <div class="text-xs text-zinc-500 mt-1">用于 Phase 3 的 LLM/tool-call。并行抽取超时时，优先调大读超时或降低并发。</div>
+                <div class="mt-3 grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label class="block text-sm font-medium text-zinc-700">连接超时（秒）</label>
+                    <input
+                      v-model.number="form.plannerConnectTimeoutSeconds"
+                      type="number"
+                      min="1"
+                      max="600"
+                      step="1"
+                      class="mt-2 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-black focus:ring-black"
+                    />
+                  </div>
+
+                  <div>
+                    <label class="block text-sm font-medium text-zinc-700">读超时（秒）</label>
+                    <input
+                      v-model.number="form.plannerReadTimeoutSeconds"
+                      type="number"
+                      min="1"
+                      max="7200"
+                      step="10"
+                      class="mt-2 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-black focus:ring-black"
+                    />
+                  </div>
+
+                  <div>
+                    <label class="block text-sm font-medium text-zinc-700">重试次数</label>
+                    <input
+                      v-model.number="form.plannerMaxRetries"
+                      type="number"
+                      min="0"
+                      max="5"
+                      step="1"
+                      class="mt-2 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-black focus:ring-black"
+                    />
+                  </div>
+                </div>
+              </div>
+
               <div>
                 <label class="block text-sm font-medium text-zinc-700">max_spans_per_bundle</label>
                 <input
@@ -524,6 +809,37 @@ onMounted(async () => {
                       <p class="text-xs text-zinc-500">需要开启 LLM 建议；将按 LLM 决策合并并删除重复项</p>
                     </div>
                   </div>
+
+                  <div class="flex items-start gap-2 md:col-span-2">
+                    <input v-model="form.pairwiseDedup" type="checkbox" class="mt-1 w-4 h-4 rounded border-zinc-300" />
+                    <div>
+                      <div class="text-sm font-medium text-zinc-700">2v2 pairwise 裁决（Tool Call）</div>
+                      <p class="text-xs text-zinc-500">同层级两两比对；无关则忽略，相关则合并为一条或重写成两条互不重叠的需求</p>
+                    </div>
+                  </div>
+
+                  <template v-if="form.pairwiseDedup">
+                    <div>
+                      <label class="block text-sm font-medium text-zinc-700">2v2 最大配对数</label>
+                      <input
+                        v-model.number="form.pairwiseMaxPairs"
+                        type="number"
+                        min="1"
+                        max="5000"
+                        step="1"
+                        class="mt-2 w-32 rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-black focus:ring-black"
+                      />
+                      <p class="mt-1 text-xs text-zinc-500">限制本次送入 Tool Call 的 pair 数，避免 session 很大时耗时失控</p>
+                    </div>
+
+                    <div class="flex items-start gap-2">
+                      <input v-model="form.pairwiseAutoApply" type="checkbox" class="mt-1 w-4 h-4 rounded border-zinc-300" />
+                      <div>
+                        <div class="text-sm font-medium text-zinc-700">2v2 自动应用（会写库）</div>
+                        <p class="text-xs text-zinc-500">按 pairwise 裁决自动 merge 或双向改写；同一 req 命中多个动作时会跳过冲突项</p>
+                      </div>
+                    </div>
+                  </template>
                 </div>
               </div>
             </div>
@@ -567,14 +883,103 @@ onMounted(async () => {
             </div>
           </div>
 
+          <div v-if="progressEvents.length > 0" class="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <div class="font-medium text-zinc-900">实时进度输出</div>
+                <div class="text-xs text-zinc-500 mt-1">并行模式下会逐条显示锚点开始、完成、异常和去重阶段</div>
+              </div>
+              <button
+                type="button"
+                class="text-xs text-zinc-600 border border-zinc-300 rounded-md px-2 py-1 hover:bg-white"
+                @click="clearProgressEvents"
+              >
+                清空日志
+              </button>
+            </div>
+
+            <div class="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs text-zinc-700">
+              <div class="rounded-md border border-zinc-200 bg-white px-3 py-2">
+                <div class="text-zinc-500">anchors</div>
+                <div class="mt-1 text-base font-semibold text-zinc-900">{{ liveStats.totalAnchors || 0 }}</div>
+              </div>
+              <div class="rounded-md border border-zinc-200 bg-white px-3 py-2">
+                <div class="text-zinc-500">processed</div>
+                <div class="mt-1 text-base font-semibold text-zinc-900">{{ liveStats.processedAnchors || 0 }}</div>
+              </div>
+              <div class="rounded-md border border-zinc-200 bg-white px-3 py-2">
+                <div class="text-zinc-500">inserted / dup</div>
+                <div class="mt-1 text-base font-semibold text-zinc-900">{{ liveStats.inserted || 0 }} / {{ liveStats.duplicates || 0 }}</div>
+              </div>
+              <div class="rounded-md border border-zinc-200 bg-white px-3 py-2">
+                <div class="text-zinc-500">errors</div>
+                <div class="mt-1 text-base font-semibold" :class="liveStats.errors > 0 ? 'text-red-700' : 'text-zinc-900'">
+                  {{ liveStats.errors || 0 }}
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-zinc-600">
+              <span class="rounded-full border border-zinc-200 bg-white px-2 py-1">
+                session: {{ liveStats.sessionId || '-' }}
+              </span>
+              <span class="rounded-full border border-zinc-200 bg-white px-2 py-1">
+                mode: {{ liveStats.enableParallel ? `parallel x${liveStats.maxConcurrent || 0}` : 'serial' }}
+              </span>
+              <span class="rounded-full border border-zinc-200 bg-white px-2 py-1">
+                cleared: {{ liveStats.clearedBeforeExtract || 0 }}
+              </span>
+              <span v-if="liveStats.dedupStarted" class="rounded-full border border-zinc-200 bg-white px-2 py-1">
+                dedup: running
+              </span>
+              <span v-if="liveStats.finished" class="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-emerald-700">
+                抽取阶段完成
+              </span>
+            </div>
+
+            <div class="mt-3 max-h-72 overflow-y-auto rounded-md border border-zinc-200 bg-white">
+              <div
+                v-for="(event, idx) in progressEvents"
+                :key="`${event.time}-${idx}`"
+                class="flex items-start gap-3 border-b border-zinc-100 px-3 py-2 text-xs last:border-b-0"
+              >
+                <span class="w-16 shrink-0 text-zinc-400">{{ event.time }}</span>
+                <span
+                  class="w-28 shrink-0 font-medium"
+                  :class="{
+                    'text-zinc-700': event.level === 'info',
+                    'text-emerald-700': event.level === 'success',
+                    'text-amber-700': event.level === 'warning',
+                    'text-red-700': event.level === 'error'
+                  }"
+                >
+                  [{{ event.type }}]
+                </span>
+                <span
+                  class="flex-1 whitespace-pre-wrap break-words"
+                  :class="{
+                    'text-zinc-700': event.level === 'info',
+                    'text-emerald-700': event.level === 'success',
+                    'text-amber-700': event.level === 'warning',
+                    'text-red-700': event.level === 'error'
+                  }"
+                >
+                  {{ event.message }}
+                </span>
+              </div>
+            </div>
+          </div>
+
           <div v-if="extractionResult" class="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm">
             <div class="font-medium text-zinc-900">本次抽取结果</div>
             <div class="mt-2 grid grid-cols-2 gap-3 text-xs text-zinc-700">
+              <div>spans: {{ extractionResult.total_spans ?? 0 }}</div>
               <div>anchors: {{ extractionResult.total_anchors }}</div>
               <div>bundles_processed: {{ extractionResult.bundles_processed }}</div>
               <div>cleared: {{ extractionResult.cleared_before_extract ?? 0 }}</div>
               <div>inserted: {{ extractionResult.total_inserted }}</div>
               <div>duplicates: {{ extractionResult.total_duplicates }}</div>
+              <div>updated: {{ extractionResult.total_updated ?? 0 }}</div>
             </div>
             <div v-if="extractionResult.errors?.length" class="mt-3">
               <div class="text-xs font-medium text-red-700">errors ({{ extractionResult.errors.length }})</div>
@@ -595,6 +1000,14 @@ onMounted(async () => {
               <div class="col-span-2" v-if="deduplicationResult.total_merged !== null && deduplicationResult.total_merged !== undefined">
                 merged: {{ deduplicationResult.total_merged }}
               </div>
+              <template v-if="deduplicationResult.pairwise">
+                <div>pairwise_reviewed: {{ deduplicationResult.pairwise.pairs_reviewed ?? 0 }}</div>
+                <div>pairwise_related: {{ deduplicationResult.pairwise.related_pairs ?? 0 }}</div>
+                <div class="col-span-2">pairwise_applied: {{ deduplicationResult.pairwise.total_applied ?? 0 }}</div>
+                <div class="col-span-2" v-if="deduplicationResult.pairwise.conflicts_skipped">
+                  pairwise_conflicts_skipped: {{ deduplicationResult.pairwise.conflicts_skipped }}
+                </div>
+              </template>
             </div>
 
             <div v-if="deduplicationResult.duplicate_groups?.length" class="mt-3 space-y-3">
@@ -665,6 +1078,73 @@ onMounted(async () => {
 
             <div v-else class="mt-2 text-xs text-zinc-600">
               {{ deduplicationResult.message || '未检测到重复组' }}
+            </div>
+
+            <div v-if="deduplicationResult.pairwise?.actions?.length" class="mt-3 space-y-3">
+              <div class="text-xs font-medium text-zinc-700">2v2 pairwise actions</div>
+              <div
+                v-for="(item, idx) in deduplicationResult.pairwise.actions"
+                :key="`${item.req_1?.req_id || 'a'}-${item.req_2?.req_id || 'b'}-${idx}`"
+                class="rounded-lg border border-zinc-200 bg-white px-3 py-3"
+              >
+                <div class="flex items-start justify-between gap-3">
+                  <div class="text-xs font-semibold text-zinc-900">
+                    {{ item.level }} · {{ item.decision?.action || 'ignore' }}
+                  </div>
+                  <div class="text-[11px] text-zinc-600">similarity: {{ item.similarity }}</div>
+                </div>
+
+                <div class="mt-2 space-y-2">
+                  <div class="rounded-md border border-zinc-100 bg-zinc-50 px-2 py-2">
+                    <div class="text-[11px] text-zinc-600">A: {{ item.req_1?.req_id }}</div>
+                    <div class="mt-1 text-xs text-zinc-800 whitespace-pre-wrap break-words">{{ item.req_1?.text }}</div>
+                  </div>
+                  <div class="rounded-md border border-zinc-100 bg-zinc-50 px-2 py-2">
+                    <div class="text-[11px] text-zinc-600">B: {{ item.req_2?.req_id }}</div>
+                    <div class="mt-1 text-xs text-zinc-800 whitespace-pre-wrap break-words">{{ item.req_2?.text }}</div>
+                  </div>
+                </div>
+
+                <div v-if="item.decision" class="mt-3 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-2">
+                  <div class="text-[11px] font-medium text-zinc-700">pairwise_decision</div>
+                  <div class="mt-1 grid grid-cols-2 gap-2 text-[11px] text-zinc-700">
+                    <div>action: {{ item.decision.action }}</div>
+                    <div>primary: {{ item.decision.primary_req_id || '-' }}</div>
+                    <div class="col-span-2">merged_level: {{ item.decision.merged_level || '-' }}</div>
+                  </div>
+                  <div v-if="item.decision.reason" class="mt-2 text-[11px] text-zinc-700 whitespace-pre-wrap break-words">
+                    <span class="text-zinc-500">reason:</span>
+                    <span class="ml-1">{{ item.decision.reason }}</span>
+                  </div>
+                  <div v-if="item.decision.merged_text" class="mt-2 text-[11px] text-zinc-700 whitespace-pre-wrap break-words">
+                    <span class="text-zinc-500">merged_text:</span>
+                    <div class="mt-1 rounded-md border border-zinc-200 bg-white px-2 py-2">{{ item.decision.merged_text }}</div>
+                  </div>
+                  <div v-if="item.decision.rewritten_requirements?.length" class="mt-2">
+                    <div class="text-[11px] text-zinc-500">rewritten_requirements:</div>
+                    <div class="mt-1 space-y-2">
+                      <div
+                        v-for="rewrite in item.decision.rewritten_requirements"
+                        :key="rewrite.req_id"
+                        class="rounded-md border border-zinc-200 bg-white px-2 py-2"
+                      >
+                        <div class="text-[11px] text-zinc-600">{{ rewrite.req_id }} · {{ rewrite.level }}</div>
+                        <div class="mt-1 text-xs text-zinc-800 whitespace-pre-wrap break-words">{{ rewrite.text }}</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div v-if="item.decision.error" class="mt-2 text-[11px] text-red-700 whitespace-pre-wrap">
+                    error: {{ item.decision.error }}
+                  </div>
+                </div>
+
+                <div v-if="item.apply_result" class="mt-3 rounded-md border border-zinc-200 bg-white px-2 py-2">
+                  <div class="text-[11px] font-medium text-zinc-700">apply_result</div>
+                  <div class="mt-1 text-[11px] text-zinc-700 whitespace-pre-wrap break-words">
+                    {{ JSON.stringify(item.apply_result, null, 2) }}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -803,4 +1283,3 @@ onMounted(async () => {
     </div>
   </div>
 </template>
-

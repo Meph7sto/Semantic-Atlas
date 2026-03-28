@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+import asyncio
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT_DIR not in sys.path:
@@ -81,6 +82,72 @@ class TestContextBuilderPhase2(unittest.TestCase):
         self.assertIn(("A", "C"), kept)
         self.assertIn(("A", "D"), kept)
         self.assertNotIn(("A", "B"), kept)
+
+    def test_process_windows_parallel_emits_refs_and_error_details(self):
+        async def _run():
+            spans = [self._span("A", 0), self._span("B", 1), self._span("C", 2)]
+            windows = [
+                ([spans[0], spans[1]], {"A": "S1", "B": "S2"}),
+                ([spans[1], spans[2]], {"B": "S1", "C": "S2"}),
+            ]
+            event_queue = asyncio.Queue()
+
+            async def _fake_process_window_async(
+                window_index,
+                window_spans,
+                ref_map,
+                llm,
+                llm_model,
+                use_streaming_llm,
+                tau,
+                top_k,
+                max_edges_per_window,
+            ):
+                await asyncio.sleep(0 if window_index == 1 else 0.01)
+                if window_index == 2:
+                    raise TimeoutError()
+                return type(
+                    "WindowResultStub",
+                    (),
+                    {
+                        "window_index": window_index,
+                        "ref_map": ref_map,
+                        "raw_links": [{"source": "S1", "target": "S2", "type": "continuation", "strength": 0.8}],
+                        "pruned_edges": [],
+                        "noise_refs": [],
+                    },
+                )()
+
+            self.builder._process_window_async = _fake_process_window_async
+
+            results = await self.builder._process_windows_parallel(
+                windows=windows,
+                llm=object(),
+                llm_model=None,
+                use_streaming_llm=False,
+                tau=0.6,
+                top_k=3,
+                max_edges_per_window=8,
+                max_concurrent=2,
+                event_queue=event_queue,
+            )
+
+            events = []
+            while not event_queue.empty():
+                events.append(await event_queue.get())
+
+            self.assertEqual([result.window_index for result in results], [1])
+            self.assertEqual(events[0].event, "window_start")
+            self.assertEqual(events[0].data["span_refs"], ["S1", "S2"])
+            self.assertEqual(events[1].event, "window_start")
+            self.assertEqual(events[1].data["span_refs"], ["S1", "S2"])
+            self.assertEqual(events[2].event, "window_complete")
+            self.assertEqual(events[2].data["window_index"], 1)
+            self.assertEqual(events[3].event, "window_error")
+            self.assertEqual(events[3].data["window_index"], 2)
+            self.assertEqual(events[3].data["error"], "TimeoutError")
+
+        asyncio.run(_run())
 
     @unittest.skipUnless(
         _llm_available(),

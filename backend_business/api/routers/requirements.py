@@ -109,6 +109,9 @@ def extract_l123_requirements(req: ExtractL123Request):
             enable_parallel=req.enable_parallel_windows,
             max_concurrent=req.max_concurrent_windows,
             history_aware=req.history_aware,
+            planner_connect_timeout_seconds=req.planner_connect_timeout_seconds,
+            planner_read_timeout_seconds=req.planner_read_timeout_seconds,
+            planner_max_retries=req.planner_max_retries,
         )
 
         if req.post_dedup:
@@ -118,6 +121,9 @@ def extract_l123_requirements(req: ExtractL123Request):
                 level=None,
                 with_llm_decision=req.dedup_with_llm,
                 auto_merge=req.dedup_auto_merge,
+                pairwise_review=req.pairwise_dedup,
+                pairwise_auto_apply=req.pairwise_auto_apply,
+                pairwise_max_pairs=req.pairwise_max_pairs,
                 model_name=req.model,
                 max_concurrent=req.dedup_max_concurrent,
             )
@@ -167,6 +173,9 @@ def extract_l123_requirements_stream(req: ExtractL123Request):
                 enable_parallel=req.enable_parallel_windows,
                 max_concurrent=req.max_concurrent_windows,
                 history_aware=req.history_aware,
+                planner_connect_timeout_seconds=req.planner_connect_timeout_seconds,
+                planner_read_timeout_seconds=req.planner_read_timeout_seconds,
+                planner_max_retries=req.planner_max_retries,
             ):
                 event_name = str(event_dict.get("event", "message"))
                 event_data = event_dict.get("data", {})
@@ -180,6 +189,9 @@ def extract_l123_requirements_stream(req: ExtractL123Request):
                     level=None,
                     with_llm_decision=req.dedup_with_llm,
                     auto_merge=req.dedup_auto_merge,
+                    pairwise_review=req.pairwise_dedup,
+                    pairwise_auto_apply=req.pairwise_auto_apply,
+                    pairwise_max_pairs=req.pairwise_max_pairs,
                     model_name=req.model,
                     max_concurrent=req.dedup_max_concurrent,
                 )

@@ -45,6 +45,7 @@ class BuildContextOptions(BaseModel):
     mock_llm: bool = False
     llm_model: Optional[str] = None
     use_thinking_mode: bool = True
+    use_streaming_llm: bool = False
     enable_parallel_windows: bool = False
     max_concurrent_windows: int = Field(default=5, ge=1)
 

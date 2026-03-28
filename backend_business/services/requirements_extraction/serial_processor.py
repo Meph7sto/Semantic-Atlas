@@ -71,6 +71,9 @@ def process_single_anchor_serial(
     use_toolcall: bool,
     history_aware: bool,
     existing_requirements: Optional[List[Dict[str, Any]]] = None,
+    planner_connect_timeout_seconds: Optional[float] = None,
+    planner_read_timeout_seconds: Optional[float] = None,
+    planner_max_retries: Optional[int] = None,
 ) -> AnchorResult:
     """
     串行处理单个锚点的完整管线:
@@ -107,6 +110,9 @@ def process_single_anchor_serial(
             use_toolcall=use_toolcall,
             existing_requirements=existing_requirements,
             history_aware=history_aware,
+            connect_timeout=planner_connect_timeout_seconds,
+            read_timeout=planner_read_timeout_seconds,
+            max_retries=planner_max_retries,
         )
         if planner_result.get("error"):
             exec_result = _make_planner_error_result(planner_result["error"])

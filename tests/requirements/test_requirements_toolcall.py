@@ -79,6 +79,8 @@ class TestRequirementToolDef(unittest.TestCase):
         self.assertIn("L1", prompt)
         self.assertIn("L2", prompt)
         self.assertIn("L3", prompt)
+        self.assertIn("一条需求只表达一个核心能力", prompt)
+        self.assertIn("忽略寒暄、背景说明", prompt)
 
 
 class TestRequirementsExecutorParsing(unittest.TestCase):

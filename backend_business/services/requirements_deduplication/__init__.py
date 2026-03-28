@@ -5,7 +5,14 @@ Requirements deduplication service public API
 from .detector import DuplicateDetector
 from .executor import DeduplicationExecutor
 from .merger import RequirementMerger
-from .models import DeduplicationResult, DuplicateGroup, MergeDecision, MergeResult
+from .models import (
+    DeduplicationResult,
+    DuplicateGroup,
+    MergeDecision,
+    MergeResult,
+    PairwiseDecision,
+    PairwiseRewrite,
+)
 from .service import RequirementsDeduplicationService
 
 __all__ = [
@@ -16,5 +23,7 @@ __all__ = [
     "DuplicateGroup",
     "MergeDecision",
     "MergeResult",
+    "PairwiseDecision",
+    "PairwiseRewrite",
     "DeduplicationResult",
 ]

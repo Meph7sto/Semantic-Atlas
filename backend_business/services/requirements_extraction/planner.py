@@ -59,6 +59,10 @@ def build_extraction_prompt(
     lines.append("")
     lines.append("# 任务")
     lines.append("")
+    lines.append("请只提炼明确的需求或约束，忽略背景介绍、论证过程、寒暄、供应方承诺和纯示例性表述。")
+    lines.append("每条需求必须原子化，只表达一个核心点；若同一片段包含多个独立要求，请拆成多条。")
+    lines.append("会议中的举例或场景应改写为通用需求，不要把示例细节整段照抄进需求文本。")
+    lines.append("")
 
     if use_toolcall:
         if existing_requirements:
@@ -75,6 +79,7 @@ def build_extraction_prompt(
                 "2. 如发现当前片段细化/补充了已有需求，调用 `update_req` 更新对应条目"
             )
             lines.append("3. 如当前片段与已知需求高度重复且无新信息，则不进行任何操作")
+            lines.append("4. 不要把多个独立主题揉进同一条 update_req；能拆则拆")
         else:
             lines.append(
                 "基于上述上下文片段,请使用 create_req 工具抽取 L1/L2/L3 需求。"
@@ -101,6 +106,9 @@ def call_planner(
     use_toolcall: bool = True,
     existing_requirements: Optional[List[Dict[str, Any]]] = None,
     history_aware: bool = False,
+    connect_timeout: Optional[float] = None,
+    read_timeout: Optional[float] = None,
+    max_retries: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     调用 Planner（大模型）进行需求抽取
@@ -137,6 +145,9 @@ def call_planner(
                 model=model_name,
                 temperature=0.3,
                 tool_choice="auto",  # 让模型自动决定是否调用工具
+                connect_timeout=connect_timeout,
+                read_timeout=read_timeout,
+                max_retries=max_retries,
             )
             # tool_calls 格式返回
             tool_calls = response.get("tool_calls")
@@ -209,6 +220,9 @@ async def call_planner_async(
     session: Optional[aiohttp.ClientSession] = None,
     existing_requirements: Optional[List[Dict[str, Any]]] = None,
     history_aware: bool = False,
+    connect_timeout: Optional[float] = None,
+    read_timeout: Optional[float] = None,
+    max_retries: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     异步调用 Planner（大模型）进行需求抽取
@@ -246,6 +260,9 @@ async def call_planner_async(
                 temperature=0.3,
                 tool_choice="auto",
                 session=session,
+                connect_timeout=connect_timeout,
+                read_timeout=read_timeout,
+                max_retries=max_retries,
             )
 
             tool_calls = response.get("tool_calls")

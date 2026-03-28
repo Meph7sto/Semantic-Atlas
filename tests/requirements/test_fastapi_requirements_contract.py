@@ -200,9 +200,15 @@ async def test_extract_l123_success_with_post_dedup(fastapi_client):
             "post_dedup": True,
             "dedup_with_llm": True,
             "dedup_auto_merge": False,
+            "pairwise_dedup": True,
+            "pairwise_auto_apply": True,
+            "pairwise_max_pairs": 64,
             "dedup_max_concurrent": 4,
             "enable_parallel_windows": True,
             "max_concurrent_windows": 3,
+            "planner_connect_timeout_seconds": 20,
+            "planner_read_timeout_seconds": 480,
+            "planner_max_retries": 1,
         },
     )
 
@@ -213,7 +219,13 @@ async def test_extract_l123_success_with_post_dedup(fastapi_client):
     assert "deduplication" in body
     assert stub_requirements.extract_calls[0]["enable_parallel"] is True
     assert stub_requirements.extract_calls[0]["max_concurrent"] == 3
+    assert stub_requirements.extract_calls[0]["planner_connect_timeout_seconds"] == 20
+    assert stub_requirements.extract_calls[0]["planner_read_timeout_seconds"] == 480
+    assert stub_requirements.extract_calls[0]["planner_max_retries"] == 1
     assert stub_dedup.calls[0]["with_llm_decision"] is True
+    assert stub_dedup.calls[0]["pairwise_review"] is True
+    assert stub_dedup.calls[0]["pairwise_auto_apply"] is True
+    assert stub_dedup.calls[0]["pairwise_max_pairs"] == 64
 
 
 async def test_extract_l123_stream_emits_reset_and_dedup_events(fastapi_client):

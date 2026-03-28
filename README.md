@@ -26,6 +26,8 @@ Semantic-Atlas 是面向需求工程的语义分析平台，覆盖会议转写�
 2. `/api/v2/build_context`：构建关联图 → bundles / context_run_id
 3. `/api/v2/requirements/extract_l123`：EgoBundle 抽取 L1/L2/L3 需求 → PostgreSQL
 
+需求获取模块的数据流转图见 [docs/需求获取模块数据流转图.md](./docs/需求获取模块数据流转图.md)。
+
 ## 架构
 
 ```

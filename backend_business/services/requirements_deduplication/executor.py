@@ -341,3 +341,70 @@ class DeduplicationExecutor:
                     (req_ids, session_id),
                 )
                 return [dict(row) for row in cur.fetchall()]
+
+    def rewrite_requirements(
+        self,
+        session_id: str,
+        rewrites: List[Dict[str, str]],
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        """
+        批量改写多条需求，并在单个事务中提交。
+
+        Args:
+            session_id: 会话ID
+            rewrites: [{"req_id": "...", "text": "...", "level": "L1|L2|L3"}]
+            reason: 改写原因
+
+        Returns:
+            操作结果
+        """
+        result: Dict[str, Any] = {
+            "success": False,
+            "updated_count": 0,
+            "reason": reason,
+            "error": None,
+        }
+
+        if not rewrites:
+            result["error"] = "rewrites 不能为空"
+            return result
+
+        try:
+            with self._connect() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    for rewrite in rewrites:
+                        req_id = (rewrite.get("req_id") or "").strip()
+                        text = (rewrite.get("text") or "").strip()
+                        level = (rewrite.get("level") or "").strip()
+
+                        if not req_id or not text:
+                            raise ValueError("rewrite 中 req_id/text 不能为空")
+                        if level not in ("L1", "L2", "L3"):
+                            raise ValueError(f"无效的 level: {level}")
+
+                        fingerprint = self._compute_fingerprint(
+                            session_id=session_id,
+                            level=level,
+                            text=text,
+                        )
+
+                        cur.execute(
+                            """
+                            UPDATE requirements_l123
+                            SET text = %s, level = %s, fingerprint = %s
+                            WHERE req_id = %s AND session_id = %s
+                            """,
+                            (text, level, fingerprint, req_id, session_id),
+                        )
+                        if cur.rowcount == 0:
+                            raise ValueError(f"需求不存在或更新失败: {req_id}")
+                        result["updated_count"] += cur.rowcount
+
+                    conn.commit()
+                    result["success"] = True
+        except Exception as exc:
+            logger.exception("批量改写需求时发生错误")
+            result["error"] = str(exc)
+
+        return result

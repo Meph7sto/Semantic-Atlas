@@ -112,11 +112,17 @@ async def test_detect_valid_payload_calls_service(api_client):
             "session_id": "s1",
             "with_llm_decision": True,
             "auto_merge": False,
+            "pairwise_review": True,
+            "pairwise_auto_apply": True,
+            "pairwise_max_pairs": 120,
         },
     )
     assert response.status_code == 200
     assert dummy.detect_kwargs["with_llm_decision"] is True
     assert dummy.detect_kwargs["auto_merge"] is False
+    assert dummy.detect_kwargs["pairwise_review"] is True
+    assert dummy.detect_kwargs["pairwise_auto_apply"] is True
+    assert dummy.detect_kwargs["pairwise_max_pairs"] == 120
 
 
 async def test_merge_missing_primary_req_id(api_client):
@@ -159,4 +165,3 @@ async def test_regenerate_requires_at_least_two_ids(api_client):
         json={"session_id": "s1", "req_ids": ["r1"]},
     )
     _assert_validation_error(response, "req_ids")
-

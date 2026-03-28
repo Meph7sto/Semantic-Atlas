@@ -43,6 +43,28 @@ class MergeResult:
 
 
 @dataclass
+class PairwiseRewrite:
+    """成对裁决后，对单条需求的改写结果"""
+
+    req_id: str
+    text: str
+    level: str
+
+
+@dataclass
+class PairwiseDecision:
+    """两条需求之间的语义裁决结果"""
+
+    action: str  # ignore | merge | split_keep_both
+    reason: str = ""
+    primary_req_id: str = ""
+    merged_text: str = ""
+    merged_level: str = ""
+    rewritten_requirements: List[PairwiseRewrite] = field(default_factory=list)
+    error: Optional[str] = None
+
+
+@dataclass
 class DeduplicationResult:
     """去重检测的完整结果"""
 

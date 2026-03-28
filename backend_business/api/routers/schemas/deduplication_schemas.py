@@ -14,6 +14,9 @@ class DetectDuplicatesRequest(BaseModel):
     level: Optional[str] = None  # "L1" | "L2" | "L3"
     with_llm_decision: bool = True
     auto_merge: bool = False
+    pairwise_review: bool = False
+    pairwise_auto_apply: bool = False
+    pairwise_max_pairs: Optional[int] = Field(default=None, ge=1, le=5000)
     model: Optional[str] = None
     threshold: Optional[float] = None
     max_concurrent: int = Field(default=5, ge=1, le=10)

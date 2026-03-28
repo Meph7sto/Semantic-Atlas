@@ -7,6 +7,29 @@ from typing import Any, Dict, List
 from .models import AnchorResult
 
 
+def _summarize_exec_error(exec_result: Dict[str, Any]) -> str | None:
+    """提取执行结果中的高价值错误摘要，便于前端流式展示。"""
+    planner_error = exec_result.get("planner_error")
+    if planner_error:
+        return str(planner_error)
+
+    quota_error = exec_result.get("quota_error")
+    if quota_error:
+        return str(quota_error)
+
+    db_errors = exec_result.get("db_errors") or []
+    if db_errors:
+        first = db_errors[0]
+        return str(first)
+
+    validation_errors = exec_result.get("validation_errors") or []
+    if validation_errors:
+        first = validation_errors[0]
+        return str(first)
+
+    return None
+
+
 def accumulate_serial_result(
     result: Dict[str, Any],
     anchor_result: AnchorResult,
@@ -86,11 +109,14 @@ def build_anchor_complete_event(anchor_result: AnchorResult) -> Dict[str, Any]:
     从 AnchorResult 构建 anchor_complete SSE 事件数据
     """
     exec_result = anchor_result.exec_result
+    error_message = _summarize_exec_error(exec_result)
     return {
         "anchor_idx": anchor_result.anchor_idx,
+        "anchor_span_id": anchor_result.anchor_span_id,
         "r": anchor_result.bundle_r,
         "inserted": exec_result.get("inserted", 0),
         "duplicates": exec_result.get("duplicates", 0),
         "updated": exec_result.get("updated", 0),
         "status": exec_result.get("status", "unknown"),
+        "error": error_message,
     }

@@ -101,6 +101,12 @@ class ContextBuilder:
     def save_bundles(self, bundles: List[Dict], bundle_items: List[Dict]) -> int:
         return self.repository.save_bundles(bundles, bundle_items)
 
+    @staticmethod
+    def _format_exception(exc: Exception) -> str:
+        detail = str(exc).strip()
+        error_type = type(exc).__name__
+        return f"{error_type}: {detail}" if detail else error_type
+
     async def _process_window_async(
         self,
         window_index: int,
@@ -108,6 +114,7 @@ class ContextBuilder:
         ref_map: Dict[str, str],
         llm: LLMClient,
         llm_model: Optional[str],
+        use_streaming_llm: bool,
         tau: float,
         top_k: int,
         max_edges_per_window: int,
@@ -115,7 +122,7 @@ class ContextBuilder:
         """异步处理单个窗口"""
         # 调用异步 LLM
         raw_links, noise_refs = await llm.generate_links_async(
-            window_spans, ref_map, llm_model
+            window_spans, ref_map, llm_model, use_streaming_llm
         )
 
         # CPU 密集操作（解析和剪枝）
@@ -136,6 +143,7 @@ class ContextBuilder:
         windows: List[Tuple[List[Span], Dict[str, str]]],
         llm: LLMClient,
         llm_model: Optional[str],
+        use_streaming_llm: bool,
         tau: float,
         top_k: int,
         max_edges_per_window: int,
@@ -150,48 +158,75 @@ class ContextBuilder:
             batch_end = min(batch_start + max_concurrent, len(windows))
             batch = windows[batch_start:batch_end]
 
-            # 创建批次任务
+            async def _run_window_task(
+                window_index: int,
+                window_spans: List[Span],
+                ref_map: Dict[str, str],
+            ):
+                try:
+                    result = await self._process_window_async(
+                        window_index,
+                        window_spans,
+                        ref_map,
+                        llm,
+                        llm_model,
+                        use_streaming_llm,
+                        tau,
+                        top_k,
+                        max_edges_per_window,
+                    )
+                    return {
+                        "ok": True,
+                        "result": result,
+                    }
+                except Exception as exc:
+                    return {
+                        "ok": False,
+                        "window_index": window_index,
+                        "ref_map": ref_map,
+                        "error": self._format_exception(exc),
+                    }
+
             tasks = []
             for i, (window_spans, ref_map) in enumerate(batch):
                 window_index = batch_start + i + 1
-                task = self._process_window_async(
-                    window_index,
-                    window_spans,
-                    ref_map,
-                    llm,
-                    llm_model,
-                    tau,
-                    top_k,
-                    max_edges_per_window,
-                )
-                tasks.append((window_index, task))
-
-            # 并行执行并实时发送事件
-            for window_index, task in tasks:
-                # 发送开始事件
+                span_refs = list(ref_map.values())
                 await event_queue.put(
                     SSEEvent(
                         "window_start",
-                        {"window_index": window_index, "status": "processing"},
+                        {
+                            "window_index": window_index,
+                            "span_refs": span_refs,
+                            "status": "processing",
+                        },
+                    )
+                )
+                tasks.append(
+                    asyncio.create_task(
+                        _run_window_task(window_index, window_spans, ref_map)
                     )
                 )
 
-            # 等待所有任务完成
-            batch_results = await asyncio.gather(
-                *[t[1] for t in tasks], return_exceptions=True
-            )
-
-            # 处理结果并发送完成事件
-            for (window_index, _), result in zip(tasks, batch_results):
-                if isinstance(result, Exception):
-                    print(f"[ContextBuilder] Window {window_index} failed: {result}")
+            for completed in asyncio.as_completed(tasks):
+                outcome = await completed
+                if not outcome["ok"]:
+                    window_index = outcome["window_index"]
+                    error_message = outcome["error"]
+                    print(
+                        f"[ContextBuilder] Window {window_index} failed: {error_message}"
+                    )
                     await event_queue.put(
                         SSEEvent(
                             "window_error",
-                            {"window_index": window_index, "error": str(result)},
+                            {
+                                "window_index": window_index,
+                                "span_refs": list(outcome["ref_map"].values()),
+                                "error": error_message,
+                            },
                         )
                     )
                 else:
+                    result = outcome["result"]
                     results.append(result)
                     await event_queue.put(
                         SSEEvent(
@@ -231,6 +266,7 @@ class ContextBuilder:
         token_limit = max(1000, opts.get("token_limit_per_bundle", 4000))
         mock_llm = opts.get("mock_llm", False)
         llm_model = _resolve_llm_model(opts)
+        use_streaming_llm = opts.get("use_streaming_llm", False)
 
         spans = self.load_spans(session_id)
         if not spans:
@@ -248,7 +284,7 @@ class ContextBuilder:
                 spans, window_size, step_size
             ):
                 raw_links, noise_refs = llm.generate_links(
-                    window_spans, ref_map, llm_model
+                    window_spans, ref_map, llm_model, use_streaming_llm
                 )
                 window_edges = self.parse_window_edges(raw_links, ref_map, window_spans)
                 pruned_edges = self.prune_edges(
@@ -381,6 +417,7 @@ class ContextBuilder:
         token_limit = max(1000, opts.get("token_limit_per_bundle", 4000))
         mock_llm = opts.get("mock_llm", False)
         llm_model = _resolve_llm_model(opts)
+        use_streaming_llm = opts.get("use_streaming_llm", False)
 
         spans = self.load_spans(session_id)
         if not spans:
@@ -397,6 +434,7 @@ class ContextBuilder:
                 "session_id": session_id,
                 "context_run_id": context_run_id,
                 "span_total": len(spans),
+                "llm_transport": "stream" if use_streaming_llm else "completion",
             },
         )
 
@@ -425,6 +463,7 @@ class ContextBuilder:
                         windows,
                         llm,
                         llm_model,
+                        use_streaming_llm,
                         tau,
                         top_k,
                         max_edges_per_window,
@@ -504,7 +543,7 @@ class ContextBuilder:
                     )
 
                     raw_links, noise_refs = llm.generate_links(
-                        window_spans, ref_map, llm_model
+                        window_spans, ref_map, llm_model, use_streaming_llm
                     )
 
                     yield SSEEvent(

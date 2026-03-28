@@ -93,6 +93,9 @@ class RequirementsExtractionService:
         model_name,
         use_toolcall,
         context_run_id,
+        planner_connect_timeout_seconds=None,
+        planner_read_timeout_seconds=None,
+        planner_max_retries=None,
         event_queue=None,
     ):
         """在新事件循环中运行并行处理，返回 anchor_results 列表"""
@@ -125,6 +128,9 @@ class RequirementsExtractionService:
                     context_run_id=context_run_id,
                     max_concurrent=params.effective_max_concurrent,
                     event_queue=event_queue,
+                    planner_connect_timeout_seconds=planner_connect_timeout_seconds,
+                    planner_read_timeout_seconds=planner_read_timeout_seconds,
+                    planner_max_retries=planner_max_retries,
                 )
             )
         finally:
@@ -155,6 +161,9 @@ class RequirementsExtractionService:
         enable_parallel: bool = False,
         max_concurrent: int = 5,
         history_aware: bool = False,
+        planner_connect_timeout_seconds: Optional[float] = None,
+        planner_read_timeout_seconds: Optional[float] = None,
+        planner_max_retries: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         对指定 session 进行 L1-L3 需求抽取
@@ -231,6 +240,9 @@ class RequirementsExtractionService:
                 model_name,
                 use_toolcall,
                 context_run_id,
+                planner_connect_timeout_seconds,
+                planner_read_timeout_seconds,
+                planner_max_retries,
             )
             accumulate_parallel_results(result, anchor_results)
             return result
@@ -260,6 +272,9 @@ class RequirementsExtractionService:
                     use_toolcall=use_toolcall,
                     history_aware=history_aware,
                     existing_requirements=rolling_existing_requirements,
+                    planner_connect_timeout_seconds=planner_connect_timeout_seconds,
+                    planner_read_timeout_seconds=planner_read_timeout_seconds,
+                    planner_max_retries=planner_max_retries,
                 )
                 accumulate_serial_result(result, anchor_result)
 
@@ -293,6 +308,9 @@ class RequirementsExtractionService:
         enable_parallel: bool = False,
         max_concurrent: int = 5,
         history_aware: bool = False,
+        planner_connect_timeout_seconds: Optional[float] = None,
+        planner_read_timeout_seconds: Optional[float] = None,
+        planner_max_retries: Optional[int] = None,
     ) -> Generator[Dict[str, Any], None, None]:
         """
         流式版本的需求抽取,支持并发处理
@@ -340,6 +358,9 @@ class RequirementsExtractionService:
                     "enable_parallel": params.enable_parallel,
                     "max_concurrent": params.effective_max_concurrent,
                     "history_aware": history_aware,
+                    "planner_connect_timeout_seconds": planner_connect_timeout_seconds,
+                    "planner_read_timeout_seconds": planner_read_timeout_seconds,
+                    "planner_max_retries": planner_max_retries,
                 },
             }
 
@@ -392,6 +413,9 @@ class RequirementsExtractionService:
                     model_name,
                     use_toolcall,
                     context_run_id,
+                    planner_connect_timeout_seconds,
+                    planner_read_timeout_seconds,
+                    planner_max_retries,
                     result,
                 )
             else:
@@ -405,6 +429,9 @@ class RequirementsExtractionService:
                     model_name,
                     use_toolcall,
                     history_aware,
+                    planner_connect_timeout_seconds,
+                    planner_read_timeout_seconds,
+                    planner_max_retries,
                     result,
                 )
 
@@ -439,6 +466,9 @@ class RequirementsExtractionService:
         model_name,
         use_toolcall,
         context_run_id,
+        planner_connect_timeout_seconds,
+        planner_read_timeout_seconds,
+        planner_max_retries,
         result,
     ) -> Generator[Dict[str, Any], None, None]:
         yield {
@@ -471,6 +501,9 @@ class RequirementsExtractionService:
                 context_run_id=context_run_id,
                 max_concurrent=params.effective_max_concurrent,
                 event_queue=event_queue,
+                planner_connect_timeout_seconds=planner_connect_timeout_seconds,
+                planner_read_timeout_seconds=planner_read_timeout_seconds,
+                planner_max_retries=planner_max_retries,
             )
 
         process_task = loop.create_task(_process())
@@ -518,6 +551,9 @@ class RequirementsExtractionService:
         model_name,
         use_toolcall,
         history_aware,
+        planner_connect_timeout_seconds,
+        planner_read_timeout_seconds,
+        planner_max_retries,
         result,
     ) -> Generator[Dict[str, Any], None, None]:
         rolling_existing_requirements = None
@@ -552,6 +588,9 @@ class RequirementsExtractionService:
                     use_toolcall=use_toolcall,
                     history_aware=history_aware,
                     existing_requirements=rolling_existing_requirements,
+                    planner_connect_timeout_seconds=planner_connect_timeout_seconds,
+                    planner_read_timeout_seconds=planner_read_timeout_seconds,
+                    planner_max_retries=planner_max_retries,
                 )
                 accumulate_serial_result(result, anchor_result)
 

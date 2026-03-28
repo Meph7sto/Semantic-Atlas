@@ -190,7 +190,7 @@ async def chat_completions(request: ChatCompletionRequest):
             raise HTTPException(status_code=400, detail="User message is required.")
 
         # 调用模型生成
-        result = model_engine.generate(
+        result = await model_engine.generate_async(
             prompt=user_prompt,
             system_prompt=system_prompt or "",
             max_new_tokens=request.max_tokens,
@@ -228,7 +228,7 @@ async def context_completion(request: ContextCompletionRequest):
         raise HTTPException(status_code=400, detail="Prompt is required.")
 
     try:
-        content = model_engine.generate(
+        content = await model_engine.generate_async(
             prompt=request.prompt,
             system_prompt=request.system_prompt or "",
             max_new_tokens=request.max_tokens,
@@ -243,6 +243,71 @@ async def context_completion(request: ContextCompletionRequest):
     except Exception as e:
         logger.exception("Context completion failed with unexpected exception.")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/context-completion/stream")
+async def context_completion_stream(request: ContextCompletionRequest):
+    """
+    Context builder 专用流式补全接口。
+    返回 NDJSON，每行一个 JSON 对象。
+    """
+    if not request.prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt is required.")
+
+    async def generate():
+        full_response = ""
+
+        def _handle_chunk(chunk):
+            nonlocal full_response
+            if isinstance(chunk, dict):
+                msg_type = chunk.get("type", "content")
+                content = chunk.get("delta", "")
+                if msg_type == "thinking":
+                    return "thinking", content
+                if msg_type == "content":
+                    full_response += content
+                    return "token", content
+                return None
+
+            token = str(chunk)
+            full_response += token
+            return "token", token
+
+        try:
+            stream = model_engine.generate_stream_async(
+                prompt=request.prompt,
+                system_prompt=request.system_prompt or "",
+                max_new_tokens=request.max_tokens,
+                model=request.model,
+            )
+
+            async for chunk in stream:
+                parsed = _handle_chunk(chunk)
+                if not parsed:
+                    continue
+                msg_type, content = parsed
+                if msg_type == "thinking":
+                    yield _ndjson_line({"type": "thinking", "content": content})
+                else:
+                    yield _ndjson_line({"type": "token", "content": content})
+
+            yield _ndjson_line({"type": "result", "data": {"answer": full_response}})
+        except RuntimeError:
+            logger.exception("Context completion stream failed with RuntimeError.")
+            yield _ndjson_line(
+                {
+                    "type": "error",
+                    "error": "Model service not initialized or unavailable.",
+                }
+            )
+        except Exception as e:
+            logger.exception("Context completion stream failed with unexpected exception.")
+            yield _ndjson_line({"type": "error", "error": str(e)})
+
+    return StreamingResponse(
+        generate(),
+        media_type="application/x-ndjson",
+    )
 
 
 @router.post("/completions/tools", response_model=ChatCompletionWithToolsResponse)

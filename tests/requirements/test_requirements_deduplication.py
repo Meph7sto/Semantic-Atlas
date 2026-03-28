@@ -25,6 +25,8 @@ from backend_business.services.requirements_deduplication.models import (
     DuplicateGroup,
     MergeDecision,
     MergeResult,
+    PairwiseDecision,
+    PairwiseRewrite,
 )
 from backend_business.services.requirements_deduplication.service import (
     RequirementsDeduplicationService,
@@ -589,6 +591,98 @@ class TestRequirementsDeduplicationService(unittest.TestCase):
         self.assertEqual(result["total_duplicates"], 1)
         self.assertEqual(result["total_merged"], 1)
         self.assertTrue(result["duplicate_groups"][0]["merge_result"]["success"])
+
+    def test_detect_duplicates_with_pairwise_review(self):
+        """Test pairwise review is included in dedup result."""
+        self.service.data_access.get_all_requirements_for_session.return_value = [
+            {"req_id": "r1", "level": "L1", "text": "系统需支持统一数据纳管"},
+            {"req_id": "r2", "level": "L1", "text": "系统应形成全域数据一张图"},
+            {"req_id": "r3", "level": "L1", "text": "系统需要支持用户登录"},
+        ]
+        self.service.merger.batch_decide_pairwise.return_value = [
+            PairwiseDecision(
+                action="split_keep_both",
+                reason="两条需求有关联，但应拆成两个独立目标",
+                rewritten_requirements=[
+                    PairwiseRewrite(
+                        req_id="r1",
+                        text="系统应支持历史数据统一纳管。",
+                        level="L1",
+                    ),
+                    PairwiseRewrite(
+                        req_id="r2",
+                        text="系统应提供全域数据一张图视图。",
+                        level="L1",
+                    ),
+                ],
+            ),
+            PairwiseDecision(action="ignore", reason="无关"),
+            PairwiseDecision(action="ignore", reason="无关"),
+        ]
+
+        result = self.service.detect_duplicates(
+            session_id="test-session",
+            with_llm_decision=False,
+            pairwise_review=True,
+            pairwise_auto_apply=False,
+            pairwise_max_pairs=10,
+        )
+
+        self.assertIn("pairwise", result)
+        self.assertEqual(result["pairwise"]["pairs_reviewed"], 3)
+        self.assertEqual(result["pairwise"]["related_pairs"], 1)
+        self.assertEqual(
+            result["pairwise"]["actions"][0]["decision"]["action"],
+            "split_keep_both",
+        )
+
+    def test_detect_duplicates_with_pairwise_auto_apply_skips_conflicts(self):
+        """Test pairwise auto-apply skips conflicting repeated req updates."""
+        self.service.data_access.get_all_requirements_for_session.return_value = [
+            {"req_id": "r1", "level": "L1", "text": "系统需同步设计"},
+            {"req_id": "r2", "level": "L1", "text": "地面系统需同步设计"},
+            {"req_id": "r3", "level": "L1", "text": "系统需同步交付"},
+        ]
+        self.service.merger.batch_decide_pairwise.return_value = [
+            PairwiseDecision(
+                action="merge",
+                reason="语义重复",
+                primary_req_id="r1",
+                merged_text="系统与地面系统应同步设计。",
+                merged_level="L1",
+            ),
+            PairwiseDecision(
+                action="merge",
+                reason="共享 req r1，自动应用时应跳过冲突",
+                primary_req_id="r1",
+                merged_text="系统应同步设计并同步交付。",
+                merged_level="L1",
+            ),
+            PairwiseDecision(action="ignore", reason="无关"),
+        ]
+        self.service.executor.merge_requirements.return_value = MergeResult(
+            success=True,
+            primary_req_id="r1",
+            deleted_count=1,
+            old_text="old",
+            new_text="系统与地面系统应同步设计。",
+            reason="pairwise merge",
+        )
+
+        result = self.service.detect_duplicates(
+            session_id="test-session",
+            with_llm_decision=False,
+            pairwise_review=True,
+            pairwise_auto_apply=True,
+            pairwise_max_pairs=10,
+        )
+
+        self.assertEqual(result["pairwise"]["total_applied"], 1)
+        self.assertEqual(result["pairwise"]["conflicts_skipped"], 1)
+        self.assertTrue(result["pairwise"]["actions"][0]["apply_result"]["success"])
+        self.assertTrue(
+            result["pairwise"]["actions"][1]["apply_result"]["skipped_conflict"]
+        )
 
     def test_detect_duplicates_level_filter(self):
         """Test detection with level filter."""

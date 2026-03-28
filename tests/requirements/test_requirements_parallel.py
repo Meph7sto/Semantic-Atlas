@@ -2,6 +2,7 @@
 Parallel extraction behavior tests for Phase 3 requirements.
 """
 
+import asyncio
 import os
 import sys
 import unittest
@@ -151,6 +152,67 @@ class TestRequirementsExtractionAsync(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(to_thread_mock.called)
         called_func = to_thread_mock.call_args[0][0]
         self.assertIs(called_func, service.executor.execute_bundle)
+
+    async def test_parallel_emits_anchor_complete_as_each_anchor_finishes(self):
+        spans = [
+            {"span_id": "s1", "text": "a"},
+            {"span_id": "s2", "text": "b"},
+        ]
+        event_queue = asyncio.Queue()
+
+        async def fake_process_anchor_async(anchor_idx, **_kwargs):
+            if anchor_idx == 0:
+                await asyncio.sleep(0.05)
+            else:
+                await asyncio.sleep(0.01)
+            return AnchorResult(
+                anchor_idx=anchor_idx,
+                anchor_span_id=spans[anchor_idx]["span_id"],
+                bundle_r=1,
+                exec_result={
+                    "inserted": 1,
+                    "duplicates": 0,
+                    "updated": 0,
+                    "status": "success",
+                },
+            )
+
+        with patch(
+            "backend_business.services.requirements_extraction.anchor_processor.process_anchor_async",
+            new=AsyncMock(side_effect=fake_process_anchor_async),
+        ):
+            from backend_business.services.requirements_extraction.anchor_processor import (
+                process_anchors_parallel,
+            )
+
+            results = await process_anchors_parallel(
+                anchor_indices=[0, 1],
+                spans=spans,
+                bundle_generator=MagicMock(),
+                executor=MagicMock(),
+                bundle_strategy="sequence",
+                adjacency=None,
+                max_r=1,
+                adaptive_retry_r2=False,
+                effective_top_m_2hop=5,
+                session_id="test-session",
+                model_name="deepseek-chat",
+                use_toolcall=True,
+                context_run_id=None,
+                max_concurrent=2,
+                event_queue=event_queue,
+            )
+
+        self.assertEqual(len(results), 2)
+
+        emitted = []
+        while not event_queue.empty():
+            emitted.append(await event_queue.get())
+
+        complete_events = [e for e in emitted if e["event"] == "anchor_complete"]
+        self.assertEqual(len(complete_events), 2)
+        self.assertEqual(complete_events[0]["data"]["anchor_idx"], 1)
+        self.assertEqual(complete_events[1]["data"]["anchor_idx"], 0)
 
 
 if __name__ == "__main__":

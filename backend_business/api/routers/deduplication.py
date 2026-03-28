@@ -64,6 +64,9 @@ def detect_duplicates(req: DetectDuplicatesRequest):
         level=req.level,
         with_llm_decision=req.with_llm_decision,
         auto_merge=req.auto_merge,
+        pairwise_review=req.pairwise_review,
+        pairwise_auto_apply=req.pairwise_auto_apply,
+        pairwise_max_pairs=req.pairwise_max_pairs,
         model_name=req.model,
         max_concurrent=req.max_concurrent,
     )

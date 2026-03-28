@@ -13,6 +13,7 @@ from backend_business.services.requirements_executor import RequirementsExecutor
 
 from .models import AnchorResult
 from .planner import call_planner_async
+from .result_collector import build_anchor_complete_event
 from .utils import build_attempt_r_values, is_insufficient_output
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,9 @@ async def process_anchor_async(
     use_toolcall: bool,
     context_run_id: Optional[str],
     http_session: aiohttp.ClientSession,
+    planner_connect_timeout_seconds: Optional[float] = None,
+    planner_read_timeout_seconds: Optional[float] = None,
+    planner_max_retries: Optional[int] = None,
 ) -> AnchorResult:
     """异步处理单个锚点"""
     try:
@@ -63,7 +67,13 @@ async def process_anchor_async(
 
             # 异步调用 Planner
             planner_result = await call_planner_async(
-                bundle, model_name, use_toolcall=use_toolcall, session=http_session
+                bundle,
+                model_name,
+                use_toolcall=use_toolcall,
+                session=http_session,
+                connect_timeout=planner_connect_timeout_seconds,
+                read_timeout=planner_read_timeout_seconds,
+                max_retries=planner_max_retries,
             )
 
             if planner_result.get("error"):
@@ -128,9 +138,47 @@ async def process_anchors_parallel(
     context_run_id: Optional[str],
     max_concurrent: int,
     event_queue: asyncio.Queue,
+    planner_connect_timeout_seconds: Optional[float] = None,
+    planner_read_timeout_seconds: Optional[float] = None,
+    planner_max_retries: Optional[int] = None,
 ) -> List[AnchorResult]:
     """并行处理所有锚点,分批控制并发度"""
     results = []
+
+    async def _run_one(
+        anchor_idx: int,
+        http_session: aiohttp.ClientSession,
+    ) -> tuple[int, AnchorResult]:
+        try:
+            result = await process_anchor_async(
+                anchor_idx=anchor_idx,
+                spans=spans,
+                bundle_generator=bundle_generator,
+                executor=executor,
+                bundle_strategy=bundle_strategy,
+                adjacency=adjacency,
+                max_r=max_r,
+                adaptive_retry_r2=adaptive_retry_r2,
+                effective_top_m_2hop=effective_top_m_2hop,
+                session_id=session_id,
+                model_name=model_name,
+                use_toolcall=use_toolcall,
+                context_run_id=context_run_id,
+                http_session=http_session,
+                planner_connect_timeout_seconds=planner_connect_timeout_seconds,
+                planner_read_timeout_seconds=planner_read_timeout_seconds,
+                planner_max_retries=planner_max_retries,
+            )
+        except Exception as exc:
+            logger.exception(f"Anchor {anchor_idx} task failed unexpectedly")
+            result = AnchorResult(
+                anchor_idx=anchor_idx,
+                anchor_span_id="",
+                bundle_r=max_r,
+                exec_result={},
+                error=str(exc),
+            )
+        return anchor_idx, result
 
     # 创建共享的 HTTP session
     async with aiohttp.ClientSession() as http_session:
@@ -140,28 +188,18 @@ async def process_anchors_parallel(
             batch = anchor_indices[batch_start:batch_end]
 
             # 创建批次任务
-            tasks = []
+            tasks: list[asyncio.Task[tuple[int, AnchorResult]]] = []
             for anchor_idx in batch:
-                task = process_anchor_async(
-                    anchor_idx=anchor_idx,
-                    spans=spans,
-                    bundle_generator=bundle_generator,
-                    executor=executor,
-                    bundle_strategy=bundle_strategy,
-                    adjacency=adjacency,
-                    max_r=max_r,
-                    adaptive_retry_r2=adaptive_retry_r2,
-                    effective_top_m_2hop=effective_top_m_2hop,
-                    session_id=session_id,
-                    model_name=model_name,
-                    use_toolcall=use_toolcall,
-                    context_run_id=context_run_id,
-                    http_session=http_session,
+                task = asyncio.create_task(
+                    _run_one(
+                        anchor_idx=anchor_idx,
+                        http_session=http_session,
+                    )
                 )
-                tasks.append((anchor_idx, task))
+                tasks.append(task)
 
             # 发送开始事件
-            for anchor_idx, _ in tasks:
+            for anchor_idx in batch:
                 await event_queue.put(
                     {
                         "event": "anchor_start",
@@ -169,36 +207,9 @@ async def process_anchors_parallel(
                     }
                 )
 
-            # 等待所有任务完成
-            batch_results = await asyncio.gather(
-                *[t[1] for t in tasks], return_exceptions=True
-            )
-
-            # 处理结果并发送完成事件
-            for (anchor_idx, _), result in zip(tasks, batch_results):
-                if isinstance(result, Exception):
-                    logger.error(f"Anchor {anchor_idx} failed: {result}")
-                    anchor_span_id = ""
-                    if 0 <= anchor_idx < len(spans):
-                        anchor_span_id = spans[anchor_idx].get("span_id", "")
-                    error_result = AnchorResult(
-                        anchor_idx=anchor_idx,
-                        anchor_span_id=anchor_span_id,
-                        bundle_r=max_r,
-                        exec_result={},
-                        error=str(result),
-                    )
-                    results.append(error_result)
-                    await event_queue.put(
-                        {
-                            "event": "anchor_error",
-                            "data": {
-                                "anchor_idx": anchor_idx,
-                                "error": str(result),
-                            },
-                        }
-                    )
-                    continue
+            # 按完成顺序发送事件，而不是整批等待后统一输出
+            for completed in asyncio.as_completed(tasks):
+                anchor_idx, result = await completed
 
                 results.append(result)
 
@@ -217,14 +228,7 @@ async def process_anchors_parallel(
                 await event_queue.put(
                     {
                         "event": "anchor_complete",
-                        "data": {
-                            "anchor_idx": result.anchor_idx,
-                            "anchor_span_id": result.anchor_span_id,
-                            "r": result.bundle_r,
-                            "inserted": result.exec_result.get("inserted", 0),
-                            "duplicates": result.exec_result.get("duplicates", 0),
-                            "status": result.exec_result.get("status", "unknown"),
-                        },
+                        "data": build_anchor_complete_event(result),
                     }
                 )
 
