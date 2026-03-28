@@ -416,7 +416,7 @@ superspec commit --summary "Add session controller delegation for requirement cl
 - Modify: `frontend/src/components/alpha/AlphaSidebar.vue`
 - Modify: `frontend/src/api/index.js`
 
-- [ ] **Step 1: Add the route and imports first, then verify the frontend build fails**
+- [x] **Step 1: Add the route and imports first, then verify the frontend build fails**
 
 Planned change:
 
@@ -434,7 +434,7 @@ Run: `npm run build`
 Workdir: `frontend`
 Expected: FAIL with missing module errors for the new page or API file
 
-- [ ] **Step 2: Implement the minimal frontend API client**
+- [x] **Step 2: Implement the minimal frontend API client**
 
 ```javascript
 export const requirementClassificationAgentChatApi = {
@@ -449,7 +449,7 @@ export const requirementClassificationAgentChatApi = {
 }
 ```
 
-- [ ] **Step 3: Implement the minimal Alpha page by copying the existing agent-page pattern**
+- [x] **Step 3: Implement the minimal Alpha page by copying the existing agent-page pattern**
 
 ```vue
 <script setup>
@@ -470,13 +470,13 @@ Implementation notes:
 - Keep the new page independent from the old offline classification page.
 - Surface a concise classification summary card instead of inventing a brand-new layout system.
 
-- [ ] **Step 4: Run the frontend build to verify it passes**
+- [x] **Step 4: Run the frontend build to verify it passes**
 
 Run: `npm run build`
 Workdir: `frontend`
 Expected: PASS with the new route and page included
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/api/requirementClassificationAgentChat.js \
