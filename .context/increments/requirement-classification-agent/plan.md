@@ -499,7 +499,7 @@ superspec commit --summary "Add the requirement classification agent frontend pa
 - Test: `tests/agent_chat/test_fastapi_requirement_classification_agent_chat_contract.py`
 - Test: `tests/agent_chat/test_session_controller_tools.py`
 
-- [ ] **Step 1: Run the focused backend test suite**
+- [x] **Step 1: Run the focused backend test suite**
 
 Run:
 
@@ -513,13 +513,13 @@ pytest \
 
 Expected: PASS
 
-- [ ] **Step 2: Run the frontend production build**
+- [x] **Step 2: Run the frontend production build**
 
 Run: `npm run build`
 Workdir: `frontend`
 Expected: PASS
 
-- [ ] **Step 3: Perform a manual smoke test**
+- [x] **Step 3: Perform a manual smoke test**
 
 Manual checklist:
 - Open `/alpha/requirement-classification-agent`
@@ -530,7 +530,7 @@ Manual checklist:
 - Confirm the summary card shows `level`, `requirement_nature`, `domain_tags`, and `priority_suggestion`
 - Confirm `/alpha/session-controller` can delegate a classification request and show nested nodes
 
-- [ ] **Step 4: Apply only narrow additive fixes if any check fails**
+- [x] **Step 4: Apply only narrow additive fixes if any check fails**
 
 Example fixes:
 
@@ -542,7 +542,7 @@ if not result.get("domain_tags"):
 # avoid: rewriting existing agent infrastructure or changing old offline classification behavior
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend_business/services/agent/tools/requirement_classification_tools.py \
