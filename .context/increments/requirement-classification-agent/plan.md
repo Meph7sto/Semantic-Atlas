@@ -273,7 +273,7 @@ superspec commit --summary "Add the standalone requirement classification agent 
 - Modify: `backend_business/api/routers/__init__.py`
 - Test: `tests/agent_chat/test_fastapi_requirement_classification_agent_chat_contract.py`
 
-- [ ] **Step 1: Write the failing FastAPI contract tests**
+- [x] **Step 1: Write the failing FastAPI contract tests**
 
 ```python
 async def test_stream_message_passes_requirement_id(monkeypatch):
@@ -289,12 +289,12 @@ async def test_stream_message_passes_requirement_id(monkeypatch):
     assert stub.last_stream_args["requirement_id"] == "REQ-1"
 ```
 
-- [ ] **Step 2: Run the contract tests to verify they fail**
+- [x] **Step 2: Run the contract tests to verify they fail**
 
 Run: `pytest tests/agent_chat/test_fastapi_requirement_classification_agent_chat_contract.py -v`
 Expected: FAIL with missing router module or missing route registration
 
-- [ ] **Step 3: Implement the router and app registration**
+- [x] **Step 3: Implement the router and app registration**
 
 ```python
 router = APIRouter(
@@ -313,12 +313,12 @@ Implementation notes:
 - Keep auth and project-access checks identical to current agent routers.
 - Add `app.include_router(requirement_classification_agent_chat.router)` in `backend_business/main.py`.
 
-- [ ] **Step 4: Run the contract tests to verify they pass**
+- [x] **Step 4: Run the contract tests to verify they pass**
 
 Run: `pytest tests/agent_chat/test_fastapi_requirement_classification_agent_chat_contract.py -v`
 Expected: PASS for session/message/graph route shapes
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tests/agent_chat/test_fastapi_requirement_classification_agent_chat_contract.py \

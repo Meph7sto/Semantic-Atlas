@@ -132,6 +132,7 @@ from backend_business.api.routers import (
     permission,
     product,
     push,
+    requirement_classification_agent_chat,
     requirement_actor,
     requirements,
     session_controller_chat,
@@ -139,6 +140,7 @@ from backend_business.api.routers import (
 )
 
 app.include_router(agent_chat.router)
+app.include_router(requirement_classification_agent_chat.router)
 app.include_router(conflict_agent_chat.router)
 app.include_router(session_controller_chat.router)
 app.include_router(deduplication.router)
