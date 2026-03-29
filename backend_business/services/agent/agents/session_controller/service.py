@@ -13,6 +13,7 @@ from backend_business.config import settings
 from backend_business.services.ai_chat_service import AiChatService, ai_chat_service
 from backend_business.services.ai_proxy import ai_proxy
 from backend_business.services.agent.execution_graph_service import ExecutionGraphService
+from backend_business.services.agent.runtime.scratchpad import Scratchpad
 from backend_business.services.requirements_manage_service import RequirementsManageService
 
 from .prompt_builder import SessionControllerPromptBuilder
@@ -48,6 +49,159 @@ class SessionControllerService:
         self.ai_proxy = ai_proxy_client or ai_proxy
         self.prompt_builder = prompt_builder or SessionControllerPromptBuilder()
         self.tools = tools
+
+    @staticmethod
+    def _compact_write_result(write_result: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(write_result, dict):
+            return None
+        compact = {
+            "requirement_id": write_result.get("requirement_id"),
+            "version": write_result.get("version"),
+            "priority": write_result.get("priority"),
+            "title": write_result.get("title"),
+            "applied_updates": write_result.get("applied_updates"),
+        }
+        return {key: value for key, value in compact.items() if value is not None}
+
+    def _inherit_session_scratchpad(
+        self,
+        *,
+        graph_id: str,
+        prev_graph_id: str | None,
+        updated_by: str,
+    ) -> None:
+        if not prev_graph_id:
+            return
+        current_graph = self.execution_graph_service.get_execution_graph(graph_id)
+        current_meta = (current_graph.get("meta_json") or {}) if current_graph else {}
+        if current_meta.get("scratchpad_entries"):
+            return
+
+        previous_graph = self.execution_graph_service.get_execution_graph(prev_graph_id)
+        previous_meta = (previous_graph.get("meta_json") or {}) if previous_graph else {}
+        inherited_entries = previous_meta.get("scratchpad_entries") or []
+        inherited_requirement_id = previous_meta.get("resolved_requirement_id")
+        if not inherited_entries and not inherited_requirement_id:
+            return
+
+        meta_patch: dict[str, Any] = {}
+        if inherited_entries:
+            meta_patch["scratchpad_entries"] = inherited_entries
+        if inherited_requirement_id:
+            meta_patch["resolved_requirement_id"] = inherited_requirement_id
+        self.execution_graph_service.patch_graph_meta(
+            graph_id,
+            meta_patch,
+            updated_by=updated_by,
+        )
+
+    def _generate_turn_summary(
+        self,
+        *,
+        user_message: str,
+        tool_loop_reply: str,
+        assistant_reply: str,
+        context: dict[str, Any],
+    ) -> str:
+        write_result = self._compact_write_result(context.get("last_write_result"))
+        payload = {
+            "user_message": user_message,
+            "tool_loop_reply": tool_loop_reply,
+            "assistant_reply": assistant_reply,
+            "resolved_requirement_id": context.get("resolved_requirement_id"),
+            "dispatched_agents": context.get("dispatched_agents") or [],
+            "write_result": write_result,
+        }
+        fallback_parts = []
+        resolved_requirement_id = payload.get("resolved_requirement_id")
+        if resolved_requirement_id:
+            fallback_parts.append(f"当前焦点需求是 {resolved_requirement_id}。")
+        if write_result and write_result.get("applied_updates"):
+            fallback_parts.append(
+                f"本轮已执行更新：{json.dumps(write_result['applied_updates'], ensure_ascii=False)}。"
+            )
+        elif payload["dispatched_agents"]:
+            fallback_parts.append(
+                f"本轮调用了 {', '.join(payload['dispatched_agents'])}。"
+            )
+        if assistant_reply.strip():
+            fallback_parts.append(f"结果：{assistant_reply.strip()}")
+        elif tool_loop_reply.strip():
+            fallback_parts.append(f"结果：{tool_loop_reply.strip()}")
+        fallback_summary = " ".join(fallback_parts) or f"用户本轮请求：{user_message}"
+
+        try:
+            response = self.ai_proxy.chat_completion(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "你负责维护需求工程会话的跨轮记事本。"
+                            "请根据给定信息写一段 1 到 3 句的中文摘要，记录本轮做了什么、"
+                            "当前聚焦对象是什么、结果或待澄清点是什么。"
+                            "如果目标需求可确定，优先明确写出 requirement_id。"
+                            "只输出摘要正文，不要 JSON，不要客套话。"
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(payload, ensure_ascii=False),
+                    },
+                ],
+                temperature=0.2,
+                max_tokens=220,
+            )
+            summary = str(response.get("content") or "").strip()
+            return summary or fallback_summary
+        except Exception:
+            logger.warning("生成会话记事本摘要失败，改用回退摘要", exc_info=True)
+            return fallback_summary
+
+    def _persist_turn_summary_to_scratchpad(
+        self,
+        *,
+        graph_id: str,
+        turn_index: int,
+        user_id: str,
+        user_message: str,
+        tool_loop_reply: str,
+        assistant_reply: str,
+        context: dict[str, Any],
+    ) -> None:
+        scratchpad = context.get("_scratchpad")
+        if not isinstance(scratchpad, Scratchpad):
+            graph = self.execution_graph_service.get_execution_graph(graph_id)
+            meta = (graph.get("meta_json") or {}) if graph else {}
+            scratchpad = Scratchpad.from_snapshot(meta.get("scratchpad_entries") or [])
+
+        summary = self._generate_turn_summary(
+            user_message=user_message,
+            tool_loop_reply=tool_loop_reply,
+            assistant_reply=assistant_reply,
+            context=context,
+        )
+        scratchpad.write(
+            "note",
+            {
+                "turn": turn_index,
+                "summary": summary,
+                "resolved_requirement_id": context.get("resolved_requirement_id"),
+                "dispatched_agents": context.get("dispatched_agents") or [],
+                "write_result": self._compact_write_result(context.get("last_write_result")),
+            },
+            source_subgraph=f"session_turn_{turn_index}",
+            readonly=True,
+        )
+        context["_scratchpad"] = scratchpad
+        context["_scratchpad_prompt_text"] = scratchpad.format_for_prompt()
+        self.execution_graph_service.patch_graph_meta(
+            graph_id,
+            {
+                "scratchpad_entries": scratchpad.snapshot(),
+                "resolved_requirement_id": context.get("resolved_requirement_id"),
+            },
+            updated_by=user_id,
+        )
 
     # ---- session helpers ----
 
@@ -380,6 +534,11 @@ class SessionControllerService:
             graph_id=graph_target["graph_id"],
             prev_graph_id=graph_target["prev_graph_id"],
         )
+        self._inherit_session_scratchpad(
+            graph_id=recorder.graph_id,
+            prev_graph_id=graph_target["prev_graph_id"],
+            updated_by=user_id,
+        )
         self.chat_storage.update_session(
             session_id=session_id,
             active_graph_id=recorder.graph_id,
@@ -497,6 +656,15 @@ class SessionControllerService:
             if not assistant_content:
                 assistant_content = tool_loop_reply or "已完成处理。"
 
+            self._persist_turn_summary_to_scratchpad(
+                graph_id=recorder.graph_id,
+                turn_index=recorder.turn_index,
+                user_id=user_id,
+                user_message=user_message,
+                tool_loop_reply=tool_loop_reply,
+                assistant_reply=assistant_content,
+                context=context,
+            )
             recorder.complete_stage(
                 recorder.stage_node_key("conductor_reply"),
                 created_by=user_id,

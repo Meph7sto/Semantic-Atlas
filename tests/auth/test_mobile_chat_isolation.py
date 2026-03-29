@@ -25,8 +25,9 @@ from backend_business.services.mobile_chat_service import MobileChatService
 
 
 class _FakeCursor:
-    def __init__(self, rows=None):
+    def __init__(self, rows=None, one_rows=None):
         self.rows = rows or []
+        self.one_rows = list(one_rows or [])
         self.executions = []
 
     def __enter__(self):
@@ -40,6 +41,11 @@ class _FakeCursor:
 
     def fetchall(self):
         return self.rows
+
+    def fetchone(self):
+        if self.one_rows:
+            return self.one_rows.pop(0)
+        return None
 
 
 class _FakeConnection:
@@ -181,7 +187,7 @@ def test_stream_uses_user_id_for_subscription(mobile_client):
 
 
 def test_service_sql_uses_user_id(monkeypatch):
-    cursor = _FakeCursor(rows=[{"message_id": "m1", "user_id": "u1"}])
+    cursor = _FakeCursor(rows=[{"message_id": "m1", "user_id": "u1"}], one_rows=[None, None])
     fake_db = _FakeDB(cursor)
     monkeypatch.setattr(mobile_chat_module, "db_service", fake_db)
 
@@ -203,6 +209,80 @@ def test_service_sql_uses_user_id(monkeypatch):
     assert list_params[-1] == 10
 
 
+def test_service_deduplicates_recent_mobile_message(monkeypatch):
+    duplicate_row = {
+        "message_id": "m_existing",
+        "user_id": "u1",
+        "session_id": "s1",
+        "sender": "mobile",
+        "content": "hello",
+        "metadata": '{"client_message_id":"cmid-1"}',
+        "created_at": "2026-03-29T12:00:00Z",
+    }
+    cursor = _FakeCursor(one_rows=[duplicate_row])
+    fake_db = _FakeDB(cursor)
+    monkeypatch.setattr(mobile_chat_module, "db_service", fake_db)
+
+    service = MobileChatService()
+    message = service.create_message(
+        user_id="u1",
+        session_id="s1",
+        sender="mobile",
+        content="hello",
+        metadata={"client_message_id": "cmid-1"},
+    )
+
+    assert message["message_id"] == "m_existing"
+    assert message["metadata"]["client_message_id"] == "cmid-1"
+    assert len(cursor.executions) == 1
+    assert "COALESCE(" in cursor.executions[0][0]
+
+
+def test_service_deduplicates_recent_mobile_message_by_content_window(monkeypatch):
+    duplicate_row = {
+        "message_id": "m_existing",
+        "user_id": "u1",
+        "session_id": "s1",
+        "sender": "mobile",
+        "content": "hello",
+        "metadata": None,
+        "created_at": "2026-03-29T12:00:00Z",
+    }
+    cursor = _FakeCursor(one_rows=[duplicate_row])
+    fake_db = _FakeDB(cursor)
+    monkeypatch.setattr(mobile_chat_module, "db_service", fake_db)
+
+    service = MobileChatService()
+    message = service.create_message(
+        user_id="u1",
+        session_id="s1",
+        sender="mobile",
+        content="hello",
+    )
+
+    assert message["message_id"] == "m_existing"
+    assert len(cursor.executions) == 1
+    assert "created_at >= NOW()" in cursor.executions[0][0]
+
+
+def test_service_does_not_dedupe_web_message_by_content_window(monkeypatch):
+    cursor = _FakeCursor()
+    fake_db = _FakeDB(cursor)
+    monkeypatch.setattr(mobile_chat_module, "db_service", fake_db)
+
+    service = MobileChatService()
+    message = service.create_message(
+        user_id="u1",
+        session_id="s1",
+        sender="web",
+        content="hello",
+    )
+
+    assert message["sender"] == "web"
+    assert len(cursor.executions) == 1
+    assert "INSERT INTO mobile_chat_messages" in cursor.executions[0][0]
+
+
 def test_service_broadcast_is_scoped_by_user_and_session():
     service = MobileChatService()
     q_u1_s1 = service.subscribe("u1", "s1")
@@ -222,4 +302,3 @@ def test_service_broadcast_is_scoped_by_user_and_session():
     assert not q_u1_s1.empty()
     assert q_u2_s1.empty()
     assert q_u1_s2.empty()
-

@@ -357,12 +357,19 @@ class SessionControllerTools:
             child_node_key=end_node_key, parent_node_key=parent_node_key, created_by=user_id,
         )
         recorder.restore_stage_cursor(node_key=parent_node_key, updated_by=user_id)
+        resolved_requirement_id = loop_result.get("resolved_requirement_id")
+        if resolved_requirement_id:
+            context["resolved_requirement_id"] = resolved_requirement_id
+            context.setdefault("resolved_requirement_ids", set()).add(resolved_requirement_id)
+        write_result = loop_result.get("write_result")
+        if write_result is not None:
+            context["last_write_result"] = write_result
 
         return {
             "status": "success",
             "reply": loop_result.get("tool_loop_reply", ""),
-            "resolved_requirement_id": loop_result.get("resolved_requirement_id"),
-            "write_result": loop_result.get("write_result"),
+            "resolved_requirement_id": resolved_requirement_id,
+            "write_result": write_result,
         }
 
     def _stream_invoke_requirement_agent(
@@ -485,6 +492,13 @@ class SessionControllerTools:
             created_by=user_id,
         )
         recorder.restore_stage_cursor(node_key=parent_node_key, updated_by=user_id)
+        resolved_requirement_id = loop_result.get("resolved_requirement_id")
+        if resolved_requirement_id:
+            context["resolved_requirement_id"] = resolved_requirement_id
+            context.setdefault("resolved_requirement_ids", set()).add(resolved_requirement_id)
+        write_result = loop_result.get("write_result")
+        if write_result is not None:
+            context["last_write_result"] = write_result
         yield {
             "event": "stage",
             "data": recorder.build_stage_event_data(
@@ -496,8 +510,8 @@ class SessionControllerTools:
         return {
             "status": "success",
             "reply": loop_result.get("tool_loop_reply", ""),
-            "resolved_requirement_id": loop_result.get("resolved_requirement_id"),
-            "write_result": loop_result.get("write_result"),
+            "resolved_requirement_id": resolved_requirement_id,
+            "write_result": write_result,
         }
 
     def _execute_invoke_conflict_detection(

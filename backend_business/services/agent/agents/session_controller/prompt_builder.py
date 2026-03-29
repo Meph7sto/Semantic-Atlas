@@ -8,7 +8,7 @@ from typing import Any
 
 class SessionControllerPromptBuilder:
     def build_system_prompt(self, *, context: dict[str, Any]) -> str:
-        return (
+        base_prompt = (
             "你是会话总控 Agent（Session Controller）。你是用户与需求工程平台唯一的交互入口。\n"
             "\n"
             "职责严格限于三项：\n"
@@ -23,11 +23,21 @@ class SessionControllerPromptBuilder:
             "不清楚用户意图时，用最少问题澄清，不要猜测。\n"
             "当工具足够回答用户时，直接给出简洁中文结论，不要输出 JSON。"
         )
+        scratchpad_text = context.get("_scratchpad_prompt_text") or ""
+        if scratchpad_text:
+            base_prompt += (
+                "\n\n以下是跨轮会话记事本。它记录了之前已经确认过的对象、执行结果和后续线索。"
+                "当用户使用“它”“这个”“刚才那个”这类指代，且记事本中存在唯一明确的当前焦点时，"
+                "优先沿用该焦点；如果记事本不能唯一定位，再发起最小必要澄清。\n\n"
+                f"{scratchpad_text}"
+            )
+        return base_prompt
 
     def build_user_message(self, *, user_message: str, context: dict[str, Any]) -> str:
         payload = {
             "project_id": context.get("project_id"),
             "user_message": user_message,
+            "resolved_requirement_id": context.get("resolved_requirement_id"),
         }
         return json.dumps(payload, ensure_ascii=False)
 

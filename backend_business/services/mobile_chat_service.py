@@ -16,6 +16,8 @@ from backend_business.services.db_service import db_service
 
 
 class MobileChatService:
+    _DUPLICATE_WINDOW_SECONDS = 3
+
     def __init__(self) -> None:
         self._subscribers: List[Tuple[str, str, queue.Queue]] = []
         self._lock = threading.Lock()
@@ -36,6 +38,16 @@ class MobileChatService:
             raise ValueError("session_id is required")
         if not content:
             raise ValueError("content is required")
+
+        duplicate = self._find_duplicate_message(
+            user_id=user_id,
+            session_id=session_id,
+            sender=sender,
+            content=content,
+            metadata=metadata,
+        )
+        if duplicate:
+            return duplicate
 
         message_id = f"mchat_{uuid.uuid4().hex[:12]}"
         created_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -182,6 +194,94 @@ class MobileChatService:
             pass
         finally:
             self.unsubscribe(q)
+
+    def _find_duplicate_message(
+        self,
+        user_id: str,
+        session_id: str,
+        sender: str,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        client_message_id = self._extract_client_message_id(metadata)
+
+        with db_service._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                if client_message_id:
+                    cur.execute(
+                        """
+                        SELECT
+                            message_id, user_id, session_id, sender, content, metadata,
+                            created_at::text AS created_at
+                        FROM mobile_chat_messages
+                        WHERE user_id = %s
+                          AND session_id = %s
+                          AND sender = %s
+                          AND COALESCE(
+                                metadata->>'client_message_id',
+                                metadata->>'clientMessageId',
+                                metadata->>'message_id',
+                                metadata->>'messageId'
+                              ) = %s
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                        """,
+                        (user_id, session_id, sender, client_message_id),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        return self._normalize_row(dict(row))
+
+                if sender != "mobile":
+                    return None
+
+                cur.execute(
+                    """
+                    SELECT
+                        message_id, user_id, session_id, sender, content, metadata,
+                        created_at::text AS created_at
+                    FROM mobile_chat_messages
+                    WHERE user_id = %s
+                      AND session_id = %s
+                      AND sender = %s
+                      AND content = %s
+                      AND created_at >= NOW() - (%s * INTERVAL '1 second')
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (
+                        user_id,
+                        session_id,
+                        sender,
+                        content,
+                        self._DUPLICATE_WINDOW_SECONDS,
+                    ),
+                )
+                row = cur.fetchone()
+                if row:
+                    return self._normalize_row(dict(row))
+        return None
+
+    @staticmethod
+    def _extract_client_message_id(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+        if not isinstance(metadata, dict):
+            return None
+        for key in ("client_message_id", "clientMessageId", "message_id", "messageId"):
+            value = metadata.get(key)
+            if isinstance(value, str):
+                value = value.strip()
+                if value:
+                    return value
+        return None
+
+    @staticmethod
+    def _normalize_row(row: Dict[str, Any]) -> Dict[str, Any]:
+        if row.get("metadata") and isinstance(row["metadata"], str):
+            try:
+                row["metadata"] = json.loads(row["metadata"])
+            except Exception:
+                pass
+        return row
 
 
 mobile_chat_service = MobileChatService() if db_service else None
