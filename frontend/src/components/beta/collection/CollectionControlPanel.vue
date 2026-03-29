@@ -63,87 +63,19 @@
       ></textarea>
     </div>
 
-    <!-- 高级选项折叠 -->
+    <!-- 高级选项入口 -->
     <div class="stats-panel" style="padding: 0;">
       <button
         type="button"
-        class="stat-row"
-        style="width: 100%; cursor: pointer; border: none; background: transparent;"
-        @click="$emit('update:showAdvanced', !showAdvanced)"
+        class="stat-row adv-nav-btn"
+        @click="$emit('openAdvanced')"
       >
         <span style="display: flex; align-items: center; gap: 6px;">
           <Settings class="w-4 h-4" />
           高级选项
         </span>
-        <ChevronDown class="w-4 h-4" :style="{ transform: showAdvanced ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }" />
+        <ChevronRight class="w-4 h-4" />
       </button>
-      <div v-if="showAdvanced" style="padding: 12px; border-top: 1px solid rgba(28, 40, 52, 0.08);">
-        <div class="stat-row">
-          <span>窗口大小</span>
-          <input v-model.number="options.window_size" type="number" min="5" max="10" class="control-input" style="width: 80px; padding: 4px 8px;" />
-        </div>
-        <div class="stat-row">
-          <span>步长</span>
-          <input v-model.number="options.step_size" type="number" min="1" :max="options.window_size - 1" class="control-input" style="width: 80px; padding: 4px 8px;" />
-        </div>
-        <div class="stat-row">
-          <span>置信度阈值</span>
-          <input v-model.number="options.tau" type="number" min="0" max="1" step="0.05" class="control-input" style="width: 80px; padding: 4px 8px;" />
-        </div>
-        <div class="stat-row">
-          <span style="display: flex; align-items: center; gap: 6px;">
-            并行处理
-            <span style="font-size: 11px; color: rgba(28, 40, 52, 0.5);">(Phase 2 & 3)</span>
-          </span>
-          <label class="toggle-switch">
-            <input v-model="options.enable_parallel_windows" type="checkbox" />
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
-        <div v-if="options.enable_parallel_windows" class="stat-row">
-          <span style="padding-left: 12px; font-size: 12px;">最大并发数</span>
-          <input v-model.number="options.max_concurrent_windows" type="number" min="1" max="10" class="control-input" style="width: 80px; padding: 4px 8px;" />
-        </div>
-        <div class="stat-row">
-          <span style="display: flex; align-items: center; gap: 6px;">
-            串行记忆
-            <div class="tooltip-container">
-              <AlertCircle class="w-3 h-3 text-muted" />
-              <span class="tooltip-text">仅在关闭并行处理时生效。开启后大模型可以看到已生成的需求，避免重复。</span>
-            </div>
-          </span>
-          <label class="toggle-switch">
-            <input v-model="options.history_aware" type="checkbox" :disabled="options.enable_parallel_windows" />
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
-        <div class="stat-row">
-          <span>Mock 模式</span>
-          <input v-model="options.mock_llm" type="checkbox" style="width: 16px; height: 16px;" />
-        </div>
-        <div class="stat-row" style="border-top: 1px dashed rgba(28, 40, 52, 0.12); margin-top: 10px; padding-top: 10px;">
-          <span style="display: flex; align-items: center; gap: 6px;">
-            抽取后去重
-            <span style="font-size: 11px; color: rgba(28, 40, 52, 0.5);">(Phase 3)</span>
-          </span>
-          <label class="toggle-switch">
-            <input v-model="options.post_dedup" type="checkbox" />
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
-        <div v-if="options.post_dedup" class="stat-row">
-          <span style="padding-left: 12px; font-size: 12px;">相似度阈值</span>
-          <input v-model.number="options.dedup_threshold" type="number" min="0.5" max="0.99" step="0.01" class="control-input" style="width: 80px; padding: 4px 8px;" />
-        </div>
-        <div v-if="options.post_dedup" class="stat-row">
-          <span style="padding-left: 12px; font-size: 12px;">LLM 建议</span>
-          <input v-model="options.dedup_with_llm" type="checkbox" style="width: 16px; height: 16px;" />
-        </div>
-        <div v-if="options.post_dedup" class="stat-row">
-          <span style="padding-left: 12px; font-size: 12px;">自动合并（写库）</span>
-          <input v-model="options.dedup_auto_merge" type="checkbox" style="width: 16px; height: 16px;" />
-        </div>
-      </div>
     </div>
 
     <!-- 开始采集按钮 -->
@@ -188,7 +120,7 @@
 
 <script setup>
 import {
-  Loader2, Sparkles, FileDown, Settings, ChevronDown,
+  Loader2, Sparkles, FileDown, Settings, ChevronRight,
   AlertCircle, CheckCircle2, RefreshCw
 } from 'lucide-vue-next'
 
@@ -201,7 +133,7 @@ defineProps({
   sessionId: { type: String, required: true },
   transcriptText: { type: String, required: true },
   isSampleLoading: { type: Boolean, required: true },
-  showAdvanced: { type: Boolean, required: true },
+
   options: { type: Object, required: true },
   canStart: { type: Boolean, required: true },
   pipelineState: { type: Object, required: true },
@@ -211,7 +143,7 @@ defineEmits([
   'update:selectedProjectId',
   'update:sessionId',
   'update:transcriptText',
-  'update:showAdvanced',
+  'openAdvanced',
   'loadProjects',
   'loadSample',
   'run',
@@ -462,6 +394,19 @@ defineEmits([
 .toggle-switch input:checked + .toggle-slider { background-color: var(--accent); }
 .toggle-switch input:checked + .toggle-slider:before { transform: translateX(20px); }
 .toggle-switch input:focus + .toggle-slider { box-shadow: 0 0 0 3px rgba(196, 105, 47, 0.1); }
+
+/* Advanced nav button */
+.adv-nav-btn {
+  width: 100%;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  transition: background 0.2s ease;
+}
+
+.adv-nav-btn:hover {
+  background: rgba(196, 105, 47, 0.06);
+}
 
 /* Icon size utilities */
 .w-3 { width: 12px !important; height: 12px !important; }

@@ -24,6 +24,7 @@ const ROUTE_NAME_TO_PAGE_KEY = Object.freeze({
   'beta-requirements-session': 'requirements-session',
   'beta-requirements-analysis': 'requirements-analysis',
   'beta-requirements-collection': 'requirements-collection',
+  'beta-collection-advanced': 'requirements-collection',
   'beta-multimodal-ingestion': 'multimodal-ingestion',
   'beta-defects': 'defects',
   'beta-user-manage': 'user-management',

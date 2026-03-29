@@ -31,7 +31,6 @@
               v-model:selectedProjectId="selectedProjectId"
               v-model:sessionId="sessionId"
               v-model:transcriptText="transcriptText"
-              v-model:showAdvanced="showAdvanced"
               :projects="projects"
               :isLoadingProjects="isLoadingProjects"
               :selectedProject="selectedProject"
@@ -45,6 +44,7 @@
               @run="runPipeline(selectedProjectId)"
               @retry="retryFromCurrentPhase"
               @goToRequirements="goToRequirements"
+              @openAdvanced="openAdvanced"
             />
             <CollectionProgressPanel
               :pipelineState="pipelineState"
@@ -62,6 +62,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import Sidebar from '../../components/beta/Sidebar.vue'
 import CollectionControlPanel from '../../components/beta/collection/CollectionControlPanel.vue'
 import CollectionProgressPanel from '../../components/beta/collection/CollectionProgressPanel.vue'
@@ -69,6 +70,7 @@ import { useCollectionProjects } from '../../composables/useCollectionProjects'
 import { useCollectionPipeline } from '../../composables/useCollectionPipeline'
 import { useBetaNavigation, useBetaSidebarProps } from '@/composables/useBetaNavigation'
 
+const router = useRouter()
 const { activePage, handleNavigate, handleExit } = useBetaNavigation('requirements-collection')
 const { roleType, roleLabel, timestamp, notificationCount } = useBetaSidebarProps()
 
@@ -87,7 +89,6 @@ const {
   sessionId,
   transcriptText,
   isSampleLoading,
-  showAdvanced,
   options,
   pipelineState,
   phases,
@@ -104,6 +105,10 @@ const canStart = computed(() =>
   && !!selectedProjectId.value
   && !selectedProjectHasSession.value
 )
+
+function openAdvanced() {
+  router.push({ name: 'beta-collection-advanced' })
+}
 </script>
 
 <style scoped>
