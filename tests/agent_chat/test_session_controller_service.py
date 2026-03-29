@@ -17,6 +17,9 @@ if ROOT_DIR not in sys.path:
 from backend_business.services.agent.agents.session_controller import (  # noqa: E402
     SessionControllerService,
 )
+from backend_business.services.agent.agents.session_controller.tools import (  # noqa: E402
+    SessionControllerTools,
+)
 
 
 class _FakeExecutionGraphService:
@@ -447,3 +450,181 @@ def test_stream_session_controller_reply_inherits_scratchpad_into_next_turn_prom
     assert "actor视觉测试" in system_prompt
     current_graph = graph_service.get_execution_graph("graph-2")
     assert current_graph["meta_json"]["resolved_requirement_id"] == "REQ-9"
+
+
+def test_stream_session_controller_reply_stops_after_delegated_agent_returns(monkeypatch):
+    class _FakeRequirementsService:
+        pass
+
+    class _FakeRequirementAgentService:
+        def run_inline_tool_loop(self, **kwargs):
+            return {
+                "status": "success",
+                "tool_loop_reply": "已读取需求详情",
+                "resolved_requirement_id": "REQ-9",
+                "write_result": None,
+                "approval_pending": False,
+                "approval_result": None,
+            }
+
+        def stream_inline_tool_loop(self, **kwargs):
+            yield {
+                "event": "stage",
+                "data": {
+                    "graph_id": "graph-1",
+                    "node_key": "turn_1__req_agent_1_tool_loop_round_1",
+                    "status": "succeeded",
+                },
+            }
+            return self.run_inline_tool_loop(**kwargs)
+
+    class _FakeConflictAgentService:
+        def run_inline_tool_loop(self, **kwargs):
+            return {"status": "success", "tool_loop_reply": "冲突检测完成"}
+
+        def stream_inline_tool_loop(self, **kwargs):
+            return self.run_inline_tool_loop(**kwargs)
+
+    chat_storage = _FakeChatStorage()
+    graph_service = _FakeExecutionGraphService()
+    ai_proxy = _FakeAiProxy(
+        tool_responses=[
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "tc-1",
+                        "type": "function",
+                        "function": {
+                            "name": "invoke_requirement_agent",
+                            "arguments": "{\"task_description\":\"给我一个需求的完整信息\"}",
+                        },
+                    }
+                ],
+                "finish_reason": "tool_calls",
+            },
+        ],
+        summary_responses=[
+            {"content": "当前焦点是 REQ-9。"},
+        ],
+    )
+    tools = SessionControllerTools(
+        requirements_service=_FakeRequirementsService(),
+        requirement_agent_service=_FakeRequirementAgentService(),
+        conflict_agent_service=_FakeConflictAgentService(),
+    )
+    service = SessionControllerService(
+        chat_storage=chat_storage,
+        execution_graph_service=graph_service,
+        tools=tools,
+        ai_proxy_client=ai_proxy,
+    )
+    monkeypatch.setattr(
+        service,
+        "_stream_llm_reply",
+        lambda **kwargs: _token_stream("这是一个需求的完整信息摘要"),
+    )
+
+    events = list(
+        service.stream_session_controller_reply(
+            session_id="sess-1",
+            user_id="u-1",
+            project_id="p-1",
+            user_message="随便给我一个需求的完整信息",
+        )
+    )
+
+    assert events[-1]["event"] == "result"
+    assert len(ai_proxy.tool_calls) == 1
+    assert events[-1]["data"]["reply_text"] == "这是一个需求的完整信息摘要"
+
+
+def test_stream_session_controller_reply_suspends_on_delegated_clarification(monkeypatch):
+    class _FakeRequirementsService:
+        pass
+
+    class _FakeRequirementAgentService:
+        def run_inline_tool_loop(self, **kwargs):
+            return {
+                "status": "success",
+                "tool_loop_reply": "我发现两条标题完全相同的需求，请确认要修改哪一条。",
+                "resolved_requirement_id": None,
+                "write_result": None,
+                "mode": "clarification",
+                "clarification_required": True,
+                "approval_pending": False,
+                "approval_result": None,
+            }
+
+        def stream_inline_tool_loop(self, **kwargs):
+            yield {
+                "event": "stage",
+                "data": {
+                    "graph_id": "graph-1",
+                    "node_key": "turn_1__req_agent_1_tool_loop_round_1",
+                    "status": "succeeded",
+                },
+            }
+            return self.run_inline_tool_loop(**kwargs)
+
+    class _FakeConflictAgentService:
+        def run_inline_tool_loop(self, **kwargs):
+            return {"status": "success", "tool_loop_reply": "冲突检测完成"}
+
+        def stream_inline_tool_loop(self, **kwargs):
+            return self.run_inline_tool_loop(**kwargs)
+
+    chat_storage = _FakeChatStorage()
+    graph_service = _FakeExecutionGraphService()
+    ai_proxy = _FakeAiProxy(
+        tool_responses=[
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "tc-1",
+                        "type": "function",
+                        "function": {
+                            "name": "invoke_requirement_agent",
+                            "arguments": "{\"task_description\":\"把这条需求优先级改成高\"}",
+                        },
+                    }
+                ],
+                "finish_reason": "tool_calls",
+            },
+        ],
+        summary_responses=[
+            {"content": "当前待用户确认具体要修改的需求。"},
+        ],
+    )
+    tools = SessionControllerTools(
+        requirements_service=_FakeRequirementsService(),
+        requirement_agent_service=_FakeRequirementAgentService(),
+        conflict_agent_service=_FakeConflictAgentService(),
+    )
+    service = SessionControllerService(
+        chat_storage=chat_storage,
+        execution_graph_service=graph_service,
+        tools=tools,
+        ai_proxy_client=ai_proxy,
+    )
+
+    def _should_not_be_called(**kwargs):
+        raise AssertionError("clarification branch should return delegated reply directly")
+
+    monkeypatch.setattr(service, "_stream_llm_reply", _should_not_be_called)
+
+    events = list(
+        service.stream_session_controller_reply(
+            session_id="sess-1",
+            user_id="u-1",
+            project_id="p-1",
+            user_message="把这条需求优先级改成高",
+        )
+    )
+
+    assert events[-1]["event"] == "result"
+    assert events[-1]["data"]["reply_text"] == "我发现两条标题完全相同的需求，请确认要修改哪一条。"
+    graph = graph_service.get_execution_graph("graph-1")
+    assert graph["status"] == "suspended"
+    assert graph["meta_json"]["awaiting_user_input"] is True

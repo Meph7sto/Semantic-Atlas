@@ -85,6 +85,47 @@ class _FakeRequirementsService:
         return self.requirements.get(requirement_id)
 
 
+class _FakeApprovalService:
+    def __init__(self):
+        self.calls = []
+
+    def create_approval_request(
+        self,
+        *,
+        project_id,
+        requirement_id,
+        requested_by,
+        updates,
+        session_id,
+        graph_id,
+        source_agent,
+    ):
+        self.calls.append(
+            {
+                "project_id": project_id,
+                "requirement_id": requirement_id,
+                "requested_by": requested_by,
+                "updates": updates,
+                "session_id": session_id,
+                "graph_id": graph_id,
+                "source_agent": source_agent,
+            }
+        )
+        return {
+            "approval_request_id": "apr-1",
+            "push_message_id": "msg-1",
+            "summary_text": "优先级 high -> high",
+        }
+
+
+class _FailingApprovalService:
+    def __init__(self, message):
+        self.message = message
+
+    def create_approval_request(self, **kwargs):
+        raise RuntimeError(self.message)
+
+
 def test_get_tools_list_contains_expected_schemas():
     tools = RequirementAgentTools.get_tools_list()
     tool_names = [tool["function"]["name"] for tool in tools]
@@ -119,6 +160,7 @@ def test_execute_list_requirements_returns_window_summary():
         requirements_service=service,
         actor_query_fn=lambda _actor_manager, _requirement_id: {},
         actor_write_fn=lambda _actor_manager, _requirement_id, _command: {},
+        approval_service=_FakeApprovalService(),
     )
     context = {"project_id": "p-1", "resolved_requirement_ids": set()}
 
@@ -136,6 +178,7 @@ def test_execute_search_requirements_validates_keyword_and_returns_total():
         requirements_service=service,
         actor_query_fn=lambda _actor_manager, _requirement_id: {},
         actor_write_fn=lambda _actor_manager, _requirement_id, _command: {},
+        approval_service=_FakeApprovalService(),
     )
     context = {"project_id": "p-1", "resolved_requirement_ids": set()}
 
@@ -171,6 +214,7 @@ def test_execute_get_requirement_state_reads_actor():
             },
         },
         actor_write_fn=lambda _actor_manager, _requirement_id, _command: {},
+        approval_service=_FakeApprovalService(),
     )
     context = {"project_id": "p-1", "resolved_requirement_ids": set(), "actor_manager": object()}
 
@@ -181,9 +225,9 @@ def test_execute_get_requirement_state_reads_actor():
     assert context["resolved_requirement_id"] == "r-1"
 
 
-def test_execute_update_requirement_content_writes_actor_and_returns_summary():
+def test_execute_update_requirement_content_creates_approval_and_returns_summary():
     service = _FakeRequirementsService()
-    write_commands = []
+    approval_service = _FakeApprovalService()
 
     tools = RequirementAgentTools(
         requirements_service=service,
@@ -201,10 +245,11 @@ def test_execute_update_requirement_content_writes_actor_and_returns_summary():
                 },
             },
         },
-        actor_write_fn=lambda _actor_manager, _requirement_id, command: write_commands.append(command) or {
+        actor_write_fn=lambda _actor_manager, _requirement_id, _command: {
             "status": "success",
             "event_id": "evt-1",
         },
+        approval_service=approval_service,
     )
     context = {
         "project_id": "p-1",
@@ -222,8 +267,69 @@ def test_execute_update_requirement_content_writes_actor_and_returns_summary():
         context,
     )
 
-    assert result["write_status"] == "success"
-    assert result["event_id"] == "evt-1"
+    assert result["write_status"] == "approval_pending"
+    assert result["approval_request_id"] == "apr-1"
+    assert result["push_message_id"] == "msg-1"
     assert result["version"] == 6
-    assert write_commands[0]["updates"] == {"title": "新标题", "priority": "high"}
-    assert context["write_performed"] is True
+    assert approval_service.calls[0]["updates"] == {"title": "新标题", "priority": "high"}
+    assert context["approval_pending"] is True
+
+
+def test_execute_update_requirement_content_surfaces_actionable_approval_error():
+    service = _FakeRequirementsService()
+    tools = RequirementAgentTools(
+        requirements_service=service,
+        actor_query_fn=lambda _actor_manager, _requirement_id: {"status": "success", "state": {}},
+        actor_write_fn=lambda _actor_manager, _requirement_id, _command: {},
+        approval_service=_FailingApprovalService(
+            "审批记录写入失败，请检查数据库连接以及 requirement_change_approvals 表是否已初始化。"
+        ),
+    )
+    context = {
+        "project_id": "p-1",
+        "user_id": "u-1",
+        "session_id": "sess-1",
+        "graph_id": "graph-1",
+        "actor_manager": object(),
+        "selected_requirement_id": "r-1",
+        "resolved_requirement_ids": {"r-1"},
+    }
+
+    with pytest.raises(ValueError, match="requirement_change_approvals 表是否已初始化"):
+        tools.execute(
+            "update_requirement_content",
+            {"requirement_id": "r-1", "updates": {"priority": "low"}},
+            context,
+        )
+
+
+def test_execute_update_requirement_content_keeps_approval_pending_when_state_refresh_fails():
+    service = _FakeRequirementsService()
+    approval_service = _FakeApprovalService()
+    tools = RequirementAgentTools(
+        requirements_service=service,
+        actor_query_fn=lambda _actor_manager, _requirement_id: {"status": "error"},
+        actor_write_fn=lambda _actor_manager, _requirement_id, _command: {},
+        approval_service=approval_service,
+    )
+    context = {
+        "project_id": "p-1",
+        "user_id": "u-1",
+        "session_id": "sess-1",
+        "graph_id": "graph-1",
+        "actor_manager": object(),
+        "selected_requirement_id": "r-1",
+        "resolved_requirement_ids": {"r-1"},
+    }
+
+    result = tools.execute(
+        "update_requirement_content",
+        {"requirement_id": "r-1", "updates": {"priority": "low"}},
+        context,
+    )
+
+    assert result["write_status"] == "approval_pending"
+    assert result["requirement_id"] == "r-1"
+    assert result["title"] == "登录性能"
+    assert result["priority"] is None
+    assert context["approval_pending"] is True

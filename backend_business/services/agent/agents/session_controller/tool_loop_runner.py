@@ -9,7 +9,7 @@ from backend_business.services.agent.execution.tool_loop_runner import ToolLoopR
 from backend_business.services.agent.execution_graph_service import ExecutionGraphService
 from backend_business.services.agent.runtime.scratchpad import Scratchpad
 
-from .prompt_builder import SessionControllerPromptBuilder
+from .prompt_builder import SessionControllerPromptBuilder, infer_routing_hint
 from .runtime_graph_recorder import SessionControllerGraphRecorder
 from .tools import SessionControllerTools
 
@@ -23,12 +23,14 @@ class SessionControllerToolLoopRunner:
         execution_graph_service: ExecutionGraphService,
         prompt_builder: SessionControllerPromptBuilder,
         max_tool_call_rounds: int,
+        delegated_max_tool_call_rounds: int = 15,
     ) -> None:
         self._ai_proxy_client = ai_proxy_client
         self._tools = tools
         self._execution_graph_service = execution_graph_service
         self._prompt_builder = prompt_builder
         self._max_tool_call_rounds = max_tool_call_rounds
+        self._delegated_max_tool_call_rounds = delegated_max_tool_call_rounds
 
     def run(
         self,
@@ -53,6 +55,11 @@ class SessionControllerToolLoopRunner:
             "historical_node_context": recorder.historical_node_context,
             "tool_results": [],
             "dispatched_agents": [],
+            "approval_pending": False,
+            "routing_hint": infer_routing_hint(user_message),
+            "delegated_prompt_payload_format": "markdown",
+            "delegated_context_mode": "full",
+            "delegated_max_tool_call_rounds": self._delegated_max_tool_call_rounds,
             "_scratchpad": scratchpad,
             "_scratchpad_prompt_text": scratchpad.format_for_prompt(),
             "_graph_recorder": recorder,

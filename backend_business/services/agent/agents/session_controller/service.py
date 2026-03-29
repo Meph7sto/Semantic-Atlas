@@ -484,6 +484,7 @@ class SessionControllerService:
         user_message: str,
         project_id: str,
         session_id: str,
+        delegated_max_tool_call_rounds: int,
     ) -> Generator[dict[str, Any], None, dict[str, Any]]:
         runner = SessionControllerToolLoopRunner(
             ai_proxy_client=self.ai_proxy,
@@ -491,6 +492,7 @@ class SessionControllerService:
             execution_graph_service=self.execution_graph_service,
             prompt_builder=self.prompt_builder,
             max_tool_call_rounds=self.MAX_TOOL_CALL_ROUNDS,
+            delegated_max_tool_call_rounds=delegated_max_tool_call_rounds,
         )
         return runner.run(
             recorder=recorder,
@@ -508,21 +510,24 @@ class SessionControllerService:
         project_id: str,
         user_message: str,
         use_thinking_mode: bool = True,
+        delegated_max_tool_call_rounds: int = 15,
+        skip_user_message_creation: bool = False,
     ) -> Generator[dict[str, Any], None, None]:
         if not self.chat_storage:
             raise RuntimeError("AI chat storage not initialized")
 
         session = self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
-        user_record = self.chat_storage.create_message(
-            session_id=session_id,
-            user_id=user_id,
-            role="user",
-            content=user_message,
-            metadata={},
-            is_read=True,
-        )
-        self.chat_storage.update_session(session_id=session_id)
-        yield {"event": "user_message", "data": user_record}
+        if not skip_user_message_creation:
+            user_record = self.chat_storage.create_message(
+                session_id=session_id,
+                user_id=user_id,
+                role="user",
+                content=user_message,
+                metadata={},
+                is_read=True,
+            )
+            self.chat_storage.update_session(session_id=session_id)
+            yield {"event": "user_message", "data": user_record}
 
         graph_target = self._resolve_session_graph_target(session=session, project_id=project_id)
         recorder = SessionControllerGraphRecorder(
@@ -593,6 +598,7 @@ class SessionControllerService:
                 user_message=user_message,
                 project_id=project_id,
                 session_id=session_id,
+                delegated_max_tool_call_rounds=delegated_max_tool_call_rounds,
             )
             while True:
                 try:
@@ -605,6 +611,7 @@ class SessionControllerService:
                 yield event
 
             dispatched_agents = context.get("dispatched_agents") or []
+            approval_result = context.get("last_approval_result")
 
             # Stage 3: Conductor reply (streaming final answer)
             recorder.start_stage(
@@ -628,33 +635,45 @@ class SessionControllerService:
                 ),
             }
 
-            final_system_prompt = (
-                "你是面向需求工程用户的中文助手。"
-                "根据工具的执行结论，用自然、简洁的中文回复用户。"
-                "直接给出结论，不要重复 JSON 内容，不要输出 JSON。"
-                "如需澄清，只问最小必要问题。"
-            )
-            final_prompt = (
-                f"用户原始请求：{user_message}\n\n"
-                f"工具执行结论：\n{tool_loop_reply}\n\n"
-                "请给出最终的中文总结回复。"
-            )
+            if context.get("approval_pending"):
+                assistant_content = (
+                    "需求管理 Agent 已把变更通知发到你的移动端待审界面。"
+                    "请先去手机端查看并同意该变更通知；在你同意之前，系统不会修改需求。"
+                )
+            elif context.get("clarification_required"):
+                assistant_content = (
+                    str(context.get("last_clarification_reply") or "").strip()
+                    or tool_loop_reply
+                    or "请补充最小必要信息后我再继续。"
+                )
+            else:
+                final_system_prompt = (
+                    "你是面向需求工程用户的中文助手。"
+                    "根据工具的执行结论，用自然、简洁的中文回复用户。"
+                    "直接给出结论，不要重复 JSON 内容，不要输出 JSON。"
+                    "如需澄清，只问最小必要问题。"
+                )
+                final_prompt = (
+                    f"用户原始请求：{user_message}\n\n"
+                    f"工具执行结论：\n{tool_loop_reply}\n\n"
+                    "请给出最终的中文总结回复。"
+                )
 
-            stream = self._stream_llm_reply(
-                prompt=final_prompt,
-                system_prompt=final_system_prompt,
-                use_thinking_mode=use_thinking_mode,
-            )
-            while True:
-                try:
-                    event = next(stream)
-                except StopIteration as stop:
-                    assistant_content = (stop.value or "").strip()
-                    break
-                yield event
+                stream = self._stream_llm_reply(
+                    prompt=final_prompt,
+                    system_prompt=final_system_prompt,
+                    use_thinking_mode=use_thinking_mode,
+                )
+                while True:
+                    try:
+                        event = next(stream)
+                    except StopIteration as stop:
+                        assistant_content = (stop.value or "").strip()
+                        break
+                    yield event
 
-            if not assistant_content:
-                assistant_content = tool_loop_reply or "已完成处理。"
+                if not assistant_content:
+                    assistant_content = tool_loop_reply or "已完成处理。"
 
             self._persist_turn_summary_to_scratchpad(
                 graph_id=recorder.graph_id,
@@ -671,6 +690,7 @@ class SessionControllerService:
                 output_summary={
                     "reply": assistant_content,
                     "dispatched_agents": dispatched_agents,
+                    "approval_result": approval_result,
                 },
             )
             yield {
@@ -687,11 +707,33 @@ class SessionControllerService:
                 "turn_count": recorder.turn_index,
                 "active_turn_index": recorder.turn_index,
             }
-            recorder.succeed_graph(
-                created_by=user_id,
-                final_reply=assistant_content,
-                meta_patch=meta_patch,
-            )
+            if approval_result:
+                meta_patch.update(
+                    {
+                        "approval_request_id": approval_result.get("approval_request_id"),
+                        "approval_push_message_id": approval_result.get("push_message_id"),
+                        "approval_status": "pending",
+                    }
+                )
+            if context.get("clarification_required"):
+                meta_patch["awaiting_user_input"] = True
+                recorder.suspend_graph(
+                    created_by=user_id,
+                    final_reply=assistant_content,
+                    meta_patch=meta_patch,
+                )
+            elif context.get("approval_pending"):
+                recorder.suspend_graph(
+                    created_by=user_id,
+                    final_reply=assistant_content,
+                    meta_patch=meta_patch,
+                )
+            else:
+                recorder.succeed_graph(
+                    created_by=user_id,
+                    final_reply=assistant_content,
+                    meta_patch=meta_patch,
+                )
 
             assistant_message = self.chat_storage.create_message(
                 session_id=session_id,
@@ -701,6 +743,7 @@ class SessionControllerService:
                 metadata={
                     "graph_id": recorder.graph_id,
                     "dispatched_agents": dispatched_agents,
+                    "approval_result": approval_result,
                 },
                 is_read=False,
             )
@@ -711,6 +754,7 @@ class SessionControllerService:
                     "graph_id": recorder.graph_id,
                     "reply_text": assistant_message["content"],
                     "dispatched_agents": dispatched_agents,
+                    "approval_result": approval_result,
                 },
             }
         except Exception as exc:

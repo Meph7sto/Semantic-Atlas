@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Callable
 
 from backend_business.services.requirements_manage_service import (
     RequirementsManageService,
     normalize_priority,
+)
+from backend_business.services.requirement_change_approval_service import (
+    RequirementChangeApprovalService,
 )
 
 
@@ -19,6 +23,7 @@ _ALLOWED_UPDATE_FIELDS = {
     "priority",
     "notes",
 }
+logger = logging.getLogger(__name__)
 
 
 def _normalize_requirement_id(requirement_id: Any) -> str:
@@ -101,6 +106,24 @@ def _summarize_actor_state(state: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _summarize_requirement_record(item: dict[str, Any] | None) -> dict[str, Any]:
+    item = item or {}
+    return {
+        "requirement_id": item.get("req_id"),
+        "version": item.get("version"),
+        "status": item.get("status"),
+        "priority": item.get("priority"),
+        "title": item.get("title"),
+        "description": item.get("description"),
+        "acceptance_criteria": item.get("acceptance_criteria"),
+    }
+
+
+def _format_approval_creation_error(exc: Exception) -> str:
+    message = str(exc).strip() or "未知错误"
+    return f"无法发起需求修改审批：{message}"
+
+
 class RequirementAgentTools:
     """Requirement tool definitions and execution against existing backend services."""
 
@@ -110,10 +133,12 @@ class RequirementAgentTools:
         requirements_service: RequirementsManageService,
         actor_query_fn: Callable[[Any, str], dict[str, Any]],
         actor_write_fn: Callable[[Any, str, dict[str, Any]], dict[str, Any]],
+        approval_service: RequirementChangeApprovalService,
     ) -> None:
         self.requirements_service = requirements_service
         self._actor_query_fn = actor_query_fn
         self._actor_write_fn = actor_write_fn
+        self._approval_service = approval_service
 
     @staticmethod
     def get_tools_list() -> list[dict[str, Any]]:
@@ -380,7 +405,7 @@ class RequirementAgentTools:
     ) -> dict[str, Any]:
         requirement_id = _normalize_requirement_id(arguments.get("requirement_id"))
         normalized_updates = _normalize_updates(arguments.get("updates"))
-        self._resolve_project_requirement(
+        requirement = self._resolve_project_requirement(
             project_id=context["project_id"],
             requirement_id=requirement_id,
         )
@@ -390,34 +415,41 @@ class RequirementAgentTools:
         )
 
         actor_manager = context.get("actor_manager")
-        command = {
-            "type": "UpdateRequirementContent",
-            "updates": normalized_updates,
-            "metadata": {
-                "graph_id": context.get("graph_id"),
-                "session_id": context.get("session_id"),
-                "source": "requirement_agent_chat_tool",
-            },
-            "source": context.get("user_id") or "requirement_agent_chat",
-        }
-        write_result = self._actor_write_fn(actor_manager, requirement_id, command)
-        if write_result.get("status") != "success":
-            raise ValueError("更新需求失败")
+        _ = actor_manager  # kept for call signature compatibility
+        try:
+            approval_result = self._approval_service.create_approval_request(
+                project_id=context["project_id"],
+                requirement_id=requirement_id,
+                requested_by=context.get("user_id") or "requirement_agent_chat",
+                updates=normalized_updates,
+                session_id=context.get("session_id"),
+                graph_id=context.get("graph_id"),
+                source_agent="requirement_agent",
+            )
+        except Exception as exc:
+            raise ValueError(_format_approval_creation_error(exc)) from exc
 
-        state_result = self._actor_query_fn(actor_manager, requirement_id)
-        if state_result.get("status") != "success":
-            raise ValueError("更新后读取需求状态失败")
-
-        summary = _summarize_actor_state(state_result.get("state") or {})
+        state_result = self._actor_query_fn(context.get("actor_manager"), requirement_id)
+        if state_result.get("status") == "success":
+            summary = _summarize_actor_state(state_result.get("state") or {})
+        else:
+            logger.warning(
+                "创建审批成功，但回读需求状态失败 requirement_id=%s graph_id=%s",
+                requirement_id,
+                context.get("graph_id"),
+            )
+            summary = _summarize_requirement_record(requirement)
         self._record_resolution_from_state(context=context, state_summary=summary)
         result = {
             **summary,
-            "write_status": write_result.get("status"),
-            "event_id": write_result.get("event_id"),
+            "write_status": "approval_pending",
+            "approval_request_id": approval_result.get("approval_request_id"),
+            "push_message_id": approval_result.get("push_message_id"),
             "applied_updates": normalized_updates,
+            "summary_text": approval_result.get("summary_text"),
         }
-        context["write_performed"] = True
-        context["last_write_result"] = result
+        context["approval_pending"] = True
+        context["last_approval_result"] = result
         return result
 
     @staticmethod

@@ -15,6 +15,9 @@ from backend_business.services.ai_chat_service import AiChatService, ai_chat_ser
 from backend_business.services.ai_proxy import ai_proxy
 from backend_business.services.agent.execution_graph_service import ExecutionGraphService
 from backend_business.services.agent.tools import RequirementAgentTools
+from backend_business.services.requirement_change_approval_service import (
+    RequirementChangeApprovalService,
+)
 from backend_business.services.requirements_manage_service import RequirementsManageService
 
 from .actor_runtime import RequirementAgentActorRuntime
@@ -37,6 +40,7 @@ class RequirementAgentChatService:
         execution_graph_service: ExecutionGraphService | None = None,
         requirements_service: RequirementsManageService | None = None,
         tools: RequirementAgentTools | None = None,
+        approval_service: RequirementChangeApprovalService | None = None,
         ai_proxy_client: Any = None,
         actor_runtime: RequirementAgentActorRuntime | None = None,
         prompt_builder: RequirementAgentPromptBuilder | None = None,
@@ -51,10 +55,17 @@ class RequirementAgentChatService:
         self.ai_proxy = ai_proxy_client or ai_proxy
         self.actor_runtime = actor_runtime or RequirementAgentActorRuntime()
         self.prompt_builder = prompt_builder or RequirementAgentPromptBuilder()
+        self.approval_service = approval_service or RequirementChangeApprovalService(
+            requirements_service=self.requirements_service,
+            chat_storage=self.chat_storage,
+            execution_graph_service=self.execution_graph_service,
+            actor_runtime=self.actor_runtime,
+        )
         self.tools = tools or RequirementAgentTools(
             requirements_service=self.requirements_service,
             actor_query_fn=self._actor_query,
             actor_write_fn=self._actor_write,
+            approval_service=self.approval_service,
         )
 
     def _hydrate_session_graph(self, session: dict[str, Any]) -> dict[str, Any]:
@@ -446,6 +457,7 @@ class RequirementAgentChatService:
         session_id: str,
         prompt_payload_format: str,
         context_mode: str,
+        max_tool_call_rounds: int | None = None,
     ) -> Generator[dict[str, Any], None, dict[str, Any]]:
         runner = RequirementAgentToolLoopRunner(
             ai_proxy_client=self.ai_proxy,
@@ -453,7 +465,7 @@ class RequirementAgentChatService:
             execution_graph_service=self.execution_graph_service,
             actor_manager_getter=self._get_actor_manager,
             prompt_builder=self.prompt_builder,
-            max_tool_call_rounds=self.MAX_TOOL_CALL_ROUNDS,
+            max_tool_call_rounds=max_tool_call_rounds or self.MAX_TOOL_CALL_ROUNDS,
         )
         return runner.run(
             recorder=recorder,
@@ -473,6 +485,10 @@ class RequirementAgentChatService:
         user_id: str,
         user_message: str,
         project_id: str,
+        session_id: str | None = None,
+        prompt_payload_format: str | None = None,
+        context_mode: str | None = None,
+        max_tool_call_rounds: int | None = None,
         requirement_id: str | None = None,
         container_key: str = "requirement_agent",
         node_key_prefix: str = "requirement_agent",
@@ -488,6 +504,10 @@ class RequirementAgentChatService:
             user_id=user_id,
             user_message=user_message,
             project_id=project_id,
+            session_id=session_id,
+            prompt_payload_format=prompt_payload_format,
+            context_mode=context_mode,
+            max_tool_call_rounds=max_tool_call_rounds,
             requirement_id=requirement_id,
             container_key=container_key,
             node_key_prefix=node_key_prefix,
@@ -507,18 +527,29 @@ class RequirementAgentChatService:
         user_id: str,
         user_message: str,
         project_id: str,
+        session_id: str | None = None,
+        prompt_payload_format: str | None = None,
+        context_mode: str | None = None,
+        max_tool_call_rounds: int | None = None,
         requirement_id: str | None = None,
         container_key: str = "requirement_agent",
         node_key_prefix: str = "requirement_agent",
     ) -> Generator[dict[str, Any], None, dict[str, Any]]:
         """Stream inline tool-loop events within an external recorder."""
+        normalized_prompt_payload_format = normalize_prompt_payload_format(
+            prompt_payload_format,
+            default="markdown",
+        )
+        normalized_context_mode = (
+            context_mode if context_mode in ("full", "incremental", "scratchpad") else "full"
+        )
         runner = RequirementAgentToolLoopRunner(
             ai_proxy_client=self.ai_proxy,
             tools=self.tools,
             execution_graph_service=self.execution_graph_service,
             actor_manager_getter=self._get_actor_manager,
             prompt_builder=self.prompt_builder,
-            max_tool_call_rounds=self.MAX_TOOL_CALL_ROUNDS,
+            max_tool_call_rounds=max_tool_call_rounds or self.MAX_TOOL_CALL_ROUNDS,
             stage_container_key=container_key,
             node_key_prefix=node_key_prefix,
         )
@@ -528,16 +559,22 @@ class RequirementAgentChatService:
             user_message=user_message,
             project_id=project_id,
             requirement_id=requirement_id,
-            session_id="",
-            prompt_payload_format=DEFAULT_PROMPT_PAYLOAD_FORMAT,
-            context_mode="full",
+            session_id=session_id or "",
+            prompt_payload_format=normalized_prompt_payload_format,
+            context_mode=normalized_context_mode,
         )
         context = result.get("context") or {}
+        approval_result = context.get("last_approval_result")
+        mode = self._normalize_mode(context)
         return {
             "status": "success",
             "tool_loop_reply": result.get("tool_loop_reply", ""),
             "resolved_requirement_id": context.get("resolved_requirement_id"),
             "write_result": context.get("last_write_result"),
+            "mode": mode,
+            "clarification_required": mode == "clarification",
+            "approval_pending": bool(context.get("approval_pending")),
+            "approval_result": approval_result,
         }
 
     def stream_requirement_agent_reply(
@@ -653,6 +690,7 @@ class RequirementAgentChatService:
 
             mode = self._normalize_mode(context)
             write_result = context.get("last_write_result")
+            approval_result = context.get("last_approval_result")
 
             recorder.start_stage(
                 node_key=recorder.stage_node_key("conductor_reply"),
@@ -677,27 +715,33 @@ class RequirementAgentChatService:
                 },
             }
 
-            final_system_prompt, final_prompt = self._build_final_reply_prompt(
-                user_message=user_message,
-                tool_loop_reply=tool_loop_reply,
-                mode=mode,
-                context=context,
-                prompt_payload_format=prompt_payload_format,
-            )
-            stream = self._stream_llm_reply(
-                prompt=final_prompt,
-                system_prompt=final_system_prompt,
-            )
-            while True:
-                try:
-                    event = next(stream)
-                except StopIteration as stop:
-                    assistant_content = (stop.value or "").strip()
-                    break
-                yield event
+            if context.get("approval_pending"):
+                assistant_content = (
+                    "我已把这次需求修改申请发送到移动端待审界面的变更通知。"
+                    "在你同意之前，需求不会被修改；同意后会立即生效。"
+                )
+            else:
+                final_system_prompt, final_prompt = self._build_final_reply_prompt(
+                    user_message=user_message,
+                    tool_loop_reply=tool_loop_reply,
+                    mode=mode,
+                    context=context,
+                    prompt_payload_format=prompt_payload_format,
+                )
+                stream = self._stream_llm_reply(
+                    prompt=final_prompt,
+                    system_prompt=final_system_prompt,
+                )
+                while True:
+                    try:
+                        event = next(stream)
+                    except StopIteration as stop:
+                        assistant_content = (stop.value or "").strip()
+                        break
+                    yield event
 
-            if not assistant_content:
-                assistant_content = tool_loop_reply or "已处理。"
+                if not assistant_content:
+                    assistant_content = tool_loop_reply or "已处理。"
 
             recorder.complete_stage(
                 recorder.stage_node_key("conductor_reply"),
@@ -706,6 +750,7 @@ class RequirementAgentChatService:
                     "reply": assistant_content,
                     "mode": mode,
                     "write_result": write_result,
+                    "approval_result": approval_result,
                 },
             )
             yield {
@@ -723,7 +768,15 @@ class RequirementAgentChatService:
                 "turn_count": recorder.turn_index,
                 "active_turn_index": recorder.turn_index,
             }
-            if mode == "clarification":
+            if approval_result:
+                meta_patch.update(
+                    {
+                        "approval_request_id": approval_result.get("approval_request_id"),
+                        "approval_push_message_id": approval_result.get("push_message_id"),
+                        "approval_status": "pending",
+                    }
+                )
+            if mode in {"clarification", "approval_pending"}:
                 recorder.suspend_graph(
                     created_by=user_id,
                     final_reply=assistant_content,
@@ -747,6 +800,7 @@ class RequirementAgentChatService:
                     "resolved_requirement_id": context.get("resolved_requirement_id"),
                     "write_result": write_result,
                     "mode": mode,
+                    "approval_result": approval_result,
                 },
                 is_read=False,
             )
@@ -759,6 +813,7 @@ class RequirementAgentChatService:
                     "write_result": write_result,
                     "mode": mode,
                     "resolved_requirement_id": context.get("resolved_requirement_id"),
+                    "approval_result": approval_result,
                 },
             }
         except Exception as exc:

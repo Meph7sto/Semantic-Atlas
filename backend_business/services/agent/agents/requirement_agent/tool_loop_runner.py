@@ -121,6 +121,7 @@ class RequirementAgentToolLoopRunner:
             "tool_results": [],
             "write_performed": False,
             "clarification_required": False,
+            "approval_pending": False,
             "_scratchpad_prompt_text": scratchpad_prompt_text,
         }
 
@@ -170,5 +171,4 @@ class RequirementAgentToolLoopRunner:
             "route_key": result.route_key,
             "conclusion": result.conclusion,
         }
-
 

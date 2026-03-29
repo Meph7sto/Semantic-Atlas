@@ -404,6 +404,7 @@ class ConflictDetectionAgentService:
         user_id: str,
         user_message: str,
         project_id: str,
+        max_tool_call_rounds: int | None = None,
         container_key: str = "conflict_detection",
         node_key_prefix: str = "conflict_agent",
     ) -> dict[str, Any]:
@@ -418,6 +419,7 @@ class ConflictDetectionAgentService:
             user_id=user_id,
             user_message=user_message,
             project_id=project_id,
+            max_tool_call_rounds=max_tool_call_rounds,
             container_key=container_key,
             node_key_prefix=node_key_prefix,
         )
@@ -436,6 +438,7 @@ class ConflictDetectionAgentService:
         user_id: str,
         user_message: str,
         project_id: str,
+        max_tool_call_rounds: int | None = None,
         container_key: str = "conflict_detection",
         node_key_prefix: str = "conflict_agent",
     ) -> Generator[dict[str, Any], None, dict[str, Any]]:
@@ -445,7 +448,7 @@ class ConflictDetectionAgentService:
             tools=self.tools,
             execution_graph_service=self.execution_graph_service,
             prompt_builder=self.prompt_builder,
-            max_tool_call_rounds=self.MAX_TOOL_CALL_ROUNDS,
+            max_tool_call_rounds=max_tool_call_rounds or self.MAX_TOOL_CALL_ROUNDS,
             stage_container_key=container_key,
             node_key_prefix=node_key_prefix,
         )

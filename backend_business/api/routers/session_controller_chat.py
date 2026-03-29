@@ -37,6 +37,7 @@ class SessionControllerMessageRequest(BaseModel):
     project_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
     use_thinking_mode: bool = True
+    delegated_max_tool_call_rounds: int = Field(default=15, ge=1, le=50)
 
     @field_validator("project_id", "message")
     @classmethod
@@ -198,6 +199,7 @@ def stream_message(
                 project_id=payload.project_id,
                 user_message=payload.message,
                 use_thinking_mode=payload.use_thinking_mode,
+                delegated_max_tool_call_rounds=payload.delegated_max_tool_call_rounds,
             ):
                 yield _sse_event(event["event"], event.get("data", {}))
         except Exception as exc:
@@ -254,6 +256,7 @@ class MobileMessageRequest(BaseModel):
     project_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
     use_thinking_mode: bool = True
+    delegated_max_tool_call_rounds: int = Field(default=15, ge=1, le=50)
 
     @field_validator("project_id", "message")
     @classmethod
@@ -271,6 +274,7 @@ def _run_agent_in_background(
     project_id: str,
     user_message: str,
     use_thinking_mode: bool,
+    delegated_max_tool_call_rounds: int,
 ) -> None:
     """Fire-and-forget agent processing.  The reply is automatically
     persisted to ``ai_chat_messages`` by the service layer."""
@@ -281,6 +285,8 @@ def _run_agent_in_background(
             project_id=project_id,
             user_message=user_message,
             use_thinking_mode=use_thinking_mode,
+            delegated_max_tool_call_rounds=delegated_max_tool_call_rounds,
+            skip_user_message_creation=True,
         )
         # Drain the generator so every side-effect (message storage, graph
         # creation, etc.) is executed.
@@ -332,6 +338,7 @@ def send_message_async(
             "project_id": payload.project_id,
             "user_message": payload.message,
             "use_thinking_mode": payload.use_thinking_mode,
+            "delegated_max_tool_call_rounds": payload.delegated_max_tool_call_rounds,
         },
         daemon=True,
     )
@@ -361,4 +368,3 @@ def list_projects_for_mobile(
 
     accessible = set(db_service.get_accessible_projects(user_id, user=user))
     return {"projects": [p for p in projects if p.get("project_id") in accessible]}
-

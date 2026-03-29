@@ -56,6 +56,7 @@ class RequirementAgentPromptBuilder:
             "根据给定的工具执行结果和阶段结论，输出自然、简洁、直接的最终回复。"
             "如果需要澄清，就只问最小必要问题。"
             "如果已经成功更新需求，要明确说明修改内容与最新版本。"
+            "如果进入审批等待，要明确说明已发送移动端变更通知，等待用户同意后才会生效。"
             "不要输出 JSON。"
         )
         prompt = serialize_prompt_payload(
@@ -90,6 +91,8 @@ class RequirementAgentPromptBuilder:
 
     @staticmethod
     def normalize_mode(context: dict[str, Any]) -> str:
+        if context.get("approval_pending"):
+            return "approval_pending"
         if context.get("write_performed"):
             return "requirement_update"
         if context.get("clarification_required"):

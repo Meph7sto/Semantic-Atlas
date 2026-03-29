@@ -16,6 +16,9 @@ if ROOT_DIR not in sys.path:
 from backend_business.services.agent.agents.session_controller.tools import (  # noqa: E402
     SessionControllerTools,
 )
+from backend_business.services.agent.agents.session_controller.prompt_builder import (  # noqa: E402
+    infer_routing_hint,
+)
 from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner  # noqa: E402
 
 
@@ -95,6 +98,8 @@ class _FakeRequirementAgentService:
 
     def run_inline_tool_loop(
         self, *, recorder, user_id, user_message, project_id,
+        session_id=None, prompt_payload_format=None, context_mode=None,
+        max_tool_call_rounds=None,
         requirement_id=None, container_key="requirement_agent",
         node_key_prefix="requirement_agent",
     ):
@@ -103,6 +108,10 @@ class _FakeRequirementAgentService:
             "user_id": user_id,
             "user_message": user_message,
             "project_id": project_id,
+            "session_id": session_id,
+            "prompt_payload_format": prompt_payload_format,
+            "context_mode": context_mode,
+            "max_tool_call_rounds": max_tool_call_rounds,
             "requirement_id": requirement_id,
             "container_key": container_key,
             "node_key_prefix": node_key_prefix,
@@ -127,6 +136,8 @@ class _FakeRequirementAgentService:
 
     def stream_inline_tool_loop(
         self, *, recorder, user_id, user_message, project_id,
+        session_id=None, prompt_payload_format=None, context_mode=None,
+        max_tool_call_rounds=None,
         requirement_id=None, container_key="requirement_agent",
         node_key_prefix="requirement_agent",
     ):
@@ -135,6 +146,10 @@ class _FakeRequirementAgentService:
             user_id=user_id,
             user_message=user_message,
             project_id=project_id,
+            session_id=session_id,
+            prompt_payload_format=prompt_payload_format,
+            context_mode=context_mode,
+            max_tool_call_rounds=max_tool_call_rounds,
             requirement_id=requirement_id,
             container_key=container_key,
             node_key_prefix=node_key_prefix,
@@ -158,6 +173,7 @@ class _FakeConflictAgentService:
 
     def run_inline_tool_loop(
         self, *, recorder, user_id, user_message, project_id,
+        max_tool_call_rounds=None,
         container_key="conflict_detection", node_key_prefix="conflict_agent",
     ):
         self.inline_calls.append({
@@ -165,6 +181,7 @@ class _FakeConflictAgentService:
             "user_id": user_id,
             "user_message": user_message,
             "project_id": project_id,
+            "max_tool_call_rounds": max_tool_call_rounds,
             "container_key": container_key,
             "node_key_prefix": node_key_prefix,
         })
@@ -187,6 +204,7 @@ class _FakeConflictAgentService:
 
     def stream_inline_tool_loop(
         self, *, recorder, user_id, user_message, project_id,
+        max_tool_call_rounds=None,
         container_key="conflict_detection", node_key_prefix="conflict_agent",
     ):
         result = self.run_inline_tool_loop(
@@ -194,6 +212,7 @@ class _FakeConflictAgentService:
             user_id=user_id,
             user_message=user_message,
             project_id=project_id,
+            max_tool_call_rounds=max_tool_call_rounds,
             container_key=container_key,
             node_key_prefix=node_key_prefix,
         )
@@ -223,6 +242,7 @@ def test_invoke_requirement_agent_records_expanded_nodes():
     context = {
         "project_id": "p-1",
         "user_id": "u-1",
+        "session_id": "sess-1",
         "_graph_recorder": recorder,
         "_active_stage_node_key": "turn_1__session_controller_tool_loop_round_1",
         "tool_results": [],
@@ -273,6 +293,87 @@ def test_invoke_requirement_agent_records_expanded_nodes():
     ]
 
 
+def test_invoke_requirement_agent_propagates_approval_pending_context():
+    recorder = _FakeRecorder()
+    tools = SessionControllerTools(
+        requirements_service=_FakeRequirementsService(),
+        requirement_agent_service=_FakeRequirementAgentService(
+            inline_result={
+                "status": "success",
+                "tool_loop_reply": "已发起审批",
+                "resolved_requirement_id": "REQ-1",
+                "write_result": None,
+                "approval_pending": True,
+                "approval_result": {
+                    "approval_request_id": "apr-1",
+                    "push_message_id": "msg-1",
+                },
+            }
+        ),
+        conflict_agent_service=_FakeConflictAgentService(),
+    )
+    context = {
+        "project_id": "p-1",
+        "user_id": "u-1",
+        "session_id": "sess-1",
+        "_graph_recorder": recorder,
+        "_active_stage_node_key": "turn_1__session_controller_tool_loop_round_1",
+        "tool_results": [],
+        "dispatched_agents": [],
+    }
+
+    result = tools.execute(
+        "invoke_requirement_agent",
+        {"task_description": "把 REQ-1 优先级改为高", "requirement_id": "REQ-1"},
+        context,
+    )
+
+    assert result["approval_pending"] is True
+    assert result["approval_result"]["approval_request_id"] == "apr-1"
+    assert context["approval_pending"] is True
+    assert context["last_approval_result"]["push_message_id"] == "msg-1"
+
+
+def test_invoke_requirement_agent_propagates_clarification_context():
+    recorder = _FakeRecorder()
+    tools = SessionControllerTools(
+        requirements_service=_FakeRequirementsService(),
+        requirement_agent_service=_FakeRequirementAgentService(
+            inline_result={
+                "status": "success",
+                "tool_loop_reply": "我发现两条标题相同的需求，请确认要修改哪一条。",
+                "resolved_requirement_id": None,
+                "write_result": None,
+                "mode": "clarification",
+                "clarification_required": True,
+                "approval_pending": False,
+                "approval_result": None,
+            }
+        ),
+        conflict_agent_service=_FakeConflictAgentService(),
+    )
+    context = {
+        "project_id": "p-1",
+        "user_id": "u-1",
+        "session_id": "sess-1",
+        "_graph_recorder": recorder,
+        "_active_stage_node_key": "turn_1__session_controller_tool_loop_round_1",
+        "tool_results": [],
+        "dispatched_agents": [],
+    }
+
+    result = tools.execute(
+        "invoke_requirement_agent",
+        {"task_description": "把这条需求的优先级改成高"},
+        context,
+    )
+
+    assert result["clarification_required"] is True
+    assert result["mode"] == "clarification"
+    assert context["clarification_required"] is True
+    assert context["last_clarification_reply"] == "我发现两条标题相同的需求，请确认要修改哪一条。"
+
+
 def test_invoke_requirement_agent_passes_correct_params_to_inline():
     """Ensure run_inline_tool_loop receives the right parameters."""
     fake_service = _FakeRequirementAgentService()
@@ -285,6 +386,7 @@ def test_invoke_requirement_agent_passes_correct_params_to_inline():
     context = {
         "project_id": "p-2",
         "user_id": "u-2",
+        "session_id": "sess-2",
         "_graph_recorder": recorder,
         "_active_stage_node_key": "turn_1__session_controller_tool_loop_round_1",
         "tool_results": [],
@@ -301,10 +403,43 @@ def test_invoke_requirement_agent_passes_correct_params_to_inline():
     call = fake_service.inline_calls[0]
     assert call["user_id"] == "u-2"
     assert call["project_id"] == "p-2"
+    assert call["session_id"] == "sess-2"
+    assert call["prompt_payload_format"] == "markdown"
+    assert call["context_mode"] == "full"
+    assert call["max_tool_call_rounds"] == 15
     assert call["user_message"] == "修改 REQ-2 的标题"
     assert call["requirement_id"] == "REQ-2"
     assert call["container_key"] == "requirement_agent"
     assert call["node_key_prefix"] == "req_agent_1"
+
+
+def test_invoke_requirement_agent_falls_back_to_resolved_requirement_id():
+    fake_service = _FakeRequirementAgentService()
+    tools = SessionControllerTools(
+        requirements_service=_FakeRequirementsService(),
+        requirement_agent_service=fake_service,
+        conflict_agent_service=_FakeConflictAgentService(),
+    )
+    recorder = _FakeRecorder()
+    context = {
+        "project_id": "p-2",
+        "user_id": "u-2",
+        "session_id": "sess-2",
+        "resolved_requirement_id": "REQ-9",
+        "_graph_recorder": recorder,
+        "_active_stage_node_key": "turn_1__session_controller_tool_loop_round_1",
+        "tool_results": [],
+        "dispatched_agents": [],
+    }
+
+    tools.execute(
+        "invoke_requirement_agent",
+        {"task_description": "把这个需求的优先级改成低"},
+        context,
+    )
+
+    assert len(fake_service.inline_calls) == 1
+    assert fake_service.inline_calls[0]["requirement_id"] == "REQ-9"
 
 
 def test_streaming_invoke_requirement_agent_yields_nested_stage_events():
@@ -313,6 +448,7 @@ def test_streaming_invoke_requirement_agent_yields_nested_stage_events():
     context = {
         "project_id": "p-3",
         "user_id": "u-3",
+        "session_id": "sess-3",
         "graph_id": recorder.graph_id,
         "_graph_recorder": recorder,
         "_active_stage_node_key": "turn_1__session_controller_tool_loop_round_1",
@@ -351,6 +487,7 @@ def test_invoke_conflict_detection_records_expanded_nodes():
     context = {
         "project_id": "p-1",
         "user_id": "u-1",
+        "session_id": "sess-1",
         "_graph_recorder": recorder,
         "_active_stage_node_key": "turn_2__session_controller_tool_loop_round_1",
         "tool_results": [{"tool_name": "list_requirements"}],
@@ -383,6 +520,7 @@ def test_invoke_conflict_detection_records_expanded_nodes():
 
     assert len(recorder.return_edges) == 1
     assert recorder.return_edges[0]["parent_node_key"] == "turn_2__session_controller_tool_loop_round_1"
+    assert tools._conflict_agent_service.inline_calls[0]["max_tool_call_rounds"] == 15
 
 
 def test_invoke_requirement_agent_handles_inline_error():
@@ -403,6 +541,7 @@ def test_invoke_requirement_agent_handles_inline_error():
     context = {
         "project_id": "p-1",
         "user_id": "u-1",
+        "session_id": "sess-1",
         "_graph_recorder": recorder,
         "_active_stage_node_key": "turn_1__session_controller_tool_loop_round_1",
         "tool_results": [],
@@ -452,6 +591,22 @@ def test_no_recorder_returns_error():
     assert "recorder" in result["error"].lower()
 
 
+def test_infer_routing_hint_prefers_requirement_agent_for_priority_updates():
+    hint = infer_routing_hint(
+        "10. 冲突检测引擎 shall 将检测到的冲突结果输出到指定数据结构，这条需求的优先级改为low"
+    )
+
+    assert hint is not None
+    assert hint["preferred_tool"] == "invoke_requirement_agent"
+
+
+def test_infer_routing_hint_prefers_conflict_agent_for_explicit_checks():
+    hint = infer_routing_hint("请检查 REQ-1 和 REQ-2 是否冲突")
+
+    assert hint is not None
+    assert hint["preferred_tool"] == "invoke_conflict_detection"
+
+
 def test_tool_loop_runner_forwards_streaming_tool_events():
     class _PromptBuilder:
         def build_system_prompt(self, *, context):
@@ -469,24 +624,20 @@ def test_tool_loop_runner_forwards_streaming_tool_events():
 
         def chat_completion_with_tools(self, **kwargs):
             self.calls += 1
-            if self.calls == 1:
-                return {
-                    "content": "",
-                    "finish_reason": "tool_calls",
-                    "tool_calls": [
-                        {
-                            "id": "tool-1",
-                            "function": {
-                                "name": "invoke_requirement_agent",
-                                "arguments": "{\"task_description\":\"读取 REQ-9\"}",
-                            },
-                        }
-                    ],
-                }
+            if self.calls > 1:
+                raise AssertionError("session controller should stop after delegated agent returns")
             return {
-                "content": "完成",
-                "finish_reason": "stop",
-                "tool_calls": [],
+                "content": "",
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": "tool-1",
+                        "function": {
+                            "name": "invoke_requirement_agent",
+                            "arguments": "{\"task_description\":\"读取 REQ-9\"}",
+                        },
+                    }
+                ],
             }
 
     tools = _make_tools()
@@ -540,4 +691,4 @@ def test_tool_loop_runner_forwards_streaming_tool_events():
         "turn_1__req_agent_1_tool_loop_round_1",
         "turn_1__req_agent_1_end",
     ]
-    assert result.tool_loop_reply == "完成"
+    assert result.tool_loop_reply == "已读取需求详情"

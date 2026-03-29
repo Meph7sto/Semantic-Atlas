@@ -8,6 +8,7 @@ import pytest
 from fastapi import FastAPI
 
 
+from backend_business.api.deps.auth import get_current_user
 from backend_business.api.routers import push
 
 
@@ -36,12 +37,26 @@ class _StubPushActionService:
         return True
 
 
+class _StubApprovalActionService:
+    def approve_from_push_message(self, *, push_message_id: str, approved_by: str):
+        if push_message_id.startswith("missing"):
+            raise ValueError("审批请求不存在")
+        return {"push_message_id": push_message_id, "approved_by": approved_by, "status": "applied"}
+
+    def reject_from_push_message(self, *, push_message_id: str, rejected_by: str):
+        if push_message_id.startswith("missing"):
+            raise ValueError("审批请求不存在")
+        return {"push_message_id": push_message_id, "rejected_by": rejected_by, "status": "rejected"}
+
+
 @pytest.fixture
 async def fastapi_client(monkeypatch):
     stub = _StubPushActionService()
     monkeypatch.setattr(push, "push_service", stub)
+    monkeypatch.setattr(push, "requirement_change_approval_service", _StubApprovalActionService())
 
     app = build_test_app(push.router)
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "u-op", "role": "member"}
 
     async with async_client(app) as client:
         yield client, stub
@@ -82,3 +97,10 @@ async def test_push_mark_read_delete_not_found(fastapi_client):
     assert delete_resp.status_code == 404
     assert delete_resp.json()["error"] == "消息不存在"
 
+    approve_resp = await client.post("/api/v2/push/messages/missing-1/approve")
+    assert approve_resp.status_code == 400
+    assert approve_resp.json()["error"] == "审批请求不存在"
+
+    reject_resp = await client.post("/api/v2/push/messages/missing-1/reject")
+    assert reject_resp.status_code == 400
+    assert reject_resp.json()["error"] == "审批请求不存在"

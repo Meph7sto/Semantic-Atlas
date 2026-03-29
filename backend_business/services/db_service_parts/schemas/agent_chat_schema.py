@@ -85,6 +85,47 @@ def init_agent_chat_schema(cur):
     )
 
     # ========================
+    # Requirement Change Approval Requests (Agent 审批挂起)
+    # ========================
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS requirement_change_approvals (
+            approval_request_id TEXT PRIMARY KEY,
+            project_id TEXT REFERENCES manage_projects(project_id) ON DELETE CASCADE,
+            session_id TEXT REFERENCES ai_chat_sessions(session_id) ON DELETE SET NULL,
+            graph_id TEXT,
+            requirement_id TEXT NOT NULL,
+            requested_by TEXT NOT NULL,
+            source_agent TEXT NOT NULL DEFAULT 'requirement_agent',
+            approval_type TEXT NOT NULL DEFAULT 'requirement_update',
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending', 'approved', 'rejected', 'applied')),
+            updates_json JSONB NOT NULL,
+            summary_text TEXT,
+            push_message_id TEXT REFERENCES push_messages(message_id) ON DELETE SET NULL,
+            approved_by TEXT,
+            rejected_by TEXT,
+            decision_comment TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            resolved_at TIMESTAMPTZ,
+            applied_at TIMESTAMPTZ
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_requirement_change_approvals_status ON requirement_change_approvals(status)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_requirement_change_approvals_session ON requirement_change_approvals(session_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_requirement_change_approvals_push_message ON requirement_change_approvals(push_message_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_requirement_change_approvals_requirement ON requirement_change_approvals(requirement_id)"
+    )
+
+    # ========================
     # Mobile Chat Messages Table (移动端对话桥接)
     # ========================
     cur.execute(

@@ -5,10 +5,15 @@
 from collections.abc import Generator
 from typing import Any
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
+from backend_business.api.deps.auth import get_current_user
 from backend_business.api.http.sse import sse_response_raw
+from backend_business.services.requirement_change_approval_service import (
+    RequirementChangeApprovalService,
+    requirement_change_approval_service,
+)
 from backend_business.services.push_service import PushService, push_service
 
 router = APIRouter(prefix="/api/v2/push", tags=["push"])
@@ -30,6 +35,10 @@ def _parse_int(value: str | None, default: int) -> int:
 
 def _require_push_service() -> PushService | None:
     return push_service
+
+
+def _require_approval_service() -> RequirementChangeApprovalService | None:
+    return requirement_change_approval_service
 
 
 @router.get("/messages")
@@ -156,6 +165,42 @@ def mark_read(message_id: str):
         return _error_response("消息不存在", 404)
 
     return {"success": True, "message": "已标记为已读"}
+
+
+@router.post("/messages/{message_id}/approve")
+def approve_message(message_id: str, current_user: dict = Depends(get_current_user)):
+    approval_service = _require_approval_service()
+    if not approval_service:
+        return _error_response("审批服务未初始化", 500)
+
+    try:
+        result = approval_service.approve_from_push_message(
+            push_message_id=message_id,
+            approved_by=current_user["user_id"],
+        )
+        return {"success": True, "data": result}
+    except ValueError as exc:
+        return _error_response(str(exc), 400)
+    except Exception as exc:
+        return _error_response(str(exc), 500)
+
+
+@router.post("/messages/{message_id}/reject")
+def reject_message(message_id: str, current_user: dict = Depends(get_current_user)):
+    approval_service = _require_approval_service()
+    if not approval_service:
+        return _error_response("审批服务未初始化", 500)
+
+    try:
+        result = approval_service.reject_from_push_message(
+            push_message_id=message_id,
+            rejected_by=current_user["user_id"],
+        )
+        return {"success": True, "data": result}
+    except ValueError as exc:
+        return _error_response(str(exc), 400)
+    except Exception as exc:
+        return _error_response(str(exc), 500)
 
 
 @router.delete("/messages/{message_id}")

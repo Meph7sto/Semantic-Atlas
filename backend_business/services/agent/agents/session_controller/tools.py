@@ -12,6 +12,12 @@ from backend_business.services.requirements_manage_service import RequirementsMa
 logger = logging.getLogger(__name__)
 
 _LIST_ITEM_EXCERPT_LENGTH = 180
+_DEFAULT_DELEGATED_MAX_TOOL_CALL_ROUNDS = 15
+
+
+def _mark_tool_loop_should_stop(context: dict[str, Any], reply: str | None) -> None:
+    context["_stop_after_tool_round"] = True
+    context["_forced_tool_loop_reply"] = str(reply or "").strip()
 
 
 def _normalize_window_arg(value: Any, *, default: int, field_name: str) -> int:
@@ -34,6 +40,18 @@ def _collapse_excerpt(text: Any) -> str:
     if len(single_line) <= _LIST_ITEM_EXCERPT_LENGTH:
         return single_line
     return f"{single_line[:_LIST_ITEM_EXCERPT_LENGTH - 3]}..."
+
+
+def _resolve_delegated_max_tool_call_rounds(context: dict[str, Any]) -> int:
+    raw_value = context.get(
+        "delegated_max_tool_call_rounds",
+        _DEFAULT_DELEGATED_MAX_TOOL_CALL_ROUNDS,
+    )
+    try:
+        normalized = int(raw_value)
+    except (TypeError, ValueError):
+        return _DEFAULT_DELEGATED_MAX_TOOL_CALL_ROUNDS
+    return max(1, min(50, normalized))
 
 
 def _summarize_list_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -266,9 +284,19 @@ class SessionControllerTools:
         if not task_description:
             raise ValueError("task_description 不能为空")
         requirement_id = str(arguments.get("requirement_id") or "").strip() or None
+        if not requirement_id:
+            requirement_id = (
+                str(context.get("resolved_requirement_id") or "").strip() or None
+            )
 
         user_id = context.get("user_id", "")
         project_id = context.get("project_id", "")
+        session_id = str(context.get("session_id") or "")
+        prompt_payload_format = (
+            str(context.get("delegated_prompt_payload_format") or "").strip() or "markdown"
+        )
+        context_mode = str(context.get("delegated_context_mode") or "").strip() or "full"
+        delegated_max_tool_call_rounds = _resolve_delegated_max_tool_call_rounds(context)
         self._mark_dispatched_agent(context, "requirement_agent")
 
         recorder = context.get("_graph_recorder")
@@ -310,6 +338,10 @@ class SessionControllerTools:
                 user_id=user_id,
                 user_message=task_description,
                 project_id=project_id,
+                session_id=session_id,
+                prompt_payload_format=prompt_payload_format,
+                context_mode=context_mode,
+                max_tool_call_rounds=delegated_max_tool_call_rounds,
                 requirement_id=requirement_id,
                 container_key="requirement_agent",
                 node_key_prefix=node_key_prefix,
@@ -335,7 +367,9 @@ class SessionControllerTools:
                 child_node_key=end_node_key, parent_node_key=parent_node_key, created_by=user_id,
             )
             recorder.restore_stage_cursor(node_key=parent_node_key, updated_by=user_id)
-            return {"status": "error", "error": f"需求管理 Agent 执行失败: {exc}"}
+            error_result = {"status": "error", "error": f"需求管理 Agent 执行失败: {exc}"}
+            _mark_tool_loop_should_stop(context, error_result["error"])
+            return error_result
 
         # 3. End node + return edge (cross-container boundary)
         end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
@@ -364,13 +398,28 @@ class SessionControllerTools:
         write_result = loop_result.get("write_result")
         if write_result is not None:
             context["last_write_result"] = write_result
+        if loop_result.get("approval_pending"):
+            context["approval_pending"] = True
+            context["last_approval_result"] = loop_result.get("approval_result")
+        if loop_result.get("clarification_required") or loop_result.get("mode") == "clarification":
+            context["clarification_required"] = True
+            context["last_clarification_reply"] = loop_result.get("tool_loop_reply", "")
 
-        return {
+        result = {
             "status": "success",
             "reply": loop_result.get("tool_loop_reply", ""),
             "resolved_requirement_id": resolved_requirement_id,
             "write_result": write_result,
+            "mode": loop_result.get("mode"),
+            "clarification_required": bool(
+                loop_result.get("clarification_required")
+                or loop_result.get("mode") == "clarification"
+            ),
+            "approval_pending": bool(loop_result.get("approval_pending")),
+            "approval_result": loop_result.get("approval_result"),
         }
+        _mark_tool_loop_should_stop(context, result.get("reply"))
+        return result
 
     def _stream_invoke_requirement_agent(
         self,
@@ -381,10 +430,19 @@ class SessionControllerTools:
         if not task_description:
             raise ValueError("task_description 不能为空")
         requirement_id = str(arguments.get("requirement_id") or "").strip() or None
+        if not requirement_id:
+            requirement_id = (
+                str(context.get("resolved_requirement_id") or "").strip() or None
+            )
 
         user_id = context.get("user_id", "")
         project_id = context.get("project_id", "")
-        graph_id = str(context.get("graph_id") or "")
+        session_id = str(context.get("session_id") or "")
+        prompt_payload_format = (
+            str(context.get("delegated_prompt_payload_format") or "").strip() or "markdown"
+        )
+        context_mode = str(context.get("delegated_context_mode") or "").strip() or "full"
+        delegated_max_tool_call_rounds = _resolve_delegated_max_tool_call_rounds(context)
         self._mark_dispatched_agent(context, "requirement_agent")
 
         recorder = context.get("_graph_recorder")
@@ -431,6 +489,10 @@ class SessionControllerTools:
                 user_id=user_id,
                 user_message=task_description,
                 project_id=project_id,
+                session_id=session_id,
+                prompt_payload_format=prompt_payload_format,
+                context_mode=context_mode,
+                max_tool_call_rounds=delegated_max_tool_call_rounds,
                 requirement_id=requirement_id,
                 container_key="requirement_agent",
                 node_key_prefix=node_key_prefix,
@@ -468,7 +530,9 @@ class SessionControllerTools:
                     status="failed",
                 ),
             }
-            return {"status": "error", "error": f"需求管理 Agent 执行失败: {exc}"}
+            error_result = {"status": "error", "error": f"需求管理 Agent 执行失败: {exc}"}
+            _mark_tool_loop_should_stop(context, error_result["error"])
+            return error_result
 
         end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
         recorder.start_stage(
@@ -499,6 +563,12 @@ class SessionControllerTools:
         write_result = loop_result.get("write_result")
         if write_result is not None:
             context["last_write_result"] = write_result
+        if loop_result.get("approval_pending"):
+            context["approval_pending"] = True
+            context["last_approval_result"] = loop_result.get("approval_result")
+        if loop_result.get("clarification_required") or loop_result.get("mode") == "clarification":
+            context["clarification_required"] = True
+            context["last_clarification_reply"] = loop_result.get("tool_loop_reply", "")
         yield {
             "event": "stage",
             "data": recorder.build_stage_event_data(
@@ -507,12 +577,21 @@ class SessionControllerTools:
             ),
         }
 
-        return {
+        result = {
             "status": "success",
             "reply": loop_result.get("tool_loop_reply", ""),
             "resolved_requirement_id": resolved_requirement_id,
             "write_result": write_result,
+            "mode": loop_result.get("mode"),
+            "clarification_required": bool(
+                loop_result.get("clarification_required")
+                or loop_result.get("mode") == "clarification"
+            ),
+            "approval_pending": bool(loop_result.get("approval_pending")),
+            "approval_result": loop_result.get("approval_result"),
         }
+        _mark_tool_loop_should_stop(context, result.get("reply"))
+        return result
 
     def _execute_invoke_conflict_detection(
         self,
@@ -525,6 +604,7 @@ class SessionControllerTools:
 
         user_id = context.get("user_id", "")
         project_id = context.get("project_id", "")
+        delegated_max_tool_call_rounds = _resolve_delegated_max_tool_call_rounds(context)
         self._mark_dispatched_agent(context, "conflict_detection")
 
         recorder = context.get("_graph_recorder")
@@ -565,6 +645,7 @@ class SessionControllerTools:
                 user_id=user_id,
                 user_message=task_description,
                 project_id=project_id,
+                max_tool_call_rounds=delegated_max_tool_call_rounds,
                 container_key="conflict_detection",
                 node_key_prefix=node_key_prefix,
             )
@@ -589,7 +670,9 @@ class SessionControllerTools:
                 child_node_key=end_node_key, parent_node_key=parent_node_key, created_by=user_id,
             )
             recorder.restore_stage_cursor(node_key=parent_node_key, updated_by=user_id)
-            return {"status": "error", "error": f"冲突检测 Agent 执行失败: {exc}"}
+            error_result = {"status": "error", "error": f"冲突检测 Agent 执行失败: {exc}"}
+            _mark_tool_loop_should_stop(context, error_result["error"])
+            return error_result
 
         # 3. End node + return edge (cross-container boundary)
         end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
@@ -612,10 +695,12 @@ class SessionControllerTools:
         )
         recorder.restore_stage_cursor(node_key=parent_node_key, updated_by=user_id)
 
-        return {
+        result = {
             "status": "success",
             "reply": loop_result.get("tool_loop_reply", ""),
         }
+        _mark_tool_loop_should_stop(context, result.get("reply"))
+        return result
 
     def _stream_invoke_conflict_detection(
         self,
@@ -628,7 +713,7 @@ class SessionControllerTools:
 
         user_id = context.get("user_id", "")
         project_id = context.get("project_id", "")
-        graph_id = str(context.get("graph_id") or "")
+        delegated_max_tool_call_rounds = _resolve_delegated_max_tool_call_rounds(context)
         self._mark_dispatched_agent(context, "conflict_detection")
 
         recorder = context.get("_graph_recorder")
@@ -674,6 +759,7 @@ class SessionControllerTools:
                 user_id=user_id,
                 user_message=task_description,
                 project_id=project_id,
+                max_tool_call_rounds=delegated_max_tool_call_rounds,
                 container_key="conflict_detection",
                 node_key_prefix=node_key_prefix,
             )
@@ -710,7 +796,9 @@ class SessionControllerTools:
                     status="failed",
                 ),
             }
-            return {"status": "error", "error": f"冲突检测 Agent 执行失败: {exc}"}
+            error_result = {"status": "error", "error": f"冲突检测 Agent 执行失败: {exc}"}
+            _mark_tool_loop_should_stop(context, error_result["error"])
+            return error_result
 
         end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
         recorder.start_stage(
@@ -742,10 +830,12 @@ class SessionControllerTools:
             ),
         }
 
-        return {
+        result = {
             "status": "success",
             "reply": loop_result.get("tool_loop_reply", ""),
         }
+        _mark_tool_loop_should_stop(context, result.get("reply"))
+        return result
 
     @staticmethod
     def _mark_dispatched_agent(context: dict[str, Any], agent_key: str) -> None:

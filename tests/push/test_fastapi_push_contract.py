@@ -10,6 +10,7 @@ import pytest
 from fastapi import FastAPI
 
 
+from backend_business.api.deps.auth import get_current_user
 from backend_business.api.routers import push
 
 
@@ -58,12 +59,32 @@ class _StubPushService:
         yield "event: connected\ndata: {\"status\": \"connected\"}\n\n"
 
 
+class _StubApprovalService:
+    def approve_from_push_message(self, *, push_message_id: str, approved_by: str):
+        return {
+            "approval_request_id": "apr-1",
+            "push_message_id": push_message_id,
+            "status": "applied",
+            "approved_by": approved_by,
+        }
+
+    def reject_from_push_message(self, *, push_message_id: str, rejected_by: str):
+        return {
+            "approval_request_id": "apr-1",
+            "push_message_id": push_message_id,
+            "status": "rejected",
+            "rejected_by": rejected_by,
+        }
+
+
 @pytest.fixture
 async def fastapi_client(monkeypatch):
     stub = _StubPushService()
     monkeypatch.setattr(push, "push_service", stub)
+    monkeypatch.setattr(push, "requirement_change_approval_service", _StubApprovalService())
 
     app = build_test_app(push.router)
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "u-1", "role": "member"}
 
     async with async_client(app) as client:
         yield client, stub
@@ -134,3 +155,15 @@ async def test_stream_returns_sse_headers(fastapi_client):
     assert response.headers["cache-control"] == "no-cache"
     assert response.headers["x-accel-buffering"] == "no"
     assert "event: connected" in response.text
+
+
+async def test_approve_and_reject_message_actions(fastapi_client):
+    client, _ = fastapi_client
+
+    approve_resp = await client.post("/api/v2/push/messages/msg-1/approve")
+    assert approve_resp.status_code == 200
+    assert approve_resp.json()["data"]["status"] == "applied"
+
+    reject_resp = await client.post("/api/v2/push/messages/msg-2/reject")
+    assert reject_resp.status_code == 200
+    assert reject_resp.json()["data"]["status"] == "rejected"

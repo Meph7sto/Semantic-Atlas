@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   Bot,
   Download,
@@ -41,6 +41,17 @@ const selectedCanvasId = ref(null)
 const draftAssistantId = ref(null)
 const isAssistantOpen = ref(false)
 const lastDispatchedAgents = ref([])
+const detailPanelRef = ref(null)
+const delegatedMaxToolCallRounds = ref(15)
+
+const GRAPH_CHAIN_REFRESH_DEBOUNCE_MS = 180
+const DEFAULT_DELEGATED_MAX_TOOL_CALL_ROUNDS = 15
+const MIN_DELEGATED_MAX_TOOL_CALL_ROUNDS = 1
+const MAX_DELEGATED_MAX_TOOL_CALL_ROUNDS = 50
+
+let graphChainRefreshTimer = null
+let graphChainRefreshPendingSessionId = ''
+let graphChainRefreshInFlight = null
 
 const currentSession = computed(() => {
   return sessions.value.find((item) => item.session_id === sessionId.value) || null
@@ -55,6 +66,16 @@ const selectedEdge = computed(() => {
 })
 
 const latestGraphStatus = computed(() => graphDetail.value.graph?.status || 'idle')
+
+const detailPanelTitle = computed(() => {
+  if (selectedNode.value) {
+    return `节点详情: ${selectedNode.value.label || selectedNode.value.node_key || selectedNode.value.node_id}`
+  }
+  if (selectedEdge.value) {
+    return `连线详情: ${selectedEdge.value.label || selectedEdge.value.edge_id}`
+  }
+  return '节点详情'
+})
 
 const sessionGraphSummaries = computed(() => {
   return sessionGraphChain.value.map((detail, index) => {
@@ -113,6 +134,19 @@ const generateSessionTitle = () => {
     minute: '2-digit'
   }).replace(/\//g, '-')
   return `会话总控 ${stamp}`
+}
+
+const normalizeDelegatedMaxToolCallRounds = () => {
+  const parsed = Number.parseInt(String(delegatedMaxToolCallRounds.value ?? ''), 10)
+  if (Number.isNaN(parsed)) {
+    delegatedMaxToolCallRounds.value = DEFAULT_DELEGATED_MAX_TOOL_CALL_ROUNDS
+    return delegatedMaxToolCallRounds.value
+  }
+  delegatedMaxToolCallRounds.value = Math.min(
+    MAX_DELEGATED_MAX_TOOL_CALL_ROUNDS,
+    Math.max(MIN_DELEGATED_MAX_TOOL_CALL_ROUNDS, parsed)
+  )
+  return delegatedMaxToolCallRounds.value
 }
 
 const resetSessionView = () => {
@@ -260,14 +294,82 @@ const refreshSessionGraphChain = async (targetSessionId = sessionId.value) => {
   }
   try {
     const chainPayload = await sessionControllerChatApi.getSessionGraphChain(targetSessionId)
+    if (targetSessionId !== sessionId.value) {
+      return chainPayload
+    }
     sessionGraphChain.value = chainPayload?.graphs || []
     activeGraphId.value = chainPayload?.active_graph_id || activeGraphId.value || ''
     graphDetail.value = buildMergedSessionGraphDetail(chainPayload)
+    return chainPayload
   } catch (err) {
     console.error('加载会话执行图链失败', err)
-    sessionGraphChain.value = []
-    graphDetail.value = createEmptyGraphDetail()
+    if (targetSessionId !== sessionId.value) {
+      return null
+    }
+    if (!sessionGraphChain.value.length) {
+      sessionGraphChain.value = []
+      graphDetail.value = createEmptyGraphDetail()
+    }
+    return null
   }
+}
+
+const clearScheduledGraphChainRefresh = () => {
+  if (graphChainRefreshTimer) {
+    clearTimeout(graphChainRefreshTimer)
+    graphChainRefreshTimer = null
+  }
+}
+
+const runQueuedGraphChainRefresh = async () => {
+  if (graphChainRefreshInFlight) {
+    await graphChainRefreshInFlight
+    if (!graphChainRefreshPendingSessionId) return
+  }
+
+  const targetSessionId = graphChainRefreshPendingSessionId || sessionId.value
+  graphChainRefreshPendingSessionId = ''
+  if (!targetSessionId) return
+
+  const refreshPromise = refreshSessionGraphChain(targetSessionId)
+  graphChainRefreshInFlight = refreshPromise
+
+  try {
+    await refreshPromise
+  } finally {
+    if (graphChainRefreshInFlight === refreshPromise) {
+      graphChainRefreshInFlight = null
+    }
+  }
+
+  if (graphChainRefreshPendingSessionId) {
+    await runQueuedGraphChainRefresh()
+  }
+}
+
+const queueGraphChainRefresh = (targetSessionId = sessionId.value, { immediate = false } = {}) => {
+  if (!targetSessionId) return
+
+  graphChainRefreshPendingSessionId = targetSessionId
+  clearScheduledGraphChainRefresh()
+
+  if (immediate) {
+    void runQueuedGraphChainRefresh()
+    return
+  }
+
+  graphChainRefreshTimer = setTimeout(() => {
+    graphChainRefreshTimer = null
+    void runQueuedGraphChainRefresh()
+  }, GRAPH_CHAIN_REFRESH_DEBOUNCE_MS)
+}
+
+const flushGraphChainRefresh = async (targetSessionId = sessionId.value) => {
+  if (!targetSessionId) return
+
+  graphChainRefreshPendingSessionId = targetSessionId
+  clearScheduledGraphChainRefresh()
+  await runQueuedGraphChainRefresh()
 }
 
 const loadProjects = async () => {
@@ -438,7 +540,7 @@ const consumeSSEStream = async (stream) => {
           active_graph_id: payload.graph_id || '',
           updated_at: new Date().toISOString()
         })
-        await refreshSessionGraphChain(sessionId.value)
+        queueGraphChainRefresh(sessionId.value, { immediate: true })
       } else if (eventName === 'token') {
         const draft = ensureDraftAssistant()
         draft.content += payload.content || ''
@@ -459,7 +561,7 @@ const consumeSSEStream = async (stream) => {
             updated_at: new Date().toISOString()
           })
           applyGraphIncrementalPayload(payload, 'succeeded')
-          await refreshSessionGraphChain(sessionId.value)
+          await flushGraphChainRefresh(sessionId.value)
         }
       } else if (eventName === 'stage' || eventName === 'tool_call' || eventName === 'tool_result') {
         if (payload.graph_id) {
@@ -470,8 +572,10 @@ const consumeSSEStream = async (stream) => {
           })
           const graphStatus = eventName === 'stage' && payload.status === 'failed' ? 'failed' : 'running'
           const patched = applyGraphIncrementalPayload(payload, graphStatus)
-          if (!patched && eventName === 'stage') {
-            await refreshSessionGraphChain(sessionId.value)
+          if (!patched) {
+            queueGraphChainRefresh(sessionId.value, { immediate: true })
+          } else {
+            queueGraphChainRefresh(sessionId.value)
           }
         }
       } else if (eventName === 'error') {
@@ -483,7 +587,7 @@ const consumeSSEStream = async (stream) => {
             updated_at: new Date().toISOString()
           })
           applyGraphIncrementalPayload(payload, 'failed')
-          await refreshSessionGraphChain(sessionId.value)
+          await flushGraphChainRefresh(sessionId.value)
         }
       }
     }
@@ -504,14 +608,20 @@ const sendMessage = async () => {
 
   try {
     const message = inputMessage.value.trim()
+    const effectiveDelegatedMaxToolCallRounds = normalizeDelegatedMaxToolCallRounds()
+    clearScheduledGraphChainRefresh()
     const stream = await sessionControllerChatApi.streamMessage({
       sessionId: sessionId.value,
       projectId: selectedProjectId.value,
       message,
-      useThinkingMode: useThinkingMode.value
+      useThinkingMode: useThinkingMode.value,
+      delegatedMaxToolCallRounds: effectiveDelegatedMaxToolCallRounds
     })
     inputMessage.value = ''
-    appendTimeline('submit', { message })
+    appendTimeline('submit', {
+      message,
+      delegated_max_tool_call_rounds: effectiveDelegatedMaxToolCallRounds
+    })
     upsertSessionPatch(sessionId.value, { updated_at: new Date().toISOString() })
     await consumeSSEStream(stream)
     await loadSessions({ preferredSessionId: sessionId.value })
@@ -533,12 +643,22 @@ const handleExportExecutionGraph = () => {
   }
 }
 
-const handleCanvasSelectNode = (nodeId) => {
-  selectedCanvasId.value = nodeId
+const scrollToDetailPanel = async () => {
+  await nextTick()
+  detailPanelRef.value?.scrollIntoView({
+    behavior: 'smooth',
+    block: 'start'
+  })
 }
 
-const handleCanvasSelectEdge = (edgeId) => {
+const handleCanvasSelectNode = async (nodeId) => {
+  selectedCanvasId.value = nodeId
+  await scrollToDetailPanel()
+}
+
+const handleCanvasSelectEdge = async (edgeId) => {
   selectedCanvasId.value = edgeId
+  await scrollToDetailPanel()
 }
 
 watch(selectedProjectId, async (projectId) => {
@@ -551,6 +671,10 @@ watch(selectedProjectId, async (projectId) => {
 
 onMounted(async () => {
   await loadProjects()
+})
+
+onBeforeUnmount(() => {
+  clearScheduledGraphChainRefresh()
 })
 </script>
 
@@ -723,6 +847,18 @@ onMounted(async () => {
                 </span>
                 <span>{{ useThinkingMode ? 'Reasoner 模式' : 'Chat 模式' }}</span>
               </label>
+              <label class="flex items-center gap-2 text-xs font-medium text-stone-600">
+                <span>子Agent最大调用</span>
+                <input
+                  v-model.number="delegatedMaxToolCallRounds"
+                  type="number"
+                  min="1"
+                  max="50"
+                  class="w-20 border border-stone-300 bg-white px-2 py-1 text-right text-xs text-stone-800 outline-none transition focus:border-stone-500 disabled:cursor-not-allowed disabled:opacity-60"
+                  :disabled="isSending || !sessionId"
+                  @blur="normalizeDelegatedMaxToolCallRounds"
+                >
+              </label>
             </div>
             <div class="border border-stone-300 bg-white p-2">
               <textarea
@@ -783,6 +919,24 @@ onMounted(async () => {
             </div>
           </div>
 
+          <div
+            ref="detailPanelRef"
+            class="flex flex-col overflow-hidden border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)] max-h-[800px]"
+          >
+            <div class="shrink-0 border-b border-stone-200 px-5 py-4">
+              <h2 class="text-lg font-semibold text-stone-900">{{ detailPanelTitle }}</h2>
+              <p class="mt-1 text-xs text-stone-500">
+                点击执行图中的节点或连线后，这里会展示对应的运行信息与原始数据。
+              </p>
+            </div>
+            <div class="flex-1 min-h-0 overflow-y-auto px-5 py-4">
+              <NodeDetailPanel
+                :selected-node="selectedNode"
+                :selected-edge="selectedEdge"
+              />
+            </div>
+          </div>
+
           <div class="flex flex-col overflow-hidden border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)] max-h-[900px]">
             <div class="shrink-0 border-b border-stone-200 px-5 py-4">
               <h2 class="flex items-center gap-2 text-lg font-semibold text-stone-900">
@@ -800,32 +954,18 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div class="grid grid-cols-1 gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+          <div class="flex flex-col gap-6">
             <div class="flex flex-col overflow-hidden border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)] max-h-[800px]">
               <div class="shrink-0 border-b border-stone-200 px-5 py-4">
-                <h2 class="text-lg font-semibold text-stone-900">节点详情</h2>
+                <h2 class="text-lg font-semibold text-stone-900">工具调用结果</h2>
+                <p class="mt-1 text-xs text-stone-500">
+                  展示会话总控调用各执行层 Agent 工具的返回结果。
+                </p>
               </div>
               <div class="flex-1 min-h-0 overflow-y-auto px-5 py-4">
                 <NodeDetailPanel
-                  :selected-node="selectedNode"
-                  :selected-edge="selectedEdge"
+                  :tool-results="flattenedToolResults"
                 />
-              </div>
-            </div>
-
-            <div class="flex flex-col gap-6">
-              <div class="flex flex-col overflow-hidden border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)] max-h-[800px]">
-                <div class="shrink-0 border-b border-stone-200 px-5 py-4">
-                  <h2 class="text-lg font-semibold text-stone-900">工具调用结果</h2>
-                  <p class="mt-1 text-xs text-stone-500">
-                    展示会话总控调用各执行层 Agent 工具的返回结果。
-                  </p>
-                </div>
-                <div class="flex-1 min-h-0 overflow-y-auto px-5 py-4">
-                  <NodeDetailPanel
-                    :tool-results="flattenedToolResults"
-                  />
-                </div>
               </div>
             </div>
           </div>
