@@ -15,9 +15,6 @@
           <div class="nav-left">
             <span class="nav-title">缺陷与问题 · 全局工作台</span>
           </div>
-          <div class="nav-center">
-            <span class="jama-pill">关联需求条目 + 状态流转 + 验收卡点</span>
-          </div>
           <div class="page-actions">
             <button v-if="showBackToRequirement" type="button" class="action-btn ghost" @click="backToRequirement">
               返回需求

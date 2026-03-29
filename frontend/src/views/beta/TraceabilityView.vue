@@ -15,9 +15,6 @@
           <div class="nav-left">
             <span class="nav-title">追踪 · 分支级需求追溯工作台</span>
           </div>
-          <div class="nav-center">
-            <span class="jama-pill">需求快照 / 分支 / 变更集 / 审计证据</span>
-          </div>
           <div class="page-actions">
             <button type="button" class="action-btn white" @click="refreshContext">刷新上下文</button>
             <button type="button" class="action-btn brown" :disabled="triggeringImpact || !selectedBranchId" @click="triggerImpactAnalysis()">

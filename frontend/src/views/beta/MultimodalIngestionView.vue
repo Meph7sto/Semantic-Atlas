@@ -16,9 +16,6 @@
           <div class="nav-left">
             <span class="nav-title">项目管理 · 多模态采集</span>
           </div>
-          <div class="nav-center">
-            <span class="jama-pill">正式界面统一接入图生文与音频转文字</span>
-          </div>
           <div class="page-actions">
             <span class="nav-text">复用现有后端接口</span>
           </div>

@@ -15,7 +15,6 @@
         <section class="workbench-header" data-animate style="--delay: 0.05s">
           <div>
             <h1>需求工程管理工作台</h1>
-            <p>覆盖需求生命周期、里程碑、分支与合并历史，已迁移到 beta 正式页面。</p>
           </div>
           <button type="button" class="overview-link" @click="router.push({ name: 'beta-requirements-overview' })">
             打开需求总览
