@@ -3,6 +3,7 @@ FastAPI requirements route contract tests.
 """
 
 from collections.abc import Generator
+import json
 from typing import Any
 
 import httpx
@@ -99,6 +100,7 @@ class _StubDBService:
     def __init__(self):
         self.list_calls: list[dict[str, Any]] = []
         self.exists_calls: list[str] = []
+        self.clear_calls: list[str] = []
         self.top_id_calls: list[tuple[str, list[str]]] = []
         self.save_calls: list[dict[str, Any]] = []
         self.existing_top_ids: list[str] = []
@@ -124,6 +126,10 @@ class _StubDBService:
         self.exists_calls.append(session_id)
         return True
 
+    def clear_l4_requirements_for_session(self, session_id: str) -> int:
+        self.clear_calls.append(session_id)
+        return 3
+
     def get_existing_top_req_ids(
         self, session_id: str, top_req_ids: list[str]
     ) -> list[str]:
@@ -133,6 +139,30 @@ class _StubDBService:
     def save_l4_requirements(self, session_id: str, reqs: list[dict[str, Any]]):
         self.save_calls.append({"session_id": session_id, "reqs": reqs})
         return {"inserted": len(reqs), "duplicates": 0, "inserted_ids": ["l4-1"]}
+
+
+class _FakeRequestsResponse:
+    def __init__(self, payload: dict[str, Any], status_code: int = 200):
+        self._payload = payload
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.exceptions.HTTPError(f"http {self.status_code}")
+
+    def json(self):
+        return self._payload
+
+
+def _parse_sse_events(text: str) -> list[tuple[str, dict[str, Any]]]:
+    events: list[tuple[str, dict[str, Any]]] = []
+    current_event = "message"
+    for line in text.splitlines():
+        if line.startswith("event: "):
+            current_event = line.split(":", 1)[1].strip()
+        elif line.startswith("data: "):
+            events.append((current_event, json.loads(line[6:])))
+    return events
 
 
 @pytest.fixture
@@ -291,6 +321,16 @@ async def test_l4_exists_and_list_success(fastapi_client):
     assert stub_db.list_calls[0]["per_page"] == 10
 
 
+async def test_clear_l4_requirements_success(fastapi_client):
+    client, _, _, _, stub_db = fastapi_client
+
+    response = await client.delete("/api/v2/requirements/l4/session-1")
+
+    assert response.status_code == 200
+    assert response.json() == {"session_id": "session-1", "deleted_count": 3}
+    assert stub_db.clear_calls == ["session-1"]
+
+
 async def test_generate_l4_requirements_cache_hit(fastapi_client, monkeypatch):
     client, _, _, _, stub_db = fastapi_client
     stub_db.existing_top_ids = ["t1", "t2"]
@@ -335,3 +375,123 @@ async def test_generate_l4_requirements_inference_failure_returns_500(
 
     assert response.status_code == 500
     assert "推理后端调用失败" in response.json()["detail"]
+
+
+async def test_generate_l4_requirements_timeout_isolated_per_top_requirement(
+    fastapi_client, monkeypatch
+):
+    client, _, _, _, stub_db = fastapi_client
+    stub_db.existing_top_ids = []
+    calls: list[dict[str, Any]] = []
+
+    def _mock_post(url, json=None, timeout=None):
+        calls.append({"url": url, "json": json, "timeout": timeout})
+        req_id = json["requirements"][0]["id"]
+        if req_id == "t1":
+            raise requests.exceptions.ReadTimeout("single requirement timed out")
+        return _FakeRequestsResponse(
+            {
+                "results": [
+                    {
+                        "source_top_id": "t2",
+                        "l4_requirements": [
+                            {
+                                "req_id": "l4-2",
+                                "text": "系统 shall 记录审批日志",
+                                "acceptance_criteria": ["审批完成后生成审计日志"],
+                            }
+                        ],
+                        "open_questions": [],
+                    }
+                ],
+                "kb_version": "kb-v1",
+                "model_id": "deepseek-reasoner",
+            }
+        )
+
+    monkeypatch.setattr(requirements.requests, "post", _mock_post)
+
+    response = await client.post(
+        "/api/v2/requirements/l4/generate",
+        json={
+            "session_id": "s-1",
+            "requirements": [
+                {"id": "t1", "text": "Top req 1"},
+                {"id": "t2", "text": "Top req 2"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["timed_out_top_ids"] == ["t1"]
+    assert body["per_requirement_timeout_seconds"] > 0
+    assert len(body["generation_results"]) == 2
+    assert body["generation_results"][0]["source_top_id"] == "t1"
+    assert "超时" in body["generation_results"][0]["open_questions"][0]
+    assert body["generation_results"][1]["source_top_id"] == "t2"
+    assert len(stub_db.save_calls) == 1
+    assert len(stub_db.save_calls[0]["reqs"]) == 1
+    assert len(calls) == 2
+    assert calls[0]["timeout"][0] > 0
+    assert calls[0]["timeout"][1] == body["per_requirement_timeout_seconds"]
+
+
+async def test_generate_l4_requirements_stream_returns_per_top_item_events(
+    fastapi_client, monkeypatch
+):
+    client, _, _, _, stub_db = fastapi_client
+    stub_db.existing_top_ids = []
+
+    def _mock_post(url, json=None, timeout=None):
+        req_id = json["requirements"][0]["id"]
+        return _FakeRequestsResponse(
+            {
+                "results": [
+                    {
+                        "source_top_id": req_id,
+                        "l4_requirements": [
+                            {
+                                "req_id": f"l4-{req_id}",
+                                "text": f"系统 shall 处理 {req_id}",
+                                "acceptance_criteria": [f"{req_id} 验收"],
+                            }
+                        ],
+                        "open_questions": [],
+                    }
+                ],
+                "kb_version": "kb-v1",
+                "model_id": "deepseek-reasoner",
+            }
+        )
+
+    monkeypatch.setattr(requirements.requests, "post", _mock_post)
+
+    response = await client.post(
+        "/api/v2/requirements/l4/generate/stream",
+        json={
+            "session_id": "s-1",
+            "requirements": [
+                {"id": "t1", "text": "Top req 1"},
+                {"id": "t2", "text": "Top req 2"},
+            ],
+            "config": {"max_concurrent": 2},
+        },
+    )
+
+    assert response.status_code == 200
+    events = _parse_sse_events(response.text)
+    event_names = [name for name, _ in events]
+    assert event_names[0] == "init"
+    assert event_names.count("item") == 2
+    assert event_names[-1] == "done"
+
+    item_payloads = [payload for name, payload in events if name == "item"]
+    source_ids = {payload["source_top_id"] for payload in item_payloads}
+    assert source_ids == {"t1", "t2"}
+    assert all(payload["completed_count"] >= 1 for payload in item_payloads)
+
+    done_payload = [payload for name, payload in events if name == "done"][0]
+    assert done_payload["completed_count"] == 2
+    assert done_payload["total_count"] == 2
+    assert done_payload["max_concurrent"] == 2

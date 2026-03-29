@@ -81,6 +81,8 @@ L4 需求的特征：
 }
 """
 
+MAX_JSON_RETRIES = 1
+
 
 def _identify_level(text: str) -> Literal["L1", "L2", "L3", "unknown"]:
     """识别需求层级"""
@@ -191,6 +193,13 @@ def _parse_llm_response(response: str) -> Tuple[List[Dict], List[str]]:
     return l4_list, open_questions
 
 
+def _needs_json_retry(open_questions: List[str]) -> bool:
+    return any(
+        question in ("无法解析 LLM 输出的 JSON", "LLM 输出不包含有效 JSON")
+        for question in open_questions
+    )
+
+
 class L4GenerationService:
     """L4 生成服务"""
 
@@ -203,6 +212,19 @@ class L4GenerationService:
         if self._kb_service is None:
             self._kb_service = get_kb_service()
         return self._kb_service
+
+    def _call_generation_model(
+        self,
+        prompt: str,
+        system_prompt: str,
+        model_id: Optional[str],
+    ) -> str:
+        return model_engine.generate(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            max_new_tokens=4096,
+            model=model_id,
+        )
 
     def preprocess(self, top_req: TopRequirement) -> Dict[str, Any]:
         """
@@ -279,11 +301,10 @@ class L4GenerationService:
 
         # 4. 调用 LLM
         try:
-            response = model_engine.generate(
+            response = self._call_generation_model(
                 prompt=prompt,
                 system_prompt=SYSTEM_PROMPT,
-                max_new_tokens=4096,
-                model=model_id,
+                model_id=model_id,
             )
         except Exception as e:
             return GenerateL4Result(
@@ -386,16 +407,38 @@ class L4GenerationService:
         kb = self._get_kb_service()
         kb_version = kb.ensure_loaded()
 
-        # 逐条生成
-        results = []
-        for req in requirements:
+        # 逐条生成；仅在 JSON 解析失败时延后重试
+        results: List[Optional[GenerateL4Result]] = [None] * len(requirements)
+        retry_queue: List[Tuple[int, TopRequirement]] = []
+
+        for idx, req in enumerate(requirements):
             result = self.generate_l4_for_single(
                 req, config, model_id=resolved_model_id
             )
-            results.append(result)
+            results[idx] = result
+            if not result.l4_requirements and _needs_json_retry(result.open_questions):
+                retry_queue.append((idx, req))
+
+        for retry_round in range(MAX_JSON_RETRIES):
+            if not retry_queue:
+                break
+
+            current_queue = retry_queue
+            retry_queue = []
+
+            for idx, req in current_queue:
+                result = self.generate_l4_for_single(
+                    req, config, model_id=resolved_model_id
+                )
+                if result.l4_requirements:
+                    for l4 in result.l4_requirements:
+                        l4.issues.append(f"json_retried:{retry_round + 1}")
+                results[idx] = result
+                if not result.l4_requirements and _needs_json_retry(result.open_questions):
+                    retry_queue.append((idx, req))
 
         return GenerateL4Response(
-            results=results,
+            results=[result for result in results if result is not None],
             kb_version=kb_version,
             prompt_version="v1.0",
             model_id=resolved_model_id,

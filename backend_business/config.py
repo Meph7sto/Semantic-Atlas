@@ -64,6 +64,12 @@ class Settings:
     ASR_REMOTE_TIMEOUT_SECONDS = float(
         os.environ.get("ASR_REMOTE_TIMEOUT_SECONDS", "1800")
     )
+    L4_GENERATION_CONNECT_TIMEOUT_SECONDS = float(
+        os.environ.get("L4_GENERATION_CONNECT_TIMEOUT_SECONDS", "30")
+    )
+    L4_SINGLE_REQUIREMENT_TIMEOUT_SECONDS = float(
+        os.environ.get("L4_SINGLE_REQUIREMENT_TIMEOUT_SECONDS", "180")
+    )
     ASR_MAX_UPLOAD_MB = int(os.environ.get("ASR_MAX_UPLOAD_MB", "200"))
     ASR_ALLOWED_EXTENSIONS = os.environ.get(
         "ASR_ALLOWED_EXTENSIONS", "wav,mp3,m4a,mp4"

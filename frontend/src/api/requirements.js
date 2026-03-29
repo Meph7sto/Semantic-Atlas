@@ -207,7 +207,7 @@ export const requirementsL123Api = {
                     try {
                         const data = JSON.parse(line.slice(6))
                         if (onEvent) {
-                            onEvent(currentEvent, data)
+                            await onEvent(currentEvent, data)
                         }
                     } catch (e) {
                         console.warn('Failed to parse SSE data:', line, e)
@@ -276,6 +276,14 @@ export const l4RequirementsApi = {
         return resp.data.exists
     },
 
+    async clearBySession(sessionId) {
+        const resp = await api.delete(`/requirements/l4/${encodeURIComponent(sessionId)}`)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '清空 L4 历史失败')
+        }
+        return resp.data
+    },
+
     /**
      * 生成 L4 底层需求
      * 如有缓存直接返回，否则调用推理后端生成
@@ -296,6 +304,58 @@ export const l4RequirementsApi = {
             throw new Error(resp.data?.error || 'L4 需求生成失败')
         }
         return resp.data
+    },
+
+    async generateStream(sessionId, requirements, onEvent, { config = {}, model = null, forceRegenerate = false } = {}) {
+        const payload = {
+            session_id: sessionId,
+            requirements,
+            config,
+            force_regenerate: forceRegenerate,
+        }
+        if (model) {
+            payload.model = model
+        }
+
+        const response = await fetch('/api/v2/requirements/l4/generate/stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        })
+
+        if (!response.ok) {
+            const text = await response.text()
+            throw new Error(`HTTP ${response.status}: ${text}`)
+        }
+
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+
+        while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+            buffer = lines.pop() || ''
+
+            let currentEvent = 'message'
+            for (const line of lines) {
+                if (line.startsWith('event: ')) {
+                    currentEvent = line.slice(7).trim()
+                } else if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6))
+                        if (onEvent) {
+                            await onEvent(currentEvent, data)
+                        }
+                    } catch (e) {
+                        console.warn('Failed to parse SSE data:', line, e)
+                    }
+                }
+            }
+        }
     },
 }
 

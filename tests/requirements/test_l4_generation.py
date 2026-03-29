@@ -12,6 +12,7 @@ import sys
 import shutil
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 # 添加项目路径
 project_root = Path(__file__).parent.parent
@@ -103,6 +104,53 @@ class TestKBService:
 
         # 应该有相同的 evidence_ids
         assert ids1 == ids2, "evidence_ids should be stable across restart"
+
+    def test_kb_falls_back_to_lexical_mode_when_embedding_unavailable(
+        self, temp_persist_dir, monkeypatch
+    ):
+        """嵌入模型不可用时，KB 仍应可构建和检索"""
+        from backend_inference.services.kb_service import KBService
+
+        monkeypatch.setattr(KBService, "_get_embed_model", lambda self: None)
+
+        kb = KBService(persist_dir=temp_persist_dir)
+        version = kb.build_indexes()
+        response = kb.search(query="系统登录", kb_type="spec", top_k=3)
+
+        assert version, "KB version should not be empty in lexical mode"
+        assert kb._is_loaded, "KB should still be marked loaded in lexical mode"
+        assert len(response.items) > 0, "Lexical mode should still return evidence"
+        assert all(
+            item.metadata.get("retrieval_mode") == "lexical"
+            for item in response.items
+        ), "Fallback search should mark lexical retrieval mode"
+
+    def test_kb_loads_from_docstore_without_csv_or_embedding(
+        self, temp_persist_dir, monkeypatch
+    ):
+        """CSV 缺失时，仍应能从持久化 docstore 加载 spec/nfr"""
+        from backend_inference.services.kb_service import KBService
+
+        monkeypatch.setattr(KBService, "_get_embed_model", lambda self: None)
+
+        kb1 = KBService(
+            persist_dir=temp_persist_dir,
+            csv_path="missing_patterns.csv",
+        )
+        kb1.build_indexes()
+
+        kb2 = KBService(
+            persist_dir=temp_persist_dir,
+            csv_path="missing_patterns.csv",
+        )
+        loaded = kb2.load_indexes()
+        response = kb2.search(query="性能 日志 接口", kb_type="all", top_k=5)
+
+        assert loaded, "KB should load from persisted docstore in lexical mode"
+        assert kb2._pattern_count == 0, "Missing CSV should not produce pattern entries"
+        assert kb2._spec_count > 0, "Spec entries should still be available"
+        assert kb2._nfr_count > 0, "NFR entries should still be available"
+        assert len(response.items) > 0, "Search should still return spec/nfr evidence"
 
 
 class TestL4Validator:
@@ -229,6 +277,94 @@ class TestL4GenerationService:
         req_l3 = TopRequirement(id="3", text="系统应支持手机号短信验证码登录功能")
         result = service.preprocess(req_l3)
         assert result["level"] in ("L3", "unknown")
+
+    def test_generate_l4_retries_json_failures_after_first_pass(self, monkeypatch):
+        """JSON 解析失败的条目应在首轮结束后再重试"""
+        from backend_inference.schemas.kb_schemas import EvidenceItem
+        from backend_inference.schemas.l4_schemas import GenerateConfig, TopRequirement
+        from backend_inference.services.l4_generation_service import L4GenerationService
+
+        service = L4GenerationService()
+        service._kb_service = SimpleNamespace(ensure_loaded=lambda: "kb-test")
+
+        evidence = EvidenceItem(
+            evidence_id="spec-001",
+            kb_type="spec",
+            text="L4 需求必须使用 shall 句式",
+            score=1.0,
+            metadata={},
+        )
+        monkeypatch.setattr(
+            service,
+            "retrieve_evidences",
+            lambda query, config: ([], [evidence], []),
+        )
+
+        call_order = []
+
+        def fake_generate(prompt: str, system_prompt: str, model_id: str | None) -> str:
+            if "REQ-1" in prompt:
+                call_order.append("REQ-1")
+                if call_order.count("REQ-1") == 1:
+                    return "not json"
+                return """
+                {
+                  "l4_requirements": [
+                    {
+                      "shall_statement": "认证模块 shall 完成用户身份校验",
+                      "component": "认证模块",
+                      "acceptance_criteria": ["输入合法凭证时系统完成身份校验"],
+                      "test_method": "integration",
+                      "interfaces": [],
+                      "data_contracts": [],
+                      "error_handling": [],
+                      "nfr": [],
+                      "confidence": 0.8,
+                      "evidence_ids": ["spec-001"]
+                    }
+                  ],
+                  "open_questions": []
+                }
+                """
+            call_order.append("REQ-2")
+            return """
+            {
+              "l4_requirements": [
+                {
+                  "shall_statement": "会话模块 shall 记录用户登录态",
+                  "component": "会话模块",
+                  "acceptance_criteria": ["登录成功后系统保存有效登录态"],
+                  "test_method": "integration",
+                  "interfaces": [],
+                  "data_contracts": [],
+                  "error_handling": [],
+                  "nfr": [],
+                  "confidence": 0.8,
+                  "evidence_ids": ["spec-001"]
+                }
+              ],
+              "open_questions": []
+            }
+            """
+
+        monkeypatch.setattr(service, "_call_generation_model", fake_generate)
+
+        response = service.generate_l4(
+            requirements=[
+                TopRequirement(id="REQ-1", text="用户应能够登录系统"),
+                TopRequirement(id="REQ-2", text="系统应维护用户会话"),
+            ],
+            config=GenerateConfig(),
+            model_id="test-model",
+        )
+
+        assert call_order == ["REQ-1", "REQ-2", "REQ-1"]
+        assert len(response.results) == 2
+        assert response.results[0].source_top_id == "REQ-1"
+        assert len(response.results[0].l4_requirements) == 1
+        assert "json_retried:1" in response.results[0].l4_requirements[0].issues
+        assert response.results[1].source_top_id == "REQ-2"
+        assert len(response.results[1].l4_requirements) == 1
 
 
 if __name__ == "__main__":

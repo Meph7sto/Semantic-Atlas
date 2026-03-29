@@ -32,6 +32,13 @@ const validationWarning = ref('')
 const generationResults = ref([])
 const kbVersion = ref('')
 const useReasoningModel = ref(true)
+const clearExistingL4BeforeGenerate = ref(false)
+const generationProgress = ref({
+  total: 0,
+  completed: 0,
+  cached: 0,
+  concurrency: 0,
+})
 
 const config = ref({
   top_k_pattern: 5,
@@ -39,7 +46,8 @@ const config = ref({
   top_k_nfr: 3,
   max_l4_per_top_req: 5,
   min_l4_per_top_req: 1,
-  confidence_threshold: 0.6
+  confidence_threshold: 0.6,
+  max_concurrent: 4
 })
 
 // --- Computed ---
@@ -102,6 +110,112 @@ function normalizeList(value) {
   return Array.isArray(value) ? value : []
 }
 
+function appendGenerationNotice(message) {
+  if (!message) return
+  generationNotice.value = generationNotice.value
+    ? `${generationNotice.value} ${message}`
+    : message
+}
+
+function appendValidationWarning(message) {
+  if (!message) return
+  validationWarning.value = validationWarning.value
+    ? `${validationWarning.value} ${message}`
+    : message
+}
+
+function createPendingResult(item) {
+  return {
+    source_top_id: item.id,
+    source_top_text: item.text || '',
+    l4_requirements: [],
+    open_questions: [],
+    stream_status: 'pending',
+    from_cache: false,
+  }
+}
+
+function createResultFromPayload(payload, validatorStatusMap = new Map()) {
+  const topId = payload?.source_top_id || payload?.generation_result?.source_top_id || 'unknown'
+  const topText = payload?.source_top_text || ''
+  const requirements = normalizeList(payload?.requirements)
+  const generationResult = payload?.generation_result || {}
+  const openQuestions = Array.from(
+    new Set(normalizeList(generationResult?.open_questions).filter(Boolean))
+  )
+
+  return {
+    source_top_id: topId,
+    source_top_text: topText,
+    l4_requirements: requirements.map((req) => {
+      const parsedConfidence = typeof req.confidence === 'number' ? req.confidence : Number(req.confidence)
+      return {
+        l4_id: req.req_id,
+        source_top_id: req.source_top_id,
+        source_top_text: req.source_top_text,
+        component: req.component || 'TBD',
+        shall_statement: req.text,
+        acceptance_criteria: req.acceptance_criteria || [],
+        test_method: req.test_method || 'TBD',
+        interfaces: req.interfaces || [],
+        data_contracts: req.data_contracts || [],
+        error_handling: req.error_handling || [],
+        nfr: req.nfr || [],
+        open_questions: req.open_questions || [],
+        evidence_ids: req.evidence_ids || [],
+        confidence: Number.isFinite(parsedConfidence) ? parsedConfidence : 0.6,
+        validator_status: validatorStatusMap.get(req.req_id) || { passed: null, issues: [] },
+      }
+    }),
+    open_questions: openQuestions,
+    stream_status: payload?.status || 'completed',
+    from_cache: !!payload?.from_cache,
+  }
+}
+
+function upsertGenerationResult(result) {
+  const index = generationResults.value.findIndex((item) => item.source_top_id === result.source_top_id)
+  if (index >= 0) {
+    generationResults.value[index] = {
+      ...generationResults.value[index],
+      ...result,
+    }
+  } else {
+    generationResults.value.push(result)
+  }
+}
+
+async function validateStreamResult(topId, requirements) {
+  if (!requirements.length) return
+
+  try {
+    const validateResp = await l4Api.validate(requirements.map(toValidationL4), {
+      expectedTopIds: [topId],
+      confidenceThreshold: config.value.confidence_threshold,
+    })
+    const validatorStatusMap = buildValidatorStatusMap(validateResp, requirements)
+    const index = generationResults.value.findIndex((item) => item.source_top_id === topId)
+    if (index < 0) return
+    generationResults.value[index] = createResultFromPayload(
+      {
+        source_top_id: topId,
+        source_top_text: generationResults.value[index].source_top_text,
+        requirements,
+        generation_result: {
+          source_top_id: topId,
+          open_questions: generationResults.value[index].open_questions,
+        },
+        status: generationResults.value[index].stream_status,
+        from_cache: generationResults.value[index].from_cache,
+      },
+      validatorStatusMap
+    )
+  } catch (err) {
+    console.error('L4 validation failed', err)
+    appendValidationWarning(err?.message || `来源 ${topId} 的校验结果获取失败，状态显示为 Unknown`)
+  }
+}
+
 function toValidationL4(req) {
   const parsedConfidence = typeof req.confidence === 'number' ? req.confidence : Number(req.confidence)
   return {
@@ -151,93 +265,79 @@ async function startGeneration() {
   generationNotice.value = ''
   validationWarning.value = ''
   isGenerating.value = true
-  generationResults.value = []
+  generationResults.value = selectedReqsForApi.value.map(createPendingResult)
+  generationProgress.value = {
+    total: selectedReqsForApi.value.length,
+    completed: 0,
+    cached: 0,
+    concurrency: Number(config.value.max_concurrent) || 0,
+  }
 
   try {
-    const resp = await l4RequirementsApi.generate(
+    if (clearExistingL4BeforeGenerate.value) {
+      const clearResp = await l4RequirementsApi.clearBySession(sessionId.value.trim())
+      appendGenerationNotice(`生成前已清空历史 L4：${Number(clearResp?.deleted_count || 0)} 条。`)
+    }
+
+    await l4RequirementsApi.generateStream(
       sessionId.value.trim(),
       selectedReqsForApi.value,
+      async (eventName, eventData) => {
+        if (eventName === 'init') {
+          generationProgress.value = {
+            total: Number(eventData.total_count) || selectedReqsForApi.value.length,
+            completed: 0,
+            cached: Number(eventData.cached_count) || 0,
+            concurrency: Number(eventData.max_concurrent) || Number(config.value.max_concurrent) || 0,
+          }
+          return
+        }
+
+        if (eventName === 'item') {
+          generationProgress.value.completed = Number(eventData.completed_count) || generationProgress.value.completed
+          const result = createResultFromPayload(eventData)
+          upsertGenerationResult(result)
+          if (eventData?.requirements?.length) {
+            void validateStreamResult(result.source_top_id, eventData.requirements)
+          }
+          return
+        }
+
+        if (eventName === 'done') {
+          generationProgress.value.completed = Number(eventData.completed_count) || generationProgress.value.total
+          if (eventData.kb_version) {
+            kbVersion.value = eventData.kb_version
+          }
+          const timedOutTopIds = normalizeList(eventData.timed_out_top_ids)
+          const failedTopIds = normalizeList(eventData.failed_top_ids)
+          const perRequirementTimeout = Number(eventData.per_requirement_timeout_seconds)
+          if (timedOutTopIds.length > 0) {
+            const timeoutLabel = Number.isFinite(perRequirementTimeout)
+              ? `${perRequirementTimeout}s`
+              : '当前配置时长'
+            appendGenerationNotice(
+              `${timedOutTopIds.length} 条顶层需求在单条上限 ${timeoutLabel} 内未完成，已跳过并写入 open questions。`
+            )
+          }
+          if (failedTopIds.length > 0) {
+            appendGenerationNotice(`${failedTopIds.length} 条顶层需求生成失败，已逐条返回失败信息。`)
+          }
+          const duplicates = Number(eventData.duplicates_skipped || 0)
+          if (duplicates > 0) {
+            appendGenerationNotice(`本次生成有 ${duplicates} 条 L4 被去重跳过。`)
+          }
+          return
+        }
+
+        if (eventName === 'error') {
+          generationError.value = eventData?.message || '生成失败'
+        }
+      },
       {
         config: config.value,
         model: modelId.value,
       }
     )
-
-    const requirements = resp.requirements || []
-    const generationMeta = Array.isArray(resp.generation_results) ? resp.generation_results : []
-    let validatorStatusMap = new Map()
-
-    if (requirements.length > 0) {
-      const validatePayload = requirements.map(toValidationL4)
-      try {
-        const validateResp = await l4Api.validate(validatePayload, {
-          expectedTopIds: selectedReqsForApi.value.map((item) => item.id),
-          confidenceThreshold: config.value.confidence_threshold,
-        })
-        validatorStatusMap = buildValidatorStatusMap(validateResp, requirements)
-      } catch (err) {
-        console.error('L4 validation failed', err)
-        validationWarning.value = err?.message || '校验结果获取失败，状态显示为 Unknown'
-      }
-    }
-
-    const grouped = {}
-    requirements.forEach((req) => {
-      const topId = req.source_top_id || 'unknown'
-      const parsedConfidence = typeof req.confidence === 'number' ? req.confidence : Number(req.confidence)
-      if (!grouped[topId]) {
-        grouped[topId] = {
-          source_top_id: topId,
-          l4_requirements: [],
-          open_questions: [],
-        }
-      }
-      grouped[topId].l4_requirements.push({
-        l4_id: req.req_id,
-        source_top_id: req.source_top_id,
-        source_top_text: req.source_top_text,
-        component: req.component || 'TBD',
-        shall_statement: req.text,
-        acceptance_criteria: req.acceptance_criteria || [],
-        test_method: req.test_method || 'TBD',
-        interfaces: req.interfaces || [],
-        data_contracts: req.data_contracts || [],
-        error_handling: req.error_handling || [],
-        nfr: req.nfr || [],
-        open_questions: req.open_questions || [],
-        evidence_ids: req.evidence_ids || [],
-        confidence: Number.isFinite(parsedConfidence) ? parsedConfidence : 0.6,
-        validator_status: validatorStatusMap.get(req.req_id) || { passed: null, issues: [] },
-      })
-    })
-
-    generationMeta.forEach((item) => {
-      const topId = item?.source_top_id || 'unknown'
-      if (!grouped[topId]) {
-        grouped[topId] = {
-          source_top_id: topId,
-          l4_requirements: [],
-          open_questions: [],
-        }
-      }
-      const mergedQuestions = [
-        ...normalizeList(grouped[topId].open_questions),
-        ...normalizeList(item?.open_questions),
-      ]
-      grouped[topId].open_questions = Array.from(new Set(mergedQuestions.filter(Boolean)))
-    })
-
-    if (Object.keys(grouped).length === 0) {
-      const duplicates = Number(resp.duplicates_skipped || 0)
-      if (duplicates > 0) {
-        generationNotice.value = `本次生成未新增可展示结果：${duplicates} 条被去重跳过。`
-      } else {
-        generationNotice.value = '本次生成未返回可展示的 L4 需求。'
-      }
-    }
-
-    generationResults.value = Object.values(grouped)
-    kbVersion.value = resp.kb_version || kbVersion.value
   } catch (err) {
     generationError.value = err?.message || '生成失败'
   } finally {
@@ -398,7 +498,14 @@ watch(reqLevelFilter, () => {
               <span class="ml-3 text-sm font-medium text-zinc-600">DeepSeek R1 (Reasoning Mode)</span>
             </label>
           </div>
-          <div class="grid grid-cols-3 xl:grid-cols-6 gap-4">
+          <div class="flex items-center gap-3 mb-4">
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" v-model="clearExistingL4BeforeGenerate" class="sr-only peer">
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-zinc-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-rose-600"></div>
+              <span class="ml-3 text-sm font-medium text-zinc-600">开始前清空历史 L4</span>
+            </label>
+          </div>
+          <div class="grid grid-cols-3 xl:grid-cols-7 gap-4">
             <div>
               <label class="block text-[10px] font-semibold text-zinc-500 uppercase mb-1">Top-k Pattern</label>
               <input v-model.number="config.top_k_pattern" type="number" class="w-full text-sm bg-zinc-50 border border-zinc-200 rounded p-1.5 px-2 focus:ring-1 focus:ring-black outline-none" />
@@ -422,6 +529,10 @@ watch(reqLevelFilter, () => {
             <div>
               <label class="block text-[10px] font-semibold text-zinc-500 uppercase mb-1">Confidence</label>
               <input v-model.number="config.confidence_threshold" type="number" step="0.1" max="1" min="0" class="w-full text-sm bg-zinc-50 border border-zinc-200 rounded p-1.5 px-2 focus:ring-1 focus:ring-black outline-none" />
+            </div>
+            <div>
+              <label class="block text-[10px] font-semibold text-zinc-500 uppercase mb-1">Parallelism</label>
+              <input v-model.number="config.max_concurrent" type="number" min="1" max="8" class="w-full text-sm bg-zinc-50 border border-zinc-200 rounded p-1.5 px-2 focus:ring-1 focus:ring-black outline-none" />
             </div>
           </div>
         </div>
@@ -453,7 +564,7 @@ watch(reqLevelFilter, () => {
           <div v-if="isGenerating" class="flex flex-col items-center justify-center py-20 text-zinc-400">
             <Loader2 class="w-12 h-12 animate-spin mb-4" />
             <h4 class="text-lg font-medium text-zinc-900">Generating L4 Requirements...</h4>
-            <p class="text-sm mt-2">Connecting to DeepSeek and LlamaIndex KB</p>
+            <p class="text-sm mt-2">已完成 {{ generationProgress.completed }} / {{ generationProgress.total }}，并发 {{ generationProgress.concurrency || config.max_concurrent }}</p>
           </div>
 
           <div v-if="generationResults.length === 0 && !isGenerating && !generationError" class="flex flex-col items-center justify-center py-20 text-zinc-300">
@@ -475,7 +586,17 @@ watch(reqLevelFilter, () => {
                <p class="text-sm text-zinc-600 italic">"{{ getSourceText(result.source_top_id) }}"</p>
             </div> -->
 
-            <div v-if="result.l4_requirements.length === 0 && result.open_questions.length > 0" class="bg-amber-50 border border-amber-200 rounded-xl p-5">
+            <div v-if="result.stream_status === 'pending'" class="bg-zinc-100 border border-zinc-200 rounded-xl p-5">
+               <div class="flex items-center gap-3">
+                  <Loader2 class="w-5 h-5 text-zinc-500 animate-spin shrink-0" />
+                  <div>
+                    <h4 class="text-sm font-semibold text-zinc-900">Generating...</h4>
+                    <p class="text-xs text-zinc-600 mt-1">该顶层需求正在并发队列中，完成后会立即显示。</p>
+                  </div>
+               </div>
+            </div>
+
+            <div v-else-if="result.l4_requirements.length === 0 && result.open_questions.length > 0" class="bg-amber-50 border border-amber-200 rounded-xl p-5">
                <div class="flex items-start gap-3">
                   <AlertTriangle class="w-5 h-5 text-amber-600 mt-1 shrink-0" />
                   <div>

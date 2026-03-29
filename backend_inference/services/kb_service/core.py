@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
@@ -84,6 +85,7 @@ class KBService:
 
         # 嵌入模型
         self._embed_model = None
+        self._embedding_error: Optional[str] = None
 
         # 版本信息
         self._kb_version: str = ""
@@ -95,19 +97,85 @@ class KBService:
         self._nfr_count: int = 0
         self._hard_negative_count: int = 0
 
-    def _get_embed_model(self):
-        """懒加载嵌入模型"""
+    def _get_embed_model(self) -> Optional[Any]:
+        """懒加载嵌入模型；失败时降级为 lexical-only 模式"""
         if not LLAMAINDEX_AVAILABLE:
             raise RuntimeError("LlamaIndex not installed")
 
+        if self._embedding_error:
+            return None
+
         if self._embed_model is None:
-            self._embed_model = HuggingFaceEmbedding(
-                model_name=self.embedding_model_name
-            )
-            # 设置全局默认
-            Settings.embed_model = self._embed_model
+            try:
+                self._embed_model = HuggingFaceEmbedding(
+                    model_name=self.embedding_model_name
+                )
+                # 设置全局默认
+                Settings.embed_model = self._embed_model
+            except Exception as e:
+                self._embedding_error = str(e)
+                print(
+                    "[KB Service] WARNING: Embedding model unavailable, "
+                    f"falling back to lexical retrieval only: {e}"
+                )
+                return None
 
         return self._embed_model
+
+    def _build_pattern_nodes(self, patterns: List[Dict[str, Any]]) -> List[TextNode]:
+        nodes = []
+        for p in patterns:
+            node = TextNode(
+                text=p["text"],
+                id_=p["id"],
+                metadata={
+                    "kb_type": "pattern",
+                    "high_text": p["high_text"],
+                    "low_text": p["low_text"],
+                },
+            )
+            nodes.append(node)
+        return nodes
+
+    def _build_spec_nodes(self) -> List[TextNode]:
+        nodes = []
+        for entry in SPEC_ENTRIES:
+            node = TextNode(
+                text=entry["text"],
+                id_=entry["id"],
+                metadata={
+                    "kb_type": "spec",
+                    "category": entry.get("category", ""),
+                    "source": entry.get("source", ""),
+                },
+            )
+            nodes.append(node)
+        return nodes
+
+    def _build_nfr_nodes(self) -> List[TextNode]:
+        nodes = []
+        for entry in NFR_ENTRIES:
+            node = TextNode(
+                text=entry["text"],
+                id_=entry["id"],
+                metadata={
+                    "kb_type": "nfr",
+                    "nfr_type": entry.get("nfr_type", ""),
+                    "category": entry.get("category", ""),
+                },
+            )
+            nodes.append(node)
+        return nodes
+
+    def _build_vector_index(self, nodes: List[TextNode]) -> Optional[VectorStoreIndex]:
+        if not nodes:
+            return None
+
+        embed_model = self._get_embed_model()
+        if embed_model is None:
+            return None
+
+        return VectorStoreIndex(nodes, embed_model=embed_model)
 
     def _compute_version(
         self,
@@ -207,59 +275,20 @@ class KBService:
             print(f"[KB Service] ERROR loading CSV: {e}")
             return [], []
 
-    def _build_pattern_index(self, patterns: List[Dict]) -> VectorStoreIndex:
+    def _build_pattern_index(self, patterns: List[Dict]) -> Optional[VectorStoreIndex]:
         """构建 Pattern 索引"""
-        nodes = []
-        for p in patterns:
-            node = TextNode(
-                text=p["text"],
-                id_=p["id"],
-                metadata={
-                    "kb_type": "pattern",
-                    "high_text": p["high_text"],
-                    "low_text": p["low_text"],
-                },
-            )
-            nodes.append(node)
+        self._pattern_nodes = self._build_pattern_nodes(patterns)
+        return self._build_vector_index(self._pattern_nodes)
 
-        self._pattern_nodes = nodes
-        return VectorStoreIndex(nodes, embed_model=self._get_embed_model())
-
-    def _build_spec_index(self) -> VectorStoreIndex:
+    def _build_spec_index(self) -> Optional[VectorStoreIndex]:
         """构建 Spec 索引"""
-        nodes = []
-        for entry in SPEC_ENTRIES:
-            node = TextNode(
-                text=entry["text"],
-                id_=entry["id"],
-                metadata={
-                    "kb_type": "spec",
-                    "category": entry.get("category", ""),
-                    "source": entry.get("source", ""),
-                },
-            )
-            nodes.append(node)
+        self._spec_nodes = self._build_spec_nodes()
+        return self._build_vector_index(self._spec_nodes)
 
-        self._spec_nodes = nodes
-        return VectorStoreIndex(nodes, embed_model=self._get_embed_model())
-
-    def _build_nfr_index(self) -> VectorStoreIndex:
+    def _build_nfr_index(self) -> Optional[VectorStoreIndex]:
         """构建 NFR 索引"""
-        nodes = []
-        for entry in NFR_ENTRIES:
-            node = TextNode(
-                text=entry["text"],
-                id_=entry["id"],
-                metadata={
-                    "kb_type": "nfr",
-                    "nfr_type": entry.get("nfr_type", ""),
-                    "category": entry.get("category", ""),
-                },
-            )
-            nodes.append(node)
-
-        self._nfr_nodes = nodes
-        return VectorStoreIndex(nodes, embed_model=self._get_embed_model())
+        self._nfr_nodes = self._build_nfr_nodes()
+        return self._build_vector_index(self._nfr_nodes)
 
     def _build_hard_negative_nodes(self, hard_negatives: List[Dict[str, Any]]) -> None:
         """构建 hard negatives 节点列表 (仅用于检索评估/过滤)"""
@@ -322,6 +351,136 @@ class KBService:
         except Exception:
             return []
         return nodes
+
+    def _load_nodes_from_docstore_file(self, docstore_file: Path) -> List[TextNode]:
+        if not LLAMAINDEX_AVAILABLE or not docstore_file.exists():
+            return []
+
+        try:
+            with open(docstore_file, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+        except Exception as e:
+            print(f"[KB Service] ERROR loading docstore {docstore_file}: {e}")
+            return []
+
+        raw_nodes = payload.get("docstore/data", {})
+        nodes: List[TextNode] = []
+        for fallback_id, raw_entry in raw_nodes.items():
+            node_data = raw_entry.get("__data__", {}) if isinstance(raw_entry, dict) else {}
+            text = str(node_data.get("text", "")).strip()
+            node_id = str(node_data.get("id_", fallback_id)).strip() or fallback_id
+            if not text:
+                continue
+            nodes.append(
+                TextNode(
+                    text=text,
+                    id_=node_id,
+                    metadata=node_data.get("metadata") or {},
+                )
+            )
+        return nodes
+
+    def _persist_nodes_docstore(self, target_dir: Path, nodes: List[TextNode]) -> None:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        payload: Dict[str, Dict[str, Any]] = {
+            "docstore/data": {},
+            "docstore/metadata": {},
+        }
+
+        for node in nodes:
+            node_id = node.id_ or getattr(node, "node_id", None) or ""
+            if not node_id:
+                continue
+
+            metadata = dict(node.metadata) if node.metadata else {}
+            text = node.text or ""
+            doc_hash = hashlib.sha256(
+                json.dumps(
+                    {"id": node_id, "text": text, "metadata": metadata},
+                    sort_keys=True,
+                    ensure_ascii=True,
+                ).encode("utf-8")
+            ).hexdigest()
+
+            payload["docstore/data"][node_id] = {
+                "__data__": {
+                    "id_": node_id,
+                    "embedding": None,
+                    "metadata": metadata,
+                    "excluded_embed_metadata_keys": [],
+                    "excluded_llm_metadata_keys": [],
+                    "relationships": {},
+                    "metadata_template": "{key}: {value}",
+                    "metadata_separator": "\n",
+                    "text": text,
+                    "mimetype": "text/plain",
+                    "start_char_idx": None,
+                    "end_char_idx": None,
+                    "metadata_seperator": "\n",
+                    "text_template": "{metadata_str}\n\n{content}",
+                    "class_name": "TextNode",
+                },
+                "__type__": "1",
+            }
+            payload["docstore/metadata"][node_id] = {"doc_hash": doc_hash}
+
+        with open(target_dir / "docstore.json", "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=True)
+
+    def _get_nodes_for_type(self, kb_type: str) -> List[TextNode]:
+        if kb_type == "pattern":
+            return self._pattern_nodes
+        if kb_type == "spec":
+            return self._spec_nodes
+        if kb_type == "nfr":
+            return self._nfr_nodes
+        return []
+
+    def _collect_query_terms(self, text: str) -> List[str]:
+        lower = text.lower()
+        tokens = [token for token in re.split(r"[^\w\u4e00-\u9fff]+", lower) if token]
+        compact = re.sub(r"\s+", "", lower)
+        if compact:
+            tokens.extend(
+                compact[i : i + 2] for i in range(max(len(compact) - 1, 0))
+            )
+        # 保持顺序并去重
+        return list(dict.fromkeys(token for token in tokens if token))
+
+    def _score_lexical_match(self, query: str, text: str) -> float:
+        if not query or not text:
+            return 0.0
+
+        query_terms = self._collect_query_terms(query)
+        text_terms = set(self._collect_query_terms(text))
+        if not query_terms or not text_terms:
+            return 0.0
+
+        overlap = sum(1 for term in query_terms if term in text_terms)
+        overlap_score = overlap / max(len(query_terms), 1)
+
+        text_lower = text.lower()
+        phrase_bonus = 0.0
+        for term in query_terms:
+            if len(term) >= 2 and term in text_lower:
+                phrase_bonus = 0.25
+                break
+
+        return min(1.0, overlap_score + phrase_bonus)
+
+    def _search_lexical_nodes(
+        self,
+        nodes: List[TextNode],
+        query: str,
+        top_k: int,
+    ) -> List[Tuple[TextNode, float, float, float]]:
+        scored: List[Tuple[TextNode, float, float, float]] = []
+        for node in nodes:
+            score = self._score_lexical_match(query, node.text or "")
+            scored.append((node, score, 0.0, score))
+
+        scored.sort(key=lambda item: item[1], reverse=True)
+        return scored[:top_k]
 
     def _get_bm25_retriever(
         self, kb_type: str, index: VectorStoreIndex, top_k: int
@@ -482,9 +641,20 @@ class KBService:
         spec_dir = self.persist_dir / "spec"
         nfr_dir = self.persist_dir / "nfr"
 
-        self._pattern_index.storage_context.persist(persist_dir=str(pattern_dir))
-        self._spec_index.storage_context.persist(persist_dir=str(spec_dir))
-        self._nfr_index.storage_context.persist(persist_dir=str(nfr_dir))
+        if self._pattern_index is not None:
+            self._pattern_index.storage_context.persist(persist_dir=str(pattern_dir))
+        else:
+            self._persist_nodes_docstore(pattern_dir, self._pattern_nodes)
+
+        if self._spec_index is not None:
+            self._spec_index.storage_context.persist(persist_dir=str(spec_dir))
+        else:
+            self._persist_nodes_docstore(spec_dir, self._spec_nodes)
+
+        if self._nfr_index is not None:
+            self._nfr_index.storage_context.persist(persist_dir=str(nfr_dir))
+        else:
+            self._persist_nodes_docstore(nfr_dir, self._nfr_nodes)
 
         self._persist_hard_negatives(pattern_dir, hard_negatives)
 
@@ -521,10 +691,9 @@ class KBService:
         spec_dir = self.persist_dir / "spec"
         nfr_dir = self.persist_dir / "nfr"
 
-        # 检查是否存在持久化索引
-        if not all(
+        # 检查是否存在任何可复用的持久化数据
+        if not version_file.exists() and not any(
             [
-                version_file.exists(),
                 pattern_dir.exists(),
                 spec_dir.exists(),
                 nfr_dir.exists(),
@@ -535,8 +704,11 @@ class KBService:
 
         try:
             # 读取版本信息
-            with open(version_file, "r", encoding="utf-8") as f:
-                version_info = json.load(f)
+            if version_file.exists():
+                with open(version_file, "r", encoding="utf-8") as f:
+                    version_info = json.load(f)
+            else:
+                version_info = {}
 
             self._kb_version = version_info.get("kb_version", "unknown")
             self._pattern_count = version_info.get("pattern_count", 0)
@@ -546,28 +718,86 @@ class KBService:
 
             print(f"[KB Service] Loading indexes, version: {self._kb_version}")
 
-            # 设置嵌入模型
-            self._get_embed_model()
+            # 嵌入模型不可用时，直接跳过向量索引加载，转 lexical-only 模式
+            embed_model = self._get_embed_model()
+            if embed_model is not None:
+                try:
+                    if pattern_dir.exists():
+                        pattern_storage = StorageContext.from_defaults(
+                            persist_dir=str(pattern_dir)
+                        )
+                        self._pattern_index = load_index_from_storage(pattern_storage)
+                    if spec_dir.exists():
+                        spec_storage = StorageContext.from_defaults(
+                            persist_dir=str(spec_dir)
+                        )
+                        self._spec_index = load_index_from_storage(spec_storage)
+                    if nfr_dir.exists():
+                        nfr_storage = StorageContext.from_defaults(
+                            persist_dir=str(nfr_dir)
+                        )
+                        self._nfr_index = load_index_from_storage(nfr_storage)
+                except Exception as e:
+                    print(
+                        "[KB Service] WARNING: Vector indexes unavailable, "
+                        f"falling back to lexical retrieval only: {e}"
+                    )
+                    self._pattern_index = None
+                    self._spec_index = None
+                    self._nfr_index = None
 
-            # 加载索引
-            pattern_storage = StorageContext.from_defaults(persist_dir=str(pattern_dir))
-            self._pattern_index = load_index_from_storage(pattern_storage)
+            if self._pattern_index is not None:
+                self._pattern_nodes = self._load_nodes_from_index(self._pattern_index)
+            if self._spec_index is not None:
+                self._spec_nodes = self._load_nodes_from_index(self._spec_index)
+            if self._nfr_index is not None:
+                self._nfr_nodes = self._load_nodes_from_index(self._nfr_index)
 
-            spec_storage = StorageContext.from_defaults(persist_dir=str(spec_dir))
-            self._spec_index = load_index_from_storage(spec_storage)
+            if not self._pattern_nodes:
+                self._pattern_nodes = self._load_nodes_from_docstore_file(
+                    pattern_dir / "docstore.json"
+                )
+            if not self._spec_nodes:
+                self._spec_nodes = self._load_nodes_from_docstore_file(
+                    spec_dir / "docstore.json"
+                )
+            if not self._nfr_nodes:
+                self._nfr_nodes = self._load_nodes_from_docstore_file(
+                    nfr_dir / "docstore.json"
+                )
 
-            nfr_storage = StorageContext.from_defaults(persist_dir=str(nfr_dir))
-            self._nfr_index = load_index_from_storage(nfr_storage)
+            patterns_from_csv: List[Dict[str, Any]] = []
+            if not self._pattern_nodes:
+                patterns_from_csv, self._hard_negative_patterns = self._load_pattern_data()
+                self._pattern_nodes = self._build_pattern_nodes(patterns_from_csv)
 
-            self._pattern_nodes = self._load_nodes_from_index(self._pattern_index)
-            self._spec_nodes = self._load_nodes_from_index(self._spec_index)
-            self._nfr_nodes = self._load_nodes_from_index(self._nfr_index)
+            if not self._spec_nodes:
+                self._spec_nodes = self._build_spec_nodes()
+            if not self._nfr_nodes:
+                self._nfr_nodes = self._build_nfr_nodes()
 
             self._refresh_evidence_id_set()
 
-            self._hard_negative_patterns = self._load_hard_negatives(pattern_dir)
+            if not self._hard_negative_patterns:
+                self._hard_negative_patterns = self._load_hard_negatives(pattern_dir)
             self._hard_negative_count = len(self._hard_negative_patterns)
             self._build_hard_negative_nodes(self._hard_negative_patterns)
+
+            if not self._kb_version:
+                self._kb_version = self._compute_version(
+                    [
+                        {
+                            "high_text": node.metadata.get("high_text", ""),
+                            "low_text": node.metadata.get("low_text", ""),
+                        }
+                        for node in self._pattern_nodes
+                    ],
+                    self._hard_negative_patterns,
+                )
+
+            self._pattern_count = self._pattern_count or len(self._pattern_nodes)
+            self._spec_count = self._spec_count or len(self._spec_nodes)
+            self._nfr_count = self._nfr_count or len(self._nfr_nodes)
 
             self._is_loaded = True
             print(f"[KB Service] Indexes loaded successfully")
@@ -602,42 +832,70 @@ class KBService:
         total_searched = 0
 
         # 确定要检索的索引
-        indexes_to_search: List[Tuple[str, VectorStoreIndex, int]] = []
+        indexes_to_search: List[Tuple[str, Optional[VectorStoreIndex], int]] = []
 
-        if kb_type in ("pattern", "all") and self._pattern_index:
+        if kb_type in ("pattern", "all") and self._pattern_nodes:
             indexes_to_search.append(("pattern", self._pattern_index, self._pattern_count))
-        if kb_type in ("spec", "all") and self._spec_index:
+        if kb_type in ("spec", "all") and self._spec_nodes:
             indexes_to_search.append(("spec", self._spec_index, self._spec_count))
-        if kb_type in ("nfr", "all") and self._nfr_index:
+        if kb_type in ("nfr", "all") and self._nfr_nodes:
             indexes_to_search.append(("nfr", self._nfr_index, self._nfr_count))
 
         for idx_type, index, count in indexes_to_search:
             total_searched += count
 
             try:
-                vector_results = []
                 bm25_results = []
-
-                retriever = index.as_retriever(similarity_top_k=top_k)
-                vector_results = retriever.retrieve(query)
-
-                bm25_retriever = self._get_bm25_retriever(idx_type, index, top_k)
-                if bm25_retriever:
-                    bm25_results = bm25_retriever.retrieve(query)
-
-                combined_results = self._merge_retrieval_results(
-                    vector_results, bm25_results, top_k
-                )
-
                 hard_negative_max_score = 0.0
+
+                if index is not None:
+                    try:
+                        vector_results = []
+                        retriever = index.as_retriever(similarity_top_k=top_k)
+                        vector_results = retriever.retrieve(query)
+
+                        bm25_retriever = self._get_bm25_retriever(idx_type, index, top_k)
+                        if bm25_retriever:
+                            bm25_results = bm25_retriever.retrieve(query)
+
+                        combined_results = self._merge_retrieval_results(
+                            vector_results, bm25_results, top_k
+                        )
+                    except Exception as e:
+                        print(
+                            f"[KB Service] WARNING: Vector retrieval failed for {idx_type}, "
+                            f"falling back to lexical retrieval: {e}"
+                        )
+                        combined_results = self._search_lexical_nodes(
+                            self._get_nodes_for_type(idx_type), query, top_k
+                        )
+                else:
+                    combined_results = self._search_lexical_nodes(
+                        self._get_nodes_for_type(idx_type), query, top_k
+                    )
+
                 if idx_type == "pattern":
-                    hard_negative_retriever = self._get_hard_negative_retriever(3)
+                    hard_negative_retriever = (
+                        self._get_hard_negative_retriever(3)
+                        if index is not None
+                        else None
+                    )
                     if hard_negative_retriever:
                         hard_negative_results = hard_negative_retriever.retrieve(query)
                         hard_negative_max_score = max(
                             (
                                 float(result.score or 0.0)
                                 for result in hard_negative_results
+                            ),
+                            default=0.0,
+                        )
+                    else:
+                        hard_negative_max_score = max(
+                            (
+                                score
+                                for _, score, _, _ in self._search_lexical_nodes(
+                                    self._hard_negative_nodes, query, 3
+                                )
                             ),
                             default=0.0,
                         )
@@ -666,8 +924,10 @@ class KBService:
                         metadata["retrieval_mode"] = "hybrid"
                         metadata["score_vector"] = float(vector_score)
                         metadata["score_bm25"] = float(bm25_score)
-                    else:
+                    elif index is not None:
                         metadata["retrieval_mode"] = "vector"
+                    else:
+                        metadata["retrieval_mode"] = "lexical"
                     if idx_type == "pattern" and hard_negative_max_score > 0:
                         metadata["hard_negative_max_score"] = float(
                             hard_negative_max_score

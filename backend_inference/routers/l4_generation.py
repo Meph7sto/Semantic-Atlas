@@ -17,7 +17,7 @@ root_router = APIRouter(tags=["L4 Generation"])
 
 
 @router.post("/generate", response_model=GenerateL4Response)
-async def generate_l4(request: GenerateL4Request) -> GenerateL4Response:
+def generate_l4(request: GenerateL4Request) -> GenerateL4Response:
     """
     生成 L4 需求
 
@@ -69,12 +69,12 @@ async def generate_l4(request: GenerateL4Request) -> GenerateL4Response:
 
 # 兼容 mission.txt 中定义的 /generate_l4 路径
 @router.post("/generate_l4", response_model=GenerateL4Response, include_in_schema=False)
-async def generate_l4_alias(request: GenerateL4Request) -> GenerateL4Response:
+def generate_l4_alias(request: GenerateL4Request) -> GenerateL4Response:
     """兼容别名"""
-    return await generate_l4(request)
+    return generate_l4(request)
 
 
 @root_router.post("/generate_l4", response_model=GenerateL4Response)
-async def generate_l4_root(request: GenerateL4Request) -> GenerateL4Response:
+def generate_l4_root(request: GenerateL4Request) -> GenerateL4Response:
     """mission.txt 根路径"""
-    return await generate_l4(request)
+    return generate_l4(request)

@@ -109,6 +109,22 @@ class L4RequirementsMixin:
                         texts.append(row[0])
         return texts
 
+    def clear_l4_requirements_for_session(self, session_id: str) -> int:
+        """清空指定 session 的全部 L4 需求及其映射关系。"""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(1) FROM low_level_requirements WHERE session_id = %s",
+                    (session_id,),
+                )
+                count_row = cur.fetchone()
+                deleted_count = int(count_row[0] or 0) if count_row else 0
+                cur.execute(
+                    "DELETE FROM low_level_requirements WHERE session_id = %s",
+                    (session_id,),
+                )
+        return deleted_count
+
     def save_l4_requirements(
         self,
         session_id: str,
