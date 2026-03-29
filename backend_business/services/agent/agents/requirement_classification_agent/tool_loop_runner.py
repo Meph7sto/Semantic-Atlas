@@ -61,6 +61,7 @@ class RequirementClassificationToolLoopRunner:
             "session_id": session_id,
             "graph_id": recorder.graph_id,
             "selected_requirement_id": requirement_id,
+            "selected_requirement_locked": bool(requirement_id),
             "resolved_requirement_id": requirement_id,
             "classification_result": None,
             "tool_results": [],

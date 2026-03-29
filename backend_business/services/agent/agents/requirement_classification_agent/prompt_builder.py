@@ -8,18 +8,29 @@ from typing import Any
 
 class RequirementClassificationPromptBuilder:
     def build_system_prompt(self, *, context: dict[str, Any]) -> str:
-        return (
+        base = (
             "你是需求分类 Agent。你运行在当前单个项目内，只能使用提供的工具读取需求并完成分类。"
             "你的职责仅限于：定位需求、执行分类、解释分类结果。"
             "不得修改需求，不得编造需求内容，不得跳过工具直接猜测需求细节。"
             "当目标需求不明确时，必须先使用 list/search/get 工具定位。"
             "当工具已经足够回答时，输出简洁中文，不要输出 JSON。"
         )
+        selected_requirement_id = str(context.get("selected_requirement_id") or "").strip()
+        if selected_requirement_id:
+            base += (
+                f"当前会话已经由前端显式选中了目标需求 requirement_id={selected_requirement_id}。"
+                "这就是本轮的权威目标需求。"
+                "不要要求用户重复提供详细描述、验收标准或再次确认目标。"
+                "如果用户请求的是分类，请优先直接调用 classify_requirement 工具对该 requirement_id 执行分类。"
+            )
+        return base
 
     def build_user_message(self, *, user_message: str, context: dict[str, Any]) -> str:
+        selected_requirement_id = str(context.get("selected_requirement_id") or "").strip() or None
         payload = {
             "project_id": context.get("project_id"),
-            "selected_requirement_id": context.get("selected_requirement_id"),
+            "selected_requirement_id": selected_requirement_id,
+            "selected_requirement_locked": bool(selected_requirement_id),
             "user_message": user_message,
         }
         return json.dumps(payload, ensure_ascii=False)
