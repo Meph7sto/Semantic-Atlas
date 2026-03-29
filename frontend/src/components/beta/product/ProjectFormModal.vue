@@ -10,6 +10,17 @@
         <label>描述</label>
         <textarea v-model="form.description" placeholder="输入项目描述" rows="3"></textarea>
       </div>
+      <div v-if="mode === 'create'" class="form-group">
+        <label>Session ID <span class="optional-tag">可选</span></label>
+        <input
+          type="text"
+          v-model="form.sessionId"
+          placeholder="输入 Session ID，创建后自动导入该 Session 的需求"
+        />
+        <p v-if="form.sessionId && form.sessionId.trim()" class="field-hint success">
+          ✓ 创建后将自动导入该 Session 的需求数据（L1-L4）
+        </p>
+      </div>
       <div class="modal-actions">
         <button type="button" class="action-btn white" @click="$emit('close')">取消</button>
         <button
@@ -35,14 +46,14 @@ const props = defineProps({
 
 const emit = defineEmits(['submit', 'close'])
 
-const form = ref({ name: '', description: '' })
+const form = ref({ name: '', description: '', sessionId: '' })
 
 watch(
   () => props.initial,
   (val) => {
     form.value = val
-      ? { name: val.name || '', description: val.description || '' }
-      : { name: '', description: '' }
+      ? { name: val.name || '', description: val.description || '', sessionId: '' }
+      : { name: '', description: '', sessionId: '' }
   },
   { immediate: true }
 )
@@ -149,5 +160,22 @@ const handleSubmit = () => {
 
 .action-btn.white:hover {
   background: var(--surface-secondary, #f9fafb);
+}
+
+.optional-tag {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: #9ca3af;
+  margin-left: 0.25rem;
+}
+
+.field-hint {
+  margin: 0.375rem 0 0 0;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.field-hint.success {
+  color: #059669;
 }
 </style>

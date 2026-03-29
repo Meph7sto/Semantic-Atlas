@@ -31,13 +31,29 @@ export function useProjects(selectedProduct, loadProductDetails) {
 
   const handleCreateProject = async (formData) => {
     try {
-      await productApi.createProjectUnderProduct(selectedProduct.value.product_id, {
+      const project = await productApi.createProjectUnderProduct(selectedProduct.value.product_id, {
         name: formData.name.trim(),
         description: formData.description,
       })
       showCreateProjectModal.value = false
       await loadProjects()
       await loadProductDetails()
+
+      // 如果用户填了 session_id，自动导入需求
+      const sessionId = (formData.sessionId || '').trim()
+      if (sessionId && project?.project_id) {
+        try {
+          const importResult = await manageApi.importFromSession(project.project_id, {
+            session_id: sessionId,
+            mapping_mode: 'tree',
+          })
+          const inserted = importResult?.inserted ?? 0
+          alert(`项目创建成功，已导入 ${inserted} 条需求`)
+        } catch (importErr) {
+          console.error('Failed to import requirements from session:', importErr)
+          alert('项目已创建成功，但需求导入失败: ' + importErr.message + '\n可稍后在「会话需求」页面手动导入。')
+        }
+      }
     } catch (err) {
       console.error('Failed to create project:', err)
       alert('创建项目失败: ' + err.message)
