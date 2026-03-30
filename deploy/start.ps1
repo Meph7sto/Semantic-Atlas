@@ -8,16 +8,97 @@ param(
   [ValidateSet("local", "chutes", "deepseek")]
   [string]$Provider,
 
-  # 前端入口：alpha=测试页面，main=正式页面，all=全部模式(引导页)
-  [ValidateSet("alpha", "main", "all")]
-  [string]$Entry
+  # 前端运行方式：static=构建产物走 Nginx，dev=Nginx 反代 Vite 开发服务器
+  [ValidateSet("static", "dev")]
+  [string]$FrontendRuntime,
+
+  # 兼容旧参数：已废弃，业务后端固定使用 FastAPI 5002
+  [switch]$EnableFastAPIBusiness,
+
+  # 是否启用 FRP 内网穿透
+  [switch]$Frp
 )
 
 $ErrorActionPreference = "Stop"
 
+# 网络模式选择（本地运行 vs frp 内网穿透）
+$FrpMode = $false
+$FrpServerAddr = ""
+$FrpToken = ""
+
+if (-not $Frp) {
+  Write-Host "请选择网络模式: 1=本地运行(默认) 2=开启frp内网穿透" -ForegroundColor Cyan
+  $netChoice = Read-Host "输入编号 (默认 1)"
+  if ($netChoice -eq "2") {
+    $FrpMode = $true
+  }
+}
+else {
+  $FrpMode = $true
+}
+
+# .env 文件路径（用于保存/读取配置）
+$Script:EnvFile = Join-Path (Split-Path -Parent $PSScriptRoot) ".env"
+
+# 从 .env 文件加载配置到环境变量
+function Load-EnvFile {
+  if (Test-Path $Script:EnvFile) {
+    Write-Host "[start] Loading secrets from .env..." -ForegroundColor Cyan
+    Get-Content $Script:EnvFile | ForEach-Object {
+      if ($_ -match '^([^#][^=]+)=(.*)$') {
+        $name = $matches[1].Trim()
+        $value = $matches[2].Trim().Trim('"').Trim("'")
+        if (-not [Environment]::GetEnvironmentVariable($name)) {
+          [Environment]::SetEnvironmentVariable($name, $value, "Process")
+        }
+      }
+    }
+  }
+}
+
+# 加载 .env 文件（FRP 配置需要）
+Load-EnvFile
+
+# 从环境变量读取已保存的 FRP 配置
+if (-not $FrpServerAddr -and $env:FRP_SERVER_ADDR) {
+  $FrpServerAddr = $env:FRP_SERVER_ADDR
+}
+if (-not $FrpToken -and $env:FRP_TOKEN) {
+  $FrpToken = $env:FRP_TOKEN
+}
+
+# 如果启用了 frp 模式，收集配置信息
+if ($FrpMode) {
+  Write-Host "[start] FRP 模式已启用" -ForegroundColor Yellow
+  if (-not $FrpServerAddr) {
+    $FrpServerAddr = Read-Host "请输入 frp 服务器 IP 地址（留空则跳过）"
+    if ($FrpServerAddr) {
+      $env:FRP_SERVER_ADDR = $FrpServerAddr
+      if (-not (Select-String -Path $Script:EnvFile -Pattern "FRP_SERVER_ADDR=" -Quiet)) {
+        Add-Content -Path $Script:EnvFile -Value "FRP_SERVER_ADDR=`"$FrpServerAddr`""
+        Write-Host "[start] FRP Server Address saved to .env" -ForegroundColor Green
+      }
+    }
+  }
+  if (-not $FrpToken) {
+    $FrpToken = Read-Host "请输入 frp 服务器密码 (token)（留空则跳过）"
+    if ($FrpToken) {
+      $env:FRP_TOKEN = $FrpToken
+      if (-not (Select-String -Path $Script:EnvFile -Pattern "FRP_TOKEN=" -Quiet)) {
+        Add-Content -Path $Script:EnvFile -Value "FRP_TOKEN=`"$FrpToken`""
+        Write-Host "[start] FRP Token saved to .env" -ForegroundColor Green
+      }
+    }
+  }
+  if (-not $FrpServerAddr -or -not $FrpToken) {
+    Write-Host "[start] 错误：FRP 模式需要提供服务器 IP 和密码" -ForegroundColor Red
+    exit 1
+  }
+}
+
 # 启动模式选择
 if (-not $Mode) {
-  Write-Host "请选择启动模式: 1=all(前端构建+nginx+全部后端) 2=backend(两个后端) 3=inference 4=business 5=frontend" -ForegroundColor Cyan
+  Write-Host "请选择启动模式: 1=all(前端+nginx+全部后端) 2=backend(两个后端) 3=inference 4=business 5=frontend" -ForegroundColor Cyan
   $choice = Read-Host "输入编号或模式名 (默认 all)"
   switch ($choice) {
     "2" { $Mode = "backend" }
@@ -36,6 +117,23 @@ $doFrontend = $Mode -in @("all", "frontend")
 $doNginx = $Mode -in @("all", "frontend")
 $doInference = $Mode -in @("all", "backend", "inference")
 $doBusiness = $Mode -in @("all", "backend", "business")
+
+if ($doFrontend -and -not $FrontendRuntime) {
+  $defaultFrontendRuntime = if ($env:FRONTEND_RUNTIME) { $env:FRONTEND_RUNTIME } else { "dev" }
+  Write-Host "请选择前端运行方式: 1=static(构建产物+Nginx) 2=dev(Nginx代理Vite热更新)" -ForegroundColor Cyan
+  $choice = Read-Host "输入编号或模式名 (默认 $defaultFrontendRuntime)"
+  switch ($choice) {
+    "2" { $FrontendRuntime = "dev" }
+    "dev" { $FrontendRuntime = "dev" }
+    "1" { $FrontendRuntime = "static" }
+    "static" { $FrontendRuntime = "static" }
+    default { $FrontendRuntime = $defaultFrontendRuntime }
+  }
+}
+elseif (-not $FrontendRuntime) {
+  $FrontendRuntime = if ($env:FRONTEND_RUNTIME) { $env:FRONTEND_RUNTIME } else { "dev" }
+}
+$env:FRONTEND_RUNTIME = $FrontendRuntime
 
 # 模型提供方选择
 if (-not $Provider) {
@@ -67,34 +165,44 @@ else {
   Write-Host "[start] Model loading skipped (default)." -ForegroundColor Yellow
 }
 
-# 前端入口选择
-if (-not $Entry) {
-  $defaultEntry = if ($env:FRONTEND_ENTRY) { $env:FRONTEND_ENTRY } else { "all" }
-  Write-Host "请选择前端入口: 1=main(正式页面) 2=alpha(测试页面) 3=all(全部模式+引导页)" -ForegroundColor Cyan
-  $choice = Read-Host "输入编号或模式名 (默认 $defaultEntry)"
-  switch ($choice) {
-    "1" { $Entry = "main" }
-    "2" { $Entry = "alpha" }
-    "3" { $Entry = "all" }
-    "main" { $Entry = "main" }
-    "alpha" { $Entry = "alpha" }
-    "all" { $Entry = "all" }
-    default { $Entry = $defaultEntry }
-  }
+# 是否加载知识库（KB）索引，默认跳过（避免连接 HuggingFace 下载嵌入模型）
+Write-Host "是否加载知识库(KB)索引? 1=no(跳过, 默认) 2=yes(需联网下载嵌入模型)" -ForegroundColor Cyan
+$kbChoice = Read-Host "输入编号 (默认 1/no)"
+if ($kbChoice -eq "2" -or $kbChoice -eq "yes") {
+  $env:SKIP_KB_LOAD = "false"
+  Write-Host "[start] KB index loading enabled." -ForegroundColor Yellow
+}
+else {
+  $env:SKIP_KB_LOAD = "true"
+  Write-Host "[start] KB index loading skipped (default)." -ForegroundColor Yellow
 }
 
+# 前端入口固定为全部模式（引导页）
+$Entry = "all"
 $env:FRONTEND_ENTRY = $Entry
 
 if ($Provider -eq "chutes" -and -not $env:CHUTES_API_TOKEN) {
   Write-Host "检测到使用 chutes 模式，但未设置 CHUTES_API_TOKEN。" -ForegroundColor Yellow
   $token = Read-Host "请输入 Chutes API Token（留空则跳过）"
-  if ($token) { $env:CHUTES_API_TOKEN = $token }
+  if ($token) {
+    $env:CHUTES_API_TOKEN = $token
+    if (-not (Select-String -Path $Script:EnvFile -Pattern "CHUTES_API_TOKEN=" -Quiet)) {
+      Add-Content -Path $Script:EnvFile -Value "CHUTES_API_TOKEN=`"$token`""
+      Write-Host "[start] Chutes Token saved to .env" -ForegroundColor Green
+    }
+  }
 }
 
 if ($Provider -eq "deepseek" -and -not $env:DEEPSEEK_API_KEY) {
   Write-Host "检测到使用 deepseek 模式，但未设置 DEEPSEEK_API_KEY。" -ForegroundColor Yellow
   $key = Read-Host "请输入 DeepSeek API Key（留空则跳过）"
-  if ($key) { $env:DEEPSEEK_API_KEY = $key }
+  if ($key) {
+    $env:DEEPSEEK_API_KEY = $key
+    if (-not (Select-String -Path $Script:EnvFile -Pattern "DEEPSEEK_API_KEY=" -Quiet)) {
+      Add-Content -Path $Script:EnvFile -Value "DEEPSEEK_API_KEY=`"$key`""
+      Write-Host "[start] DeepSeek Key saved to .env" -ForegroundColor Green
+    }
+  }
   else { Write-Host "未输入 Key，后续调用将失败。" -ForegroundColor Yellow }
 }
 
@@ -248,6 +356,105 @@ function Test-LocalPortOpen {
   }
 }
 
+function Resolve-NativeCommandPath {
+  param([Parameter(Mandatory = $true)][string]$CommandName)
+
+  if ([System.IO.Path]::IsPathRooted($CommandName) -or $CommandName.Contains('\') -or $CommandName.Contains('/')) {
+    return $CommandName
+  }
+
+  $isWindowsHost = $env:OS -eq "Windows_NT"
+  $candidates = @($CommandName)
+  if ($isWindowsHost -and -not [System.IO.Path]::GetExtension($CommandName)) {
+    $candidates = @("$CommandName.cmd", "$CommandName.exe", "$CommandName.bat", $CommandName)
+  }
+
+  foreach ($candidate in $candidates) {
+    $command = Get-Command $candidate -CommandType Application, ExternalScript -ErrorAction SilentlyContinue |
+      Select-Object -First 1
+    if ($command) {
+      if ($command.Source) {
+        return $command.Source
+      }
+      if ($command.Path) {
+        return $command.Path
+      }
+      return $command.Definition
+    }
+  }
+
+  $fallback = Get-Command $CommandName -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($fallback) {
+    if ($fallback.Source) {
+      return $fallback.Source
+    }
+    if ($fallback.Path) {
+      return $fallback.Path
+    }
+    return $fallback.Definition
+  }
+
+  return $null
+}
+
+function Invoke-RequiredNativeCommand {
+  param(
+    [string]$FilePath,
+    [string[]]$ArgumentList,
+    [string]$WorkingDirectory,
+    [string]$StepName
+  )
+
+  $resolvedFilePath = Resolve-NativeCommandPath -CommandName $FilePath
+  if (-not $resolvedFilePath) {
+    $resolvedFilePath = $FilePath
+  }
+  Push-Location $WorkingDirectory
+  try {
+    & $resolvedFilePath @ArgumentList
+    if ($LASTEXITCODE -ne 0) {
+      throw "[start] $StepName failed with exit code $LASTEXITCODE."
+    }
+  }
+  finally {
+    Pop-Location
+  }
+}
+
+function Invoke-RequiredProcess {
+  param(
+    [string]$FilePath,
+    [string[]]$ArgumentList,
+    [string]$WorkingDirectory,
+    [string]$StepName,
+    [switch]$NoNewWindow
+  )
+
+  $processArgs = @{
+    FilePath         = $FilePath
+    ArgumentList     = $ArgumentList
+    WorkingDirectory = $WorkingDirectory
+    Wait             = $true
+    PassThru         = $true
+  }
+
+  $resolvedFilePath = Resolve-NativeCommandPath -CommandName $FilePath
+  if ($resolvedFilePath) {
+    $processArgs.FilePath = $resolvedFilePath
+  }
+
+  if ($NoNewWindow) {
+    $processArgs.NoNewWindow = $true
+  }
+
+  $process = Start-Process @processArgs
+  if ($process.ExitCode -ne 0) {
+    throw "[start] $StepName failed with exit code $($process.ExitCode)."
+  }
+
+  return $process
+}
+
 function Test-PostgresPortConflict {
   param([int]$Port)
   if (-not (Test-LocalPortOpen -Port $Port)) {
@@ -346,7 +553,8 @@ if ($doBusiness) {
       }
     }
     if ($needsOverride) {
-      $selectedPort = Select-PostgresPort -DefaultPort ([int]$env:POSTGRES_PORT) -DockerExe ($dockerCmd ? $dockerCmd.Source : $null) -ContainerName "semantic-atlas-postgres"
+      $dockerExePath = if ($dockerCmd) { $dockerCmd.Source } else { $null }
+      $selectedPort = Select-PostgresPort -DefaultPort ([int]$env:POSTGRES_PORT) -DockerExe $dockerExePath -ContainerName "semantic-atlas-postgres"
       if ($selectedPort -ne [int]$env:POSTGRES_PORT) {
         Write-Warning "[start] Port $($env:POSTGRES_PORT) is in use. Switching PostgreSQL host port to $selectedPort."
         $env:POSTGRES_PORT = "$selectedPort"
@@ -412,6 +620,7 @@ if ($doBusiness) {
 
 # 前端产物目录，可通过环境变量 FRONTEND_ROOT 覆盖
 $FRONTEND_ROOT = if ($env:FRONTEND_ROOT) { $env:FRONTEND_ROOT } else { Join-Path $BASE_DIR "frontend/dist" }
+$FRONTEND_DEV_PORT = if ($env:FRONTEND_DEV_PORT) { [int]$env:FRONTEND_DEV_PORT } else { 5173 }
 
 # 日志目录与 PID 路径
 $LogsDir = Join-Path $BASE_DIR "deploy/logs"
@@ -425,13 +634,10 @@ if (Test-Path $stopScript) {
 }
 
 Write-Host "[start] Mode: $Mode; Model provider: $Provider"
-if ($doFrontend) { Write-Host "[start] Using frontend directory: $FRONTEND_ROOT" }
+if ($doFrontend) { Write-Host "[start] Frontend runtime: $FrontendRuntime" }
+if ($doFrontend -and $FrontendRuntime -eq "static") { Write-Host "[start] Using frontend directory: $FRONTEND_ROOT" }
 
 if ($doFrontend) {
-  # 1) 前端构建
-  Write-Host "[start] Building frontend (npm install & npm run build)..."
-  if (Test-Path $FRONTEND_ROOT) { Remove-Item -Recurse -Force $FRONTEND_ROOT }
-
   # 根据入口选择修改路由默认重定向
   $routerPath = Join-Path $BASE_DIR "frontend/src/router/index.js"
   if (Test-Path $routerPath) {
@@ -480,8 +686,16 @@ module.exports = {
 
   Push-Location (Join-Path $BASE_DIR "frontend")
   try {
-    npm install
-    npm run build
+    Invoke-RequiredNativeCommand -FilePath "npm" -ArgumentList @("install") -WorkingDirectory (Get-Location).Path -StepName "npm install"
+    if ($FrontendRuntime -eq "static") {
+      Write-Host "[start] Building frontend (npm install & npm run build)..."
+      if (Test-Path $FRONTEND_ROOT) { Remove-Item -Recurse -Force $FRONTEND_ROOT }
+      Invoke-RequiredNativeCommand -FilePath "npm" -ArgumentList @("run", "build") -WorkingDirectory (Get-Location).Path -StepName "npm run build"
+      $builtIndexPath = Join-Path $FRONTEND_ROOT "index.html"
+      if (-not (Test-Path $builtIndexPath)) {
+        throw "[start] Frontend build did not produce $builtIndexPath."
+      }
+    }
   }
   finally {
     Pop-Location
@@ -489,14 +703,42 @@ module.exports = {
 
   # 2) 生成 Nginx 配置
   $MimePath = Join-Path $BASE_DIR "deploy/mime.types"
-  $NginxTemplate = Get-Content (Join-Path $BASE_DIR "deploy/nginx_windows.conf") -Raw
+  $NginxTemplatePath = if ($FrontendRuntime -eq "dev") {
+    Join-Path $BASE_DIR "deploy/nginx_windows.dev.conf"
+  }
+  else {
+    Join-Path $BASE_DIR "deploy/nginx_windows.conf"
+  }
+  $NginxTemplate = Get-Content $NginxTemplatePath -Raw
   $NginxGeneratedPath = Join-Path $BASE_DIR "deploy/nginx.generated.conf"
   $FrontForNginx = ($FRONTEND_ROOT -replace '\\', '/')
   $MimeForNginx = ($MimePath -replace '\\', '/')
   $NginxConfig = $NginxTemplate -replace '\${FRONTEND_ROOT}', $FrontForNginx
+  $NginxConfig = $NginxConfig -replace '\${FRONTEND_DEV_PORT}', "$FRONTEND_DEV_PORT"
   $NginxConfig = $NginxConfig -replace '\${MIME_TYPES_PATH}', $MimeForNginx
   Set-Content -Path $NginxGeneratedPath -Value $NginxConfig -Encoding UTF8
   Write-Host "[start] Nginx config generated at $NginxGeneratedPath"
+}
+
+if ($doFrontend -and $FrontendRuntime -eq "dev") {
+  $env:VITE_DEV_SERVER_HOST = "127.0.0.1"
+  $env:VITE_DEV_SERVER_PORT = "$FRONTEND_DEV_PORT"
+  $env:VITE_PUBLIC_PORT = "8008"
+  $env:VITE_USE_POLLING = "1"
+  $env:VITE_POLL_INTERVAL = "300"
+  $NpmExe = Resolve-NativeCommandPath -CommandName "npm"
+  if (-not $NpmExe) {
+    throw "[start] npm not found."
+  }
+  Write-Host "[start] Starting Vite dev server ($FRONTEND_DEV_PORT) behind Nginx 8008..."
+  $viteProcess = Start-Process -FilePath $NpmExe -ArgumentList @("run", "dev") -WorkingDirectory (Join-Path $BASE_DIR "frontend") -PassThru
+  Start-Sleep -Seconds 3
+  if ($viteProcess.HasExited) {
+    throw "[start] Vite dev server exited immediately with code $($viteProcess.ExitCode)."
+  }
+  if (-not (Test-LocalPortOpen -Port $FRONTEND_DEV_PORT)) {
+    throw "[start] Vite dev server did not open port $FRONTEND_DEV_PORT."
+  }
 }
 
 if ($doNginx -and $doFrontend) {
@@ -533,12 +775,14 @@ if ($doNginx -and $doFrontend) {
   if ($NginxExe) {
     # Ensure temp dir exists for Nginx
     $TempDir = Join-Path $BASE_DIR "deploy/temp"
+    $LogDir = Join-Path $BASE_DIR "deploy/logs"
     if (-not (Test-Path $TempDir)) { New-Item -ItemType Directory -Force -Path $TempDir | Out-Null }
+    if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Force -Path $LogDir | Out-Null }
 
-    $NginxArgs = @(
-      "-c", $NginxGeneratedPath,
-      "-p", (Join-Path $BASE_DIR "deploy")
-    )
+    $NginxPrefix = Join-Path $BASE_DIR "deploy"
+    # Start-Process 在 Windows 上会拆分带空格的参数；这里使用单字符串并显式加引号，
+    # 避免 -g 的值 "pid logs/nginx.pid;" 被拆成多个参数导致 nginx 启动失败。
+    $NginxArgs = "-c `"$NginxGeneratedPath`" -p `"$NginxPrefix`" -g `"pid logs/nginx.pid;`""
     Write-Host "[start] Starting/reloading Nginx..."
     Start-Process -FilePath $NginxExe -ArgumentList $NginxArgs -NoNewWindow
   }
@@ -570,13 +814,13 @@ catch {
 if ($doInference -or $doBusiness) {
   if (Test-Path "requirements.txt") {
     Write-Host "[start] Installing/Updating Python dependencies..."
-    Start-Process -FilePath $PythonExe -ArgumentList "-m pip install -r requirements.txt" -WorkingDirectory $BASE_DIR -NoNewWindow -Wait
+    Invoke-RequiredProcess -FilePath $PythonExe -ArgumentList @("-m", "pip", "install", "-r", "requirements.txt") -WorkingDirectory $BASE_DIR -StepName "pip install -r requirements.txt" -NoNewWindow
   }
 }
 
 # 3.6) PostgreSQL smoke test (default when business enabled)
 if ($doBusiness) {
-  $TestScript = Join-Path $BASE_DIR "backend_business/scripts/test_postgres.py"
+  $TestScript = Join-Path $BASE_DIR "tests/fixtures/test_postgres.py"
   if (Test-Path $TestScript) {
     Write-Host "[start] Running PostgreSQL smoke test..." -ForegroundColor Cyan
     & $PythonExe $TestScript
@@ -599,18 +843,101 @@ if ($doInference) {
   )
   Write-Host "[start] Starting FastAPI inference service (8000)..."
   Write-Host "[start] Working directory: $BASE_DIR"
-  # 使用 -WorkingDirectory 确保从项目根目录启动，这样 .env 文件能被正确加载
-  Start-Process -FilePath $PythonExe -ArgumentList $UvicornArgs -WorkingDirectory $BASE_DIR -NoNewWindow
+  # 使用 -WorkingDirectory 确保从项目根目录启动，这样 .env 文件能被正确加载；
+  # 不使用 -NoNewWindow，让每个端口在独立终端窗口运行。
+  Start-Process -FilePath $PythonExe -ArgumentList $UvicornArgs -WorkingDirectory $BASE_DIR
 }
 
-# 5) 启动 Flask 业务服务
+# 5) 启动业务服务（FastAPI）
 if ($doBusiness) {
-  Write-Host "[start] Starting Flask business service (5001)..."
-  # 使用 -WorkingDirectory 确保从项目根目录启动
-  Start-Process -FilePath $PythonExe -ArgumentList @("backend_business/app.py") -WorkingDirectory $BASE_DIR -NoNewWindow
+  Write-Host "[start] Starting FastAPI business service (5002)..."
+  Write-Host "[start] Working directory: $BASE_DIR"
+  $UvicornArgs = @("-m", "uvicorn", "backend_business.main:app", "--host", "0.0.0.0", "--port", "5002")
+  Start-Process -FilePath $PythonExe -ArgumentList $UvicornArgs -WorkingDirectory $BASE_DIR
 }
 
 
-Write-Host "[start] Done. Mode=$Mode; Model provider=$Provider; Entry=$Entry"
-Write-Host "[start] Nginx 8008 (if enabled), FastAPI 8000 (if enabled), Flask 5001 (if enabled)."
+Write-Host "[start] Done. Mode=$Mode; Model provider=$Provider; Entry=$Entry; FrontendRuntime=$FrontendRuntime"
+$backendInfo = "FastAPI 5002"
+if ($doFrontend -and $FrontendRuntime -eq "dev") {
+  Write-Host "[start] Nginx 8008 -> Vite $FRONTEND_DEV_PORT (if enabled), FastAPI 8000 (if enabled), Business: $backendInfo."
+}
+else {
+  Write-Host "[start] Nginx 8008 (if enabled), FastAPI 8000 (if enabled), Business: $backendInfo."
+}
 Write-Host "[start] Logs located in $LogsDir"
+
+# 6) 启动 FRP 客户端（如果启用）
+if ($FrpMode) {
+  $FrpDir = Join-Path $BASE_DIR "deploy/frp"
+  $FrpConfigPath = Join-Path $FrpDir "frpc.toml"
+  $FrpPidPath = Join-Path $LogsDir "frpc.pid"
+  
+  Write-Host "[start] Setting up FRP client..." -ForegroundColor Cyan
+  
+  New-Item -ItemType Directory -Force -Path $FrpDir | Out-Null
+  
+  # 获取最新版本号
+  $FrpVersion = "0.61.1"
+  try {
+    $latestRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/fatedier/frp/releases/latest" -ErrorAction Stop
+    if ($latestRelease.tag_name) {
+      $FrpVersion = $latestRelease.tag_name
+      Write-Host "[start] Latest FRP version: $FrpVersion"
+    }
+  }
+  catch {
+    Write-Host "[start] Could not fetch latest version, using default: $FrpVersion" -ForegroundColor Yellow
+  }
+  
+  $FrpVersionNum = $FrpVersion -replace '^v', ''
+  $FrpZipName = "frp_${FrpVersionNum}_windows_amd64.zip"
+  $FrpDirName = "frp_${FrpVersionNum}_windows_amd64"
+  $FrpDownloadUrl = "https://github.com/fatedier/frp/releases/download/${FrpVersion}/${FrpZipName}"
+  $FrpExe = Join-Path $FrpDir "$FrpDirName/frpc.exe"
+  
+  # 检查是否需要下载
+  if (-not (Test-Path $FrpExe)) {
+    Write-Host "[start] Downloading FRP client from $FrpDownloadUrl..." -ForegroundColor Yellow
+    $FrpZipPath = Join-Path $FrpDir $FrpZipName
+    try {
+      Invoke-WebRequest -Uri $FrpDownloadUrl -OutFile $FrpZipPath -UseBasicParsing
+      Expand-Archive -Path $FrpZipPath -DestinationPath $FrpDir -Force
+      Remove-Item -Path $FrpZipPath -Force
+      Write-Host "[start] FRP client downloaded and extracted" -ForegroundColor Green
+    }
+    catch {
+      Write-Warning "[start] Failed to download FRP client: $_"
+      exit 1
+    }
+  }
+  else {
+    Write-Host "[start] FRP client already exists at $FrpExe"
+  }
+  
+  # 生成 frpc.toml 配置文件
+  $FrpConfigContent = @"
+serverAddr = "$FrpServerAddr"
+serverPort = 7000
+
+auth.method = "token"
+auth.token = "$FrpToken"
+
+[[proxies]]
+name = "nginx"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 8008
+remotePort = 16667
+"@
+  
+  Set-Content -Path $FrpConfigPath -Value $FrpConfigContent -Encoding UTF8
+  Write-Host "[start] FRP config generated at $FrpConfigPath"
+  
+  # 启动 frpc
+  Write-Host "[start] Starting FRP client..." -ForegroundColor Cyan
+  $FrpProcess = Start-Process -FilePath $FrpExe -ArgumentList "-c", $FrpConfigPath -PassThru
+  $FrpProcess.Id | Out-File -FilePath $FrpPidPath -Encoding UTF8
+  Write-Host "[start] FRP client started (PID: $($FrpProcess.Id))" -ForegroundColor Green
+  Write-Host "[start] Remote access: ${FrpServerAddr}:16666 -> local:8008" -ForegroundColor Green
+}

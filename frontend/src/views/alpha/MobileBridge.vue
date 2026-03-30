@@ -1,17 +1,34 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
-import { mobileChatApi } from '../../utils/api'
+import { useAuthStore } from '@/stores/auth.js'
+import { authApi } from '@/api/auth'
+import { mobileChatApi } from '@/api/chat'
 import { Smartphone, PlugZap, Radio, Send, RefreshCw, CircleDot } from 'lucide-vue-next'
 
-const sessionId = ref(localStorage.getItem('mobile_chat_session_id') || 'default')
+const authStore = useAuthStore()
+authStore.init()
+
+const normalizeUserId = (value) => (value || '').trim() || 'anonymous'
+const getAuthUserId = () => (authStore.user?.user_id || '').trim()
+const getSessionStorageKey = (userId) => `mobile_chat_session_id::${normalizeUserId(userId)}`
+const getStoredSessionId = (userId) =>
+    localStorage.getItem(getSessionStorageKey(userId)) || 'default'
+const getInitialUserId = () => normalizeUserId(getAuthUserId() || localStorage.getItem('mobile_chat_user_id') || 'anonymous')
+
+const selectedUserId = ref(
+    getInitialUserId()
+)
+const sessionId = ref(getStoredSessionId(selectedUserId.value))
 const messageInput = ref('')
 const messages = ref([])
 const isLoading = ref(false)
 const isSending = ref(false)
 const sessions = ref([])
 const isLoadingSessions = ref(false)
+const isLoadingUsers = ref(false)
 const sseStatus = ref('disconnected')
 const lastEventAt = ref(null)
+const userOptions = ref([])
 
 let eventSource = null
 const messageIdSet = new Set()
@@ -48,10 +65,173 @@ const addMessage = (msg) => {
     messages.value.push(msg)
 }
 
+const activeUserId = () => {
+    const normalized = normalizeUserId(resolveUserId(selectedUserId.value))
+    if (normalized !== selectedUserId.value) {
+        selectedUserId.value = normalized
+    }
+    return normalized
+}
+
+const buildUserOptions = (list) => {
+    const byId = new Map()
+    ;(list || []).forEach((user) => {
+        const userId = (user?.user_id || '').trim()
+        if (!userId) return
+        if (!byId.has(userId)) {
+            byId.set(userId, {
+                user_id: userId,
+                username: (user?.username || '').trim(),
+                display_name: (user?.display_name || '').trim(),
+            })
+        }
+    })
+    return Array.from(byId.values())
+}
+
+function resolveUserId(value) {
+    const raw = (value || '').trim()
+    if (!raw) return ''
+
+    const matchedById = userOptions.value.find((user) => user.user_id === raw)
+    if (matchedById) return matchedById.user_id
+
+    const matchedByUsername = userOptions.value.find((user) => user.username === raw)
+    return matchedByUsername?.user_id || raw
+}
+
+const formatUserOptionLabel = (user) => {
+    const userId = user?.user_id || ''
+    const desc = user?.display_name || user?.username || ''
+    return desc ? `${userId} (${desc})` : userId
+}
+
+const ensureCurrentUserInOptions = () => {
+    const uid = activeUserId()
+    if (!uid) return
+    if (!userOptions.value.some((user) => user.user_id === uid)) {
+        userOptions.value = [
+            {
+                user_id: uid,
+                username: '',
+                display_name: '',
+            },
+            ...userOptions.value,
+        ]
+    }
+}
+
+const collectUsers = async (requestUsers, pageSize = 500, maxPages = 20) => {
+    const users = []
+    let offset = 0
+    let total = Number.POSITIVE_INFINITY
+
+    for (let page = 0; page < maxPages && offset < total; page += 1) {
+        const result = await requestUsers({ limit: pageSize, offset })
+        const pageUsers = result?.users || []
+        const declaredTotal = Number(result?.total)
+
+        if (Number.isFinite(declaredTotal)) {
+            total = declaredTotal
+        }
+
+        if (!pageUsers.length) {
+            break
+        }
+
+        users.push(...pageUsers)
+        offset += pageUsers.length
+
+        if (!Number.isFinite(declaredTotal) && pageUsers.length < pageSize) {
+            break
+        }
+    }
+
+    return users
+}
+
+const collectRegistrations = async (status, pageSize = 200, maxPages = 20) => {
+    const registrations = []
+    let offset = 0
+    let total = Number.POSITIVE_INFINITY
+
+    for (let page = 0; page < maxPages && offset < total; page += 1) {
+        const result = await authApi.listRegistrations({ status, limit: pageSize, offset })
+        const pageRegistrations = result?.registrations || []
+        const declaredTotal = Number(result?.total)
+
+        if (Number.isFinite(declaredTotal)) {
+            total = declaredTotal
+        }
+
+        if (!pageRegistrations.length) {
+            break
+        }
+
+        registrations.push(...pageRegistrations)
+        offset += pageRegistrations.length
+
+        if (!Number.isFinite(declaredTotal) && pageRegistrations.length < pageSize) {
+            break
+        }
+    }
+
+    return registrations
+}
+
+const loadUserOptions = async () => {
+    isLoadingUsers.value = true
+    try {
+        let users = []
+
+        try {
+            users = await collectUsers(({ limit, offset }) => authApi.listUserDirectory({ limit, offset }), 500)
+        } catch (directoryError) {
+            console.warn('加载用户目录失败，尝试管理员用户列表接口', directoryError)
+            users = await collectUsers(({ limit, offset }) => authApi.listUsers({ limit, offset }), 200)
+        }
+
+        if (['super_admin', 'admin'].includes(authStore.user?.role)) {
+            try {
+                const [pendingUsers, approvedUsers, rejectedUsers] = await Promise.all([
+                    collectRegistrations('pending'),
+                    collectRegistrations('approved'),
+                    collectRegistrations('rejected'),
+                ])
+                users = [
+                    ...users,
+                    ...pendingUsers,
+                    ...approvedUsers,
+                    ...rejectedUsers,
+                ]
+            } catch (registrationError) {
+                console.warn('加载注册用户失败，仅显示已获取用户列表', registrationError)
+            }
+        }
+
+        userOptions.value = buildUserOptions(users)
+
+        const resolvedUserId = normalizeUserId(resolveUserId(selectedUserId.value))
+        if (resolvedUserId !== selectedUserId.value) {
+            selectedUserId.value = resolvedUserId
+        }
+
+        ensureCurrentUserInOptions()
+    } catch (e) {
+        console.warn('加载用户列表失败，切换为手动输入模式', e)
+        ensureCurrentUserInOptions()
+    } finally {
+        isLoadingUsers.value = false
+    }
+}
+
 const loadSessions = async () => {
     isLoadingSessions.value = true
     try {
-        const list = await mobileChatApi.listSessions({ limit: 200 })
+        const list = await mobileChatApi.listSessions({
+            userId: activeUserId(),
+            limit: 200,
+        })
         sessions.value = list || []
     } catch (e) {
         console.error('加载会话列表失败', e)
@@ -66,6 +246,7 @@ const loadHistory = async () => {
     isLoading.value = true
     try {
         const list = await mobileChatApi.listMessages({
+            userId: activeUserId(),
             sessionId: sessionId.value.trim(),
             limit: 200,
         })
@@ -89,7 +270,7 @@ const connectSSE = () => {
     }
     disconnectSSE()
     sseStatus.value = 'connecting'
-    eventSource = mobileChatApi.createSSEConnection(sessionId.value.trim())
+    eventSource = mobileChatApi.createSSEConnection(sessionId.value.trim(), activeUserId())
 
     eventSource.addEventListener('connected', (evt) => {
         sseStatus.value = 'connected'
@@ -98,6 +279,7 @@ const connectSSE = () => {
             try {
                 const payload = JSON.parse(evt.data)
                 if (payload?.session_id) sessionId.value = payload.session_id
+                if (payload?.user_id) selectedUserId.value = normalizeUserId(payload.user_id)
             } catch (e) {
                 // ignore
             }
@@ -156,6 +338,7 @@ const sendMessage = async () => {
     isSending.value = true
     try {
         const msg = await mobileChatApi.sendMessage({
+            userId: activeUserId(),
             sessionId: sessionId.value.trim(),
             sender: 'web',
             content: messageInput.value.trim(),
@@ -172,10 +355,32 @@ const sendMessage = async () => {
 }
 
 watch(sessionId, (val) => {
-    localStorage.setItem('mobile_chat_session_id', val || '')
+    localStorage.setItem(getSessionStorageKey(activeUserId()), val || '')
+})
+
+watch(selectedUserId, async (val, oldVal) => {
+    const normalized = normalizeUserId(resolveUserId(val))
+    if (normalized !== val) {
+        selectedUserId.value = normalized
+        return
+    }
+    if (normalized === oldVal) return
+
+    localStorage.setItem('mobile_chat_user_id', normalized)
+    ensureCurrentUserInOptions()
+
+    disconnectSSE()
+    messages.value = []
+    messageIdSet.clear()
+    sessionId.value = getStoredSessionId(normalized)
+
+    await loadSessions()
+    await activateSession()
 })
 
 onMounted(async () => {
+    localStorage.setItem('mobile_chat_user_id', activeUserId())
+    await loadUserOptions()
     await loadSessions()
     await activateSession()
 })
@@ -211,7 +416,25 @@ onBeforeUnmount(() => {
                             <PlugZap class="w-4 h-4 text-zinc-500" />
                             Connection
                         </div>
-                        <label class="block text-xs font-semibold text-zinc-400 mb-2 uppercase tracking-wider">Session ID</label>
+                        <div class="flex items-center justify-between mb-2">
+                            <label class="block text-xs font-semibold text-zinc-400 uppercase tracking-wider">User ID</label>
+                            <button @click="loadUserOptions" :disabled="isLoadingUsers"
+                                class="flex items-center gap-2 px-2 py-1 border border-zinc-200 rounded-lg text-[11px] hover:bg-zinc-50 transition-colors disabled:opacity-50">
+                                <RefreshCw class="w-3 h-3" :class="{ 'animate-spin': isLoadingUsers }" />
+                                Users
+                            </button>
+                        </div>
+                        <select v-model="selectedUserId"
+                            class="w-full px-3 py-2 border border-zinc-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-zinc-200">
+                            <option
+                                v-for="user in userOptions"
+                                :key="user.user_id"
+                                :value="user.user_id">
+                                {{ formatUserOptionLabel(user) }}
+                            </option>
+                        </select>
+
+                        <label class="mt-4 block text-xs font-semibold text-zinc-400 mb-2 uppercase tracking-wider">Session ID</label>
                         <input v-model="sessionId" type="text" placeholder="e.g. mobile-demo"
                             class="w-full px-3 py-2 border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-zinc-200" />
                         <div class="mt-4 flex items-center gap-2">
@@ -227,6 +450,10 @@ onBeforeUnmount(() => {
                         </div>
                         <div class="mt-4 text-xs text-zinc-500">
                             Last event: <span class="font-medium text-zinc-700">{{ formatTime(lastEventAt) }}</span>
+                        </div>
+                        <div class="mt-1 text-xs text-zinc-500">
+                            Context: <span class="font-medium text-zinc-700">User {{ selectedUserId }}</span> |
+                            <span class="font-medium text-zinc-700">Session {{ sessionId }}</span>
                         </div>
                     </div>
 
@@ -326,3 +553,4 @@ onBeforeUnmount(() => {
         </div>
     </div>
 </template>
+

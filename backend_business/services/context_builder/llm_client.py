@@ -4,6 +4,8 @@ import os
 import re
 from typing import Dict, List, Optional, Tuple
 
+from backend_business.services.ai_proxy import ai_proxy
+
 from .constants import RELATION_TYPES
 from .models import Span
 from .prompts import SYSTEM_PROMPT_LINK, build_window_prompt
@@ -17,64 +19,46 @@ class LLMClient:
             "1",
             "true",
         )
-        self._engine = None
 
-    def _get_engine(self):
-        if self._engine is None:
-            from backend_inference.core.model_container import model_engine
-
-            self._engine = model_engine
-        return self._engine
-
-    def _collect_stream_text(self, stream) -> str:
-        chunks = []
-        for event in stream:
-            if isinstance(event, dict):
-                if event.get("type") == "thinking":
-                    continue
-                delta = event.get("delta") or event.get("content")
-                if delta:
-                    chunks.append(str(delta))
-            elif isinstance(event, (bytes, bytearray)):
-                chunks.append(event.decode("utf-8", errors="ignore"))
-            elif isinstance(event, str):
-                chunks.append(event)
-        return "".join(chunks).strip()
-
-    def _generate_text(self, engine, prompt: str, model_name: Optional[str]) -> str:
-        if model_name:
-            stream = engine.generate_stream(
-                prompt=prompt,
-                system_prompt=SYSTEM_PROMPT_LINK,
-                max_new_tokens=8000,
-                model=model_name,
-            )
-            text = self._collect_stream_text(stream)
-            if text:
-                return text
-        return engine.generate(
+    def _generate_text(self, prompt: str, model_name: Optional[str]) -> str:
+        return ai_proxy.context_builder_completion(
             prompt=prompt,
             system_prompt=SYSTEM_PROMPT_LINK,
             max_new_tokens=8000,
+            model=model_name,
         )
+
+    @staticmethod
+    def _format_exception(exc: Exception) -> str:
+        detail = str(exc).strip()
+        error_type = type(exc).__name__
+        return f"{error_type}: {detail}" if detail else error_type
 
     def generate_links(
         self,
         spans: List[Span],
         ref_map: Dict[str, str],
         model_name: Optional[str] = None,
+        use_streaming: bool = False,
     ) -> Tuple[List[Dict], List[str]]:
         if self.mock_mode:
             return self._mock_generate(spans, ref_map)
 
         prompt = build_window_prompt(spans, ref_map)
-        engine = self._get_engine()
 
         try:
-            response = self._generate_text(engine, prompt, model_name)
+            if use_streaming:
+                response = ai_proxy.context_builder_completion_stream(
+                    prompt=prompt,
+                    system_prompt=SYSTEM_PROMPT_LINK,
+                    max_new_tokens=8000,
+                    model=model_name,
+                )
+            else:
+                response = self._generate_text(prompt, model_name)
             return self._parse_llm_response(response)
         except Exception as exc:
-            print(f"[LLMClient] Error calling LLM: {exc}")
+            print(f"[LLMClient] Error calling LLM: {self._format_exception(exc)}")
             raise
 
     async def generate_links_async(
@@ -82,6 +66,7 @@ class LLMClient:
         spans: List[Span],
         ref_map: Dict[str, str],
         model_name: Optional[str] = None,
+        use_streaming: bool = False,
     ) -> Tuple[List[Dict], List[str]]:
         """Async version of generate_links for parallel processing."""
         if self.mock_mode:
@@ -89,25 +74,29 @@ class LLMClient:
             return self._mock_generate(spans, ref_map)
 
         prompt = build_window_prompt(spans, ref_map)
-        engine = self._get_engine()
 
         try:
-            response = await engine.generate_async(
-                prompt=prompt,
-                system_prompt=SYSTEM_PROMPT_LINK,
-                max_new_tokens=8000,
-                model=model_name,
-            )
+            if use_streaming:
+                response = await ai_proxy.context_builder_completion_stream_async(
+                    prompt=prompt,
+                    system_prompt=SYSTEM_PROMPT_LINK,
+                    max_new_tokens=8000,
+                    model=model_name,
+                )
+            else:
+                response = await ai_proxy.context_builder_completion_async(
+                    prompt=prompt,
+                    system_prompt=SYSTEM_PROMPT_LINK,
+                    max_new_tokens=8000,
+                    model=model_name,
+                )
             return self._parse_llm_response(response)
         except Exception as exc:
-            print(f"[LLMClient] Async error: {exc}")
+            print(f"[LLMClient] Async error: {self._format_exception(exc)}")
             raise
 
     async def close_async(self) -> None:
-        engine = self._get_engine()
-        close_fn = getattr(engine, "close_async", None)
-        if callable(close_fn):
-            await close_fn()
+        return
 
     def _mock_generate(
         self, spans: List[Span], ref_map: Dict[str, str]

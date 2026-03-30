@@ -1,0 +1,306 @@
+"""
+RequirementActor router contract tests for P0 fixes.
+"""
+
+from typing import Any
+
+import httpx
+from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
+
+
+from backend_business.api.deps.auth import get_current_user
+from backend_business.api.http.errors import error_response_handler, validation_error_handler
+from backend_business.api.routers import requirement_actor
+from backend_business.services.actor.actors.requirement_actor import DomainException
+
+
+class _StubProjection:
+    def __init__(self, *, wait_result: bool = True, requirement: dict[str, Any] | None = None):
+        self.wait_result = wait_result
+        self.requirement = requirement or {}
+        self.wait_calls: list[dict[str, Any]] = []
+        self.get_calls: list[str] = []
+
+    async def wait_for_version(self, requirement_id: str, min_version: int, timeout: float = 5.0) -> bool:
+        self.wait_calls.append(
+            {
+                "requirement_id": requirement_id,
+                "min_version": min_version,
+                "timeout": timeout,
+            }
+        )
+        return self.wait_result
+
+    def get_requirement(self, requirement_id: str):
+        self.get_calls.append(requirement_id)
+        return self.requirement
+
+
+class _StubManager:
+    def __init__(self):
+        self.activate_calls: list[str] = []
+        self.passivate_calls: list[str] = []
+        self.command_calls: list[dict[str, Any]] = []
+        self.stats_data = {
+            "total_actors": 0,
+            "active_actors": 0,
+            "faulted_actors": 0,
+            "actor_ids": [],
+            "mailbox_sizes": {},
+        }
+
+    async def activate_actor(self, requirement_id: str):
+        self.activate_calls.append(requirement_id)
+
+    async def force_passivate(self, requirement_id: str):
+        self.passivate_calls.append(requirement_id)
+
+    async def send_command(self, requirement_id: str, command: dict):
+        self.command_calls.append({"requirement_id": requirement_id, "command": command})
+        return {"status": "success", "requirement_id": requirement_id, "command": command}
+
+    def get_stats(self):
+        return self.stats_data
+
+
+class _DomainErrorManager(_StubManager):
+    async def send_command(self, requirement_id: str, command: dict):
+        raise DomainException("禁止修改已基线需求")
+
+
+def _build_app():
+    app = build_test_app(requirement_actor.router)
+    app.include_router(requirement_actor.internals_router)
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "u-1"}
+    return app
+
+
+async def test_query_requirement_waits_for_min_version_and_returns_read_model(monkeypatch):
+    projection = _StubProjection(
+        wait_result=True,
+        requirement={"req_id": "r-1", "current_version": 42, "title": "t"},
+    )
+    monkeypatch.setattr(requirement_actor, "_projection", projection)
+
+    async with async_client(_build_app()) as client:
+        response = await client.get(
+            "/api/v2/requirement-actor/query",
+            params={"requirement_id": "r-1", "min_version": 42, "timeout": 3},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["source"] == "read_model"
+    assert body["requirement"]["current_version"] == 42
+    assert projection.wait_calls == [{"requirement_id": "r-1", "min_version": 42, "timeout": 3.0}]
+    assert projection.get_calls == ["r-1"]
+
+
+async def test_query_requirement_min_version_timeout_returns_503(monkeypatch):
+    projection = _StubProjection(wait_result=False, requirement={"req_id": "r-1"})
+    monkeypatch.setattr(requirement_actor, "_projection", projection)
+
+    async with async_client(_build_app()) as client:
+        response = await client.get(
+            "/api/v2/requirement-actor/query",
+            params={"requirement_id": "r-1", "min_version": 99, "timeout": 1},
+        )
+
+    assert response.status_code == 503
+    assert "读模型尚未追上指定版本" in response.json()["detail"]
+
+
+async def test_query_requirement_without_min_version_skips_wait(monkeypatch):
+    projection = _StubProjection(wait_result=True, requirement={"req_id": "r-1", "current_version": 1})
+    monkeypatch.setattr(requirement_actor, "_projection", projection)
+
+    async with async_client(_build_app()) as client:
+        response = await client.get(
+            "/api/v2/requirement-actor/query",
+            params={"requirement_id": "r-1"},
+        )
+
+    assert response.status_code == 200
+    assert projection.wait_calls == []
+    assert projection.get_calls == ["r-1"]
+
+
+async def test_query_requirement_not_found_returns_404(monkeypatch):
+    projection = _StubProjection(wait_result=True, requirement=None)
+    monkeypatch.setattr(requirement_actor, "_projection", projection)
+
+    async with async_client(_build_app()) as client:
+        response = await client.get(
+            "/api/v2/requirement-actor/query",
+            params={"requirement_id": "missing"},
+        )
+
+    assert response.status_code == 404
+    assert "需求不存在" in response.json()["detail"]
+
+
+async def test_force_activate_uses_actor_manager(monkeypatch):
+    manager = _StubManager()
+    monkeypatch.setattr(requirement_actor, "_actor_manager", manager)
+
+    async with async_client(_build_app()) as client:
+        response = await client.post("/api/v2/requirement-actor/force-activate/r-1")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "activated"
+    assert manager.activate_calls == ["r-1"]
+
+
+async def test_force_passivate_uses_actor_manager(monkeypatch):
+    manager = _StubManager()
+    monkeypatch.setattr(requirement_actor, "_actor_manager", manager)
+
+    async with async_client(_build_app()) as client:
+        response = await client.post("/api/v2/requirement-actor/force-passivate/r-1")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "passivated"
+    assert manager.passivate_calls == ["r-1"]
+
+
+async def test_command_domain_exception_returns_409(monkeypatch):
+    manager = _DomainErrorManager()
+    monkeypatch.setattr(requirement_actor, "_actor_manager", manager)
+
+    async with async_client(_build_app()) as client:
+        response = await client.post(
+            "/api/v2/requirement-actor/command/update-content",
+            params={"requirement_id": "r-1"},
+            json={"updates": {"title": "next"}},
+        )
+
+    assert response.status_code == 409
+    assert "已基线需求" in response.json()["detail"]
+
+
+async def test_update_content_accepts_nested_payload_and_sets_source(monkeypatch):
+    manager = _StubManager()
+    monkeypatch.setattr(requirement_actor, "_actor_manager", manager)
+
+    async with async_client(_build_app()) as client:
+        response = await client.post(
+            "/api/v2/requirement-actor/command/update-content",
+            params={"requirement_id": "r-1"},
+            json={"updates": {"title": "next"}, "metadata": {"from": "ui"}},
+        )
+
+    assert response.status_code == 200
+    assert len(manager.command_calls) == 1
+    sent = manager.command_calls[0]["command"]
+    assert sent["type"] == "UpdateRequirementContent"
+    assert sent["updates"] == {"title": "next"}
+    assert sent["metadata"] == {"from": "ui"}
+    assert sent["source"] == "u-1"
+
+
+async def test_update_content_accepts_legacy_payload(monkeypatch):
+    manager = _StubManager()
+    monkeypatch.setattr(requirement_actor, "_actor_manager", manager)
+
+    async with async_client(_build_app()) as client:
+        response = await client.post(
+            "/api/v2/requirement-actor/command/update-content",
+            params={"requirement_id": "r-legacy"},
+            json={"title": "legacy"},
+        )
+
+    assert response.status_code == 200
+    sent = manager.command_calls[0]["command"]
+    assert sent["updates"] == {"title": "legacy"}
+    assert sent["metadata"] == {}
+
+
+async def test_update_content_rejects_non_object_updates(monkeypatch):
+    manager = _StubManager()
+    monkeypatch.setattr(requirement_actor, "_actor_manager", manager)
+
+    async with async_client(_build_app()) as client:
+        response = await client.post(
+            "/api/v2/requirement-actor/command/update-content",
+            params={"requirement_id": "r-1"},
+            json={"updates": []},
+        )
+
+    assert response.status_code == 400
+    assert "updates 必须是对象" in response.json()["detail"]
+
+
+async def test_update_content_rejects_non_object_metadata(monkeypatch):
+    manager = _StubManager()
+    monkeypatch.setattr(requirement_actor, "_actor_manager", manager)
+
+    async with async_client(_build_app()) as client:
+        response = await client.post(
+            "/api/v2/requirement-actor/command/update-content",
+            params={"requirement_id": "r-1"},
+            json={"updates": {"title": "ok"}, "metadata": "bad"},
+        )
+
+    assert response.status_code == 400
+    assert "metadata 必须是对象" in response.json()["detail"]
+
+
+async def test_actor_health_reports_active_and_mailbox_size(monkeypatch):
+    manager = _StubManager()
+    manager.stats_data = {
+        "total_actors": 2,
+        "active_actors": 1,
+        "faulted_actors": 0,
+        "actor_ids": ["r-2"],
+        "mailbox_sizes": {"r-2": 7},
+    }
+    monkeypatch.setattr(requirement_actor, "_actor_manager", manager)
+
+    async with async_client(_build_app()) as client:
+        response = await client.get("/api/v2/requirement-actor/health/r-2")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["active"] is True
+    assert body["status"] == "active"
+    assert body["mailbox_size"] == 7
+
+
+async def test_actor_stats_route_returns_actor_stats(monkeypatch):
+    manager = _StubManager()
+    manager.stats_data = {
+        "total_actors": 1,
+        "active_actors": 1,
+        "faulted_actors": 0,
+        "actor_ids": ["r-1"],
+        "mailbox_sizes": {"r-1": 2},
+    }
+    monkeypatch.setattr(requirement_actor, "_actor_manager", manager)
+
+    async with async_client(_build_app()) as client:
+        response = await client.get("/api/v2/requirement-actor/stats")
+
+    assert response.status_code == 200
+    assert response.json()["mailbox_sizes"]["r-1"] == 2
+
+
+async def test_internals_stats_route_returns_actor_stats(monkeypatch):
+    manager = _StubManager()
+    manager.stats_data = {
+        "total_actors": 2,
+        "active_actors": 1,
+        "faulted_actors": 1,
+        "actor_ids": ["r-1", "r-2"],
+        "mailbox_sizes": {"r-1": 3, "r-2": 0},
+    }
+    monkeypatch.setattr(requirement_actor, "_actor_manager", manager)
+
+    async with async_client(_build_app()) as client:
+        response = await client.get("/api/v2/_internals/actors/stats")
+
+    assert response.status_code == 200
+    assert response.json()["total_actors"] == 2
+    assert response.json()["mailbox_sizes"]["r-1"] == 3
+

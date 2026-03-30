@@ -1,0 +1,164 @@
+"""
+FastAPI permission route contract tests.
+
+These tests enforce FastAPI-native request/response semantics.
+"""
+
+import httpx
+import pytest
+
+from backend_business.main import app
+from backend_business.services.auth_service import get_auth_service
+
+
+def _get_valid_token() -> str:
+    auth_service = get_auth_service()
+    return auth_service.generate_token(
+        user_id="test-user",
+        username="test",
+        role="member",
+        external_type=None,
+    )
+
+
+def _assert_validation_error(response, loc_field: str, loc_scope: str = "body") -> None:
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert isinstance(detail, list)
+    assert any(item.get("loc") == [loc_scope, loc_field] for item in detail)
+
+
+async def _send(client: httpx.AsyncClient, method: str, url: str, headers: dict, payload):
+    if method == "POST":
+        return await client.post(url, headers=headers, json=payload)
+    if method == "GET":
+        return await client.get(url, headers=headers)
+    if method == "DELETE":
+        return await client.delete(url, headers=headers)
+    if method == "PUT":
+        return await client.put(url, headers=headers, json=payload)
+    raise AssertionError(f"Unsupported method: {method}")
+
+
+@pytest.fixture
+async def client():
+    async with async_client(app) as c:
+        yield c
+
+
+@pytest.fixture
+def auth_headers():
+    return {"Authorization": f"Bearer {_get_valid_token()}"}
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "payload", "field"),
+    [
+        ("POST", "/api/v2/permission/projects/p1/members", {"user_id": ""}, "user_id"),
+        ("PUT", "/api/v2/permission/projects/p1/members/u1/roles", {"roles": "PO"}, "roles"),
+        ("POST", "/api/v2/permission/requirements/r1/reviews", {"seq": 1}, "reviewer_id"),
+        ("POST", "/api/v2/permission/projects/p1/baselines", {"locked": False}, "version"),
+        (
+            "POST",
+            "/api/v2/permission/requirements/r1/change-requests",
+            {"reason": "r", "change_summary": "s"},
+            "baseline_id",
+        ),
+        (
+            "POST",
+            "/api/v2/permission/requirements/r1/change-requests",
+            {"baseline_id": 1, "change_summary": "s"},
+            "reason",
+        ),
+        (
+            "POST",
+            "/api/v2/permission/requirements/r1/change-requests",
+            {"baseline_id": 1, "reason": "r"},
+            "change_summary",
+        ),
+    ],
+)
+async def test_request_validation_errors_are_422(client, auth_headers, method, path, payload, field):
+    response = await _send(client, method, path, auth_headers, payload)
+    _assert_validation_error(response, field)
+
+
+async def test_unauthorized_without_token(client):
+    response = await client.get("/api/v2/permission/projects/p1/members")
+    assert response.status_code == 401
+    assert response.json()["detail"] == "未提供认证 Token"
+
+
+async def test_invalid_token(client):
+    response = await client.get(
+        "/api/v2/permission/projects/p1/members",
+        headers={"Authorization": "Bearer invalid_token"},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Token 无效或已过期"
+
+
+async def test_valid_token_hits_business_error_when_db_is_uninitialized(client, auth_headers):
+    response = await client.get(
+        "/api/v2/permission/projects/p1/members",
+        headers=auth_headers,
+    )
+    assert response.status_code == 500
+    assert response.json()["detail"] == "数据库服务未初始化"
+
+
+async def test_health_check(client):
+    response = await client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "business_backend_ok"
+
+
+@pytest.mark.parametrize(
+    ("method", "url", "payload"),
+    [
+        ("POST", "/api/v2/permission/projects/p1/members", {"user_id": "u1"}),
+        ("GET", "/api/v2/permission/projects/p1/members", None),
+        ("DELETE", "/api/v2/permission/projects/p1/members/u2", None),
+        ("PUT", "/api/v2/permission/projects/p1/members/u1/roles", {"roles": ["PO"]}),
+        ("POST", "/api/v2/permission/requirements/r1/reviews", {"reviewer_id": "u1", "seq": 1}),
+        ("GET", "/api/v2/permission/requirements/r1/reviews", None),
+        ("POST", "/api/v2/permission/reviews/1/approve", {"comment": "ok"}),
+        ("POST", "/api/v2/permission/reviews/1/reject", {"comment": "no"}),
+        ("POST", "/api/v2/permission/reviews/1/withdraw", None),
+        ("GET", "/api/v2/permission/user/pending-reviews", None),
+        ("POST", "/api/v2/permission/projects/p1/baselines", {"version": "1.0.0", "locked": False}),
+        ("GET", "/api/v2/permission/projects/p1/baselines", None),
+        ("POST", "/api/v2/permission/baselines/1/lock", None),
+        ("POST", "/api/v2/permission/baselines/1/unlock", None),
+        (
+            "POST",
+            "/api/v2/permission/requirements/r1/change-requests",
+            {"baseline_id": 1, "reason": "change", "change_summary": "summary"},
+        ),
+        ("GET", "/api/v2/permission/requirements/r1/change-requests", None),
+        ("POST", "/api/v2/permission/change-requests/1/approve", {"review_comment": "ok"}),
+        ("POST", "/api/v2/permission/change-requests/1/reject", {"review_comment": "no"}),
+        ("GET", "/api/v2/permission/change-requests/pending", None),
+        ("GET", "/api/v2/permission/projects/p1/context", None),
+    ],
+)
+async def test_permission_endpoints_registered(client, auth_headers, method, url, payload):
+    response = await _send(client, method, url, auth_headers, payload)
+    assert response.status_code == 500
+    assert response.json()["detail"] == "数据库服务未初始化"
+
+
+async def test_invalid_include_roles_query_fails_with_422(client, auth_headers):
+    response = await client.get(
+        "/api/v2/permission/projects/p1/members?include_roles=abc",
+        headers=auth_headers,
+    )
+    _assert_validation_error(response, "include_roles", loc_scope="query")
+
+
+async def test_invalid_include_locked_query_fails_with_422(client, auth_headers):
+    response = await client.get(
+        "/api/v2/permission/projects/p1/baselines?include_locked=abc",
+        headers=auth_headers,
+    )
+    _assert_validation_error(response, "include_locked", loc_scope="query")

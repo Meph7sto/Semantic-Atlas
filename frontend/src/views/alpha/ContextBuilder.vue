@@ -120,24 +120,40 @@
           <label for="mock_llm" class="text-sm font-medium text-zinc-700">Mock 模式 (无需 API Key)</label>
         </div>
 
+        <div class="col-span-full rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <div class="text-sm font-medium text-zinc-700">LLM 传输模式</div>
+              <div class="text-xs text-zinc-500">流式接口更适合慢模型调用，适合长时间推理和窗口并行场景</div>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" v-model="options.use_streaming_llm" class="sr-only peer">
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+              <span class="ml-3 text-sm font-medium text-zinc-600">
+                {{ options.use_streaming_llm ? '流式接口' : '普通补全' }}
+              </span>
+            </label>
+          </div>
+        </div>
+
         <!-- Parallel Processing Toggle -->
         <div class="col-span-full rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
           <div class="flex items-center justify-between mb-3">
             <div>
-              <div class="text-sm font-medium text-zinc-700">并行处理模式</div>
-              <div class="text-xs text-zinc-500">同时处理多个窗口，提升 4-5 倍速度</div>
+              <div class="text-sm font-medium text-zinc-700">窗口并行模式（Phase 2）</div>
+              <div class="text-xs text-zinc-500">并行处理多个窗口（window），用于上下文构建提速</div>
             </div>
             <label class="relative inline-flex items-center cursor-pointer">
               <input type="checkbox" v-model="options.enable_parallel_windows" class="sr-only peer">
               <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-              <span class="ml-3 text-sm font-medium text-zinc-600">启用并行</span>
+              <span class="ml-3 text-sm font-medium text-zinc-600">启用窗口并行</span>
             </label>
           </div>
 
           <!-- Max Concurrent Windows -->
           <div v-if="options.enable_parallel_windows" class="mt-3">
             <label class="block text-sm font-medium text-zinc-700 mb-1">
-              最大并发窗口数
+              最大并发窗口数（Phase 2）
             </label>
             <div class="flex items-center gap-3">
               <input
@@ -429,7 +445,7 @@ const matrixRelationFilter = ref('all')
 const matrixShowStrength = ref(true)
 const matrixLoading = ref(false)
 const matrixError = ref('')
-const useThinking = ref(false)
+const useThinking = ref(true)
 const copyStatusText = ref('复制')
 
 const relationLabels = {
@@ -473,6 +489,7 @@ const options = reactive({
   max_edges_per_window: 24,
   token_limit_per_bundle: 4000,
   mock_llm: false,
+  use_streaming_llm: false,
   enable_parallel_windows: false,
   max_concurrent_windows: 5
 })
@@ -608,7 +625,7 @@ function toggleBundle(bundleId) {
 
 async function fetchBundles(contextRunId) {
   try {
-    const response = await fetch(`/api/analysis/bundles/${contextRunId}`)
+    const response = await fetch(`/api/v2/analysis/bundles/${contextRunId}`)
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`)
     }
@@ -634,8 +651,8 @@ async function fetchMatrixData(contextRunId) {
 
   try {
     const [linksResponse, spansResponse] = await Promise.all([
-      fetch(`/api/analysis/span_links/${contextRunId}`),
-      fetch(`/api/analysis/spans/${encodeURIComponent(session)}`)
+      fetch(`/api/v2/analysis/span_links/${contextRunId}`),
+      fetch(`/api/v2/analysis/spans/${encodeURIComponent(session)}`)
     ])
 
     if (!linksResponse.ok) {
@@ -671,7 +688,7 @@ async function startBuildContext() {
   }
 
   try {
-    const response = await fetch('/api/analysis/build_context/stream', {
+    const response = await fetch('/api/v2/analysis/build_context/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -718,7 +735,10 @@ function handleSSEEvent(data) {
 
   switch (eventType) {
     case 'init':
-      addProgressEvent('init', `开始构建 | Session: ${data.session_id} | Spans: ${data.span_total}`)
+      addProgressEvent(
+        'init',
+        `开始构建 | Session: ${data.session_id} | Spans: ${data.span_total} | LLM: ${data.llm_transport === 'stream' ? '流式' : '普通'}`
+      )
       activeSessionId.value = data.session_id || activeSessionId.value
       break
 

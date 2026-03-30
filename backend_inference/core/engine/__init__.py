@@ -36,7 +36,7 @@ class DeepSeekEngine:
         self.deepseek_api_url = deepseek_api_url or settings.DEEPSEEK_API_URL
         self.deepseek_api_key = deepseek_api_key or settings.DEEPSEEK_API_KEY
         self.deepseek_model = deepseek_model or getattr(
-            settings, "DEEPSEEK_MODEL", "deepseek-chat"
+            settings, "DEEPSEEK_MODEL", "deepseek-reasoner"
         )
         # 如果 CUDA 可用，自动配置 device_map，否则为 None
         self.device_map = "auto" if torch.cuda.is_available() else None

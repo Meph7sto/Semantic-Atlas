@@ -65,7 +65,7 @@ async function loadSampleTranscript() {
   isSampleLoading.value = true
 
   try {
-    const response = await fetch('/api/analysis/sample_transcript', { cache: 'no-store' })
+    const response = await fetch('/api/v2/analysis/sample_transcript', { cache: 'no-store' })
     if (!response.ok) {
       throw new Error(`加载示例失败: HTTP ${response.status}`)
       return
@@ -101,7 +101,7 @@ async function ingestTranscript() {
   }
 
   try {
-    const response = await fetch('/api/analysis/ingest_transcript/stream', {
+    const response = await fetch('/api/v2/analysis/ingest_transcript/stream', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'

@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import { pushApi } from '../../utils/api'
+import { pushApi } from '@/api/system'
 import { Send, Plus, Trash2, Eye, Bell, RefreshCw, CheckCircle, Clock, AlertTriangle } from 'lucide-vue-next'
 
 // 消息列表
@@ -320,3 +320,4 @@ onMounted(() => {
         </div>
     </div>
 </template>
+

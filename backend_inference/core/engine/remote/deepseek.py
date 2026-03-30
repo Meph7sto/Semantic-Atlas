@@ -6,7 +6,7 @@ import requests
 from .sse import extract_stream_content
 
 DEFAULT_DEEPSEEK_ENDPOINT = "https://api.deepseek.com/v1/chat/completions"
-DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
+DEFAULT_DEEPSEEK_MODEL = "deepseek-reasoner"
 
 
 @dataclass

@@ -1,0 +1,206 @@
+from __future__ import annotations
+
+import json
+import os
+import uuid
+from datetime import datetime
+from typing import Literal
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile
+from fastapi.responses import Response
+from werkzeug.utils import secure_filename
+
+from backend_business.api.deps.auth import get_current_user
+from backend_business.api.http.errors import ErrorResponse
+from backend_business.api.routers.schemas.asr_schemas import (
+    CreateSessionResponse,
+    RetrySessionResponse,
+    SessionDetailResponse,
+    SessionListResponse,
+)
+from backend_business.config import settings
+from backend_business.services.asr_orchestrator import asr_orchestrator
+from backend_business.services.db_service import db_service
+
+router = APIRouter(prefix="/api/v2/asr", tags=["asr"])
+
+
+def _require_db():
+    if db_service is None:
+        raise ErrorResponse("数据库服务未初始化", 500)
+    return db_service
+
+
+def _user_upload_dir(user_id: str) -> str:
+    path = os.path.join(settings.UPLOAD_FOLDER, "asr", user_id)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _safe_name(filename: str) -> str:
+    safe = secure_filename(filename or "")
+    if not safe:
+        safe = "media"
+    return safe
+
+
+@router.get("/health")
+def asr_health(current_user: dict = Depends(get_current_user)):
+    status = asr_orchestrator.health()
+    return {"available": bool(status.get("available")), **status}
+
+
+@router.post("/sessions", response_model=CreateSessionResponse)
+async def create_transcription_session(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    db = _require_db()
+    asr_orchestrator.ensure_available_or_raise()
+
+    user_id = str(current_user["user_id"])
+    source_filename = _safe_name(file.filename or "")
+    content = await file.read()
+    source_size_bytes = len(content)
+    source_extension = asr_orchestrator.validate_upload(
+        source_filename, source_size_bytes
+    )
+
+    user_dir = _user_upload_dir(user_id)
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    suffix = uuid.uuid4().hex[:10]
+    storage_filename = f"{ts}_{suffix}_{source_filename}"
+    storage_path = os.path.join(user_dir, storage_filename)
+    with open(storage_path, "wb") as fp:
+        fp.write(content)
+
+    session_id = f"asr_{uuid.uuid4().hex}"
+    created = db.create_transcription_session(
+        session_id=session_id,
+        user_id=user_id,
+        source_filename=source_filename,
+        source_extension=source_extension,
+        source_content_type=file.content_type or "application/octet-stream",
+        source_size_bytes=source_size_bytes,
+        source_storage_path=storage_path,
+    )
+
+    background_tasks.add_task(
+        asr_orchestrator.process_session,
+        session_id,
+        storage_path,
+        source_filename,
+        file.content_type or "application/octet-stream",
+    )
+    return created
+
+
+@router.get("/sessions", response_model=SessionListResponse)
+def list_transcription_sessions(
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=20, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
+):
+    db = _require_db()
+    return db.list_transcription_sessions(
+        user_id=str(current_user["user_id"]),
+        page=page,
+        per_page=per_page,
+    )
+
+
+@router.get("/sessions/{session_id}", response_model=SessionDetailResponse)
+def get_transcription_session(
+    session_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    db = _require_db()
+    row = db.get_transcription_session(
+        session_id=session_id.strip(),
+        user_id=str(current_user["user_id"]),
+    )
+    if not row:
+        raise ErrorResponse("会话不存在", 404)
+    return row
+
+
+@router.post("/sessions/{session_id}/retry", response_model=RetrySessionResponse)
+def retry_transcription_session(
+    session_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
+    db = _require_db()
+    asr_orchestrator.ensure_available_or_raise()
+
+    row = db.get_transcription_session(
+        session_id=session_id.strip(),
+        user_id=str(current_user["user_id"]),
+    )
+    if not row:
+        raise ErrorResponse("会话不存在", 404)
+    if row["status"] not in {"failed", "timeout"}:
+        raise ErrorResponse("仅失败或超时会话可重试", 409)
+
+    source_path = str(row.get("source_storage_path") or "")
+    if not source_path or not os.path.exists(source_path):
+        raise ErrorResponse("原始文件不存在，无法重试", 409)
+
+    db.queue_transcription_retry(session_id=row["session_id"])
+    background_tasks.add_task(
+        asr_orchestrator.process_session,
+        row["session_id"],
+        source_path,
+        row["source_filename"],
+        row.get("source_content_type") or "application/octet-stream",
+    )
+    return {
+        "session_id": row["session_id"],
+        "status": "queued",
+        "message": "retry queued",
+    }
+
+
+@router.get("/sessions/{session_id}/export")
+def export_transcription_session(
+    session_id: str,
+    format: Literal["txt", "json"] = Query(default="txt"),
+    current_user: dict = Depends(get_current_user),
+):
+    db = _require_db()
+    row = db.get_transcription_session(
+        session_id=session_id.strip(),
+        user_id=str(current_user["user_id"]),
+    )
+    if not row:
+        raise ErrorResponse("会话不存在", 404)
+    if row["status"] != "succeeded":
+        raise ErrorResponse("转写结果尚未就绪，无法导出", 409)
+
+    filename_base = f"{row['session_id']}_transcript"
+    raw_out = row.get("transcript_text") or ""
+
+    if format == "json":
+        payload = json.dumps(
+            {
+                "session_id": row["session_id"],
+                "status": row["status"],
+                "raw_out": raw_out,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ).encode("utf-8")
+        return Response(
+            content=payload,
+            media_type="application/json; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename_base}.json"'
+            },
+        )
+
+    return Response(
+        content=raw_out.encode("utf-8"),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename_base}.txt"'},
+    )

@@ -24,7 +24,8 @@ async def check_conflict(request: ConflictCheckRequest):
         # 调用服务层进行冲突检测
         result = conflict_service.check_conflict(
             requirement_a=request.requirement_a,
-            requirement_b=request.requirement_b
+            requirement_b=request.requirement_b,
+            use_thinking_mode=request.use_thinking_mode,
         )
         return result
             

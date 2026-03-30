@@ -1,6 +1,14 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { traceabilityApi, conflictApi, classifyTexts, analysisApi, requirementsL123Api, getLatestClassification, l4RequirementsApi } from '../../utils/api'
+import {
+  traceabilityApi,
+  conflictApi,
+  classifyTexts,
+  analysisApi,
+  requirementsL123Api,
+  getLatestClassification,
+  l4RequirementsApi,
+} from '@/api/requirements'
 import draggable from 'vuedraggable'
 import {
   FileText,
@@ -62,7 +70,7 @@ const extractionForm = ref({
   maxR: 2,
   adaptiveRetryR2: true,
   useToolcall: true,
-  model: 'deepseek-chat',
+  model: 'deepseek-reasoner',
   maxSpansPerBundle: 12,
   tokenLimit: 1500,
   topM2Hop: 5,
@@ -527,7 +535,7 @@ async function extractLowLevelRequirements() {
         min_l4_per_top_req: 1,
         confidence_threshold: 0.6,
       },
-      model: 'deepseek-chat',
+      model: 'deepseek-reasoner',
     })
 
     // 获取当前 session 的全部底层需求（缓存 + 新生成）

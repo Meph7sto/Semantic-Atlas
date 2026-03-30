@@ -11,11 +11,135 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg2
+from psycopg2 import IntegrityError
 from psycopg2.extras import RealDictCursor
 
 
 def _utc_now_iso() -> str:
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+
+_ALLOWED_PRIORITIES = {"low", "medium", "high"}
+_ALLOWED_REQUIREMENT_STATUSES = (
+    "draft",
+    "under_review",
+    "confirmed",
+    "in_progress",
+    "completed",
+    "archived",
+)
+_ALLOWED_REQUIREMENT_STATUS_SET = set(_ALLOWED_REQUIREMENT_STATUSES)
+_REQUIREMENT_STATUS_ALIASES = {"backlog": "draft"}
+_REQUIREMENT_STATUS_TRANSITIONS = {
+    "draft": {"draft", "under_review", "confirmed", "in_progress", "archived"},
+    "under_review": {"under_review", "draft", "confirmed", "archived"},
+    "confirmed": {"confirmed", "in_progress", "under_review", "archived"},
+    "in_progress": {"in_progress", "under_review", "completed", "archived"},
+    "completed": {"completed", "archived"},
+    "archived": {"archived"},
+}
+_TYPE_SPECIFIC_STATUS_TRANSITIONS = {
+    "top_level": _REQUIREMENT_STATUS_TRANSITIONS,
+    "low_level": _REQUIREMENT_STATUS_TRANSITIONS,
+    "task": _REQUIREMENT_STATUS_TRANSITIONS,
+}
+_ALLOWED_DEFECT_SEVERITIES = ("critical", "high", "medium", "low")
+_ALLOWED_DEFECT_PRIORITIES = ("P0", "P1", "P2", "P3")
+_ALLOWED_DEFECT_STATUSES = (
+    "open",
+    "in_progress",
+    "resolved",
+    "verified",
+    "closed",
+    "rejected",
+)
+_DEFECT_UNRESOLVED_STATUSES = {"open", "in_progress", "resolved"}
+
+
+def normalize_priority(priority: Any, allow_none: bool = True) -> Optional[str]:
+    """Normalize priority values to low/medium/high."""
+    if priority is None:
+        return None if allow_none else "medium"
+
+    text = str(priority).strip()
+    if not text:
+        return None if allow_none else "medium"
+
+    normalized = text.lower()
+    if normalized in _ALLOWED_PRIORITIES:
+        return normalized
+    raise ValueError("priority 必须是 low、medium、high")
+
+
+def normalize_requirement_status(
+    status: Any, allow_none: bool = True
+) -> Optional[str]:
+    """Normalize requirement status and accept backlog as draft."""
+    if status is None:
+        if allow_none:
+            return None
+        raise ValueError(
+            f"status 必须是: {', '.join(_ALLOWED_REQUIREMENT_STATUSES)}"
+        )
+
+    text = str(status).strip()
+    if not text:
+        if allow_none:
+            return None
+        raise ValueError(
+            f"status 必须是: {', '.join(_ALLOWED_REQUIREMENT_STATUSES)}"
+        )
+
+    normalized = _REQUIREMENT_STATUS_ALIASES.get(text.lower(), text.lower())
+    if normalized in _ALLOWED_REQUIREMENT_STATUS_SET:
+        return normalized
+
+    raise ValueError(f"status 必须是: {', '.join(_ALLOWED_REQUIREMENT_STATUSES)}")
+
+
+def normalize_defect_severity(value: Any, allow_none: bool = True) -> Optional[str]:
+    if value is None:
+        if allow_none:
+            return None
+        raise ValueError(f"severity 必须是: {', '.join(_ALLOWED_DEFECT_SEVERITIES)}")
+    text = str(value).strip().lower()
+    if not text:
+        if allow_none:
+            return None
+        raise ValueError(f"severity 必须是: {', '.join(_ALLOWED_DEFECT_SEVERITIES)}")
+    if text in _ALLOWED_DEFECT_SEVERITIES:
+        return text
+    raise ValueError(f"severity 必须是: {', '.join(_ALLOWED_DEFECT_SEVERITIES)}")
+
+
+def normalize_defect_priority(value: Any, allow_none: bool = True) -> Optional[str]:
+    if value is None:
+        if allow_none:
+            return None
+        raise ValueError(f"priority 必须是: {', '.join(_ALLOWED_DEFECT_PRIORITIES)}")
+    text = str(value).strip().upper()
+    if not text:
+        if allow_none:
+            return None
+        raise ValueError(f"priority 必须是: {', '.join(_ALLOWED_DEFECT_PRIORITIES)}")
+    if text in _ALLOWED_DEFECT_PRIORITIES:
+        return text
+    raise ValueError(f"priority 必须是: {', '.join(_ALLOWED_DEFECT_PRIORITIES)}")
+
+
+def normalize_defect_status(value: Any, allow_none: bool = True) -> Optional[str]:
+    if value is None:
+        if allow_none:
+            return None
+        raise ValueError(f"status 必须是: {', '.join(_ALLOWED_DEFECT_STATUSES)}")
+    text = str(value).strip().lower()
+    if not text:
+        if allow_none:
+            return None
+        raise ValueError(f"status 必须是: {', '.join(_ALLOWED_DEFECT_STATUSES)}")
+    if text in _ALLOWED_DEFECT_STATUSES:
+        return text
+    raise ValueError(f"status 必须是: {', '.join(_ALLOWED_DEFECT_STATUSES)}")
 
 
 class RequirementsManageService:
@@ -24,6 +148,16 @@ class RequirementsManageService:
 
     def _connect(self) -> psycopg2.extensions.connection:
         return psycopg2.connect(self.dsn)
+
+    @staticmethod
+    def _normalize_window_args(start_index: int, count: int) -> Tuple[int, int]:
+        normalized_start = int(start_index)
+        normalized_count = int(count)
+        if normalized_start < 1:
+            raise ValueError("start_index 必须大于等于 1")
+        if normalized_count < 1:
+            raise ValueError("count 必须大于等于 1")
+        return normalized_start, normalized_count
 
     # ----------------------
     # Projects
@@ -34,31 +168,36 @@ class RequirementsManageService:
         project_id = str(uuid.uuid4())
         with self._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(
-                    """
-                    INSERT INTO manage_projects(project_id, name, description, created_by, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, NOW(), NOW())
-                    RETURNING project_id, name, description, status, created_by, created_at::text AS created_at
-                    """,
-                    (project_id, name, description, created_by),
-                )
-                project = dict(cur.fetchone())
-                cur.execute(
-                    """
-                    INSERT INTO manage_branch_refs (ref_id, project_id, ref_name, ref_type, milestone_id, created_by, created_at, updated_at)
-                    VALUES (%s, %s, %s, 'branch', NULL, %s, NOW(), NOW())
-                    ON CONFLICT (project_id, ref_name) DO NOTHING
-                    """,
-                    (str(uuid.uuid4()), project_id, "main", created_by),
-                )
-                return project
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO manage_projects(project_id, name, description, created_by, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, NOW(), NOW())
+                        RETURNING project_id, name, description, status, product_id, current_session_id, created_by, created_at::text AS created_at
+                        """,
+                        (project_id, name, description, created_by),
+                    )
+                    project = dict(cur.fetchone())
+                    cur.execute(
+                        """
+                        INSERT INTO manage_branch_refs (ref_id, project_id, ref_name, ref_type, milestone_id, created_by, created_at, updated_at)
+                        VALUES (%s, %s, %s, 'branch', NULL, %s, NOW(), NOW())
+                        ON CONFLICT (project_id, ref_name) DO NOTHING
+                        """,
+                        (str(uuid.uuid4()), project_id, "main", created_by),
+                    )
+                    return project
+                except IntegrityError as e:
+                    if "uk_manage_projects_name" in str(e) or "unique" in str(e).lower():
+                        raise ValueError(f"项目名称 '{name}' 已存在")
+                    raise
 
     def list_projects(self) -> List[Dict[str, Any]]:
         with self._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     """
-                    SELECT project_id, name, description, status, created_by, created_at::text AS created_at
+                    SELECT project_id, name, description, status, product_id, current_session_id, created_by, created_at::text AS created_at
                     FROM manage_projects
                     ORDER BY created_at DESC
                     """
@@ -70,7 +209,7 @@ class RequirementsManageService:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     """
-                    SELECT project_id, name, description, status, created_by, created_at::text AS created_at
+                    SELECT project_id, name, description, status, product_id, current_session_id, created_by, created_at::text AS created_at
                     FROM manage_projects
                     WHERE project_id = %s
                     """,
@@ -78,6 +217,69 @@ class RequirementsManageService:
                 )
                 row = cur.fetchone()
                 return dict(row) if row else None
+
+    def set_project_session(
+        self, project_id: str, session_id: str, updated_by: str = ""
+    ) -> Dict[str, Any]:
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    UPDATE manage_projects
+                    SET current_session_id = %s, updated_at = NOW()
+                    WHERE project_id = %s
+                    RETURNING project_id, name, description, status, product_id, current_session_id, created_by, created_at::text AS created_at
+                    """,
+                    (session_id, project_id),
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise ValueError("项目不存在")
+                return dict(row)
+
+    def update_project_info(
+        self,
+        project_id: str,
+        name: str = None,
+        description: str = None,
+        updated_by: str = "",
+    ) -> Dict[str, Any]:
+        fields = []
+        values = []
+        if name is not None:
+            fields.append("name = %s")
+            values.append(name)
+        if description is not None:
+            fields.append("description = %s")
+            values.append(description)
+        if not fields:
+            return self.get_project(project_id)
+        fields.append("updated_at = NOW()")
+        values.append(project_id)
+        sql = (
+            f"UPDATE manage_projects SET {', '.join(fields)} WHERE project_id = %s"
+            " RETURNING project_id, name, description, status, product_id, current_session_id, created_by, created_at::text AS created_at"
+        )
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(sql, values)
+                row = cur.fetchone()
+                if not row:
+                    raise ValueError("项目不存在")
+                return dict(row)
+
+    def archive_project(self, project_id: str, updated_by: str = "") -> int:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE manage_projects
+                    SET status = 'archived', updated_at = NOW()
+                    WHERE project_id = %s AND status != 'archived'
+                    """,
+                    (project_id,),
+                )
+                return cur.rowcount
 
     # ----------------------
     # Requirements
@@ -90,6 +292,33 @@ class RequirementsManageService:
             "task": set(),
         }
         return child_type in rules.get(parent_type, set())
+
+    @staticmethod
+    def get_allowed_status_transitions(current_status: str) -> List[str]:
+        normalized = normalize_requirement_status(current_status, allow_none=False)
+        return sorted(_REQUIREMENT_STATUS_TRANSITIONS.get(normalized, {normalized}))
+
+    @staticmethod
+    def _validate_status_transition(
+        from_status: str,
+        to_status: str,
+        requirement_type: Optional[str] = None,
+    ) -> None:
+        current = normalize_requirement_status(from_status, allow_none=False)
+        target = normalize_requirement_status(to_status, allow_none=False)
+        transition_map = _REQUIREMENT_STATUS_TRANSITIONS
+        if requirement_type:
+            transition_map = _TYPE_SPECIFIC_STATUS_TRANSITIONS.get(
+                requirement_type, _REQUIREMENT_STATUS_TRANSITIONS
+            )
+        allowed = transition_map.get(current, {current})
+        if target in allowed:
+            return
+        req_type_text = f"（类型: {requirement_type}）" if requirement_type else ""
+        raise ValueError(
+            f"状态流转不允许: {current} -> {target}{req_type_text}。"
+            f"允许流转: {', '.join(sorted(allowed))}"
+        )
 
     def create_requirement(
         self,
@@ -110,6 +339,8 @@ class RequirementsManageService:
         custom_fields: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         req_id = str(uuid.uuid4())
+        status = normalize_requirement_status(status, allow_none=False)
+        priority = normalize_priority(priority, allow_none=True)
         tags_payload = json.dumps(tags or [])
         custom_payload = json.dumps(custom_fields or {})
 
@@ -195,6 +426,120 @@ class RequirementsManageService:
                 )
                 return [dict(row) for row in cur.fetchall()]
 
+    def list_requirements_window(
+        self,
+        project_id: str,
+        start_index: int,
+        count: int,
+        include_deleted: bool = False,
+    ) -> Dict[str, Any]:
+        normalized_start, normalized_count = self._normalize_window_args(
+            start_index, count
+        )
+        offset = normalized_start - 1
+        where_clause = "" if include_deleted else "AND deleted = FALSE"
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) AS total
+                    FROM manage_requirements
+                    WHERE project_id = %s {where_clause}
+                    """,
+                    (project_id,),
+                )
+                total = int((cur.fetchone() or {}).get("total") or 0)
+
+                cur.execute(
+                    f"""
+                    SELECT req_id, project_id, requirement_type, status, title, description,
+                           priority, assignee, tags, due_date, parent_id, order_index,
+                           source_req_id, source_level, custom_fields, created_by,
+                           created_at::text AS created_at, updated_by, updated_at::text AS updated_at, deleted, is_planned
+                    FROM manage_requirements
+                    WHERE project_id = %s {where_clause}
+                    ORDER BY order_index ASC, created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (project_id, normalized_count, offset),
+                )
+                items = [dict(row) for row in cur.fetchall()]
+
+        return {
+            "total": total,
+            "start_index": normalized_start,
+            "count": len(items),
+            "has_more": offset + len(items) < total,
+            "items": items,
+        }
+
+    def search_requirements(
+        self,
+        project_id: str,
+        keyword: str,
+        start_index: int,
+        count: int,
+        include_deleted: bool = False,
+    ) -> Dict[str, Any]:
+        normalized_start, normalized_count = self._normalize_window_args(
+            start_index, count
+        )
+        normalized_keyword = str(keyword or "").strip()
+        if not normalized_keyword:
+            raise ValueError("keyword 不能为空")
+
+        offset = normalized_start - 1
+        like_pattern = f"%{normalized_keyword}%"
+        where_clause = "" if include_deleted else "AND deleted = FALSE"
+        search_clause = """
+            AND (
+                COALESCE(req_id, '') ILIKE %s
+                OR COALESCE(title, '') ILIKE %s
+                OR COALESCE(description, '') ILIKE %s
+            )
+        """
+        params = (project_id, like_pattern, like_pattern, like_pattern)
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) AS total
+                    FROM manage_requirements
+                    WHERE project_id = %s
+                      {where_clause}
+                      {search_clause}
+                    """,
+                    params,
+                )
+                total = int((cur.fetchone() or {}).get("total") or 0)
+
+                cur.execute(
+                    f"""
+                    SELECT req_id, project_id, requirement_type, status, title, description,
+                           priority, assignee, tags, due_date, parent_id, order_index,
+                           source_req_id, source_level, custom_fields, created_by,
+                           created_at::text AS created_at, updated_by, updated_at::text AS updated_at, deleted, is_planned
+                    FROM manage_requirements
+                    WHERE project_id = %s
+                      {where_clause}
+                      {search_clause}
+                    ORDER BY order_index ASC, created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (*params, normalized_count, offset),
+                )
+                items = [dict(row) for row in cur.fetchall()]
+
+        return {
+            "total": total,
+            "start_index": normalized_start,
+            "count": len(items),
+            "has_more": offset + len(items) < total,
+            "items": items,
+        }
+
     def get_requirement(self, req_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -211,6 +556,60 @@ class RequirementsManageService:
                 )
                 row = cur.fetchone()
                 return dict(row) if row else None
+
+    @staticmethod
+    def _resolve_defect_current_assignee(
+        *,
+        status: str,
+        dev_assignee: Optional[str],
+        tester_assignee: Optional[str],
+        current_assignee: Optional[str],
+    ) -> str:
+        explicit = str(current_assignee or "").strip()
+        if explicit:
+            return explicit
+        if status in {"open", "in_progress"}:
+            return str(dev_assignee or "").strip()
+        if status == "resolved":
+            return str(tester_assignee or "").strip()
+        return ""
+
+    def _count_unresolved_defects(
+        self,
+        requirement_id: str,
+        conn: Optional[psycopg2.extensions.connection] = None,
+    ) -> int:
+        owns_connection = conn is None
+        if owns_connection:
+            conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM manage_defects
+                    WHERE requirement_id = %s
+                      AND status = ANY(%s)
+                    """,
+                    (requirement_id, list(_DEFECT_UNRESOLVED_STATUSES)),
+                )
+                row = cur.fetchone()
+            return int((row or [0])[0] or 0)
+        finally:
+            if owns_connection and conn is not None:
+                conn.close()
+
+    def _ensure_requirement_deliverable(
+        self,
+        requirement_id: str,
+        target_status: str,
+        conn: Optional[psycopg2.extensions.connection] = None,
+    ) -> None:
+        if target_status not in {"confirmed", "completed"}:
+            return
+        unresolved = self._count_unresolved_defects(requirement_id, conn=conn)
+        if unresolved > 0:
+            raise ValueError("该需求仍有关联未解决缺陷，不能标记为已确认/已完成")
 
     def update_requirement(
         self, req_id: str, fields: Dict[str, Any], updated_by: str = ""
@@ -229,27 +628,55 @@ class RequirementsManageService:
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             raise ValueError("没有可更新字段")
-
-        set_clauses = []
-        values = []
-        for key, value in updates.items():
-            if key in {"tags", "custom_fields"}:
-                set_clauses.append(f"{key} = %s::jsonb")
-                values.append(
-                    json.dumps(value or ({} if key == "custom_fields" else []))
-                )
-            else:
-                set_clauses.append(f"{key} = %s")
-                values.append(value)
-
-        set_clauses.append("updated_by = %s")
-        values.append(updated_by)
-        set_clauses.append("updated_at = NOW()")
-
-        values.append(req_id)
-
+        if "priority" in updates:
+            updates["priority"] = normalize_priority(
+                updates.get("priority"), allow_none=True
+            )
         with self._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                if "status" in updates:
+                    updates["status"] = normalize_requirement_status(
+                        updates.get("status"), allow_none=False
+                    )
+                    cur.execute(
+                        """
+                        SELECT status, requirement_type
+                        FROM manage_requirements
+                        WHERE req_id = %s AND deleted = FALSE
+                        """,
+                        (req_id,),
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        raise ValueError("需求不存在")
+                    self._validate_status_transition(
+                        row["status"],
+                        updates["status"],
+                        row.get("requirement_type"),
+                    )
+                    self._ensure_requirement_deliverable(
+                        req_id,
+                        updates["status"],
+                        conn=conn,
+                    )
+
+                set_clauses = []
+                values = []
+                for key, value in updates.items():
+                    if key in {"tags", "custom_fields"}:
+                        set_clauses.append(f"{key} = %s::jsonb")
+                        values.append(
+                            json.dumps(value or ({} if key == "custom_fields" else []))
+                        )
+                    else:
+                        set_clauses.append(f"{key} = %s")
+                        values.append(value)
+
+                set_clauses.append("updated_by = %s")
+                values.append(updated_by)
+                set_clauses.append("updated_at = NOW()")
+
+                values.append(req_id)
                 cur.execute(
                     f"""
                     UPDATE manage_requirements
@@ -272,22 +699,13 @@ class RequirementsManageService:
     ) -> Dict[str, Any]:
         if not req_ids:
             raise ValueError("缺少需求ID列表")
-        allowed_status = {
-            "draft",
-            "under_review",
-            "confirmed",
-            "in_progress",
-            "completed",
-            "archived",
-        }
-        if status not in allowed_status:
-            raise ValueError("非法状态")
+        status = normalize_requirement_status(status, allow_none=False)
 
         with self._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     """
-                    SELECT req_id, requirement_type
+                    SELECT req_id, requirement_type, status
                     FROM manage_requirements
                     WHERE req_id = ANY(%s)
                     """,
@@ -301,6 +719,17 @@ class RequirementsManageService:
 
                 if not low_level_ids:
                     return {"updated": 0, "skipped": skipped}
+
+                for row in rows:
+                    if row["req_id"] in low_level_ids:
+                        self._validate_status_transition(
+                            row["status"], status, row.get("requirement_type")
+                        )
+                        self._ensure_requirement_deliverable(
+                            row["req_id"],
+                            status,
+                            conn=conn,
+                        )
 
                 cur.execute(
                     """
@@ -452,9 +881,287 @@ class RequirementsManageService:
         return found
 
     # ----------------------
-    # Import from L123
+    # Defects
     # ----------------------
-    def import_from_l123(
+    def list_defects(
+        self,
+        project_id: str,
+        requirement_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        params: List[Any] = [project_id]
+        requirement_clause = ""
+        if requirement_id:
+            requirement_clause = "AND d.requirement_id = %s"
+            params.append(requirement_id)
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    f"""
+                    SELECT d.defect_id, d.project_id, d.requirement_id, r.title AS requirement_title,
+                           d.title, d.reproduce_steps, d.severity, d.priority, d.status,
+                           d.reporter, d.dev_assignee, d.tester_assignee, d.current_assignee,
+                           d.created_by, d.created_at::text AS created_at,
+                           d.updated_by, d.updated_at::text AS updated_at
+                    FROM manage_defects d
+                    JOIN manage_requirements r ON r.req_id = d.requirement_id
+                    WHERE d.project_id = %s
+                      {requirement_clause}
+                    ORDER BY d.created_at DESC
+                    """,
+                    params,
+                )
+                return [dict(row) for row in cur.fetchall()]
+
+    def get_defect(self, defect_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT d.defect_id, d.project_id, d.requirement_id, r.title AS requirement_title,
+                           d.title, d.reproduce_steps, d.severity, d.priority, d.status,
+                           d.reporter, d.dev_assignee, d.tester_assignee, d.current_assignee,
+                           d.created_by, d.created_at::text AS created_at,
+                           d.updated_by, d.updated_at::text AS updated_at
+                    FROM manage_defects d
+                    JOIN manage_requirements r ON r.req_id = d.requirement_id
+                    WHERE d.defect_id = %s
+                    """,
+                    (defect_id,),
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
+
+    def create_defect(
+        self,
+        project_id: str,
+        requirement_id: str,
+        title: str,
+        reproduce_steps: str,
+        severity: str = "medium",
+        priority: str = "P2",
+        status: str = "open",
+        reporter: str = "",
+        dev_assignee: str = "",
+        tester_assignee: str = "",
+        current_assignee: str = "",
+        created_by: str = "",
+    ) -> Dict[str, Any]:
+        defect_id = str(uuid.uuid4())
+        title = str(title or "").strip()
+        reproduce_steps = str(reproduce_steps or "").strip()
+        if not title:
+            raise ValueError("缺陷标题不能为空")
+        if not reproduce_steps:
+            raise ValueError("复现步骤不能为空")
+
+        severity = normalize_defect_severity(severity, allow_none=False)
+        priority = normalize_defect_priority(priority, allow_none=False)
+        status = normalize_defect_status(status, allow_none=False)
+        dev_assignee = str(dev_assignee or "").strip()
+        tester_assignee = str(tester_assignee or "").strip()
+        reporter = str(reporter or "").strip()
+        current_assignee = self._resolve_defect_current_assignee(
+            status=status,
+            dev_assignee=dev_assignee,
+            tester_assignee=tester_assignee,
+            current_assignee=current_assignee,
+        )
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT req_id, project_id
+                    FROM manage_requirements
+                    WHERE req_id = %s AND deleted = FALSE
+                    """,
+                    (requirement_id,),
+                )
+                requirement = cur.fetchone()
+                if not requirement:
+                    raise ValueError("关联需求不存在")
+                if requirement["project_id"] != project_id:
+                    raise ValueError("关联需求不属于当前项目")
+
+                cur.execute(
+                    """
+                    INSERT INTO manage_defects (
+                        defect_id, project_id, requirement_id, title, reproduce_steps,
+                        severity, priority, status, reporter, dev_assignee, tester_assignee,
+                        current_assignee, created_by, created_at, updated_by, updated_at
+                    )
+                    VALUES (
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s,
+                        %s, %s, NOW(), %s, NOW()
+                    )
+                    """,
+                    (
+                        defect_id,
+                        project_id,
+                        requirement_id,
+                        title,
+                        reproduce_steps,
+                        severity,
+                        priority,
+                        status,
+                        reporter,
+                        dev_assignee,
+                        tester_assignee,
+                        current_assignee,
+                        created_by,
+                        created_by,
+                    ),
+                )
+            conn.commit()
+        return self.get_defect(defect_id) or {}
+
+    def update_defect(
+        self, defect_id: str, fields: Dict[str, Any], updated_by: str = ""
+    ) -> Dict[str, Any]:
+        allowed = {
+            "title",
+            "reproduce_steps",
+            "requirement_id",
+            "severity",
+            "priority",
+            "status",
+            "reporter",
+            "dev_assignee",
+            "tester_assignee",
+            "current_assignee",
+        }
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            raise ValueError("没有可更新字段")
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT defect_id, project_id, requirement_id, title, reproduce_steps,
+                           severity, priority, status, reporter, dev_assignee, tester_assignee,
+                           current_assignee
+                    FROM manage_defects
+                    WHERE defect_id = %s
+                    """,
+                    (defect_id,),
+                )
+                existing = cur.fetchone()
+                if not existing:
+                    raise ValueError("缺陷不存在")
+
+                if "title" in updates:
+                    updates["title"] = str(updates["title"] or "").strip()
+                    if not updates["title"]:
+                        raise ValueError("缺陷标题不能为空")
+                if "reproduce_steps" in updates:
+                    updates["reproduce_steps"] = str(
+                        updates["reproduce_steps"] or ""
+                    ).strip()
+                    if not updates["reproduce_steps"]:
+                        raise ValueError("复现步骤不能为空")
+                if "severity" in updates:
+                    updates["severity"] = normalize_defect_severity(
+                        updates["severity"], allow_none=False
+                    )
+                if "priority" in updates:
+                    updates["priority"] = normalize_defect_priority(
+                        updates["priority"], allow_none=False
+                    )
+                if "status" in updates:
+                    updates["status"] = normalize_defect_status(
+                        updates["status"], allow_none=False
+                    )
+                if "dev_assignee" in updates:
+                    updates["dev_assignee"] = str(updates["dev_assignee"] or "").strip()
+                if "tester_assignee" in updates:
+                    updates["tester_assignee"] = str(
+                        updates["tester_assignee"] or ""
+                    ).strip()
+                if "reporter" in updates:
+                    updates["reporter"] = str(updates["reporter"] or "").strip()
+                if "current_assignee" in updates:
+                    updates["current_assignee"] = str(
+                        updates["current_assignee"] or ""
+                    ).strip()
+
+                if "requirement_id" in updates:
+                    requirement_id = str(updates["requirement_id"] or "").strip()
+                    if not requirement_id:
+                        raise ValueError("关联需求不能为空")
+                    cur.execute(
+                        """
+                        SELECT req_id, project_id
+                        FROM manage_requirements
+                        WHERE req_id = %s AND deleted = FALSE
+                        """,
+                        (requirement_id,),
+                    )
+                    requirement = cur.fetchone()
+                    if not requirement:
+                        raise ValueError("关联需求不存在")
+                    if requirement["project_id"] != existing["project_id"]:
+                        raise ValueError("关联需求不属于当前项目")
+                    updates["requirement_id"] = requirement_id
+
+                next_status = updates.get("status", existing["status"])
+                next_dev = updates.get("dev_assignee", existing["dev_assignee"])
+                next_tester = updates.get(
+                    "tester_assignee", existing["tester_assignee"]
+                )
+                explicit_current = updates.get("current_assignee")
+                if (
+                    "status" in updates
+                    or "dev_assignee" in updates
+                    or "tester_assignee" in updates
+                    or "current_assignee" in updates
+                ):
+                    updates["current_assignee"] = self._resolve_defect_current_assignee(
+                        status=next_status,
+                        dev_assignee=next_dev,
+                        tester_assignee=next_tester,
+                        current_assignee=explicit_current,
+                    )
+
+                set_clauses = []
+                values: List[Any] = []
+                for key, value in updates.items():
+                    set_clauses.append(f"{key} = %s")
+                    values.append(value)
+                set_clauses.append("updated_by = %s")
+                values.append(updated_by)
+                set_clauses.append("updated_at = NOW()")
+                values.append(defect_id)
+
+                cur.execute(
+                    f"""
+                    UPDATE manage_defects
+                    SET {", ".join(set_clauses)}
+                    WHERE defect_id = %s
+                    """,
+                    values,
+                )
+            conn.commit()
+        return self.get_defect(defect_id) or {}
+
+    def delete_defect(self, defect_id: str) -> int:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM manage_defects
+                    WHERE defect_id = %s
+                    """,
+                    (defect_id,),
+                )
+                return cur.rowcount
+
+    # ----------------------
+    # Import from Session
+    # ----------------------
+    def import_from_session(
         self,
         session_id: str,
         project_id: str,
@@ -699,6 +1406,21 @@ class RequirementsManageService:
             },
         }
 
+    # Backward-compatible alias: historically named import_from_l123.
+    def import_from_l123(
+        self,
+        session_id: str,
+        project_id: str,
+        created_by: str = "",
+        mapping_mode: str = "tree",
+    ) -> Dict[str, Any]:
+        return self.import_from_session(
+            session_id=session_id,
+            project_id=project_id,
+            created_by=created_by,
+            mapping_mode=mapping_mode,
+        )
+
     # ----------------------
     # Test cases & binding
     # ----------------------
@@ -909,46 +1631,76 @@ class RequirementsManageService:
                         (milestone_id, project_id, branch_name),
                     )
 
-                for req in requirements:
-                    snapshot_id = str(uuid.uuid4())
-                    snapshot_data = json.dumps(req)
-                    cur.execute(
-                        """
-                        INSERT INTO manage_milestone_nodes (
-                            snapshot_id, milestone_id, requirement_id, requirement_type,
-                            status, title, description, parent_id, order_index, snapshot_data, created_at
-                        )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
-                        """,
-                        (
-                            snapshot_id,
-                            milestone_id,
-                            req["req_id"],
-                            req["requirement_type"],
-                            req["status"],
-                            req["title"],
-                            req.get("description"),
-                            req.get("parent_id"),
-                            req.get("order_index", 0),
-                            snapshot_data,
-                        ),
-                    )
-
-                    if req.get("parent_id"):
-                        cur.execute(
-                            """
-                            INSERT INTO manage_milestone_relations (milestone_id, parent_id, child_id, order_index)
-                            VALUES (%s, %s, %s, %s)
-                            """,
-                            (
-                                milestone_id,
-                                req["parent_id"],
-                                req["req_id"],
-                                req.get("order_index", 0),
-                            ),
-                        )
+                snapshot_rows = [
+                    {
+                        "requirement_id": req["req_id"],
+                        "requirement_type": req["requirement_type"],
+                        "status": req["status"],
+                        "title": req["title"],
+                        "description": req.get("description"),
+                        "parent_id": req.get("parent_id"),
+                        "order_index": req.get("order_index", 0),
+                        "snapshot_data": req,
+                    }
+                    for req in requirements
+                ]
+                self._persist_milestone_snapshot(cur, milestone_id, snapshot_rows)
 
                 return milestone
+
+    @staticmethod
+    def _persist_milestone_snapshot(
+        cur: RealDictCursor,
+        milestone_id: str,
+        snapshot_rows: List[Dict[str, Any]],
+    ) -> None:
+        requirement_ids = {
+            row.get("requirement_id")
+            for row in snapshot_rows
+            if row.get("requirement_id")
+        }
+        for row in snapshot_rows:
+            cur.execute(
+                """
+                INSERT INTO manage_milestone_nodes (
+                    snapshot_id, milestone_id, requirement_id, requirement_type,
+                    status, title, description, parent_id, order_index, snapshot_data, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
+                """,
+                (
+                    str(uuid.uuid4()),
+                    milestone_id,
+                    row.get("requirement_id"),
+                    row.get("requirement_type"),
+                    row.get("status"),
+                    row.get("title"),
+                    row.get("description"),
+                    row.get("parent_id"),
+                    row.get("order_index", 0),
+                    json.dumps(
+                        row.get("snapshot_data")
+                        if row.get("snapshot_data") is not None
+                        else {}
+                    ),
+                ),
+            )
+
+            parent_id = row.get("parent_id")
+            child_id = row.get("requirement_id")
+            if parent_id and child_id and parent_id in requirement_ids:
+                cur.execute(
+                    """
+                    INSERT INTO manage_milestone_relations (milestone_id, parent_id, child_id, order_index)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (
+                        milestone_id,
+                        parent_id,
+                        child_id,
+                        row.get("order_index", 0),
+                    ),
+                )
 
     def list_milestones(self, project_id: str) -> List[Dict[str, Any]]:
         with self._connect() as conn:
@@ -1213,6 +1965,7 @@ class RequirementsManageService:
                 if not cur.fetchone():
                     raise ValueError("基准里程碑不存在")
 
+                ref_id = str(uuid.uuid4())
                 cur.execute(
                     """
                     INSERT INTO manage_branch_refs (ref_id, project_id, ref_name, ref_type, milestone_id, created_by, created_at, updated_at)
@@ -1221,7 +1974,7 @@ class RequirementsManageService:
                     RETURNING ref_id, project_id, ref_name, ref_type, milestone_id, created_by, created_at::text AS created_at
                     """,
                     (
-                        str(uuid.uuid4()),
+                        ref_id,
                         project_id,
                         name,
                         base_milestone_id,
@@ -1231,7 +1984,33 @@ class RequirementsManageService:
                 ref_row = cur.fetchone()
                 if not ref_row:
                     raise ValueError("分支名称已存在")
-                return dict(ref_row)
+                cur.execute(
+                    """
+                    INSERT INTO manage_branches (
+                        branch_id, project_id, base_milestone_id, name, status, created_by, created_at, updated_at, metadata
+                    )
+                    VALUES (%s, %s, %s, %s, 'active', %s, NOW(), NOW(), %s::jsonb)
+                    ON CONFLICT (branch_id) DO NOTHING
+                    """,
+                    (
+                        ref_id,
+                        project_id,
+                        base_milestone_id,
+                        name,
+                        created_by,
+                        json.dumps(
+                            {
+                                "source": "manage_branch_refs",
+                                "head_milestone_id": base_milestone_id,
+                            }
+                        ),
+                    ),
+                )
+                result = dict(ref_row)
+                result["base_milestone_id"] = base_milestone_id
+                result["head_milestone_id"] = result.get("milestone_id")
+                result["branch_name"] = result.get("ref_name")
+                return result
 
     def list_branches(self, project_id: str) -> List[Dict[str, Any]]:
         with self._connect() as conn:
@@ -1240,15 +2019,32 @@ class RequirementsManageService:
                     """
                     SELECT r.ref_id, r.project_id, r.ref_name, r.ref_type, r.milestone_id,
                            r.created_by, r.created_at::text AS created_at,
-                           m.name AS milestone_name, m.created_at::text AS milestone_created_at, m.is_baseline
+                           m.name AS milestone_name, m.created_at::text AS milestone_created_at, m.is_baseline,
+                           b.base_milestone_id
                     FROM manage_branch_refs r
                     LEFT JOIN manage_milestones m ON m.milestone_id = r.milestone_id
+                    LEFT JOIN LATERAL (
+                        SELECT base_milestone_id
+                        FROM manage_branches
+                        WHERE project_id = r.project_id AND name = r.ref_name
+                        ORDER BY created_at ASC
+                        LIMIT 1
+                    ) b ON TRUE
                     WHERE r.project_id = %s AND r.ref_type = 'branch'
                     ORDER BY r.created_at DESC
                     """,
                     (project_id,),
                 )
-                return [dict(row) for row in cur.fetchall()]
+                result = []
+                for row in cur.fetchall():
+                    item = dict(row)
+                    item["base_milestone_id"] = item.get("base_milestone_id") or item.get(
+                        "milestone_id"
+                    )
+                    item["head_milestone_id"] = item.get("milestone_id")
+                    item["branch_name"] = item.get("ref_name")
+                    result.append(item)
+                return result
 
     def update_branch_ref(
         self, project_id: str, ref_name: str, milestone_id: str
@@ -1265,6 +2061,19 @@ class RequirementsManageService:
                 )
                 if cur.rowcount == 0:
                     raise ValueError("分支不存在")
+                cur.execute(
+                    """
+                    UPDATE manage_branches
+                    SET updated_at = NOW(),
+                        metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
+                    WHERE project_id = %s AND name = %s
+                    """,
+                    (
+                        json.dumps({"head_milestone_id": milestone_id}),
+                        project_id,
+                        ref_name,
+                    ),
+                )
 
     def merge_branches(
         self,
@@ -1312,6 +2121,7 @@ class RequirementsManageService:
 
                 conflicts: List[Dict[str, Any]] = []
                 merged_nodes = dict(target_nodes)
+                added_ids: List[str] = []
                 for req_id, src_row in source_nodes.items():
                     if req_id in merged_nodes:
                         if merged_nodes[req_id].get("snapshot_data") != src_row.get(
@@ -1326,6 +2136,7 @@ class RequirementsManageService:
                             )
                         continue
                     merged_nodes[req_id] = src_row
+                    added_ids.append(req_id)
 
                 milestone_id = str(uuid.uuid4())
                 merge_name = f"Merge {source_branch} -> {target_branch}"
@@ -1394,49 +2205,21 @@ class RequirementsManageService:
                     ),
                 )
 
+                snapshot_rows = []
                 for req_id, node in merged_nodes.items():
-                    snapshot_data = node.get("snapshot_data")
-                    cur.execute(
-                        """
-                        INSERT INTO manage_milestone_nodes (
-                            snapshot_id, milestone_id, requirement_id, requirement_type,
-                            status, title, description, parent_id, order_index, snapshot_data, created_at
-                        )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
-                        """,
-                        (
-                            str(uuid.uuid4()),
-                            milestone_id,
-                            req_id,
-                            node.get("requirement_type"),
-                            node.get("status"),
-                            node.get("title"),
-                            node.get("description"),
-                            node.get("parent_id"),
-                            node.get("order_index", 0),
-                            (
-                                json.dumps(snapshot_data)
-                                if snapshot_data is not None
-                                else json.dumps({})
-                            ),
-                        ),
+                    snapshot_rows.append(
+                        {
+                            "requirement_id": req_id,
+                            "requirement_type": node.get("requirement_type"),
+                            "status": node.get("status"),
+                            "title": node.get("title"),
+                            "description": node.get("description"),
+                            "parent_id": node.get("parent_id"),
+                            "order_index": node.get("order_index", 0),
+                            "snapshot_data": node.get("snapshot_data"),
+                        }
                     )
-
-                for req_id, node in merged_nodes.items():
-                    parent_id = node.get("parent_id")
-                    if parent_id and parent_id in merged_nodes:
-                        cur.execute(
-                            """
-                            INSERT INTO manage_milestone_relations (milestone_id, parent_id, child_id, order_index)
-                            VALUES (%s, %s, %s, %s)
-                            """,
-                            (
-                                milestone_id,
-                                parent_id,
-                                req_id,
-                                node.get("order_index", 0),
-                            ),
-                        )
+                self._persist_milestone_snapshot(cur, milestone_id, snapshot_rows)
 
                 cur.execute(
                     """
@@ -1453,6 +2236,22 @@ class RequirementsManageService:
             "conflict_count": len(conflicts),
             "source_branch": source_branch,
             "target_branch": target_branch,
+            "change_set": {
+                "added_requirement_ids": sorted(added_ids),
+                "removed_requirement_ids": [],
+                "modified_requirement_ids": sorted(
+                    [c.get("requirement_id") for c in conflicts if c.get("requirement_id")]
+                ),
+                "conflict_requirement_ids": sorted(
+                    [c.get("requirement_id") for c in conflicts if c.get("requirement_id")]
+                ),
+                "merged_node_count": len(merged_nodes),
+            },
+            "traceability": {
+                "source_milestone_id": source_milestone_id,
+                "target_milestone_id": target_milestone_id,
+                "merged_milestone_id": milestone.get("milestone_id"),
+            },
         }
 
     @staticmethod
@@ -1483,6 +2282,635 @@ class RequirementsManageService:
             sort_children(root)
         roots.sort(key=lambda x: x.get("order_index", 0))
         return roots
+
+    def _find_project_baseline(self, project_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT milestone_id, project_id, name, description, message,
+                           milestone_type, is_baseline, sprint, version, tags, created_by,
+                           created_at::text AS created_at, metadata
+                    FROM manage_milestones
+                    WHERE project_id = %s AND is_baseline = TRUE
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (project_id,),
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
+
+    def _load_requirement_test_links(self, project_id: str) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT l.requirement_id, l.test_case_id, l.link_type, l.created_at::text AS created_at
+                    FROM manage_requirement_test_links l
+                    JOIN manage_requirements r ON r.req_id = l.requirement_id
+                    WHERE r.project_id = %s
+                    ORDER BY l.created_at DESC
+                    """,
+                    (project_id,),
+                )
+                return [dict(row) for row in cur.fetchall()]
+
+    @staticmethod
+    def _index_traceability_records(
+        items: List[Dict[str, Any]], key: str
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        result: Dict[str, List[Dict[str, Any]]] = {}
+        for item in items:
+            ref = item.get(key)
+            if not ref:
+                continue
+            result.setdefault(ref, []).append(item)
+        return result
+
+    @staticmethod
+    def _enrich_traceability_tree(
+        tree: List[Dict[str, Any]],
+        link_map: Dict[str, List[Dict[str, Any]]],
+        change_map: Dict[str, List[Dict[str, Any]]],
+        audit_map: Dict[str, List[Dict[str, Any]]],
+    ) -> List[Dict[str, Any]]:
+        def enrich(node: Dict[str, Any]) -> Dict[str, Any]:
+            requirement = dict(node.get("requirement") or {})
+            req_id = requirement.get("req_id") or requirement.get("requirement_id")
+            children = [enrich(child) for child in node.get("children", [])]
+            links = link_map.get(req_id, [])
+            changes = change_map.get(req_id, [])
+            audits = audit_map.get(req_id, [])
+            requirement["traceability"] = {
+                "test_case_count": len(links),
+                "test_case_ids": [link.get("test_case_id") for link in links],
+                "change_count": len(changes),
+                "audit_count": len(audits),
+                "has_coverage": len(links) > 0,
+            }
+            return {
+                "requirement": requirement,
+                "children": children,
+                "traceability": requirement["traceability"],
+            }
+
+        return [enrich(root) for root in tree]
+
+    def _resolve_traceability_branch(
+        self, project_id: str, branch_id: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        branches = self.list_branches(project_id)
+        if not branches:
+            return branches, None
+        if branch_id:
+            selected = next(
+                (branch for branch in branches if branch.get("ref_id") == branch_id),
+                None,
+            )
+            if not selected:
+                raise ValueError("分支不存在")
+            return branches, selected
+        return branches, branches[0]
+
+    def _build_traceability_branch_context(
+        self, project_id: str, branch: Optional[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        if not branch:
+            return None
+
+        head_milestone = (
+            self.get_milestone(branch["head_milestone_id"], include_nodes=False)
+            if branch.get("head_milestone_id")
+            else None
+        )
+        base_milestone = (
+            self.get_milestone(branch["base_milestone_id"], include_nodes=False)
+            if branch.get("base_milestone_id")
+            else None
+        )
+        baseline = self._find_project_baseline(project_id)
+        return {
+            "branch": branch,
+            "head_milestone": head_milestone,
+            "base_milestone": base_milestone,
+            "baseline_milestone": baseline,
+        }
+
+    def get_traceability_overview(
+        self, project_id: str, branch_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError("项目不存在")
+
+        branches, selected_branch = self._resolve_traceability_branch(project_id, branch_id)
+        branch_context = self._build_traceability_branch_context(project_id, selected_branch)
+        head_milestone = (branch_context or {}).get("head_milestone")
+        node_count = len((self.get_milestone(head_milestone["milestone_id"]) or {}).get("nodes", [])) if head_milestone else 0
+        test_cases = self.list_test_cases(project_id)
+        changes = self.list_change_sets(selected_branch["ref_id"]) if selected_branch else []
+        audits = self.list_audit_logs(project_id, limit=200)
+
+        return {
+            "project": project,
+            "branches": branches,
+            "selected_branch_id": selected_branch.get("ref_id") if selected_branch else None,
+            "selected_branch": selected_branch,
+            "branch_context": branch_context,
+            "summary": {
+                "requirement_count": node_count,
+                "test_case_count": len(test_cases),
+                "change_count": len(changes),
+                "audit_count": len(audits),
+            },
+        }
+
+    def get_traceability_matrix(
+        self, project_id: str, branch_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError("项目不存在")
+
+        branches, selected_branch = self._resolve_traceability_branch(project_id, branch_id)
+        branch_context = self._build_traceability_branch_context(project_id, selected_branch)
+        test_cases = self.list_test_cases(project_id)
+        test_links = self._load_requirement_test_links(project_id)
+        changes = self.list_change_sets(selected_branch["ref_id"]) if selected_branch else []
+        audits = self.list_audit_logs(project_id, limit=200)
+
+        requirement_tree: List[Dict[str, Any]] = []
+        if branch_context and branch_context.get("head_milestone"):
+            milestone = self.get_milestone(
+                branch_context["head_milestone"]["milestone_id"],
+                include_nodes=True,
+            )
+            snapshot_nodes = (milestone or {}).get("nodes", [])
+            requirement_tree = self._build_tree_from_snapshot(snapshot_nodes)
+            requirement_tree = self._enrich_traceability_tree(
+                requirement_tree,
+                self._index_traceability_records(test_links, "requirement_id"),
+                self._index_traceability_records(changes, "requirement_id"),
+                self._index_traceability_records(audits, "target_id"),
+            )
+
+        return {
+            "project": project,
+            "project_id": project_id,
+            "branch_id": selected_branch.get("ref_id") if selected_branch else None,
+            "branches": branches,
+            "requirements": requirement_tree,
+            "test_cases": test_cases,
+            "test_links": test_links,
+            "changes": changes,
+            "audits": audits,
+            "branch_context": branch_context,
+        }
+
+    def get_traceability_coverage(
+        self, project_id: str, branch_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError("项目不存在")
+
+        branches, selected_branch = self._resolve_traceability_branch(project_id, branch_id)
+        branch_context = self._build_traceability_branch_context(project_id, selected_branch)
+        test_links = self._load_requirement_test_links(project_id)
+        link_map = self._index_traceability_records(test_links, "requirement_id")
+        changes = self.list_change_sets(selected_branch["ref_id"]) if selected_branch else []
+
+        requirements: List[Dict[str, Any]]
+        if branch_context and branch_context.get("head_milestone"):
+            milestone = self.get_milestone(
+                branch_context["head_milestone"]["milestone_id"],
+                include_nodes=True,
+            )
+            requirements = [
+                dict(node.get("snapshot_data") or {})
+                for node in (milestone or {}).get("nodes", [])
+            ]
+        else:
+            requirements = self.list_requirements(project_id)
+
+        requirements = [req for req in requirements if req.get("req_id")]
+        requirement_map = {req["req_id"]: req for req in requirements}
+        orphan_requirements = [
+            req
+            for req in requirements
+            if req.get("status") == "in_progress" and not link_map.get(req["req_id"])
+        ]
+        unlinked_changes = [
+            change
+            for change in changes
+            if not change.get("requirement_id")
+            or change.get("requirement_id") not in requirement_map
+        ]
+
+        total_requirements = len(requirements)
+        covered_requirements = len(
+            [req for req in requirements if link_map.get(req["req_id"])]
+        )
+        in_progress_requirements = len(
+            [req for req in requirements if req.get("status") == "in_progress"]
+        )
+        coverage_rate = (
+            round(covered_requirements / total_requirements, 4)
+            if total_requirements
+            else 0.0
+        )
+
+        return {
+            "project": project,
+            "project_id": project_id,
+            "branch_id": selected_branch.get("ref_id") if selected_branch else None,
+            "branches": branches,
+            "branch_context": branch_context,
+            "coverage_summary": {
+                "total_requirements": total_requirements,
+                "covered_requirements": covered_requirements,
+                "in_progress_requirements": in_progress_requirements,
+                "orphan_requirements": len(orphan_requirements),
+                "unlinked_changes": len(unlinked_changes),
+                "coverage_rate": coverage_rate,
+            },
+            "orphan_requirements": orphan_requirements,
+            "unlinked_changes": unlinked_changes,
+        }
+
+    def _resolve_traceability_impact_target(
+        self,
+        project_id: str,
+        branch_context: Optional[Dict[str, Any]],
+        compare_to: str = "baseline",
+        milestone_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        compare_key = (compare_to or "baseline").strip().lower()
+        if compare_key == "milestone" and milestone_id:
+            milestone = self.get_milestone(milestone_id, include_nodes=False)
+            if milestone and milestone.get("project_id") == project_id:
+                return milestone
+            raise ValueError("比较里程碑不存在")
+
+        if compare_key == "baseline":
+            baseline = self._find_project_baseline(project_id)
+            if baseline:
+                return baseline
+
+        if compare_key in {"baseline", "base"}:
+            return (branch_context or {}).get("base_milestone")
+
+        raise ValueError("compare_to 必须是 baseline、base 或 milestone")
+
+    def _find_project_id_by_branch_id(self, branch_id: str) -> Optional[str]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT project_id
+                    FROM manage_branch_refs
+                    WHERE ref_id = %s
+                    """,
+                    (branch_id,),
+                )
+                row = cur.fetchone()
+                return row[0] if row else None
+
+    def _ensure_manage_branch_record(
+        self, project_id: str, branch: Optional[Dict[str, Any]]
+    ) -> str:
+        if not branch:
+            raise ValueError("分支不存在")
+
+        branch_ref_id = branch.get("ref_id")
+        branch_name = branch.get("branch_name") or branch.get("ref_name")
+        if not branch_ref_id or not branch_name:
+            raise ValueError("分支信息不完整")
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT branch_id
+                    FROM manage_branches
+                    WHERE branch_id = %s
+                    """,
+                    (branch_ref_id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    return row["branch_id"]
+
+                cur.execute(
+                    """
+                    SELECT branch_id
+                    FROM manage_branches
+                    WHERE project_id = %s AND name = %s
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (project_id, branch_name),
+                )
+                row = cur.fetchone()
+                if row:
+                    return row["branch_id"]
+
+                base_milestone_id = branch.get("base_milestone_id") or branch.get(
+                    "milestone_id"
+                )
+                if not base_milestone_id:
+                    raise ValueError("分支缺少基准里程碑，无法写入影响分析记录")
+
+                metadata = {
+                    "source": "traceability_branch_backfill",
+                    "head_milestone_id": branch.get("head_milestone_id")
+                    or branch.get("milestone_id")
+                    or base_milestone_id,
+                }
+                cur.execute(
+                    """
+                    INSERT INTO manage_branches (
+                        branch_id, project_id, base_milestone_id, name, status, created_by, created_at, updated_at, metadata
+                    )
+                    VALUES (%s, %s, %s, %s, 'active', %s, NOW(), NOW(), %s::jsonb)
+                    ON CONFLICT (branch_id) DO NOTHING
+                    RETURNING branch_id
+                    """,
+                    (
+                        branch_ref_id,
+                        project_id,
+                        base_milestone_id,
+                        branch_name,
+                        branch.get("created_by"),
+                        json.dumps(metadata),
+                    ),
+                )
+                row = cur.fetchone()
+                if row:
+                    return row["branch_id"]
+                return branch_ref_id
+
+    def create_traceability_impact_report(
+        self,
+        project_id: str,
+        branch_id: str,
+        created_by: str,
+        compare_to: str = "baseline",
+        milestone_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError("项目不存在")
+
+        _, selected_branch = self._resolve_traceability_branch(project_id, branch_id)
+        if not selected_branch:
+            raise ValueError("分支不存在")
+        persisted_branch_id = self._ensure_manage_branch_record(project_id, selected_branch)
+
+        branch_context = self._build_traceability_branch_context(project_id, selected_branch)
+        head_milestone = (branch_context or {}).get("head_milestone")
+        if not head_milestone:
+            raise ValueError("分支尚未指向可分析的里程碑")
+
+        compare_milestone = self._resolve_traceability_impact_target(
+            project_id,
+            branch_context,
+            compare_to=compare_to,
+            milestone_id=milestone_id,
+        )
+        compare_target = {
+            "compare_to": compare_to,
+            "milestone": compare_milestone,
+        }
+
+        diff_summary: Dict[str, Any] = {
+            "added": 0,
+            "deleted": 0,
+            "modified": 0,
+            "moved": 0,
+            "total": 0,
+        }
+        changed_requirements: List[Dict[str, Any]] = []
+        affected_descendants: List[Dict[str, Any]] = []
+        affected_test_cases: List[Dict[str, Any]] = []
+        related_changes: List[Dict[str, Any]] = []
+        related_audits: List[Dict[str, Any]] = []
+        risk_flags: List[str] = []
+        status = "ready"
+
+        if not compare_milestone:
+            status = "unavailable"
+            risk_flags.append("missing_compare_target")
+        else:
+            diff = self.compare_milestones(
+                compare_milestone["milestone_id"],
+                head_milestone["milestone_id"],
+            )
+            diff_summary = diff.get("summary", diff_summary)
+
+            current_milestone = self.get_milestone(head_milestone["milestone_id"], include_nodes=True)
+            current_nodes = (current_milestone or {}).get("nodes", [])
+            current_tree = self._build_tree_from_snapshot(current_nodes)
+            current_map = {
+                (node.get("snapshot_data") or {}).get("req_id") or node.get("requirement_id"): dict(node.get("snapshot_data") or {})
+                for node in current_nodes
+            }
+
+            changed_ids = []
+            for key in ("added", "modified", "moved", "deleted"):
+                changed_ids.extend(diff.get(key, []))
+            changed_ids = sorted({req_id for req_id in changed_ids if req_id})
+
+            changed_requirements = [
+                {
+                    "requirement_id": req_id,
+                    "current": current_map.get(req_id),
+                    "change_types": diff.get("change_map", {}).get(req_id, []),
+                }
+                for req_id in changed_ids
+            ]
+
+            descendant_ids = set()
+            for req_id in changed_ids:
+                descendant_ids.update(self._collect_descendants(current_tree, req_id))
+            descendant_ids = {
+                req_id for req_id in descendant_ids if req_id and req_id not in set(changed_ids)
+            }
+            affected_descendants = [
+                current_map[req_id]
+                for req_id in sorted(descendant_ids)
+                if req_id in current_map
+            ]
+
+            all_affected_ids = set(changed_ids) | set(descendant_ids)
+            test_links = self._load_requirement_test_links(project_id)
+            relevant_links = [
+                link for link in test_links if link.get("requirement_id") in all_affected_ids
+            ]
+            test_case_ids = {link.get("test_case_id") for link in relevant_links if link.get("test_case_id")}
+            test_case_map = {
+                test_case["test_case_id"]: test_case
+                for test_case in self.list_test_cases(project_id)
+            }
+            affected_test_cases = [
+                test_case_map[test_case_id]
+                for test_case_id in sorted(test_case_ids)
+                if test_case_id in test_case_map
+            ]
+
+            branch_changes = self.list_change_sets(branch_id)
+            related_changes = [
+                change for change in branch_changes if change.get("requirement_id") in all_affected_ids
+            ]
+            related_audits = [
+                audit
+                for audit in self.list_audit_logs(project_id, limit=200)
+                if audit.get("target_id") in all_affected_ids
+            ]
+
+            uncovered_impacted = [
+                req_id
+                for req_id in all_affected_ids
+                if not any(link.get("requirement_id") == req_id for link in relevant_links)
+            ]
+            if uncovered_impacted:
+                risk_flags.append("impacted_requirements_without_tests")
+            if diff_summary.get("deleted"):
+                risk_flags.append("deleted_requirements_detected")
+            if diff_summary.get("moved"):
+                risk_flags.append("structure_changes_detected")
+
+        report_id = str(uuid.uuid4())
+        detail = {
+            "status": status,
+            "project_id": project_id,
+            "branch": selected_branch,
+            "branch_context": branch_context,
+            "compare_target": compare_target,
+            "diff_summary": diff_summary,
+            "changed_requirements": changed_requirements,
+            "affected_descendants": affected_descendants,
+            "affected_test_cases": affected_test_cases,
+            "related_changes": related_changes,
+            "related_audits": related_audits,
+            "risk_flags": risk_flags,
+            "created_at": _utc_now_iso(),
+        }
+        summary = (
+            f"影响需求 {len(changed_requirements)} 项，波及测试 {len(affected_test_cases)} 项"
+            if status == "ready"
+            else "缺少比较目标，无法完成影响分析"
+        )
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    INSERT INTO manage_impact_reports (report_id, branch_id, summary, detail_json, status, created_by, created_at)
+                    VALUES (%s, %s, %s, %s::jsonb, %s, %s, NOW())
+                    RETURNING report_id, branch_id, summary, detail_json, status, created_by, created_at::text AS created_at
+                    """,
+                    (
+                        report_id,
+                        persisted_branch_id,
+                        summary,
+                        json.dumps(detail),
+                        status,
+                        created_by,
+                    ),
+                )
+                return dict(cur.fetchone())
+
+    def get_traceability_risk(
+        self, project_id: str, branch_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError("项目不存在")
+
+        branches, selected_branch = self._resolve_traceability_branch(project_id, branch_id)
+        branch_context = self._build_traceability_branch_context(project_id, selected_branch)
+        test_links = self._load_requirement_test_links(project_id)
+        link_map = self._index_traceability_records(test_links, "requirement_id")
+        changes = self.list_change_sets(selected_branch["ref_id"]) if selected_branch else []
+        audits = self.list_audit_logs(project_id, limit=200)
+        change_map = self._index_traceability_records(changes, "requirement_id")
+        audit_map = self._index_traceability_records(audits, "target_id")
+
+        requirements: List[Dict[str, Any]]
+        if branch_context and branch_context.get("head_milestone"):
+            milestone = self.get_milestone(
+                branch_context["head_milestone"]["milestone_id"],
+                include_nodes=True,
+            )
+            requirements = [
+                dict(node.get("snapshot_data") or {})
+                for node in (milestone or {}).get("nodes", [])
+                if (node.get("snapshot_data") or {}).get("req_id")
+            ]
+        else:
+            requirements = self.list_requirements(project_id)
+
+        status_distribution: Dict[str, int] = {}
+        risk_rows: List[Dict[str, Any]] = []
+        uncovered_in_progress: List[Dict[str, Any]] = []
+
+        for requirement in requirements:
+            req_id = requirement.get("req_id")
+            status = requirement.get("status") or "unknown"
+            status_distribution[status] = status_distribution.get(status, 0) + 1
+            link_count = len(link_map.get(req_id, []))
+            change_count = len(change_map.get(req_id, []))
+            audit_count = len(audit_map.get(req_id, []))
+            risk_score = change_count + audit_count + (2 if status == "in_progress" and link_count == 0 else 0)
+            row = {
+                "requirement_id": req_id,
+                "title": requirement.get("title"),
+                "status": status,
+                "test_case_count": link_count,
+                "change_count": change_count,
+                "audit_count": audit_count,
+                "risk_score": risk_score,
+            }
+            risk_rows.append(row)
+            if status == "in_progress" and link_count == 0:
+                uncovered_in_progress.append(row)
+
+        frequently_changed_requirements = sorted(
+            [row for row in risk_rows if row.get("change_count", 0) > 0],
+            key=lambda item: (-item.get("change_count", 0), item.get("requirement_id") or ""),
+        )[:10]
+
+        active_audit_targets = sorted(
+            [
+                {
+                    "target_id": target_id,
+                    "audit_count": len(items),
+                    "latest_audit": items[0] if items else None,
+                }
+                for target_id, items in audit_map.items()
+            ],
+            key=lambda item: (-item.get("audit_count", 0), item.get("target_id") or ""),
+        )[:10]
+
+        high_risk_chains = sorted(
+            [row for row in risk_rows if row.get("risk_score", 0) > 0],
+            key=lambda item: (-item.get("risk_score", 0), item.get("requirement_id") or ""),
+        )[:10]
+
+        return {
+            "project": project,
+            "project_id": project_id,
+            "branch_id": selected_branch.get("ref_id") if selected_branch else None,
+            "branches": branches,
+            "branch_context": branch_context,
+            "status_distribution": status_distribution,
+            "uncovered_in_progress": uncovered_in_progress,
+            "frequently_changed_requirements": frequently_changed_requirements,
+            "active_audit_targets": active_audit_targets,
+            "high_risk_chains": high_risk_chains,
+        }
 
     def add_change_set(
         self,
@@ -1531,31 +2959,15 @@ class RequirementsManageService:
                 return [dict(row) for row in cur.fetchall()]
 
     def create_impact_report(self, branch_id: str, created_by: str) -> Dict[str, Any]:
-        report_id = str(uuid.uuid4())
-        summary = "影响分析算法尚未实现，已预留接口"
-        detail = {
-            "status": "pending",
-            "note": "impact analysis placeholder",
-            "created_at": _utc_now_iso(),
-        }
-        with self._connect() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(
-                    """
-                    INSERT INTO manage_impact_reports (report_id, branch_id, summary, detail_json, status, created_by, created_at)
-                    VALUES (%s, %s, %s, %s::jsonb, %s, %s, NOW())
-                    RETURNING report_id, branch_id, summary, detail_json, status, created_by, created_at::text AS created_at
-                    """,
-                    (
-                        report_id,
-                        branch_id,
-                        summary,
-                        json.dumps(detail),
-                        "pending",
-                        created_by,
-                    ),
-                )
-                return dict(cur.fetchone())
+        project_id = self._find_project_id_by_branch_id(branch_id)
+        if not project_id:
+            raise ValueError("分支不存在")
+        return self.create_traceability_impact_report(
+            project_id=project_id,
+            branch_id=branch_id,
+            created_by=created_by,
+            compare_to="baseline",
+        )
 
     def create_merge_request(
         self, branch_id: str, target_milestone_id: str, created_by: str
@@ -1591,8 +3003,8 @@ class RequirementsManageService:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO manage_audit_logs (log_id, project_id, actor, action, target_type, target_id, detail, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
+                    INSERT INTO manage_audit_logs (log_id, project_id, product_id, actor, action, target_type, target_id, detail, created_at)
+                    VALUES (%s, %s, NULL, %s, %s, %s, %s, %s::jsonb, NOW())
                     """,
                     (
                         log_id,
