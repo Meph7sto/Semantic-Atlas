@@ -798,6 +798,9 @@ def _make_session_controller_service() -> SessionControllerService:
     from backend_business.services.agent.agents.requirement_agent import (
         requirement_agent_chat_service,
     )
+    from backend_business.services.agent.agents.requirement_classification_agent import (
+        requirement_classification_agent_service,
+    )
     from backend_business.services.agent.agents.conflict_detection_agent import (
         conflict_detection_agent_service,
     )
@@ -806,6 +809,7 @@ def _make_session_controller_service() -> SessionControllerService:
         requirements_service=RequirementsManageService(settings.POSTGRES_DSN),
         requirement_agent_service=requirement_agent_chat_service,
         conflict_agent_service=conflict_detection_agent_service,
+        requirement_classification_agent_service=requirement_classification_agent_service,
     )
     return SessionControllerService(
         chat_storage=ai_chat_service,

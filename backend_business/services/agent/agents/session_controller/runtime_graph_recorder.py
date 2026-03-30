@@ -19,6 +19,7 @@ class SessionControllerGraphRecorder(RuntimeGraphRecorder):
         ("conductor", "Session Controller", "agent"),
         ("requirement_agent", "Requirement Agent", "agent"),
         ("conflict_detection", "Conflict Detection Agent", "agent"),
+        ("requirement_classification_agent", "Requirement Classification Agent", "agent"),
     )
 
     def __init__(

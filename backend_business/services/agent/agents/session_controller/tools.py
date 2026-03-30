@@ -73,10 +73,12 @@ class SessionControllerTools:
         requirements_service: RequirementsManageService,
         requirement_agent_service: Any,
         conflict_agent_service: Any,
+        requirement_classification_agent_service: Any,
     ) -> None:
         self.requirements_service = requirements_service
         self._requirement_agent_service = requirement_agent_service
         self._conflict_agent_service = conflict_agent_service
+        self._requirement_classification_agent_service = requirement_classification_agent_service
 
     @staticmethod
     def get_tools_list() -> list[dict[str, Any]]:
@@ -175,6 +177,31 @@ class SessionControllerTools:
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "invoke_requirement_classification_agent",
+                    "description": (
+                        "将需求分类任务委托给需求分类 Agent 执行。"
+                        "适用于：L1/L2/L3/L4、功能/非功能、领域标签、优先级初判。"
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "task_description": {
+                                "type": "string",
+                                "description": "具体的需求分类任务描述，包含目标需求或上下文",
+                            },
+                            "requirement_id": {
+                                "type": "string",
+                                "description": "如已知目标需求 ID，可选传入",
+                            },
+                        },
+                        "required": ["task_description"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
         ]
 
     def execute(
@@ -192,6 +219,8 @@ class SessionControllerTools:
             return self._execute_invoke_requirement_agent(parsed_arguments, context)
         if tool_name == "invoke_conflict_detection":
             return self._execute_invoke_conflict_detection(parsed_arguments, context)
+        if tool_name == "invoke_requirement_classification_agent":
+            return self._execute_invoke_requirement_classification_agent(parsed_arguments, context)
         raise ValueError(f"未知工具: {tool_name}")
 
     def execute_streaming(
@@ -205,6 +234,8 @@ class SessionControllerTools:
             return self._stream_invoke_requirement_agent(parsed_arguments, context)
         if tool_name == "invoke_conflict_detection":
             return self._stream_invoke_conflict_detection(parsed_arguments, context)
+        if tool_name == "invoke_requirement_classification_agent":
+            return self._stream_invoke_requirement_classification_agent(parsed_arguments, context)
         return self.execute(tool_name, parsed_arguments, context)
 
     @staticmethod
@@ -836,6 +867,253 @@ class SessionControllerTools:
         }
         _mark_tool_loop_should_stop(context, result.get("reply"))
         return result
+
+    def _execute_invoke_requirement_classification_agent(
+        self,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        task_description = str(arguments.get("task_description") or "").strip()
+        if not task_description:
+            raise ValueError("task_description 不能为空")
+        requirement_id = str(arguments.get("requirement_id") or "").strip() or None
+
+        user_id = context.get("user_id", "")
+        project_id = context.get("project_id", "")
+        self._mark_dispatched_agent(context, "requirement_classification_agent")
+
+        recorder = context.get("_graph_recorder")
+        parent_node_key = str(context.get("_active_stage_node_key") or "").strip()
+
+        if recorder is None or not parent_node_key:
+            return {"status": "error", "error": "No graph recorder available for inline execution"}
+
+        tool_results = context.get("tool_results") or []
+        sequence = len(tool_results) + 1
+        node_key_prefix = f"classification_agent_{sequence}"
+
+        start_node_key = recorder.stage_node_key(f"{node_key_prefix}_start")
+        recorder.start_stage(
+            node_key=start_node_key,
+            label=recorder.stage_label(f"Requirement Classification Agent #{sequence}"),
+            node_type="start",
+            role_type="agent",
+            container_key="requirement_classification_agent",
+            created_by=user_id,
+            input_summary={
+                "task_description": task_description,
+                "requirement_id": requirement_id,
+                "delegated_by": parent_node_key,
+            },
+            edge_type_from_previous="call",
+        )
+        recorder.complete_stage(
+            start_node_key,
+            created_by=user_id,
+            output_summary={"accepted": True},
+        )
+
+        try:
+            loop_result = self._requirement_classification_agent_service.run_inline_tool_loop(
+                recorder=recorder,
+                user_id=user_id,
+                user_message=task_description,
+                project_id=project_id,
+                requirement_id=requirement_id,
+                container_key="requirement_classification_agent",
+                node_key_prefix=node_key_prefix,
+            )
+        except Exception as exc:
+            logger.warning("需求分类 Agent 内联执行失败: %s", exc, exc_info=True)
+            end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
+            recorder.start_stage(
+                node_key=end_node_key,
+                label=recorder.stage_label(f"Requirement Classification Agent #{sequence} End"),
+                node_type="end",
+                role_type="agent",
+                container_key="requirement_classification_agent",
+                created_by=user_id,
+                input_summary={"error": str(exc)},
+                edge_type_from_previous="seq",
+            )
+            recorder.complete_stage(
+                end_node_key,
+                created_by=user_id,
+                output_summary={"error": str(exc)},
+                success=False,
+                error=str(exc),
+            )
+            recorder.create_return_edge(
+                child_node_key=end_node_key,
+                parent_node_key=parent_node_key,
+                created_by=user_id,
+            )
+            recorder.restore_stage_cursor(node_key=parent_node_key, updated_by=user_id)
+            return {"status": "error", "error": f"需求分类 Agent 执行失败: {exc}"}
+
+        end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
+        recorder.start_stage(
+            node_key=end_node_key,
+            label=recorder.stage_label(f"Requirement Classification Agent #{sequence} End"),
+            node_type="end",
+            role_type="agent",
+            container_key="requirement_classification_agent",
+            created_by=user_id,
+            input_summary={"tool_loop_reply": loop_result.get("tool_loop_reply")},
+            edge_type_from_previous="seq",
+        )
+        recorder.complete_stage(
+            end_node_key,
+            created_by=user_id,
+            output_summary=loop_result,
+        )
+        recorder.create_return_edge(
+            child_node_key=end_node_key,
+            parent_node_key=parent_node_key,
+            created_by=user_id,
+        )
+        recorder.restore_stage_cursor(node_key=parent_node_key, updated_by=user_id)
+
+        return {
+            "status": "success",
+            "reply": loop_result.get("tool_loop_reply", ""),
+            "resolved_requirement_id": loop_result.get("resolved_requirement_id"),
+            "classification_result": loop_result.get("classification_result"),
+        }
+
+    def _stream_invoke_requirement_classification_agent(
+        self,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ):
+        task_description = str(arguments.get("task_description") or "").strip()
+        if not task_description:
+            raise ValueError("task_description 不能为空")
+        requirement_id = str(arguments.get("requirement_id") or "").strip() or None
+
+        user_id = context.get("user_id", "")
+        project_id = context.get("project_id", "")
+        self._mark_dispatched_agent(context, "requirement_classification_agent")
+
+        recorder = context.get("_graph_recorder")
+        parent_node_key = str(context.get("_active_stage_node_key") or "").strip()
+
+        if recorder is None or not parent_node_key:
+            return {"status": "error", "error": "No graph recorder available for inline execution"}
+
+        tool_results = context.get("tool_results") or []
+        sequence = len(tool_results) + 1
+        node_key_prefix = f"classification_agent_{sequence}"
+
+        start_node_key = recorder.stage_node_key(f"{node_key_prefix}_start")
+        recorder.start_stage(
+            node_key=start_node_key,
+            label=recorder.stage_label(f"Requirement Classification Agent #{sequence}"),
+            node_type="start",
+            role_type="agent",
+            container_key="requirement_classification_agent",
+            created_by=user_id,
+            input_summary={
+                "task_description": task_description,
+                "requirement_id": requirement_id,
+                "delegated_by": parent_node_key,
+            },
+            edge_type_from_previous="call",
+        )
+        recorder.complete_stage(
+            start_node_key,
+            created_by=user_id,
+            output_summary={"accepted": True},
+        )
+        yield {
+            "event": "stage",
+            "data": recorder.build_stage_event_data(
+                start_node_key,
+                status="succeeded",
+            ),
+        }
+
+        try:
+            loop_result = yield from self._requirement_classification_agent_service.stream_inline_tool_loop(
+                recorder=recorder,
+                user_id=user_id,
+                user_message=task_description,
+                project_id=project_id,
+                requirement_id=requirement_id,
+                container_key="requirement_classification_agent",
+                node_key_prefix=node_key_prefix,
+            )
+        except Exception as exc:
+            logger.warning("需求分类 Agent 内联执行失败: %s", exc, exc_info=True)
+            end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
+            recorder.start_stage(
+                node_key=end_node_key,
+                label=recorder.stage_label(f"Requirement Classification Agent #{sequence} End"),
+                node_type="end",
+                role_type="agent",
+                container_key="requirement_classification_agent",
+                created_by=user_id,
+                input_summary={"error": str(exc)},
+                edge_type_from_previous="seq",
+            )
+            recorder.complete_stage(
+                end_node_key,
+                created_by=user_id,
+                output_summary={"error": str(exc)},
+                success=False,
+                error=str(exc),
+            )
+            recorder.create_return_edge(
+                child_node_key=end_node_key,
+                parent_node_key=parent_node_key,
+                created_by=user_id,
+            )
+            recorder.restore_stage_cursor(node_key=parent_node_key, updated_by=user_id)
+            yield {
+                "event": "stage",
+                "data": recorder.build_stage_event_data(
+                    end_node_key,
+                    status="failed",
+                ),
+            }
+            return {"status": "error", "error": f"需求分类 Agent 执行失败: {exc}"}
+
+        end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
+        recorder.start_stage(
+            node_key=end_node_key,
+            label=recorder.stage_label(f"Requirement Classification Agent #{sequence} End"),
+            node_type="end",
+            role_type="agent",
+            container_key="requirement_classification_agent",
+            created_by=user_id,
+            input_summary={"tool_loop_reply": loop_result.get("tool_loop_reply")},
+            edge_type_from_previous="seq",
+        )
+        recorder.complete_stage(
+            end_node_key,
+            created_by=user_id,
+            output_summary=loop_result,
+        )
+        recorder.create_return_edge(
+            child_node_key=end_node_key,
+            parent_node_key=parent_node_key,
+            created_by=user_id,
+        )
+        recorder.restore_stage_cursor(node_key=parent_node_key, updated_by=user_id)
+        yield {
+            "event": "stage",
+            "data": recorder.build_stage_event_data(
+                end_node_key,
+                status="succeeded",
+            ),
+        }
+
+        return {
+            "status": "success",
+            "reply": loop_result.get("tool_loop_reply", ""),
+            "resolved_requirement_id": loop_result.get("resolved_requirement_id"),
+            "classification_result": loop_result.get("classification_result"),
+        }
 
     @staticmethod
     def _mark_dispatched_agent(context: dict[str, Any], agent_key: str) -> None:
