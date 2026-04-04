@@ -18,6 +18,7 @@ import ExecutionTopologyTemplate from '../views/alpha/ExecutionTopologyTemplate.
 import ActorVisualTester from '../views/alpha/ActorVisualTester.vue'
 import RequirementReplay from '../views/alpha/RequirementReplay.vue'
 import RequirementAgentChat from '../views/alpha/RequirementAgentChat.vue'
+import RequirementClassificationAgentChat from '../views/alpha/RequirementClassificationAgentChat.vue'
 import ConflictAgentChat from '../views/alpha/ConflictAgentChat.vue'
 import SessionControllerAgentChat from '../views/alpha/SessionControllerAgentChat.vue'
 import ImageCaptionPreview from '../views/alpha/ImageCaptionPreview.vue'
@@ -284,6 +285,11 @@ const router = createRouter({
                     path: 'requirement-agent',
                     name: 'requirement-agent',
                     component: RequirementAgentChat
+                },
+                {
+                    path: 'requirement-classification-agent',
+                    name: 'requirement-classification-agent',
+                    component: RequirementClassificationAgentChat
                 },
                 {
                     path: 'session-controller',

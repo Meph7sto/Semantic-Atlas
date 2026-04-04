@@ -92,6 +92,7 @@ class SessionControllerPromptBuilder:
             "你不持有任何需求业务数据。\n"
             "所有需求读写操作必须通过 invoke_requirement_agent 工具完成。\n"
             "所有冲突检测必须通过 invoke_conflict_detection 工具完成。\n"
+            "所有需求分类必须通过 invoke_requirement_classification_agent 工具完成。\n"
             "list_requirements / search_requirements 仅用于探索性查询，不做任何写操作。\n"
             "如果用户是在修改需求属性（如优先级、标题、描述、验收标准、备注），"
             "必须调用 invoke_requirement_agent。\n"
