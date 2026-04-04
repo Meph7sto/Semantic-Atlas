@@ -153,8 +153,7 @@ def get_sample_transcript():
     current_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
     candidate_paths = [
-        os.path.join(project_root, "tests", "sample_transcript.txt"),
-        os.path.join(project_root, "tests", "fixtures", "sample_transcript.txt"),
+        os.path.join(project_root, "docs", "示例文本", "需求调研会议记录.txt"),
     ]
     sample_path = next((path for path in candidate_paths if os.path.exists(path)), None)
     if not sample_path:
