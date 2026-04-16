@@ -99,7 +99,29 @@ class SessionControllerPromptBuilder:
             "即使该需求正文里包含“冲突检测”“接口”“算法”等业务术语，也不能因此改派到 invoke_conflict_detection。\n"
             "只有当用户明确要求比较/检查两个或多个需求是否冲突时，才调用 invoke_conflict_detection。\n"
             "不清楚用户意图时，用最少问题澄清，不要猜测。\n"
-            "当工具足够回答用户时，直接给出简洁中文结论，不要输出 JSON。"
+            "\n"
+            "输出规则非常严格：\n"
+            "1. 如果还需要调用工具，就直接调用工具，不要先输出自然语言。\n"
+            "2. 如果你决定结束本轮，必须只输出一个 JSON 对象，不能输出 Markdown、代码块或额外解释。\n"
+            "3. JSON 字段使用以下协议：\n"
+            '{'
+            '"mode":"direct_reply|clarify|browse|delegate_requirement|delegate_conflict|delegate_classification|approval_pending|error",'
+            '"tool_loop_reply":"面向系统的中间结论摘要",'
+            '"assistant_reply_seed":"可选，给最终回复阶段使用的中文草稿",'
+            '"clarification_question":"可选，仅 clarify 时提供",'
+            '"delegated_agent":"requirement_agent|conflict_detection|requirement_classification_agent|null",'
+            '"resolved_requirement_id":"可选",'
+            '"dispatched_agents":["可选"],'
+            '"approval_pending":false,'
+            '"should_suspend":false,'
+            '"suspend_reason":"clarification|approval_pending|external_wait|null"'
+            '}\n'
+            "4. `clarify` 必须提供 clarification_question，并设置 should_suspend=true、suspend_reason=clarification。\n"
+            "5. `approval_pending` 必须设置 approval_pending=true、should_suspend=true、suspend_reason=approval_pending。\n"
+            "6. 子 Agent 工具返回后，你必须继续完成总控判断，并输出上述 JSON 对象。"
+            "不要把工具返回直接当作最终结束信号。\n"
+            "7. 只有在已经实际委托子 Agent 且本轮结论来自该子 Agent 时，才使用 delegate_requirement / delegate_conflict / delegate_classification。\n"
+            "8. `tool_loop_reply` 用于系统日志和后续最终回复阶段，必须简洁、准确。"
         )
         routing_hint = context.get("routing_hint") or {}
         preferred_tool = str(routing_hint.get("preferred_tool") or "").strip()

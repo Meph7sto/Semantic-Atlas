@@ -534,15 +534,6 @@ class ToolLoopRunner:
                         status="succeeded",
                     ),
                 }
-                if normalized_context.pop("_stop_after_tool_round", False):
-                    forced_reply = str(
-                        normalized_context.pop("_forced_tool_loop_reply", "") or assistant_content or ""
-                    ).strip()
-                    return ToolLoopResult(
-                        tool_loop_reply=forced_reply,
-                        context=normalized_context,
-                        rounds=round_index,
-                    )
                 continue
 
             if not assistant_content:

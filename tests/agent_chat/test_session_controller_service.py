@@ -14,6 +14,9 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
+import pytest
+
+from backend_business.config import settings  # noqa: E402
 from backend_business.services.agent.agents.session_controller import (  # noqa: E402
     SessionControllerService,
 )
@@ -452,7 +455,51 @@ def test_stream_session_controller_reply_inherits_scratchpad_into_next_turn_prom
     assert current_graph["meta_json"]["resolved_requirement_id"] == "REQ-9"
 
 
-def test_stream_session_controller_reply_stops_after_delegated_agent_returns(monkeypatch):
+def test_stream_session_controller_reply_consumes_structured_loop_result(monkeypatch):
+    chat_storage = _FakeChatStorage()
+    graph_service = _FakeExecutionGraphService()
+    ai_proxy = _FakeAiProxy(
+        tool_responses=[
+            {
+                "content": (
+                    '{"mode":"direct_reply","tool_loop_reply":"已确认当前无需调用工具。",'
+                    '"assistant_reply_seed":"当前没有需要进一步处理的事项。",'
+                    '"should_suspend":false,"approval_pending":false}'
+                ),
+                "tool_calls": [],
+                "finish_reason": "stop",
+            },
+        ],
+        summary_responses=[
+            {"content": "本轮无需调度子 Agent，直接完成答复。"},
+        ],
+    )
+    service = SessionControllerService(
+        chat_storage=chat_storage,
+        execution_graph_service=graph_service,
+        tools=_FakeTools([]),
+        ai_proxy_client=ai_proxy,
+    )
+    monkeypatch.setattr(service, "_stream_llm_reply", lambda **kwargs: _token_stream("当前没有需要进一步处理的事项。"))
+
+    events = list(
+        service.stream_session_controller_reply(
+            session_id="sess-structured-1",
+            user_id="u-1",
+            project_id="p-1",
+            user_message="现在系统需要我做什么？",
+        )
+    )
+
+    assert events[-1]["event"] == "result"
+    assert events[-1]["data"]["mode"] == "direct_reply"
+    assert events[-1]["data"]["reply_text"] == "当前没有需要进一步处理的事项。"
+    graph = graph_service.get_execution_graph("graph-1")
+    assert graph["status"] == "succeeded"
+    assert graph["meta_json"]["session_controller_mode"] == "direct_reply"
+
+
+def test_stream_session_controller_reply_waits_for_structured_controller_result_after_delegation(monkeypatch):
     class _FakeRequirementsService:
         pass
 
@@ -503,6 +550,18 @@ def test_stream_session_controller_reply_stops_after_delegated_agent_returns(mon
                 ],
                 "finish_reason": "tool_calls",
             },
+            {
+                "content": (
+                    '{"mode":"delegate_requirement","tool_loop_reply":"已读取需求详情并准备向用户汇总。",'
+                    '"assistant_reply_seed":"这是一个需求的完整信息摘要",'
+                    '"delegated_agent":"requirement_agent",'
+                    '"resolved_requirement_id":"REQ-9",'
+                    '"dispatched_agents":["requirement_agent"],'
+                    '"should_suspend":false,"approval_pending":false}'
+                ),
+                "tool_calls": [],
+                "finish_reason": "stop",
+            },
         ],
         summary_responses=[
             {"content": "当前焦点是 REQ-9。"},
@@ -535,7 +594,8 @@ def test_stream_session_controller_reply_stops_after_delegated_agent_returns(mon
     )
 
     assert events[-1]["event"] == "result"
-    assert len(ai_proxy.tool_calls) == 1
+    assert len(ai_proxy.tool_calls) == 2
+    assert events[-1]["data"]["mode"] == "delegate_requirement"
     assert events[-1]["data"]["reply_text"] == "这是一个需求的完整信息摘要"
 
 
@@ -592,6 +652,17 @@ def test_stream_session_controller_reply_suspends_on_delegated_clarification(mon
                 ],
                 "finish_reason": "tool_calls",
             },
+            {
+                "content": (
+                    '{"mode":"clarify","tool_loop_reply":"我发现两条标题完全相同的需求，请确认要修改哪一条。",'
+                    '"clarification_question":"我发现两条标题完全相同的需求，请确认要修改哪一条。",'
+                    '"delegated_agent":"requirement_agent",'
+                    '"dispatched_agents":["requirement_agent"],'
+                    '"should_suspend":true,"suspend_reason":"clarification","approval_pending":false}'
+                ),
+                "tool_calls": [],
+                "finish_reason": "stop",
+            },
         ],
         summary_responses=[
             {"content": "当前待用户确认具体要修改的需求。"},
@@ -624,7 +695,29 @@ def test_stream_session_controller_reply_suspends_on_delegated_clarification(mon
     )
 
     assert events[-1]["event"] == "result"
+    assert len(ai_proxy.tool_calls) == 2
     assert events[-1]["data"]["reply_text"] == "我发现两条标题完全相同的需求，请确认要修改哪一条。"
     graph = graph_service.get_execution_graph("graph-1")
     assert graph["status"] == "suspended"
     assert graph["meta_json"]["awaiting_user_input"] is True
+
+
+def test_stream_session_controller_reply_rejects_graph_mode_when_disabled(monkeypatch):
+    monkeypatch.setattr(settings, "SESSION_CONTROLLER_GRAPH_ENABLED", False)
+    service = SessionControllerService(
+        chat_storage=_FakeChatStorage(),
+        execution_graph_service=_FakeExecutionGraphService(),
+        tools=_FakeTools([]),
+        ai_proxy_client=_FakeAiProxy(),
+    )
+
+    with pytest.raises(ValueError, match="execution_mode=graph 当前未启用"):
+        list(
+            service.stream_session_controller_reply(
+                session_id="sess-1",
+                user_id="u-1",
+                project_id="p-1",
+                user_message="测试 graph",
+                execution_mode="graph",
+            )
+        )

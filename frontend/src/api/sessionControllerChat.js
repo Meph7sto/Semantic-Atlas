@@ -70,6 +70,7 @@ export const sessionControllerChatApi = {
     sessionId,
     projectId,
     message,
+    executionMode = 'classic',
     useThinkingMode = true,
     delegatedMaxToolCallRounds = 15
   }) {
@@ -79,6 +80,7 @@ export const sessionControllerChatApi = {
       body: JSON.stringify({
         project_id: projectId,
         message,
+        execution_mode: executionMode,
         use_thinking_mode: useThinkingMode,
         delegated_max_tool_call_rounds: delegatedMaxToolCallRounds,
       })

@@ -12,10 +12,20 @@ import requests
 from backend_business.config import settings
 from backend_business.services.ai_chat_service import AiChatService, ai_chat_service
 from backend_business.services.ai_proxy import ai_proxy
+from backend_business.services.agent.execution.graph_executor import GraphExecutor
 from backend_business.services.agent.execution_graph_service import ExecutionGraphService
 from backend_business.services.agent.runtime.scratchpad import Scratchpad
 from backend_business.services.requirements_manage_service import RequirementsManageService
+from backend_business.services.agent.execution.topology_instantiator import (
+    RuntimeContainer,
+    RuntimeEdge,
+    RuntimeGraphSkeleton,
+    RuntimeNode,
+    RuntimeSubgraph,
+)
 
+from .contracts import SessionControllerDecisionMode, SessionControllerLoopResult, SuspendReason
+from .graph_template import ensure_session_controller_template
 from .prompt_builder import SessionControllerPromptBuilder
 from .runtime_graph_recorder import SessionControllerGraphRecorder
 from .tool_loop_runner import SessionControllerToolLoopRunner
@@ -51,6 +61,14 @@ class SessionControllerService:
         self.tools = tools
 
     @staticmethod
+    def _is_graph_execution_enabled() -> bool:
+        return bool(settings.SESSION_CONTROLLER_GRAPH_ENABLED)
+
+    def _ensure_execution_mode_enabled(self, execution_mode: str) -> None:
+        if execution_mode == "graph" and not self._is_graph_execution_enabled():
+            raise ValueError("execution_mode=graph 当前未启用")
+
+    @staticmethod
     def _compact_write_result(write_result: dict[str, Any] | None) -> dict[str, Any] | None:
         if not isinstance(write_result, dict):
             return None
@@ -80,13 +98,16 @@ class SessionControllerService:
         previous_graph = self.execution_graph_service.get_execution_graph(prev_graph_id)
         previous_meta = (previous_graph.get("meta_json") or {}) if previous_graph else {}
         inherited_entries = previous_meta.get("scratchpad_entries") or []
+        inherited_snapshot = previous_meta.get("scratchpad_snapshot") or inherited_entries
         inherited_requirement_id = previous_meta.get("resolved_requirement_id")
-        if not inherited_entries and not inherited_requirement_id:
+        if not inherited_entries and not inherited_snapshot and not inherited_requirement_id:
             return
 
         meta_patch: dict[str, Any] = {}
         if inherited_entries:
             meta_patch["scratchpad_entries"] = inherited_entries
+        if inherited_snapshot:
+            meta_patch["scratchpad_snapshot"] = inherited_snapshot
         if inherited_requirement_id:
             meta_patch["resolved_requirement_id"] = inherited_requirement_id
         self.execution_graph_service.patch_graph_meta(
@@ -194,10 +215,13 @@ class SessionControllerService:
         )
         context["_scratchpad"] = scratchpad
         context["_scratchpad_prompt_text"] = scratchpad.format_for_prompt()
+        snapshot = scratchpad.snapshot()
         self.execution_graph_service.patch_graph_meta(
             graph_id,
             {
-                "scratchpad_entries": scratchpad.snapshot(),
+                "scratchpad_entries": snapshot,
+                "scratchpad_snapshot": snapshot,
+                "scratchpad_entry_count": len(snapshot),
                 "resolved_requirement_id": context.get("resolved_requirement_id"),
             },
             updated_by=user_id,
@@ -485,7 +509,7 @@ class SessionControllerService:
         project_id: str,
         session_id: str,
         delegated_max_tool_call_rounds: int,
-    ) -> Generator[dict[str, Any], None, dict[str, Any]]:
+    ) -> Generator[dict[str, Any], None, SessionControllerLoopResult]:
         runner = SessionControllerToolLoopRunner(
             ai_proxy_client=self.ai_proxy,
             tools=self.tools,
@@ -502,6 +526,471 @@ class SessionControllerService:
             session_id=session_id,
         )
 
+    @staticmethod
+    def _resolve_structured_assistant_reply(
+        loop_result: SessionControllerLoopResult,
+    ) -> str:
+        if loop_result.mode == SessionControllerDecisionMode.CLARIFY:
+            return (
+                str(loop_result.clarification_question or "").strip()
+                or str(loop_result.assistant_reply_seed or "").strip()
+                or str(loop_result.tool_loop_reply or "").strip()
+                or "请补充最小必要信息后我再继续。"
+            )
+        if loop_result.mode == SessionControllerDecisionMode.APPROVAL_PENDING:
+            return (
+                str(loop_result.assistant_reply_seed or "").strip()
+                or str(loop_result.tool_loop_reply or "").strip()
+                or (
+                    "需求管理 Agent 已把变更通知发到你的移动端待审界面。"
+                    "请先去手机端查看并同意该变更通知；在你同意之前，系统不会修改需求。"
+                )
+            )
+        if loop_result.mode == SessionControllerDecisionMode.ERROR:
+            return (
+                str(loop_result.assistant_reply_seed or "").strip()
+                or str(loop_result.tool_loop_reply or "").strip()
+                or "当前请求未能完成。"
+            )
+        return ""
+
+    @staticmethod
+    def _build_final_reply_prompt(
+        *,
+        user_message: str,
+        loop_result: SessionControllerLoopResult,
+    ) -> tuple[str, str]:
+        final_system_prompt = (
+            "你负责 Session Controller 的最终回复阶段。"
+            "输入是总控阶段产出的结构化决策。"
+            "请基于其中的 mode、tool_loop_reply 和 assistant_reply_seed，"
+            "输出一段面向用户的自然中文回复。"
+            "直接给出结论，不要输出 JSON，不要重复系统字段名。"
+            "如 assistant_reply_seed 已足够自然，可在保持事实一致的前提下直接复用或轻微润色。"
+        )
+        final_prompt = json.dumps(
+            {
+                "user_message": user_message,
+                "mode": loop_result.mode.value,
+                "tool_loop_reply": loop_result.tool_loop_reply,
+                "assistant_reply_seed": loop_result.assistant_reply_seed,
+                "delegated_agent": loop_result.delegated_agent,
+                "resolved_requirement_id": loop_result.resolved_requirement_id,
+                "dispatched_agents": loop_result.dispatched_agents,
+            },
+            ensure_ascii=False,
+        )
+        return final_prompt, final_system_prompt
+
+    @staticmethod
+    def _normalize_graph_mode_loop_result(
+        payload: dict[str, Any] | None,
+    ) -> SessionControllerLoopResult:
+        normalized = dict(payload or {})
+        raw_mode = str(normalized.get("mode") or "").strip().lower()
+        if raw_mode == "clarification":
+            raw_mode = SessionControllerDecisionMode.CLARIFY.value
+        mode = next(
+            (item for item in SessionControllerDecisionMode if item.value == raw_mode),
+            SessionControllerDecisionMode.ERROR,
+        )
+        raw_suspend_reason = str(normalized.get("suspend_reason") or "").strip().lower()
+        suspend_reason = next(
+            (item for item in SuspendReason if item.value == raw_suspend_reason),
+            None,
+        )
+        if mode == SessionControllerDecisionMode.CLARIFY:
+            suspend_reason = SuspendReason.CLARIFICATION
+        elif mode == SessionControllerDecisionMode.APPROVAL_PENDING:
+            suspend_reason = SuspendReason.APPROVAL_PENDING
+        context = normalized.get("context") if isinstance(normalized.get("context"), dict) else {}
+        return SessionControllerLoopResult(
+            mode=mode,
+            tool_loop_reply=str(normalized.get("tool_loop_reply") or "").strip(),
+            assistant_reply_seed=str(normalized.get("assistant_reply_seed") or "").strip() or None,
+            clarification_question=str(normalized.get("clarification_question") or "").strip() or None,
+            delegated_agent=str(normalized.get("delegated_agent") or "").strip() or None,
+            resolved_requirement_id=str(normalized.get("resolved_requirement_id") or "").strip() or None,
+            dispatched_agents=[
+                str(item).strip()
+                for item in (normalized.get("dispatched_agents") or [])
+                if str(item).strip()
+            ],
+            approval_pending=bool(normalized.get("approval_pending")),
+            approval_result=normalized.get("approval_result") if isinstance(normalized.get("approval_result"), dict) else None,
+            should_suspend=bool(normalized.get("should_suspend")),
+            suspend_reason=suspend_reason,
+            context=context,
+        )
+
+    @staticmethod
+    def _find_stage_output(
+        snapshot: list[dict[str, Any]],
+        *,
+        source_subgraph: str,
+    ) -> Any:
+        for entry in reversed(snapshot or []):
+            if (
+                entry.get("entry_type") == "stage_output"
+                and entry.get("source_subgraph") == source_subgraph
+            ):
+                return entry.get("content")
+        return None
+
+    @staticmethod
+    def _find_latest_stage_output_for_sources(
+        snapshot: list[dict[str, Any]],
+        *,
+        source_subgraphs: set[str],
+    ) -> Any:
+        for entry in reversed(snapshot or []):
+            if (
+                entry.get("entry_type") == "stage_output"
+                and entry.get("source_subgraph") in source_subgraphs
+            ):
+                return entry.get("content")
+        return None
+
+    def _load_graph_mode_state(
+        self,
+        *,
+        graph_id: str,
+    ) -> tuple[SessionControllerLoopResult, dict[str, Any], str]:
+        graph = self.execution_graph_service.get_execution_graph(graph_id) or {}
+        meta = graph.get("meta_json") or {}
+        snapshot = list(meta.get("scratchpad_snapshot") or [])
+        decision_content = self._find_latest_stage_output_for_sources(
+            snapshot,
+            source_subgraphs={"sg_controller_intake", "sg_controller_resume_intake"},
+        )
+        try:
+            decision_payload = (
+                json.loads(decision_content)
+                if isinstance(decision_content, str) and decision_content.strip()
+                else {}
+            )
+        except json.JSONDecodeError:
+            decision_payload = {}
+        if not isinstance(decision_payload, dict):
+            decision_payload = {}
+        loop_result = self._normalize_graph_mode_loop_result(decision_payload)
+        if loop_result.resolved_requirement_id and not meta.get("resolved_requirement_id"):
+            meta["resolved_requirement_id"] = loop_result.resolved_requirement_id
+        assistant_reply = str(
+            self._find_stage_output(snapshot, source_subgraph="sg_final_reply")
+            or self._find_stage_output(snapshot, source_subgraph="sg_suspend_reply")
+            or meta.get("final_reply")
+            or ""
+        ).strip()
+        context = dict(loop_result.context or {})
+        if loop_result.resolved_requirement_id:
+            context.setdefault("resolved_requirement_id", loop_result.resolved_requirement_id)
+        if loop_result.dispatched_agents:
+            context.setdefault("dispatched_agents", loop_result.dispatched_agents)
+        if loop_result.approval_result:
+            context.setdefault("last_approval_result", loop_result.approval_result)
+        return loop_result, context, assistant_reply
+
+    @staticmethod
+    def _build_runtime_skeleton_from_detail(detail: dict[str, Any]) -> RuntimeGraphSkeleton:
+        graph = detail.get("graph") or {}
+        graph_id = str(graph.get("graph_id") or "")
+        containers = tuple(
+            RuntimeContainer(
+                container_id=item["container_id"],
+                container_key=item.get("container_key") or "",
+                label=item.get("label") or item.get("container_key") or "",
+                role_type=item.get("role_type") or "agent",
+                order_index=int(item.get("order_index") or 0),
+                source_container_id=str(
+                    ((item.get("config_json") or {}).get("source_container_id"))
+                    or ((item.get("config_json") or {}).get("template_container_id"))
+                    or item["container_id"]
+                ),
+            )
+            for item in sorted(
+                detail.get("containers") or [],
+                key=lambda entry: (int(entry.get("order_index") or 0), str(entry.get("container_id") or "")),
+            )
+        )
+        subgraphs = tuple(
+            RuntimeSubgraph(
+                subgraph_id=item["subgraph_id"],
+                container_id=item["container_id"],
+                subgraph_key=item.get("subgraph_key") or "",
+                label=item.get("label") or item.get("subgraph_key") or "",
+                task_description=item.get("task_description") or "",
+                status=item.get("status") or "pending",
+                order_index=int(item.get("order_index") or 0),
+                node_type=str((item.get("config_json") or {}).get("node_type") or "llm"),
+                config_json=dict(item.get("config_json") or {}),
+                source_node_id=str(
+                    ((item.get("config_json") or {}).get("source_node_id"))
+                    or item["subgraph_id"]
+                ),
+            )
+            for item in sorted(
+                detail.get("subgraphs") or [],
+                key=lambda entry: (int(entry.get("order_index") or 0), str(entry.get("subgraph_id") or "")),
+            )
+        )
+        nodes = tuple(
+            RuntimeNode(
+                node_id=item["node_id"],
+                graph_id=graph_id,
+                container_id=item.get("container_id"),
+                subgraph_id=item.get("subgraph_id"),
+                node_key=item.get("node_key") or "",
+                label=item.get("label") or item.get("node_key") or "",
+                node_type=item.get("node_type") or "llm",
+                role_type=item.get("role_type") or "agent",
+                order_index=int(item.get("order_index") or 0),
+            )
+            for item in sorted(
+                detail.get("nodes") or [],
+                key=lambda entry: (int(entry.get("order_index") or 0), str(entry.get("node_id") or "")),
+            )
+        )
+        edges = tuple(
+            RuntimeEdge(
+                edge_id=item["edge_id"],
+                source_node_id=item["source_node_id"],
+                target_node_id=item["target_node_id"],
+                edge_type=item.get("edge_type") or "seq",
+                label=item.get("label"),
+                condition_expr=item.get("condition_expr"),
+                config_json=dict(item.get("config_json") or {}),
+                order_index=int(item.get("order_index") or 0),
+            )
+            for item in sorted(
+                detail.get("edges") or [],
+                key=lambda entry: (int(entry.get("order_index") or 0), str(entry.get("edge_id") or "")),
+            )
+        )
+        return RuntimeGraphSkeleton(
+            graph_id=graph_id,
+            containers=containers,
+            subgraphs=subgraphs,
+            nodes=nodes,
+            edges=edges,
+        )
+
+    def stream_graph_executor_reply(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        project_id: str,
+        user_message: str,
+        delegated_max_tool_call_rounds: int = 15,
+        skip_user_message_creation: bool = False,
+    ) -> Generator[dict[str, Any], None, None]:
+        self._ensure_execution_mode_enabled("graph")
+        if not self.chat_storage:
+            raise RuntimeError("AI chat storage not initialized")
+
+        session = self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
+        if not skip_user_message_creation:
+            user_record = self.chat_storage.create_message(
+                session_id=session_id,
+                user_id=user_id,
+                role="user",
+                content=user_message,
+                metadata={},
+                is_read=True,
+            )
+            self.chat_storage.update_session(session_id=session_id)
+            yield {"event": "user_message", "data": user_record}
+
+        graph_target = self._resolve_session_graph_target(session=session, project_id=project_id)
+        recorder = SessionControllerGraphRecorder(
+            execution_graph_service=self.execution_graph_service,
+            project_id=project_id,
+            user_id=user_id,
+            session_id=session_id,
+            user_message=user_message,
+            graph_id=graph_target["graph_id"],
+            prev_graph_id=graph_target["prev_graph_id"],
+            task_context={
+                "delegated_max_tool_call_rounds": delegated_max_tool_call_rounds,
+                "delegated_prompt_payload_format": "markdown",
+                "delegated_context_mode": "full",
+            },
+        )
+        self._inherit_session_scratchpad(
+            graph_id=recorder.graph_id,
+            prev_graph_id=graph_target["prev_graph_id"],
+            updated_by=user_id,
+        )
+        self.chat_storage.update_session(
+            session_id=session_id,
+            active_graph_id=recorder.graph_id,
+        )
+        yield {"event": "graph", "data": {"graph_id": recorder.graph_id}}
+
+        executor = GraphExecutor()
+        assistant_content = ""
+        loop_result = SessionControllerLoopResult(mode=SessionControllerDecisionMode.ERROR)
+        context: dict[str, Any] = {}
+        current_graph = self.execution_graph_service.get_execution_graph(recorder.graph_id) or {}
+        current_meta = current_graph.get("meta_json") or {}
+        is_resume = (
+            current_graph.get("status") == "suspended"
+            and bool(current_meta.get("source_template_id"))
+            and bool(current_meta.get("suspended_subgraph_id"))
+        )
+
+        try:
+            if is_resume:
+                detail = self.execution_graph_service.get_graph_detail(recorder.graph_id)
+                skeleton = self._build_runtime_skeleton_from_detail(detail)
+                gen = executor.resume(
+                    skeleton=skeleton,
+                    suspended_subgraph_id=str(current_meta.get("suspended_subgraph_id")),
+                    user_input=user_message,
+                    tool_executor=self.tools,
+                    ai_proxy_client=self.ai_proxy,
+                    graph_service=self.execution_graph_service,
+                    recorder=recorder,
+                    actor=user_id,
+                )
+            else:
+                template_graph_id = ensure_session_controller_template(
+                    execution_graph_service=self.execution_graph_service,
+                    project_id=project_id,
+                    actor=user_id,
+                )
+                gen = executor.execute(
+                    template_graph_id=template_graph_id,
+                    project_id=project_id,
+                    user_message=user_message,
+                    tool_executor=self.tools,
+                    ai_proxy_client=self.ai_proxy,
+                    graph_service=self.execution_graph_service,
+                    recorder=recorder,
+                    actor=user_id,
+                    runtime_graph_id=recorder.graph_id,
+                    runtime_container_key="conductor",
+                    runtime_container_label="Session Controller",
+                    runtime_container_role_type="agent",
+                )
+
+            while True:
+                try:
+                    event = next(gen)
+                except StopIteration as stop:
+                    result = stop.value
+                    break
+                yield event
+
+            loop_result, context, assistant_content = self._load_graph_mode_state(
+                graph_id=recorder.graph_id,
+            )
+            if result.status == "failed":
+                loop_result = SessionControllerLoopResult(
+                    mode=SessionControllerDecisionMode.ERROR,
+                    tool_loop_reply=result.error or "执行失败",
+                    assistant_reply_seed=result.error or "执行失败",
+                    context=context,
+                )
+                assistant_content = result.error or assistant_content or "执行失败"
+            else:
+                assistant_content = str(result.final_output or assistant_content or "").strip()
+                if not assistant_content:
+                    assistant_content = self._resolve_structured_assistant_reply(loop_result)
+
+            self._persist_turn_summary_to_scratchpad(
+                graph_id=recorder.graph_id,
+                turn_index=recorder.turn_index,
+                user_id=user_id,
+                user_message=user_message,
+                tool_loop_reply=loop_result.tool_loop_reply,
+                assistant_reply=assistant_content,
+                context=context,
+            )
+
+            meta_patch = {
+                "intent": "session_control",
+                "session_controller_mode": loop_result.mode.value,
+                "final_reply": assistant_content,
+                "delegated_agent": loop_result.delegated_agent,
+                "dispatched_agents": loop_result.dispatched_agents,
+                "turn_count": recorder.turn_index,
+                "active_turn_index": recorder.turn_index,
+                "resolved_requirement_id": loop_result.resolved_requirement_id,
+                "awaiting_user_input": (
+                    loop_result.should_suspend
+                    and loop_result.suspend_reason == SuspendReason.CLARIFICATION
+                ),
+                "suspended_subgraph_id": getattr(result, "suspended_subgraph_id", None),
+            }
+            if loop_result.approval_result:
+                meta_patch.update(
+                    {
+                        "approval_request_id": loop_result.approval_result.get("approval_request_id"),
+                        "approval_push_message_id": loop_result.approval_result.get("push_message_id"),
+                        "approval_status": "pending",
+                    }
+                )
+            self.execution_graph_service.patch_graph_meta(
+                recorder.graph_id,
+                {key: value for key, value in meta_patch.items() if value is not None},
+                updated_by=user_id,
+            )
+
+            assistant_message = self.chat_storage.create_message(
+                session_id=session_id,
+                user_id=user_id,
+                role="assistant",
+                content=assistant_content,
+                metadata={
+                    "graph_id": recorder.graph_id,
+                    "mode": loop_result.mode.value,
+                    "delegated_agent": loop_result.delegated_agent,
+                    "dispatched_agents": loop_result.dispatched_agents,
+                    "approval_result": loop_result.approval_result,
+                    "execution_mode": "graph",
+                },
+                is_read=False,
+            )
+            yield {"event": "assistant_message", "data": assistant_message}
+            yield {
+                "event": "result",
+                "data": {
+                    "graph_id": recorder.graph_id,
+                    "reply_text": assistant_message["content"],
+                    "mode": loop_result.mode.value,
+                    "status": result.status,
+                    "dispatched_agents": loop_result.dispatched_agents,
+                    "approval_result": loop_result.approval_result,
+                    "execution_mode": "graph",
+                },
+            }
+        except Exception as exc:
+            error_text = str(exc)
+            self.execution_graph_service.patch_graph_meta(
+                recorder.graph_id,
+                {"final_reply": error_text},
+                status="failed",
+                updated_by=user_id,
+            )
+            error_message = self.chat_storage.create_message(
+                session_id=session_id,
+                user_id=user_id,
+                role="assistant",
+                content=error_text,
+                metadata={"error": True, "graph_id": recorder.graph_id, "execution_mode": "graph"},
+                is_read=False,
+            )
+            yield {
+                "event": "error",
+                "data": {
+                    "error": error_text,
+                    "message": error_message,
+                    "graph_id": recorder.graph_id,
+                },
+            }
+
     def stream_session_controller_reply(
         self,
         *,
@@ -509,10 +998,22 @@ class SessionControllerService:
         user_id: str,
         project_id: str,
         user_message: str,
+        execution_mode: str = "classic",
         use_thinking_mode: bool = True,
         delegated_max_tool_call_rounds: int = 15,
         skip_user_message_creation: bool = False,
     ) -> Generator[dict[str, Any], None, None]:
+        self._ensure_execution_mode_enabled(execution_mode)
+        if execution_mode == "graph":
+            yield from self.stream_graph_executor_reply(
+                session_id=session_id,
+                user_id=user_id,
+                project_id=project_id,
+                user_message=user_message,
+                delegated_max_tool_call_rounds=delegated_max_tool_call_rounds,
+                skip_user_message_creation=skip_user_message_creation,
+            )
+            return
         if not self.chat_storage:
             raise RuntimeError("AI chat storage not initialized")
 
@@ -565,6 +1066,7 @@ class SessionControllerService:
         assistant_content = ""
         tool_loop_reply = ""
         context: dict[str, Any] = {}
+        loop_result = SessionControllerLoopResult(mode=SessionControllerDecisionMode.ERROR)
 
         try:
             # Stage 1: Record user input
@@ -604,14 +1106,17 @@ class SessionControllerService:
                 try:
                     event = next(tool_loop)
                 except StopIteration as stop:
-                    loop_result = stop.value or {}
-                    tool_loop_reply = loop_result.get("tool_loop_reply") or ""
-                    context = loop_result.get("context") or {}
+                    loop_result = stop.value or SessionControllerLoopResult(
+                        mode=SessionControllerDecisionMode.ERROR,
+                        tool_loop_reply="SessionController tool loop 未返回结果",
+                    )
+                    tool_loop_reply = loop_result.tool_loop_reply or ""
+                    context = loop_result.context or {}
                     break
                 yield event
 
-            dispatched_agents = context.get("dispatched_agents") or []
-            approval_result = context.get("last_approval_result")
+            dispatched_agents = loop_result.dispatched_agents or []
+            approval_result = loop_result.approval_result
 
             # Stage 3: Conductor reply (streaming final answer)
             recorder.start_stage(
@@ -622,6 +1127,7 @@ class SessionControllerService:
                 container_key="conductor",
                 created_by=user_id,
                 input_summary={
+                    "mode": loop_result.mode.value,
                     "tool_loop_reply": tool_loop_reply,
                     "dispatched_agents": dispatched_agents,
                 },
@@ -635,28 +1141,16 @@ class SessionControllerService:
                 ),
             }
 
-            if context.get("approval_pending"):
-                assistant_content = (
-                    "需求管理 Agent 已把变更通知发到你的移动端待审界面。"
-                    "请先去手机端查看并同意该变更通知；在你同意之前，系统不会修改需求。"
-                )
-            elif context.get("clarification_required"):
-                assistant_content = (
-                    str(context.get("last_clarification_reply") or "").strip()
-                    or tool_loop_reply
-                    or "请补充最小必要信息后我再继续。"
-                )
+            if loop_result.mode in {
+                SessionControllerDecisionMode.APPROVAL_PENDING,
+                SessionControllerDecisionMode.CLARIFY,
+                SessionControllerDecisionMode.ERROR,
+            }:
+                assistant_content = self._resolve_structured_assistant_reply(loop_result)
             else:
-                final_system_prompt = (
-                    "你是面向需求工程用户的中文助手。"
-                    "根据工具的执行结论，用自然、简洁的中文回复用户。"
-                    "直接给出结论，不要重复 JSON 内容，不要输出 JSON。"
-                    "如需澄清，只问最小必要问题。"
-                )
-                final_prompt = (
-                    f"用户原始请求：{user_message}\n\n"
-                    f"工具执行结论：\n{tool_loop_reply}\n\n"
-                    "请给出最终的中文总结回复。"
+                final_prompt, final_system_prompt = self._build_final_reply_prompt(
+                    user_message=user_message,
+                    loop_result=loop_result,
                 )
 
                 stream = self._stream_llm_reply(
@@ -673,7 +1167,11 @@ class SessionControllerService:
                     yield event
 
                 if not assistant_content:
-                    assistant_content = tool_loop_reply or "已完成处理。"
+                    assistant_content = (
+                        str(loop_result.assistant_reply_seed or "").strip()
+                        or tool_loop_reply
+                        or "已完成处理。"
+                    )
 
             self._persist_turn_summary_to_scratchpad(
                 graph_id=recorder.graph_id,
@@ -703,6 +1201,8 @@ class SessionControllerService:
 
             meta_patch = {
                 "intent": "session_control",
+                "session_controller_mode": loop_result.mode.value,
+                "delegated_agent": loop_result.delegated_agent,
                 "dispatched_agents": dispatched_agents,
                 "turn_count": recorder.turn_index,
                 "active_turn_index": recorder.turn_index,
@@ -715,18 +1215,19 @@ class SessionControllerService:
                         "approval_status": "pending",
                     }
                 )
-            if context.get("clarification_required"):
-                meta_patch["awaiting_user_input"] = True
+            if loop_result.should_suspend:
+                if loop_result.suspend_reason == SuspendReason.CLARIFICATION:
+                    meta_patch["awaiting_user_input"] = True
                 recorder.suspend_graph(
                     created_by=user_id,
                     final_reply=assistant_content,
                     meta_patch=meta_patch,
                 )
-            elif context.get("approval_pending"):
-                recorder.suspend_graph(
+            elif loop_result.mode == SessionControllerDecisionMode.ERROR:
+                recorder.fail_graph(
                     created_by=user_id,
+                    error=tool_loop_reply or assistant_content,
                     final_reply=assistant_content,
-                    meta_patch=meta_patch,
                 )
             else:
                 recorder.succeed_graph(
@@ -742,6 +1243,8 @@ class SessionControllerService:
                 content=assistant_content,
                 metadata={
                     "graph_id": recorder.graph_id,
+                    "mode": loop_result.mode.value,
+                    "delegated_agent": loop_result.delegated_agent,
                     "dispatched_agents": dispatched_agents,
                     "approval_result": approval_result,
                 },
@@ -753,6 +1256,7 @@ class SessionControllerService:
                 "data": {
                     "graph_id": recorder.graph_id,
                     "reply_text": assistant_message["content"],
+                    "mode": loop_result.mode.value,
                     "dispatched_agents": dispatched_agents,
                     "approval_result": approval_result,
                 },

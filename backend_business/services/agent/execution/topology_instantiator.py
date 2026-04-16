@@ -470,7 +470,9 @@ def _build_subgraph_config(tpl_node: dict) -> dict[str, Any] | None:
     Stores the original node_type and conditional_edges so that the
     SubgraphRunner can later use them for routing decisions.
     """
-    config: dict[str, Any] = {"node_type": tpl_node["node_type"]}
+    config: dict[str, Any] = dict(tpl_node.get("config_json") or {})
+    config["node_type"] = tpl_node["node_type"]
+    config["source_node_id"] = tpl_node["node_id"]
 
     conditional_edges = tpl_node.get("conditional_edges")
     if conditional_edges:

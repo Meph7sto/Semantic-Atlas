@@ -32,6 +32,7 @@ class SessionControllerGraphRecorder(RuntimeGraphRecorder):
         user_message: str,
         graph_id: str | None = None,
         prev_graph_id: str | None = None,
+        task_context: dict[str, object] | None = None,
     ) -> None:
         super().__init__(
             execution_graph_service=execution_graph_service,
@@ -50,5 +51,5 @@ class SessionControllerGraphRecorder(RuntimeGraphRecorder):
             initial_graph_meta={
                 "intent": "pending",
             },
-            task_context={},
+            task_context=task_context or {},
         )

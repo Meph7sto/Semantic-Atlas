@@ -15,11 +15,6 @@ _LIST_ITEM_EXCERPT_LENGTH = 180
 _DEFAULT_DELEGATED_MAX_TOOL_CALL_ROUNDS = 15
 
 
-def _mark_tool_loop_should_stop(context: dict[str, Any], reply: str | None) -> None:
-    context["_stop_after_tool_round"] = True
-    context["_forced_tool_loop_reply"] = str(reply or "").strip()
-
-
 def _normalize_window_arg(value: Any, *, default: int, field_name: str) -> int:
     if value is None:
         normalized = default
@@ -64,6 +59,15 @@ def _summarize_list_item(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_loop_mode(raw_mode: Any) -> str | None:
+    text = str(raw_mode or "").strip().lower()
+    if not text:
+        return None
+    if text == "clarification":
+        return "clarify"
+    return text
+
+
 class SessionControllerTools:
     """Session controller tool definitions and execution."""
 
@@ -73,7 +77,7 @@ class SessionControllerTools:
         requirements_service: RequirementsManageService,
         requirement_agent_service: Any,
         conflict_agent_service: Any,
-        requirement_classification_agent_service: Any,
+        requirement_classification_agent_service: Any | None = None,
     ) -> None:
         self.requirements_service = requirements_service
         self._requirement_agent_service = requirement_agent_service
@@ -398,9 +402,7 @@ class SessionControllerTools:
                 child_node_key=end_node_key, parent_node_key=parent_node_key, created_by=user_id,
             )
             recorder.restore_stage_cursor(node_key=parent_node_key, updated_by=user_id)
-            error_result = {"status": "error", "error": f"需求管理 Agent 执行失败: {exc}"}
-            _mark_tool_loop_should_stop(context, error_result["error"])
-            return error_result
+            return {"status": "error", "error": f"需求管理 Agent 执行失败: {exc}"}
 
         # 3. End node + return edge (cross-container boundary)
         end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
@@ -429,27 +431,29 @@ class SessionControllerTools:
         write_result = loop_result.get("write_result")
         if write_result is not None:
             context["last_write_result"] = write_result
-        if loop_result.get("approval_pending"):
-            context["approval_pending"] = True
-            context["last_approval_result"] = loop_result.get("approval_result")
-        if loop_result.get("clarification_required") or loop_result.get("mode") == "clarification":
-            context["clarification_required"] = True
-            context["last_clarification_reply"] = loop_result.get("tool_loop_reply", "")
+        approval_result = loop_result.get("approval_result")
+        if approval_result is not None:
+            context["last_approval_result"] = approval_result
+        mode = _normalize_loop_mode(loop_result.get("mode"))
+        clarification_question = str(
+            loop_result.get("clarification_question") or loop_result.get("tool_loop_reply") or ""
+        ).strip() or None
 
         result = {
             "status": "success",
             "reply": loop_result.get("tool_loop_reply", ""),
+            "tool_loop_reply": loop_result.get("tool_loop_reply", ""),
             "resolved_requirement_id": resolved_requirement_id,
             "write_result": write_result,
-            "mode": loop_result.get("mode"),
+            "mode": mode,
             "clarification_required": bool(
                 loop_result.get("clarification_required")
-                or loop_result.get("mode") == "clarification"
+                or mode == "clarify"
             ),
+            "clarification_question": clarification_question,
             "approval_pending": bool(loop_result.get("approval_pending")),
-            "approval_result": loop_result.get("approval_result"),
+            "approval_result": approval_result,
         }
-        _mark_tool_loop_should_stop(context, result.get("reply"))
         return result
 
     def _stream_invoke_requirement_agent(
@@ -561,9 +565,7 @@ class SessionControllerTools:
                     status="failed",
                 ),
             }
-            error_result = {"status": "error", "error": f"需求管理 Agent 执行失败: {exc}"}
-            _mark_tool_loop_should_stop(context, error_result["error"])
-            return error_result
+            return {"status": "error", "error": f"需求管理 Agent 执行失败: {exc}"}
 
         end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
         recorder.start_stage(
@@ -594,12 +596,13 @@ class SessionControllerTools:
         write_result = loop_result.get("write_result")
         if write_result is not None:
             context["last_write_result"] = write_result
-        if loop_result.get("approval_pending"):
-            context["approval_pending"] = True
-            context["last_approval_result"] = loop_result.get("approval_result")
-        if loop_result.get("clarification_required") or loop_result.get("mode") == "clarification":
-            context["clarification_required"] = True
-            context["last_clarification_reply"] = loop_result.get("tool_loop_reply", "")
+        approval_result = loop_result.get("approval_result")
+        if approval_result is not None:
+            context["last_approval_result"] = approval_result
+        mode = _normalize_loop_mode(loop_result.get("mode"))
+        clarification_question = str(
+            loop_result.get("clarification_question") or loop_result.get("tool_loop_reply") or ""
+        ).strip() or None
         yield {
             "event": "stage",
             "data": recorder.build_stage_event_data(
@@ -611,17 +614,18 @@ class SessionControllerTools:
         result = {
             "status": "success",
             "reply": loop_result.get("tool_loop_reply", ""),
+            "tool_loop_reply": loop_result.get("tool_loop_reply", ""),
             "resolved_requirement_id": resolved_requirement_id,
             "write_result": write_result,
-            "mode": loop_result.get("mode"),
+            "mode": mode,
             "clarification_required": bool(
                 loop_result.get("clarification_required")
-                or loop_result.get("mode") == "clarification"
+                or mode == "clarify"
             ),
+            "clarification_question": clarification_question,
             "approval_pending": bool(loop_result.get("approval_pending")),
-            "approval_result": loop_result.get("approval_result"),
+            "approval_result": approval_result,
         }
-        _mark_tool_loop_should_stop(context, result.get("reply"))
         return result
 
     def _execute_invoke_conflict_detection(
@@ -701,9 +705,7 @@ class SessionControllerTools:
                 child_node_key=end_node_key, parent_node_key=parent_node_key, created_by=user_id,
             )
             recorder.restore_stage_cursor(node_key=parent_node_key, updated_by=user_id)
-            error_result = {"status": "error", "error": f"冲突检测 Agent 执行失败: {exc}"}
-            _mark_tool_loop_should_stop(context, error_result["error"])
-            return error_result
+            return {"status": "error", "error": f"冲突检测 Agent 执行失败: {exc}"}
 
         # 3. End node + return edge (cross-container boundary)
         end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
@@ -729,8 +731,8 @@ class SessionControllerTools:
         result = {
             "status": "success",
             "reply": loop_result.get("tool_loop_reply", ""),
+            "tool_loop_reply": loop_result.get("tool_loop_reply", ""),
         }
-        _mark_tool_loop_should_stop(context, result.get("reply"))
         return result
 
     def _stream_invoke_conflict_detection(
@@ -827,9 +829,7 @@ class SessionControllerTools:
                     status="failed",
                 ),
             }
-            error_result = {"status": "error", "error": f"冲突检测 Agent 执行失败: {exc}"}
-            _mark_tool_loop_should_stop(context, error_result["error"])
-            return error_result
+            return {"status": "error", "error": f"冲突检测 Agent 执行失败: {exc}"}
 
         end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
         recorder.start_stage(
@@ -864,8 +864,8 @@ class SessionControllerTools:
         result = {
             "status": "success",
             "reply": loop_result.get("tool_loop_reply", ""),
+            "tool_loop_reply": loop_result.get("tool_loop_reply", ""),
         }
-        _mark_tool_loop_should_stop(context, result.get("reply"))
         return result
 
     def _execute_invoke_requirement_classification_agent(
@@ -881,6 +881,8 @@ class SessionControllerTools:
         user_id = context.get("user_id", "")
         project_id = context.get("project_id", "")
         self._mark_dispatched_agent(context, "requirement_classification_agent")
+        if self._requirement_classification_agent_service is None:
+            return {"status": "error", "error": "Requirement classification agent service is not configured"}
 
         recorder = context.get("_graph_recorder")
         parent_node_key = str(context.get("_active_stage_node_key") or "").strip()
@@ -973,11 +975,16 @@ class SessionControllerTools:
             created_by=user_id,
         )
         recorder.restore_stage_cursor(node_key=parent_node_key, updated_by=user_id)
+        resolved_requirement_id = loop_result.get("resolved_requirement_id")
+        if resolved_requirement_id:
+            context["resolved_requirement_id"] = resolved_requirement_id
+            context.setdefault("resolved_requirement_ids", set()).add(resolved_requirement_id)
 
         return {
             "status": "success",
             "reply": loop_result.get("tool_loop_reply", ""),
-            "resolved_requirement_id": loop_result.get("resolved_requirement_id"),
+            "tool_loop_reply": loop_result.get("tool_loop_reply", ""),
+            "resolved_requirement_id": resolved_requirement_id,
             "classification_result": loop_result.get("classification_result"),
         }
 
@@ -994,6 +1001,11 @@ class SessionControllerTools:
         user_id = context.get("user_id", "")
         project_id = context.get("project_id", "")
         self._mark_dispatched_agent(context, "requirement_classification_agent")
+        if self._requirement_classification_agent_service is None:
+            return {
+                "status": "error",
+                "error": "Requirement classification agent service is not configured",
+            }
 
         recorder = context.get("_graph_recorder")
         parent_node_key = str(context.get("_active_stage_node_key") or "").strip()
@@ -1107,11 +1119,16 @@ class SessionControllerTools:
                 status="succeeded",
             ),
         }
+        resolved_requirement_id = loop_result.get("resolved_requirement_id")
+        if resolved_requirement_id:
+            context["resolved_requirement_id"] = resolved_requirement_id
+            context.setdefault("resolved_requirement_ids", set()).add(resolved_requirement_id)
 
         return {
             "status": "success",
             "reply": loop_result.get("tool_loop_reply", ""),
-            "resolved_requirement_id": loop_result.get("resolved_requirement_id"),
+            "tool_loop_reply": loop_result.get("tool_loop_reply", ""),
+            "resolved_requirement_id": resolved_requirement_id,
             "classification_result": loop_result.get("classification_result"),
         }
 

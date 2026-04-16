@@ -31,11 +31,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v2/session-controller", tags=["session-controller"])
 
 
+def _normalize_execution_mode_value(value: str) -> str:
+    text = value.strip().lower()
+    if text not in {"classic", "graph"}:
+        raise ValueError("execution_mode 必须是 classic 或 graph")
+    if text == "graph" and not settings.SESSION_CONTROLLER_GRAPH_ENABLED:
+        raise ValueError("execution_mode=graph 当前未启用")
+    return text
+
+
 class SessionControllerMessageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     project_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
+    execution_mode: str = Field(default="classic")
     use_thinking_mode: bool = True
     delegated_max_tool_call_rounds: int = Field(default=15, ge=1, le=50)
 
@@ -46,6 +56,11 @@ class SessionControllerMessageRequest(BaseModel):
         if not text:
             raise ValueError("字段不能为空")
         return text
+
+    @field_validator("execution_mode")
+    @classmethod
+    def normalize_execution_mode(cls, value: str) -> str:
+        return _normalize_execution_mode_value(value)
 
 
 def _require_project_access(project_id: str, current_user: dict) -> None:
@@ -198,6 +213,7 @@ def stream_message(
                 user_id=current_user["user_id"],
                 project_id=payload.project_id,
                 user_message=payload.message,
+                execution_mode=payload.execution_mode,
                 use_thinking_mode=payload.use_thinking_mode,
                 delegated_max_tool_call_rounds=payload.delegated_max_tool_call_rounds,
             ):
@@ -255,6 +271,7 @@ class MobileMessageRequest(BaseModel):
 
     project_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
+    execution_mode: str = Field(default="classic")
     use_thinking_mode: bool = True
     delegated_max_tool_call_rounds: int = Field(default=15, ge=1, le=50)
 
@@ -266,6 +283,11 @@ class MobileMessageRequest(BaseModel):
             raise ValueError("字段不能为空")
         return text
 
+    @field_validator("execution_mode")
+    @classmethod
+    def normalize_mobile_execution_mode(cls, value: str) -> str:
+        return _normalize_execution_mode_value(value)
+
 
 def _run_agent_in_background(
     *,
@@ -273,6 +295,7 @@ def _run_agent_in_background(
     user_id: str,
     project_id: str,
     user_message: str,
+    execution_mode: str,
     use_thinking_mode: bool,
     delegated_max_tool_call_rounds: int,
 ) -> None:
@@ -284,6 +307,7 @@ def _run_agent_in_background(
             user_id=user_id,
             project_id=project_id,
             user_message=user_message,
+            execution_mode=execution_mode,
             use_thinking_mode=use_thinking_mode,
             delegated_max_tool_call_rounds=delegated_max_tool_call_rounds,
             skip_user_message_creation=True,
@@ -337,6 +361,7 @@ def send_message_async(
             "user_id": current_user["user_id"],
             "project_id": payload.project_id,
             "user_message": payload.message,
+            "execution_mode": payload.execution_mode,
             "use_thinking_mode": payload.use_thinking_mode,
             "delegated_max_tool_call_rounds": payload.delegated_max_tool_call_rounds,
         },

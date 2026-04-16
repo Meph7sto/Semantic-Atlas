@@ -483,9 +483,11 @@ class SubgraphRunner:
     ) -> Generator[dict[str, Any], None, str | None]:
         """Execute an llm subgraph via ToolLoopRunner."""
         execution_context.begin_subgraph(sg.subgraph_key)
-        prompt_builder = SubgraphPromptBuilder(
-            task_description=sg.task_description,
-            scratchpad=pad,
+        context = _build_subgraph_context(sg=sg, recorder=recorder, pad=pad)
+        prompt_builder = _resolve_prompt_builder(
+            sg=sg,
+            pad=pad,
+            context=context,
         )
 
         runner = ToolLoopRunner(
@@ -519,7 +521,6 @@ class SubgraphRunner:
                 start_node_id=start_node_id,
             )
 
-        context = _build_subgraph_context(sg=sg, recorder=recorder)
         context["_execution_context"] = execution_context
         result: ToolLoopResult | None = None
 
@@ -714,15 +715,86 @@ def _build_subgraph_context(
     *,
     sg: RuntimeSubgraph,
     recorder: Any,
+    pad: Scratchpad,
 ) -> dict[str, Any]:
     """Seed ToolLoopRunner context with recorder task metadata when available."""
-    context: dict[str, Any] = {"_current_subgraph": sg.subgraph_key}
+    context: dict[str, Any] = {
+        "_current_subgraph": sg.subgraph_key,
+        "_graph_recorder": recorder,
+    }
     task_context = getattr(recorder, "_task_context", None)
     if isinstance(task_context, dict):
-        for key in ("project_id", "session_id", "user_id", "turn_index"):
+        for key in (
+            "project_id",
+            "session_id",
+            "user_id",
+            "turn_index",
+            "delegated_max_tool_call_rounds",
+            "delegated_prompt_payload_format",
+            "delegated_context_mode",
+        ):
             if key in task_context:
                 context[key] = task_context[key]
+        user_message = str(task_context.get("user_message") or "").strip()
+    else:
+        user_message = ""
+    graph_id = getattr(recorder, "graph_id", "")
+    if graph_id:
+        context["graph_id"] = graph_id
+    context["_scratchpad_prompt_text"] = pad.format_for_prompt()
+    config = sg.config_json or {}
+    resolved_requirement_id = None
+    service = getattr(recorder, "_service", None)
+    if service is not None and graph_id:
+        try:
+            graph = service.get_execution_graph(graph_id)
+        except Exception:
+            graph = None
+        meta = (graph or {}).get("meta_json") or {}
+        resolved_requirement_id = meta.get("resolved_requirement_id")
+    if resolved_requirement_id:
+        context["resolved_requirement_id"] = resolved_requirement_id
+    prompt_builder_kind = str(config.get("prompt_builder") or "").strip()
+    if prompt_builder_kind.startswith("session_controller_") and user_message:
+        from backend_business.services.agent.agents.session_controller.prompt_builder import (
+            infer_routing_hint,
+        )
+
+        context["routing_hint"] = infer_routing_hint(user_message)
     return context
+
+
+def _resolve_prompt_builder(
+    *,
+    sg: RuntimeSubgraph,
+    pad: Scratchpad,
+    context: dict[str, Any],
+) -> PromptBuilderProtocol:
+    config = sg.config_json or {}
+    prompt_builder_kind = str(config.get("prompt_builder") or "").strip()
+    if prompt_builder_kind == "session_controller_decision":
+        from backend_business.services.agent.agents.session_controller.graph_prompt_builders import (
+            SessionControllerDecisionGraphPromptBuilder,
+        )
+
+        return SessionControllerDecisionGraphPromptBuilder()
+    if prompt_builder_kind == "session_controller_final_reply":
+        from backend_business.services.agent.agents.session_controller.graph_prompt_builders import (
+            SessionControllerReplyGraphPromptBuilder,
+        )
+
+        return SessionControllerReplyGraphPromptBuilder(reply_kind="final")
+    if prompt_builder_kind == "session_controller_suspend_reply":
+        from backend_business.services.agent.agents.session_controller.graph_prompt_builders import (
+            SessionControllerReplyGraphPromptBuilder,
+        )
+
+        return SessionControllerReplyGraphPromptBuilder(reply_kind="suspend")
+    return SubgraphPromptBuilder(
+        task_description=sg.task_description,
+        scratchpad=pad,
+        extra_system_context=str(context.get("_extra_system_context") or ""),
+    )
 
 
 def _container_key_for_container(

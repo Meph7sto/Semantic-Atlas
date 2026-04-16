@@ -400,12 +400,22 @@ class GraphExecutor:
                 scratchpad,
                 updated_by=actor,
             )
+            latest_output = _latest_scratchpad_output(scratchpad)
+            try:
+                graph_service.patch_graph_meta(
+                    skeleton.graph_id,
+                    {"suspended_subgraph_id": sig.subgraph_id},
+                    updated_by=actor,
+                )
+            except Exception:
+                logger.warning("无法持久化 suspended_subgraph_id=%s", sig.subgraph_id, exc_info=True)
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "suspended", actor,
             )
             return ExecutionResult(
                 status="suspended",
                 graph_id=skeleton.graph_id,
+                final_output=latest_output or None,
                 suspended_subgraph_id=sig.subgraph_id,
             )
         except ContainerExecutionError as exc:
@@ -670,12 +680,22 @@ class GraphExecutor:
                 scratchpad,
                 updated_by=actor,
             )
+            latest_output = _latest_scratchpad_output(scratchpad)
+            try:
+                graph_service.patch_graph_meta(
+                    skeleton.graph_id,
+                    {"suspended_subgraph_id": sig.subgraph_id},
+                    updated_by=actor,
+                )
+            except Exception:
+                logger.warning("无法持久化 suspended_subgraph_id=%s", sig.subgraph_id, exc_info=True)
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "suspended", actor,
             )
             return ExecutionResult(
                 status="suspended",
                 graph_id=skeleton.graph_id,
+                final_output=latest_output or None,
                 suspended_subgraph_id=sig.subgraph_id,
             )
         except ContainerExecutionError as exc:
@@ -953,3 +973,16 @@ def _parse_judge_decision(
         expand_topology=True,
         selected_template_id=target_template_graph_id,
     )
+
+
+def _latest_scratchpad_output(scratchpad: Any) -> str:
+    read = getattr(scratchpad, "read", None)
+    if not callable(read):
+        return ""
+    try:
+        entries = read(filter_type="stage_output")
+    except Exception:
+        return ""
+    if not entries:
+        return ""
+    return str(entries[-1].content or "").strip()
