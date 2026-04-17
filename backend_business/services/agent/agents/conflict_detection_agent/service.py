@@ -373,30 +373,6 @@ class ConflictDetectionAgentService:
                     full_content = answer
         return full_content.strip()
 
-    def _run_tool_call_loop(
-        self,
-        *,
-        recorder: ConflictDetectionGraphRecorder,
-        user_id: str,
-        user_message: str,
-        project_id: str,
-        session_id: str,
-    ) -> Generator[dict[str, Any], None, dict[str, Any]]:
-        runner = ConflictDetectionToolLoopRunner(
-            ai_proxy_client=self.ai_proxy,
-            tools=self.tools,
-            execution_graph_service=self.execution_graph_service,
-            prompt_builder=self.prompt_builder,
-            max_tool_call_rounds=self.MAX_TOOL_CALL_ROUNDS,
-        )
-        return runner.run(
-            recorder=recorder,
-            user_id=user_id,
-            user_message=user_message,
-            project_id=project_id,
-            session_id=session_id,
-        )
-
     def run_inline_tool_loop(
         self,
         *,
@@ -471,18 +447,11 @@ class ConflictDetectionAgentService:
         user_id: str,
         project_id: str,
         user_message: str,
-        execution_mode: str = "classic",
+        execution_mode: str = "graph",
     ) -> Generator[dict[str, Any], None, None]:
-        if execution_mode == "graph":
-            yield from self.stream_graph_executor_reply(
-                session_id=session_id,
-                user_id=user_id,
-                project_id=project_id,
-                user_message=user_message,
-            )
-            return
-
-        yield from self._stream_classic_reply(
+        if str(execution_mode or "").strip().lower() != "graph":
+            raise ValueError("execution_mode 仅支持 graph")
+        yield from self.stream_graph_executor_reply(
             session_id=session_id,
             user_id=user_id,
             project_id=project_id,
@@ -497,11 +466,7 @@ class ConflictDetectionAgentService:
         project_id: str,
         user_message: str,
     ) -> Generator[dict[str, Any], None, None]:
-        """Drive the new execution-graph engine (GraphExecutor internal judge).
-
-        SSE events emitted are compatible with the classic mode contract so
-        the frontend can consume them with the same ``consumeSSEStream``.
-        """
+        """Drive the execution-graph engine (GraphExecutor internal judge)."""
         if not self.chat_storage:
             raise RuntimeError("AI chat storage not initialized")
 
@@ -642,233 +607,6 @@ class ConflictDetectionAgentService:
             is_read=False,
         )
         yield {"event": "assistant_message", "data": assistant_message}
-
-    def _stream_classic_reply(
-        self,
-        *,
-        session_id: str,
-        user_id: str,
-        project_id: str,
-        user_message: str,
-    ) -> Generator[dict[str, Any], None, None]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-
-        session = self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
-        user_record = self.chat_storage.create_message(
-            session_id=session_id,
-            user_id=user_id,
-            role="user",
-            content=user_message,
-            metadata={},
-            is_read=True,
-        )
-        self.chat_storage.update_session(session_id=session_id)
-        yield {"event": "user_message", "data": user_record}
-
-        graph_target = self._resolve_session_graph_target(session=session, project_id=project_id)
-        recorder = ConflictDetectionGraphRecorder(
-            execution_graph_service=self.execution_graph_service,
-            project_id=project_id,
-            user_id=user_id,
-            session_id=session_id,
-            user_message=user_message,
-            graph_id=graph_target["graph_id"],
-            prev_graph_id=graph_target["prev_graph_id"],
-        )
-        self.chat_storage.update_session(
-            session_id=session_id,
-            active_graph_id=recorder.graph_id,
-        )
-        self.execution_graph_service.patch_graph_meta(
-            recorder.graph_id,
-            {
-                "current_node_key": None,
-                "intent": "pending",
-                "final_reply": None,
-                "user_message": user_message,
-                "active_turn_index": recorder.turn_index,
-            },
-            status="running",
-            updated_by=user_id,
-        )
-        yield {"event": "graph", "data": {"graph_id": recorder.graph_id}}
-
-        assistant_content = ""
-        tool_loop_reply = ""
-        context: dict[str, Any] = {}
-
-        try:
-            # Stage 1: Record user input
-            recorder.start_stage(
-                node_key=recorder.stage_node_key("user_input"),
-                label=recorder.stage_label("User Input"),
-                node_type="start",
-                role_type="human",
-                container_key="human_input",
-                created_by=user_id,
-                input_summary={"message": user_message},
-                edge_type_from_previous="call" if recorder.turn_index > 1 else None,
-            )
-            recorder.complete_stage(
-                recorder.stage_node_key("user_input"),
-                created_by=user_id,
-                output_summary={"accepted": True},
-            )
-            yield {
-                "event": "stage",
-                "data": {
-                    "graph_id": recorder.graph_id,
-                    "node_key": recorder.stage_node_key("user_input"),
-                    "status": "succeeded",
-                },
-            }
-
-            # Stage 2: Tool loop
-            tool_loop = self._run_tool_call_loop(
-                recorder=recorder,
-                user_id=user_id,
-                user_message=user_message,
-                project_id=project_id,
-                session_id=session_id,
-            )
-            while True:
-                try:
-                    event = next(tool_loop)
-                except StopIteration as stop:
-                    loop_result = stop.value or {}
-                    tool_loop_reply = loop_result.get("tool_loop_reply") or ""
-                    context = loop_result.get("context") or {}
-                    break
-                yield event
-
-            # Stage 3: Conductor reply (streaming final answer)
-            recorder.start_stage(
-                node_key=recorder.stage_node_key("conductor_reply"),
-                label=recorder.stage_label("Conductor Reply"),
-                node_type="end",
-                role_type="agent",
-                container_key="conductor",
-                created_by=user_id,
-                input_summary={
-                    "tool_loop_reply": tool_loop_reply,
-                },
-                edge_type_from_previous="return",
-            )
-            yield {
-                "event": "stage",
-                "data": {
-                    "graph_id": recorder.graph_id,
-                    "node_key": recorder.stage_node_key("conductor_reply"),
-                    "status": "running",
-                },
-            }
-
-            final_system_prompt = (
-                "你是需求冲突检测助手。根据工具的执行结果，用简洁的中文回复用户，"
-                "说明是否存在冲突以及具体原因。不要编造内容。"
-            )
-            final_prompt = (
-                f"用户原始请求：{user_message}\n\n"
-                f"工具执行结论：\n{tool_loop_reply}\n\n"
-                "请给出最终的中文总结回复。"
-            )
-
-            stream = self._stream_llm_reply(
-                prompt=final_prompt,
-                system_prompt=final_system_prompt,
-            )
-            while True:
-                try:
-                    event = next(stream)
-                except StopIteration as stop:
-                    assistant_content = (stop.value or "").strip()
-                    break
-                yield event
-
-            if not assistant_content:
-                assistant_content = tool_loop_reply or "已完成冲突检测。"
-
-            recorder.complete_stage(
-                recorder.stage_node_key("conductor_reply"),
-                created_by=user_id,
-                output_summary={
-                    "reply": assistant_content,
-                },
-            )
-            yield {
-                "event": "stage",
-                "data": {
-                    "graph_id": recorder.graph_id,
-                    "node_key": recorder.stage_node_key("conductor_reply"),
-                    "status": "succeeded",
-                },
-            }
-
-            meta_patch = {
-                "intent": "conflict_detection",
-                "turn_count": recorder.turn_index,
-                "active_turn_index": recorder.turn_index,
-            }
-            recorder.succeed_graph(
-                created_by=user_id,
-                final_reply=assistant_content,
-                meta_patch=meta_patch,
-            )
-
-            assistant_message = self.chat_storage.create_message(
-                session_id=session_id,
-                user_id=user_id,
-                role="assistant",
-                content=assistant_content,
-                metadata={
-                    "graph_id": recorder.graph_id,
-                },
-                is_read=False,
-            )
-            yield {"event": "assistant_message", "data": assistant_message}
-            yield {
-                "event": "result",
-                "data": {
-                    "graph_id": recorder.graph_id,
-                    "reply_text": assistant_message["content"],
-                },
-            }
-        except Exception as exc:
-            error_text = str(exc)
-            if recorder.last_node_key:
-                try:
-                    recorder.complete_stage(
-                        recorder.last_node_key,
-                        created_by=user_id,
-                        output_summary={"error": error_text},
-                        success=False,
-                        error=error_text,
-                    )
-                except Exception:
-                    pass
-            recorder.fail_graph(
-                created_by=user_id,
-                error=error_text,
-                final_reply=error_text,
-            )
-            error_message = self.chat_storage.create_message(
-                session_id=session_id,
-                user_id=user_id,
-                role="assistant",
-                content=error_text,
-                metadata={"error": True, "graph_id": recorder.graph_id},
-                is_read=False,
-            )
-            yield {
-                "event": "error",
-                "data": {
-                    "error": error_text,
-                    "message": error_message,
-                    "graph_id": recorder.graph_id,
-                },
-            }
-
 
 conflict_detection_agent_service = ConflictDetectionAgentService(
     chat_storage=ai_chat_service,

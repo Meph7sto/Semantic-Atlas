@@ -32,27 +32,21 @@ router = APIRouter(prefix="/api/v2/session-controller", tags=["session-controlle
 
 
 def _default_execution_mode_value() -> str:
-    return "graph" if settings.SESSION_CONTROLLER_GRAPH_ENABLED else "classic"
+    return "graph"
 
 
 def _session_controller_capabilities() -> dict[str, Any]:
-    graph_enabled = bool(settings.SESSION_CONTROLLER_GRAPH_ENABLED)
-    allowed_execution_modes = ["classic"]
-    if graph_enabled:
-        allowed_execution_modes.insert(0, "graph")
     return {
-        "graph_execution_enabled": graph_enabled,
-        "default_execution_mode": _default_execution_mode_value(),
-        "allowed_execution_modes": allowed_execution_modes,
+        "graph_execution_enabled": True,
+        "default_execution_mode": "graph",
+        "allowed_execution_modes": ["graph"],
     }
 
 
 def _normalize_execution_mode_value(value: str) -> str:
     text = value.strip().lower()
-    if text not in {"classic", "graph"}:
-        raise ValueError("execution_mode 必须是 classic 或 graph")
-    if text == "graph" and not settings.SESSION_CONTROLLER_GRAPH_ENABLED:
-        raise ValueError("execution_mode=graph 当前未启用")
+    if text != "graph":
+        raise ValueError("execution_mode 仅支持 graph")
     return text
 
 

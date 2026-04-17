@@ -105,6 +105,7 @@ class ToolLoopResult:
     route_key: str | None = None
     expand_topology: bool | None = None
     target_template_graph_id: str | None = None
+    target_container_keys: tuple[str, ...] = ()
     conclusion: str | None = None
 
 
@@ -176,6 +177,16 @@ _COMPLETE_PHASE_TOOL_DEF: dict[str, Any] = {
                     "description": (
                         "仅 judge 入口节点使用。"
                         "当 expand_topology=true 时，填写候选拓扑图的 graph_id。"
+                    ),
+                },
+                "target_container_keys": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "仅 judge 入口节点使用。"
+                        "当 expand_topology=true 且只需要展开模板中的部分业务容器时，"
+                        "填写需要额外展开的 container_key 列表。"
+                        "不要填写入口容器本身。"
                     ),
                 },
             },
@@ -424,6 +435,12 @@ class ToolLoopRunner:
                             route_key = arguments.get("route_key")
                             expand_topology = arguments.get("expand_topology")
                             target_template_graph_id = arguments.get("target_template_graph_id")
+                            raw_target_container_keys = arguments.get("target_container_keys")
+                            target_container_keys = tuple(
+                                str(item).strip()
+                                for item in raw_target_container_keys
+                                if str(item).strip()
+                            ) if isinstance(raw_target_container_keys, list) else ()
                             tool_result = {"ok": True, "message": "阶段完成信号已确认"}
 
                             recorder.record_tool_call_result(
@@ -446,6 +463,7 @@ class ToolLoopRunner:
                                             "route_key": route_key,
                                             "expand_topology": expand_topology,
                                             "target_template_graph_id": target_template_graph_id,
+                                            "target_container_keys": list(target_container_keys),
                                         },
                                         node_key=node_key,
                                     )
@@ -461,6 +479,7 @@ class ToolLoopRunner:
                             output_summary["route_key"] = route_key
                             output_summary["expand_topology"] = expand_topology
                             output_summary["target_template_graph_id"] = target_template_graph_id
+                            output_summary["target_container_keys"] = list(target_container_keys)
                             output_summary["conclusion"] = conclusion
 
                             self._complete_round_and_patch_meta(
@@ -487,6 +506,7 @@ class ToolLoopRunner:
                                 route_key=route_key,
                                 expand_topology=expand_topology,
                                 target_template_graph_id=target_template_graph_id,
+                                target_container_keys=target_container_keys,
                                 conclusion=conclusion,
                             )
 

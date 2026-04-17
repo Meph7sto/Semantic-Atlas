@@ -154,6 +154,7 @@ class TopologyInstantiator:
         graph_service: Any,
         created_by: str = "",
         runtime_graph_id: str | None = None,
+        selected_container_keys: Sequence[str] | None = None,
     ) -> RuntimeGraphSkeleton:
         """Instantiate a runtime execution graph from *template_graph_id*.
 
@@ -208,6 +209,75 @@ class TopologyInstantiator:
         business_nodes = [n for n in tpl_nodes if n.get("node_type") in _BUSINESS_NODE_TYPES]
         if not business_nodes:
             raise InstantiationError(template_graph_id, "模板不包含任何业务节点（llm / invoke / handoff）")
+
+        normalized_selected_container_keys = tuple(
+            str(key).strip()
+            for key in (selected_container_keys or [])
+            if str(key).strip()
+        )
+        allowed_target_node_ids: set[str] | frozenset[str] | None = None
+        if normalized_selected_container_keys:
+            entry_container = min(
+                tpl_containers,
+                key=lambda container: (container.get("order_index", 0), container.get("container_key", "")),
+            )
+            selected_containers = [
+                container
+                for container in tpl_containers
+                if container.get("container_key") in normalized_selected_container_keys
+            ]
+            found_selected_keys = {
+                str(container.get("container_key") or "").strip()
+                for container in selected_containers
+            }
+            missing_container_keys = [
+                key for key in normalized_selected_container_keys
+                if key not in found_selected_keys
+            ]
+            if missing_container_keys:
+                raise InstantiationError(
+                    template_graph_id,
+                    "选择的 container_key 不存在: " + ", ".join(missing_container_keys),
+                )
+
+            selected_container_ids = {
+                container["container_id"]
+                for container in selected_containers
+            }
+            included_container_ids = {entry_container["container_id"], *selected_container_ids}
+            tpl_containers = [
+                container
+                for container in tpl_containers
+                if container.get("container_id") in included_container_ids
+            ]
+            business_nodes = [
+                node
+                for node in business_nodes
+                if _should_include_business_node(
+                    tpl_node=node,
+                    entry_container_id=entry_container["container_id"],
+                    included_container_ids=included_container_ids,
+                    selected_container_keys=frozenset(normalized_selected_container_keys),
+                )
+            ]
+            included_node_ids = {
+                str(node.get("node_id") or "")
+                for node in business_nodes
+                if str(node.get("node_id") or "")
+            }
+            allowed_target_node_ids = included_node_ids
+            tpl_edges = [
+                edge
+                for edge in tpl_edges
+                if edge.get("source_node_id") in included_node_ids
+                and edge.get("target_node_id") in included_node_ids
+            ]
+        else:
+            included_node_ids = {
+                str(node.get("node_id") or "")
+                for node in business_nodes
+                if str(node.get("node_id") or "")
+            }
 
         # 2. Create or load runtime graph -----------------------------------------
         reuse_existing_graph = runtime_graph_id is not None
@@ -285,7 +355,11 @@ class TopologyInstantiator:
             rt_container_id = container_id_map[tpl_container_id]
 
             # Build subgraph config from topology node metadata
-            sg_config = _build_subgraph_config(tpl_node)
+            sg_config = _build_subgraph_config(
+                tpl_node,
+                tpl_edges,
+                allowed_target_node_ids=allowed_target_node_ids,
+            )
 
             # Create subgraph
             rt_sg = graph_service.create_subgraph(
@@ -464,7 +538,12 @@ class TopologyInstantiator:
 # ---------------------------------------------------------------------------
 
 
-def _build_subgraph_config(tpl_node: dict) -> dict[str, Any] | None:
+def _build_subgraph_config(
+    tpl_node: dict,
+    tpl_edges: Sequence[dict[str, Any]] | None = None,
+    *,
+    allowed_target_node_ids: set[str] | frozenset[str] | None = None,
+) -> dict[str, Any] | None:
     """Build the ``config_json`` dict for a runtime subgraph.
 
     Stores the original node_type and conditional_edges so that the
@@ -475,10 +554,45 @@ def _build_subgraph_config(tpl_node: dict) -> dict[str, Any] | None:
     config["source_node_id"] = tpl_node["node_id"]
 
     conditional_edges = tpl_node.get("conditional_edges")
+    if not conditional_edges:
+        conditional_edges = _build_legacy_conditional_edges(
+            tpl_node=tpl_node,
+            tpl_edges=tpl_edges or [],
+        )
     if conditional_edges:
+        if allowed_target_node_ids is not None:
+            conditional_edges = [
+                edge
+                for edge in conditional_edges
+                if str(edge.get("target_node_id") or "") in allowed_target_node_ids
+            ]
         config["conditional_edges"] = conditional_edges
 
     return config
+
+
+def _build_legacy_conditional_edges(
+    *,
+    tpl_node: dict[str, Any],
+    tpl_edges: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    legacy_edges = sorted(
+        (
+            edge
+            for edge in tpl_edges
+            if edge.get("source_node_id") == tpl_node.get("node_id")
+            and str(edge.get("condition_expr") or "").strip()
+        ),
+        key=lambda edge: (edge.get("order_index", 0), edge.get("edge_id", "")),
+    )
+    return [
+        {
+            "condition": str(edge.get("condition_expr") or "").strip(),
+            "target_node_id": edge.get("target_node_id"),
+        }
+        for edge in legacy_edges
+        if edge.get("target_node_id")
+    ]
 
 
 def _load_existing_containers(
@@ -525,3 +639,24 @@ def _match_existing_container(
         return existing_containers[0]
 
     return None
+
+
+def _should_include_business_node(
+    *,
+    tpl_node: dict[str, Any],
+    entry_container_id: str,
+    included_container_ids: set[str],
+    selected_container_keys: frozenset[str],
+) -> bool:
+    container_id = str(tpl_node.get("container_id") or "").strip()
+    if not container_id or container_id not in included_container_ids:
+        return False
+    if container_id != entry_container_id:
+        return True
+    if tpl_node.get("node_type") != "invoke":
+        return True
+
+    delegate_agent = str(
+        ((tpl_node.get("config_json") or {}).get("delegate_agent")) or ""
+    ).strip()
+    return not delegate_agent or delegate_agent in selected_container_keys

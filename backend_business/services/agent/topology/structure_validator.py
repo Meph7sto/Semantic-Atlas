@@ -195,8 +195,13 @@ class StructureValidator:
     def _validate_conditions(
         self, structure: TopologyStructure
     ) -> List[str]:
-        """Validate condition expressions in edges."""
+        """Validate both legacy edge conditions and node conditional edges."""
         errors = []
+        all_node_ids = {
+            node.node_id
+            for container in structure.containers
+            for node in container.nodes
+        }
 
         # Collect available variables from container schemas
         available_vars = set()
@@ -215,6 +220,38 @@ class StructureValidator:
                 errors.extend(
                     [f"Edge '{edge.edge_id}': {e}" for e in condition_errors]
                 )
+
+        for container in structure.containers:
+            for node in container.nodes:
+                conditional_edges = node.conditional_edges or []
+                if not isinstance(conditional_edges, list):
+                    errors.append(
+                        f"Node '{node.node_key}': conditional_edges 必须是数组"
+                    )
+                    continue
+                for idx, conditional_edge in enumerate(conditional_edges):
+                    if not isinstance(conditional_edge, dict):
+                        errors.append(
+                            f"Node '{node.node_key}': conditional_edges[{idx}] 必须是对象"
+                        )
+                        continue
+                    condition = str(conditional_edge.get("condition") or "").strip()
+                    if not condition:
+                        errors.append(
+                            f"Node '{node.node_key}': conditional_edges[{idx}] 缺少 condition"
+                        )
+                    target_node_id = (
+                        conditional_edge.get("target_node_id")
+                        or conditional_edge.get("target")
+                    )
+                    if not target_node_id:
+                        errors.append(
+                            f"Node '{node.node_key}': conditional_edges[{idx}] 缺少 target_node_id"
+                        )
+                    elif target_node_id not in all_node_ids:
+                        errors.append(
+                            f"Node '{node.node_key}': conditional_edges[{idx}] 指向不存在的节点 '{target_node_id}'"
+                        )
 
         return errors
 

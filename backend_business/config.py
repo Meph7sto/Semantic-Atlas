@@ -119,10 +119,4 @@ class Settings:
         os.environ.get("VISION_CAPTION_TIMEOUT_SECONDS", "120")
     )
 
-    # SessionController GraphExecutor 实验链路开关
-    SESSION_CONTROLLER_GRAPH_ENABLED = os.environ.get(
-        "SESSION_CONTROLLER_GRAPH_ENABLED", "0"
-    ) in ("1", "true", "True")
-
-
 settings = Settings()

@@ -1,8 +1,6 @@
-"""
-Conflict agent chat request contract tests.
-"""
+"""Conflict agent chat request contract tests."""
 
-
+import pytest
 from pydantic import ValidationError
 
 from backend_business.api.routers import conflict_agent_chat
@@ -37,6 +35,30 @@ def test_message_request_rejects_template_graph_id():
     assert any(error["loc"][-1] == "template_graph_id" for error in detail)
 
 
+def test_message_request_rejects_classic_mode():
+    with pytest.raises(ValidationError) as exc_info:
+        ConflictAgentMessageRequest.model_validate(
+            {
+                "project_id": "p-1",
+                "message": "请检测 r-1 和 r-2 的冲突",
+                "execution_mode": "classic",
+            }
+        )
+
+    assert any(error["loc"][-1] == "execution_mode" for error in exc_info.value.errors())
+
+
+def test_message_request_defaults_to_graph():
+    payload = ConflictAgentMessageRequest.model_validate(
+        {
+            "project_id": "p-1",
+            "message": "请检测 r-1 和 r-2 的冲突",
+        }
+    )
+
+    assert payload.execution_mode == "graph"
+
+
 def test_stream_message_passes_graph_mode_without_template_override(monkeypatch):
     stub = _StubConflictAgentChatService()
     monkeypatch.setattr(conflict_agent_chat, "conflict_detection_agent_service", stub)
@@ -49,7 +71,6 @@ def test_stream_message_passes_graph_mode_without_template_override(monkeypatch)
             {
                 "project_id": "p-1",
                 "message": "请检测 r-1 和 r-2 的冲突",
-                "execution_mode": "graph",
             }
         ),
         current_user={"user_id": "u-1", "role": "member"},

@@ -5,6 +5,40 @@
 
 export const createEmptyGraphDetail = () => ({ graph: null, containers: [], subgraphs: [], nodes: [], edges: [] })
 
+const SESSION_CONTROLLER_MODE_TO_CONTAINER_KEYS = {
+  delegate_requirement: ['requirement_agent'],
+  delegate_conflict: ['conflict_detection'],
+  delegate_classification: ['requirement_classification_agent']
+}
+
+const normalizeContainerKeys = (value) => {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+}
+
+const resolveVisibleContainerKeys = (detail, options = {}) => {
+  if (!options.filterDelegatedContainers) return null
+
+  const meta = detail?.graph?.meta_json || {}
+  const selectedKeys = normalizeContainerKeys(meta.selected_container_keys)
+  const dispatchedKeys = normalizeContainerKeys(meta.dispatched_agents)
+  const delegatedAgent = String(meta.delegated_agent || '').trim()
+  const mode = String(meta.session_controller_mode || '').trim()
+
+  const derivedKeys = selectedKeys.length
+    ? selectedKeys
+    : dispatchedKeys.length
+      ? dispatchedKeys
+      : delegatedAgent
+        ? [delegatedAgent]
+        : (SESSION_CONTROLLER_MODE_TO_CONTAINER_KEYS[mode] || [])
+
+  if (!derivedKeys.length) return null
+  return new Set(['conductor', ...derivedKeys])
+}
+
 export const sortByOrder = (items = []) => {
   return [...items].sort((a, b) => {
     const getOrder = (n) => {
@@ -27,7 +61,7 @@ export const resolveBoundaryNode = (detail, type) => {
   return [...nodes].reverse().find((node) => node.node_type === 'end') || nodes[nodes.length - 1]
 }
 
-export const buildMergedSessionGraphDetail = (chainPayload) => {
+export const buildMergedSessionGraphDetail = (chainPayload, options = {}) => {
   const details = chainPayload?.graphs || []
   if (!details.length) return createEmptyGraphDetail()
 
@@ -47,7 +81,16 @@ export const buildMergedSessionGraphDetail = (chainPayload) => {
   const laneSeen = new Set()
   const laneOrderList = []
 
-  const allNodes = details.flatMap(d => d.nodes || []).sort((a, b) => {
+  const allNodes = details.flatMap((detail) => {
+    const visibleContainerKeys = resolveVisibleContainerKeys(detail, options)
+    const nodes = detail?.nodes || []
+    if (!visibleContainerKeys) return nodes
+    const containersById = new Map((detail?.containers || []).map((container) => [container.container_id, container]))
+    return nodes.filter((node) => {
+      const container = containersById.get(node.container_id)
+      return container && visibleContainerKeys.has(String(container.container_key || '').trim())
+    })
+  }).sort((a, b) => {
     const getOrder = (n) => {
       if (n?.node_type === 'start') return -999999
       if (n?.node_type === 'end') return 999999
@@ -74,8 +117,23 @@ export const buildMergedSessionGraphDetail = (chainPayload) => {
 
   details.forEach((detail, graphIndex) => {
     const graphLabel = `第${graphIndex + 1}轮`
+    const visibleContainerKeys = resolveVisibleContainerKeys(detail, options)
+    const containers = (detail?.containers || []).filter((container) => {
+      if (!visibleContainerKeys) return true
+      return visibleContainerKeys.has(String(container.container_key || '').trim())
+    })
+    const visibleContainerIds = new Set(containers.map((container) => container.container_id))
+    const subgraphs = (detail?.subgraphs || []).filter((subgraph) => {
+      if (!visibleContainerKeys) return true
+      return visibleContainerIds.has(subgraph.container_id)
+    })
+    const nodes = sortByOrder((detail?.nodes || []).filter((node) => {
+      if (!visibleContainerKeys) return true
+      return visibleContainerIds.has(node.container_id)
+    }))
+    const visibleNodeIds = new Set(nodes.map((node) => node.node_id))
 
-    ;(detail?.containers || []).forEach((container) => {
+    containers.forEach((container) => {
       mergedContainers.push({
         ...container,
         label: `${graphLabel} · ${container.label || container.container_key || '未命名容器'}`,
@@ -84,14 +142,13 @@ export const buildMergedSessionGraphDetail = (chainPayload) => {
       containerOffsets[container.container_id] = detail?.graph?.layout_json?.container_offsets?.[container.container_id] || { dx: 0, dy: 0 }
     })
 
-    ;(detail?.subgraphs || []).forEach((subgraph) => {
+    subgraphs.forEach((subgraph) => {
       mergedSubgraphs.push({
         ...subgraph,
         graph_index: graphIndex + 1
       })
     })
 
-    const nodes = sortByOrder(detail?.nodes || [])
     nodes.forEach((node) => {
       mergedNodes.push({
         ...node,
@@ -101,6 +158,9 @@ export const buildMergedSessionGraphDetail = (chainPayload) => {
 
     const incomingEdges = new Map()
     ;(detail?.edges || []).forEach((edge) => {
+      if (!visibleNodeIds.has(edge.source_node_id) || !visibleNodeIds.has(edge.target_node_id)) {
+        return
+      }
       mergedEdges.push({
         ...edge,
         graph_index: graphIndex + 1

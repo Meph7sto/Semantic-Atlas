@@ -20,9 +20,6 @@ from backend_business.services.agent.agents.session_controller.service import ( 
 from backend_business.services.agent.agents.session_controller.tools import (  # noqa: E402
     SessionControllerTools,
 )
-from backend_business.config import settings  # noqa: E402
-
-
 def _extract_candidate_template_id(system_prompt: str) -> str:
     match = re.search(r"\[([^\]]+)\]", system_prompt)
     if not match:
@@ -274,6 +271,7 @@ class DelegatingGraphAIProxy:
                                     "conclusion": "需要展开拓扑图并委托需求 Agent。",
                                     "expand_topology": True,
                                     "target_template_graph_id": _extract_candidate_template_id(system_prompt),
+                                    "target_container_keys": ["requirement_agent"],
                                 },
                                 ensure_ascii=False,
                             ),
@@ -384,6 +382,7 @@ class ClarifyThenResumeAIProxy:
                                     "conclusion": "这是复杂任务，需要展开拓扑图处理。",
                                     "expand_topology": True,
                                     "target_template_graph_id": _extract_candidate_template_id(system_prompt),
+                                    "target_container_keys": ["requirement_agent"],
                                 },
                                 ensure_ascii=False,
                             ),
@@ -611,8 +610,7 @@ def _build_service(ai_proxy, *, requirement_agent_service=None):
     return service, chat_storage, graph_service, requirement_agent_service
 
 
-def test_stream_graph_executor_reply_delegates_requirement_agent_and_succeeds(monkeypatch):
-    monkeypatch.setattr(settings, "SESSION_CONTROLLER_GRAPH_ENABLED", True)
+def test_stream_graph_executor_reply_delegates_requirement_agent_and_succeeds():
     service, chat_storage, graph_service, requirement_agent_service = _build_service(DelegatingGraphAIProxy())
 
     events = list(
@@ -643,15 +641,26 @@ def test_stream_graph_executor_reply_delegates_requirement_agent_and_succeeds(mo
     assert requirement_agent_service.inline_calls == []
 
     runtime_graph = graph_service.get_execution_graph(graph_event["data"]["graph_id"])
+    runtime_detail = graph_service.get_graph_detail(graph_event["data"]["graph_id"])
     assert runtime_graph["status"] == "succeeded"
     assert runtime_graph["meta_json"]["session_controller_mode"] == "delegate_requirement"
     assert runtime_graph["meta_json"]["resolved_requirement_id"] == "REQ-9"
+    assert {
+        item["container_key"] for item in runtime_detail["containers"]
+    } == {"conductor", "requirement_agent"}
+    assert not any(
+        item["subgraph_key"] == "sg_invoke_conflict_detection"
+        for item in runtime_detail["subgraphs"]
+    )
+    assert not any(
+        item["subgraph_key"] == "sg_invoke_requirement_classification_agent"
+        for item in runtime_detail["subgraphs"]
+    )
     snapshot = runtime_graph["meta_json"]["scratchpad_snapshot"]
     assert any(entry.get("entry_type") == "note" for entry in snapshot)
 
 
-def test_stream_graph_executor_reply_suspends_and_resumes_same_graph(monkeypatch):
-    monkeypatch.setattr(settings, "SESSION_CONTROLLER_GRAPH_ENABLED", True)
+def test_stream_graph_executor_reply_suspends_and_resumes_same_graph():
     service, chat_storage, graph_service, _ = _build_service(ClarifyThenResumeAIProxy())
 
     first_events = list(
@@ -700,8 +709,7 @@ def test_stream_graph_executor_reply_suspends_and_resumes_same_graph(monkeypatch
     assert chat_storage.sessions["session-1"]["active_graph_id"] == first_graph_event["data"]["graph_id"]
 
 
-def test_stream_graph_executor_reply_skips_topology_for_simple_message(monkeypatch):
-    monkeypatch.setattr(settings, "SESSION_CONTROLLER_GRAPH_ENABLED", True)
+def test_stream_graph_executor_reply_skips_topology_for_simple_message():
     service, _chat_storage, graph_service, _ = _build_service(
         NoTopologySessionControllerAIProxy()
     )
@@ -735,8 +743,7 @@ def test_stream_graph_executor_reply_skips_topology_for_simple_message(monkeypat
     )
 
 
-def test_stream_graph_executor_reply_forwards_delegated_round_limit(monkeypatch):
-    monkeypatch.setattr(settings, "SESSION_CONTROLLER_GRAPH_ENABLED", True)
+def test_stream_graph_executor_reply_forwards_delegated_round_limit():
     requirement_agent_service = FakeRequirementAgentService()
     service, _chat_storage, _graph_service, requirement_agent_service = _build_service(
         DelegatingGraphAIProxy(),

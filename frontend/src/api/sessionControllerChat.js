@@ -19,11 +19,6 @@ const buildAuthHeaders = () => {
 }
 
 export const sessionControllerChatApi = {
-  async getCapabilities() {
-    const resp = await api.get('/session-controller/capabilities')
-    return resp.data || {}
-  },
-
   async listSessions(projectId, limit = 100) {
     const resp = await api.get('/session-controller/sessions', {
       params: {
@@ -75,18 +70,15 @@ export const sessionControllerChatApi = {
     sessionId,
     projectId,
     message,
-    executionMode,
     useThinkingMode = true,
     delegatedMaxToolCallRounds = 15
   }) {
     const payload = {
       project_id: projectId,
       message,
+      execution_mode: 'graph',
       use_thinking_mode: useThinkingMode,
-      delegated_max_tool_call_rounds: delegatedMaxToolCallRounds,
-    }
-    if (executionMode) {
-      payload.execution_mode = executionMode
+      delegated_max_tool_call_rounds: delegatedMaxToolCallRounds
     }
 
     const response = await fetch(`/api/v2/session-controller/sessions/${encodeURIComponent(sessionId)}/messages/stream`, {

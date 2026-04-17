@@ -27,8 +27,8 @@ from backend_business.services.agent.execution_graph_service import (
     ExecutionGraphService,
 )
 from backend_business.services.db_service import db_service
-from backend_business.services.agent.execution.topology_execution_service import (
-    TopologyExecutionService,
+from backend_business.services.agent.execution.graph_executor_topology_service import (
+    GraphExecutorTopologyRuntimeService,
 )
 from backend_business.services.agent.topology import (
     GraphStructureBuilder,
@@ -44,7 +44,9 @@ router = APIRouter(prefix="/api/v2/execution-topology", tags=["execution-topolog
 
 # 初始化服务
 _service = ExecutionGraphService(dsn=settings.POSTGRES_DSN)
-_topology_execution_service = TopologyExecutionService(execution_graph_service=_service)
+_graph_executor_runtime_service = GraphExecutorTopologyRuntimeService(
+    execution_graph_service=_service
+)
 
 
 # ========================
@@ -575,7 +577,7 @@ async def execute_topology_template(
     """从拓扑模板创建运行时图并执行。"""
     actor = _get_actor(request, current_user)
     try:
-        return _topology_execution_service.execute_template(
+        return _graph_executor_runtime_service.execute_template(
             template_graph_id=graph_id,
             input_payload=req.input_payload,
             actor=actor,

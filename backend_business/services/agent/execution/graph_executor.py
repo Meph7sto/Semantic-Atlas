@@ -72,6 +72,7 @@ class JudgeDecision:
 
     expand_topology: bool
     selected_template_id: str | None = None
+    selected_container_keys: tuple[str, ...] = ()
 
 
 class IntentJudgeError(RuntimeError):
@@ -96,11 +97,13 @@ _JUDGE_SYSTEM_PROMPT = """\
 1. **需要展开拓扑图**：
    - expand_topology: 填写 true
    - target_template_graph_id: 填写选中的拓扑图 ID（从下方候选列表中选择）
+   - target_container_keys: 如果你已经明确只需要模板中的部分业务容器，填写这些 container_key 列表；不要填写入口容器本身
    - conclusion: 填写你的判断理由
 
 2. **不需要展开拓扑图**（任务足够简单、闲聊、问候等）：
    - expand_topology: 填写 false
    - target_template_graph_id: 不要填写
+   - target_container_keys: 不要填写
    - conclusion: 填写你的判断理由
 
 候选拓扑图列表：
@@ -130,6 +133,25 @@ def _format_candidates_block(
         line = f"{idx}. [{graph_id}] {name}"
         if desc:
             line += f" — {desc}"
+        selectable_containers = tpl.get("selectable_containers") or []
+        if selectable_containers:
+            container_parts: list[str] = []
+            for item in selectable_containers:
+                if not isinstance(item, dict):
+                    continue
+                container_key = str(item.get("container_key") or "").strip()
+                if not container_key:
+                    continue
+                label = str(item.get("label") or "").strip()
+                description = str(item.get("description") or "").strip()
+                part = container_key
+                if label:
+                    part += f" ({label})"
+                if description:
+                    part += f": {description}"
+                container_parts.append(part)
+            if container_parts:
+                line += f"\n   可按需展开容器: {'; '.join(container_parts)}"
         lines.append(line)
     return "\n".join(lines)
 
@@ -262,6 +284,7 @@ class GraphExecutor:
         ``StopIteration.value``.
         """
         effective_template_id = template_graph_id
+        selected_container_keys: tuple[str, ...] = ()
 
         # 0. Intent gate -------------------------------------------------------
         if candidate_templates is not None:
@@ -309,6 +332,7 @@ class GraphExecutor:
             # Use judge-selected template
             if effective_template_id is None:
                 effective_template_id = judge_decision.selected_template_id
+            selected_container_keys = judge_decision.selected_container_keys
 
             # Reuse the runtime graph created during gating
             runtime_graph_id = gate_graph_id
@@ -329,6 +353,7 @@ class GraphExecutor:
                 graph_service=graph_service,
                 created_by=actor,
                 runtime_graph_id=runtime_graph_id,
+                selected_container_keys=selected_container_keys or None,
             )
         except Exception as exc:
             logger.error("%s: %s", expand_error_label, exc, exc_info=True)
@@ -584,6 +609,7 @@ class GraphExecutor:
             "data": {
                 "graph_id": graph_id,
                 "selected_template_id": judge_decision.selected_template_id,
+                "selected_container_keys": list(judge_decision.selected_container_keys),
                 "expand_topology": judge_decision.expand_topology,
                 "reason": result.conclusion or "",
             },
@@ -1014,23 +1040,52 @@ def _parse_judge_decision(
         raise ValueError("judge complete_phase 缺少 expand_topology 布尔字段")
 
     target_template_graph_id = result.target_template_graph_id
+    target_container_keys = tuple(
+        key for key in result.target_container_keys if str(key).strip()
+    )
     if not expand_topology:
         if target_template_graph_id:
             raise ValueError(
                 "judge 指定 expand_topology=false 时，不应再携带 target_template_graph_id",
             )
+        if target_container_keys:
+            raise ValueError(
+                "judge 指定 expand_topology=false 时，不应再携带 target_container_keys",
+            )
         return JudgeDecision(expand_topology=False)
 
-    valid_ids = {c.get("graph_id") for c in candidates}
+    candidates_by_id = {
+        c.get("graph_id"): c
+        for c in candidates
+        if c.get("graph_id")
+    }
+    valid_ids = set(candidates_by_id)
     if not target_template_graph_id:
         raise ValueError("judge 指定 expand_topology=true 时，必须提供 target_template_graph_id")
     if target_template_graph_id not in valid_ids:
         raise ValueError(
             f"judge 选择的 target_template_graph_id '{target_template_graph_id}' 不在候选列表中",
         )
+    candidate = candidates_by_id.get(target_template_graph_id) or {}
+    selectable_keys = {
+        str(item.get("container_key") or "").strip()
+        for item in (candidate.get("selectable_containers") or [])
+        if isinstance(item, dict) and str(item.get("container_key") or "").strip()
+    }
+    if selectable_keys and target_container_keys:
+        invalid_keys = [
+            key for key in target_container_keys
+            if key not in selectable_keys
+        ]
+        if invalid_keys:
+            raise ValueError(
+                "judge 选择的 target_container_keys 包含无效值: "
+                + ", ".join(invalid_keys),
+            )
     return JudgeDecision(
         expand_topology=True,
         selected_template_id=target_template_graph_id,
+        selected_container_keys=target_container_keys,
     )
 
 

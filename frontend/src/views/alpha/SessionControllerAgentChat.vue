@@ -14,29 +14,15 @@ import {
 
 import { manageApi } from '@/api/project'
 import { sessionControllerChatApi } from '@/api/sessionControllerChat'
-import { api } from '@/api/request'
 import ExecutionGraphCanvas from '@/components/alpha/ExecutionGraphCanvas.vue'
 import NodeDetailPanel from '@/components/alpha/NodeDetailPanel.vue'
 import SubgraphTracePanel from '@/components/alpha/SubgraphTracePanel.vue'
 import { createEmptyGraphDetail, buildMergedSessionGraphDetail } from '@/utils/sessionGraphLayout'
 import { buildExecutionGraphExportPayload, downloadExecutionGraphFile } from '@/utils/executionGraphExport'
 
-const EXECUTION_MODE_OPTIONS = [
-  { value: 'graph', label: 'Graph', description: 'GraphExecutor 默认主路径' },
-  { value: 'classic', label: 'Classic', description: '兼容回滚链路' }
-]
-const DEFAULT_EXECUTION_MODE = 'classic'
-const resolveStoredExecutionMode = (capabilities = null) => {
-  const allowedExecutionModes = Array.isArray(capabilities?.allowed_execution_modes)
-    ? capabilities.allowed_execution_modes
-    : [DEFAULT_EXECUTION_MODE]
-  const defaultExecutionMode = allowedExecutionModes.includes(capabilities?.default_execution_mode)
-    ? capabilities.default_execution_mode
-    : allowedExecutionModes[0]
-  const storedMode = localStorage.getItem('session_controller_execution_mode')
-  return allowedExecutionModes.includes(storedMode)
-    ? storedMode
-    : defaultExecutionMode
+const GRAPH_EXECUTION_MODE = 'graph'
+const SESSION_GRAPH_LAYOUT_OPTIONS = {
+  filterDelegatedContainers: true
 }
 
 const projects = ref([])
@@ -61,12 +47,6 @@ const isAssistantOpen = ref(false)
 const lastDispatchedAgents = ref([])
 const detailPanelRef = ref(null)
 const delegatedMaxToolCallRounds = ref(15)
-const sessionControllerCapabilities = ref({
-  graph_execution_enabled: false,
-  default_execution_mode: DEFAULT_EXECUTION_MODE,
-  allowed_execution_modes: [DEFAULT_EXECUTION_MODE]
-})
-const executionModeDraft = ref(resolveStoredExecutionMode(sessionControllerCapabilities.value))
 
 const GRAPH_CHAIN_REFRESH_DEBOUNCE_MS = 180
 const DEFAULT_DELEGATED_MAX_TOOL_CALL_ROUNDS = 15
@@ -90,13 +70,6 @@ const selectedEdge = computed(() => {
 })
 
 const latestGraphStatus = computed(() => graphDetail.value.graph?.status || 'idle')
-const graphExecutionEnabled = computed(() => Boolean(sessionControllerCapabilities.value?.graph_execution_enabled))
-const selectedExecutionModeOption = computed(() => {
-  return (
-    EXECUTION_MODE_OPTIONS.find((option) => option.value === executionModeDraft.value)
-    || EXECUTION_MODE_OPTIONS[0]
-  )
-})
 
 const detailPanelTitle = computed(() => {
   if (selectedNode.value) {
@@ -180,30 +153,6 @@ const normalizeDelegatedMaxToolCallRounds = () => {
   return delegatedMaxToolCallRounds.value
 }
 
-const setExecutionMode = (mode) => {
-  const allowedExecutionModes = sessionControllerCapabilities.value?.allowed_execution_modes || [DEFAULT_EXECUTION_MODE]
-  if (!allowedExecutionModes.includes(mode)) return
-  executionModeDraft.value = mode
-  localStorage.setItem('session_controller_execution_mode', mode)
-}
-
-const applySessionControllerCapabilities = (capabilities) => {
-  const nextCapabilities = {
-    graph_execution_enabled: Boolean(capabilities?.graph_execution_enabled),
-    default_execution_mode: capabilities?.default_execution_mode || DEFAULT_EXECUTION_MODE,
-    allowed_execution_modes: Array.isArray(capabilities?.allowed_execution_modes) && capabilities.allowed_execution_modes.length
-      ? capabilities.allowed_execution_modes
-      : [DEFAULT_EXECUTION_MODE]
-  }
-  sessionControllerCapabilities.value = nextCapabilities
-
-  const resolvedMode = resolveStoredExecutionMode(nextCapabilities)
-  if (executionModeDraft.value !== resolvedMode) {
-    executionModeDraft.value = resolvedMode
-  }
-  localStorage.setItem('session_controller_execution_mode', resolvedMode)
-}
-
 const resetSessionView = () => {
   messages.value = []
   inputMessage.value = ''
@@ -268,7 +217,7 @@ const rebuildMergedGraphDetail = () => {
     session_id: sessionId.value,
     active_graph_id: activeGraphId.value,
     graphs: sessionGraphChain.value
-  })
+  }, SESSION_GRAPH_LAYOUT_OPTIONS)
 }
 
 const upsertById = (items, idKey, nextItem) => {
@@ -340,6 +289,58 @@ const applyGraphIncrementalPayload = (payload, graphStatus = null) => {
   return true
 }
 
+const patchSessionGraphMeta = (graphId, metaPatch) => {
+  if (!graphId || !metaPatch || typeof metaPatch !== 'object') return false
+
+  const index = sessionGraphChain.value.findIndex((detail) => detail?.graph?.graph_id === graphId)
+  if (index < 0) return false
+
+  const currentDetail = sessionGraphChain.value[index] || {}
+  const nextDetail = {
+    ...currentDetail,
+    graph: currentDetail.graph
+      ? {
+          ...currentDetail.graph,
+          meta_json: {
+            ...(currentDetail.graph.meta_json || {}),
+            ...metaPatch
+          }
+        }
+      : currentDetail.graph
+  }
+
+  const nextChain = [...sessionGraphChain.value]
+  nextChain[index] = nextDetail
+  sessionGraphChain.value = nextChain
+  rebuildMergedGraphDetail()
+  return true
+}
+
+const inferDelegatedAgentsFromEvent = (eventName, payload) => {
+  if (eventName === 'intent_judge_completed') {
+    return Array.isArray(payload?.selected_container_keys) ? payload.selected_container_keys : []
+  }
+
+  if (eventName === 'result') {
+    if (Array.isArray(payload?.dispatched_agents) && payload.dispatched_agents.length) {
+      return payload.dispatched_agents
+    }
+    if (payload?.mode === 'delegate_requirement') return ['requirement_agent']
+    if (payload?.mode === 'delegate_conflict') return ['conflict_detection']
+    if (payload?.mode === 'delegate_classification') return ['requirement_classification_agent']
+    return []
+  }
+
+  if (eventName !== 'tool_call' && eventName !== 'tool_result') {
+    return []
+  }
+
+  if (payload?.tool === 'invoke_requirement_agent') return ['requirement_agent']
+  if (payload?.tool === 'invoke_conflict_detection') return ['conflict_detection']
+  if (payload?.tool === 'invoke_requirement_classification_agent') return ['requirement_classification_agent']
+  return []
+}
+
 const refreshSessionGraphChain = async (targetSessionId = sessionId.value) => {
   if (!targetSessionId) {
     sessionGraphChain.value = []
@@ -354,7 +355,7 @@ const refreshSessionGraphChain = async (targetSessionId = sessionId.value) => {
     }
     sessionGraphChain.value = chainPayload?.graphs || []
     activeGraphId.value = chainPayload?.active_graph_id || activeGraphId.value || ''
-    graphDetail.value = buildMergedSessionGraphDetail(chainPayload)
+    graphDetail.value = buildMergedSessionGraphDetail(chainPayload, SESSION_GRAPH_LAYOUT_OPTIONS)
     return chainPayload
   } catch (err) {
     console.error('加载会话执行图链失败', err)
@@ -440,16 +441,6 @@ const loadProjects = async () => {
     errorMessage.value = err?.message || '加载项目失败'
   } finally {
     isLoadingProjects.value = false
-  }
-}
-
-const loadCapabilities = async () => {
-  try {
-    const payload = await sessionControllerChatApi.getCapabilities()
-    applySessionControllerCapabilities(payload)
-  } catch (err) {
-    console.error('加载会话总控能力配置失败', err)
-    applySessionControllerCapabilities(null)
   }
 }
 
@@ -620,6 +611,15 @@ const consumeSSEStream = async (stream) => {
           lastDispatchedAgents.value = payload.dispatched_agents
         }
         if (payload.graph_id) {
+          const delegatedAgents = inferDelegatedAgentsFromEvent(eventName, payload)
+          if (delegatedAgents.length) {
+            patchSessionGraphMeta(payload.graph_id, {
+              dispatched_agents: delegatedAgents,
+              selected_container_keys: delegatedAgents
+            })
+          }
+        }
+        if (payload.graph_id) {
           activeGraphId.value = payload.graph_id
           upsertSessionPatch(sessionId.value, {
             active_graph_id: payload.graph_id,
@@ -628,7 +628,22 @@ const consumeSSEStream = async (stream) => {
           applyGraphIncrementalPayload(payload, 'succeeded')
           await flushGraphChainRefresh(sessionId.value)
         }
+      } else if (eventName === 'intent_judge_completed') {
+        const delegatedAgents = inferDelegatedAgentsFromEvent(eventName, payload)
+        if (payload.graph_id && delegatedAgents.length) {
+          patchSessionGraphMeta(payload.graph_id, {
+            selected_container_keys: delegatedAgents
+          })
+        }
       } else if (eventName === 'stage' || eventName === 'tool_call' || eventName === 'tool_result') {
+        const delegatedAgents = inferDelegatedAgentsFromEvent(eventName, payload)
+        if (payload.graph_id && delegatedAgents.length) {
+          patchSessionGraphMeta(payload.graph_id, {
+            selected_container_keys: delegatedAgents,
+            dispatched_agents: delegatedAgents
+          })
+          lastDispatchedAgents.value = delegatedAgents
+        }
         if (payload.graph_id) {
           activeGraphId.value = payload.graph_id
           upsertSessionPatch(sessionId.value, {
@@ -679,14 +694,13 @@ const sendMessage = async () => {
       sessionId: sessionId.value,
       projectId: selectedProjectId.value,
       message,
-      executionMode: executionModeDraft.value,
       useThinkingMode: useThinkingMode.value,
       delegatedMaxToolCallRounds: effectiveDelegatedMaxToolCallRounds
     })
     inputMessage.value = ''
     appendTimeline('submit', {
       message,
-      execution_mode: executionModeDraft.value,
+      execution_mode: GRAPH_EXECUTION_MODE,
       delegated_max_tool_call_rounds: effectiveDelegatedMaxToolCallRounds
     })
     upsertSessionPatch(sessionId.value, { updated_at: new Date().toISOString() })
@@ -737,7 +751,6 @@ watch(selectedProjectId, async (projectId) => {
 })
 
 onMounted(async () => {
-  await loadCapabilities()
   await loadProjects()
 })
 
@@ -842,9 +855,9 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-stone-500">
-            <span class="flex items-center gap-1 bg-stone-900 px-1.5 py-0.5 text-white" :title="selectedExecutionModeOption.description">
-              Mode: <span class="font-medium">{{ selectedExecutionModeOption.label }}</span>
+        <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-stone-500">
+            <span class="flex items-center gap-1 bg-stone-900 px-1.5 py-0.5 text-white" title="会话总控固定使用 GraphExecutor 主链路">
+              Pipeline: <span class="font-medium">GraphExecutor</span>
             </span>
             <span v-if="sessionId" class="flex items-center gap-1 bg-stone-200/50 px-1.5 py-0.5">
               Current: <span class="font-medium text-stone-700">{{ activeGraphId || '无' }}</span>
@@ -919,23 +932,12 @@ onBeforeUnmount(() => {
                 <span>{{ useThinkingMode ? 'Reasoner 模式' : 'Chat 模式' }}</span>
               </label>
               <div class="flex items-center gap-3">
-                <div class="inline-flex items-center border border-stone-300 bg-white p-0.5 shadow-sm">
-                  <button
-                    v-for="option in EXECUTION_MODE_OPTIONS"
-                    :key="option.value"
-                    type="button"
-                    class="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] transition"
-                    :class="executionModeDraft === option.value
-                      ? 'bg-stone-900 text-white'
-                      : 'bg-transparent text-stone-500 hover:bg-stone-100 hover:text-stone-800'"
-                    :disabled="isSending || (option.value === 'graph' && !graphExecutionEnabled)"
-                    :title="option.value === 'graph' && !graphExecutionEnabled
-                      ? 'GraphExecutor 当前未启用'
-                      : option.description"
-                    @click="setExecutionMode(option.value)"
-                  >
-                    {{ option.label }}
-                  </button>
+                <div
+                  class="inline-flex items-center gap-2 border border-stone-300 bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-700 shadow-sm"
+                  title="当前仅保留 GraphExecutor 主链路"
+                >
+                  <Workflow class="h-3.5 w-3.5" />
+                  GraphExecutor
                 </div>
                 <label class="flex items-center gap-2 text-xs font-medium text-stone-600">
                   <span>子Agent最大调用</span>

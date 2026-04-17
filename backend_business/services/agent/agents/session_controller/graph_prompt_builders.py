@@ -32,7 +32,7 @@ class SessionControllerDecisionGraphPromptBuilder:
         return (
             f"{base_prompt}\n\n"
             "你当前处于执行图中的“总控决策阶段”。\n"
-            "和 classic 模式不同，本阶段结束时不要直接输出 JSON 文本作为 assistant 回复。\n"
+            "本阶段结束时不要直接输出 JSON 文本作为 assistant 回复。\n"
             "当你确认本阶段已完成时，必须调用 complete_phase，并按以下规则填写参数：\n"
             "1. `conclusion` 必须是一个 JSON 对象字符串，字段协议与 Session Controller 结构化结果一致。\n"
             "2. 如果你刚刚调用了 `invoke_requirement_agent` 并准备让运行时执行原生 invoke，"
