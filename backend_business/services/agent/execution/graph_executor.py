@@ -54,6 +54,8 @@ class ExecutionResult:
         The subgraph ID that triggered suspension (only when suspended).
     error : str | None
         Human-readable error message (only when failed).
+    metadata : dict[str, Any] | None
+        Optional execution-path-specific metadata for the caller.
     """
 
     status: str
@@ -61,6 +63,7 @@ class ExecutionResult:
     final_output: str | None = None
     suspended_subgraph_id: str | None = None
     error: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -647,6 +650,14 @@ class GraphExecutor:
             status="succeeded",
             graph_id=graph_id,
             final_output=result.tool_loop_reply,
+            metadata={
+                "execution_path": "normal_conversation",
+                "tool_loop_result": {
+                    "tool_loop_reply": result.tool_loop_reply,
+                    "rounds": result.rounds,
+                    "context": _compact_tool_loop_context(result.context),
+                },
+            },
         )
 
     def _drive_runner(
@@ -939,6 +950,54 @@ def _persist_graph_status(
             status,
             exc_info=True,
         )
+
+
+def _compact_tool_loop_context(context: dict[str, Any] | None) -> dict[str, Any]:
+    """Persist only the session-safe subset of ToolLoopRunner context."""
+    if not isinstance(context, dict):
+        return {}
+
+    compact: dict[str, Any] = {}
+
+    resolved_requirement_id = str(context.get("resolved_requirement_id") or "").strip()
+    if resolved_requirement_id:
+        compact["resolved_requirement_id"] = resolved_requirement_id
+
+    dispatched_agents = [
+        str(item).strip()
+        for item in (context.get("dispatched_agents") or [])
+        if str(item).strip()
+    ]
+    if dispatched_agents:
+        compact["dispatched_agents"] = dispatched_agents
+
+    last_approval_result = context.get("last_approval_result")
+    if isinstance(last_approval_result, dict):
+        compact["last_approval_result"] = dict(last_approval_result)
+
+    tool_results: list[dict[str, Any]] = []
+    for entry in context.get("tool_results") or []:
+        if not isinstance(entry, dict):
+            continue
+        tool_results.append(
+            {
+                "tool_name": str(entry.get("tool_name") or "").strip(),
+                "arguments": (
+                    dict(entry.get("arguments"))
+                    if isinstance(entry.get("arguments"), dict)
+                    else {}
+                ),
+                "result": (
+                    dict(entry.get("result"))
+                    if isinstance(entry.get("result"), dict)
+                    else entry.get("result")
+                ),
+            }
+        )
+    if tool_results:
+        compact["tool_results"] = tool_results
+
+    return compact
 
 
 def _parse_judge_decision(

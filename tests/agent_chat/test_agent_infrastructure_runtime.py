@@ -478,7 +478,16 @@ def test_tool_loop_runner_rejects_empty_model_reply_without_tool_calls():
         user_message="hello",
     )
     runner = ToolLoopRunner(
-        ai_proxy_client=_FakeAiProxy([{"content": "", "tool_calls": [], "finish_reason": "stop"}]),
+        ai_proxy_client=_FakeAiProxy(
+            [
+                {
+                    "content": "",
+                    "tool_calls": [],
+                    "reasoning_content": "我还在想，但没有给出最终输出。",
+                    "finish_reason": "stop",
+                }
+            ]
+        ),
         tool_executor=_FakeToolExecutor([]),
         prompt_builder=_FakePromptBuilder(),
         stage_container_key="agent_main",
@@ -491,8 +500,13 @@ def test_tool_loop_runner_rejects_empty_model_reply_without_tool_calls():
         context={"project_id": "p-1", "tool_results": []},
     )
     assert next(generator)["event"] == "stage"
-    with pytest.raises(ValueError, match="模型未返回文本或工具调用"):
+    with pytest.raises(ValueError) as exc_info:
         next(generator)
+    error_text = str(exc_info.value)
+    assert "模型未返回文本或工具调用" in error_text
+    assert "finish_reason='stop'" in error_text
+    assert "reasoning_content_present=True" in error_text
+    assert "tool_call_count=0" in error_text
 
 
 def test_tool_loop_runner_raises_when_round_limit_exceeded():

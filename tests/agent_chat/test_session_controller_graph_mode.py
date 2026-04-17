@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import uuid
 
@@ -20,6 +21,13 @@ from backend_business.services.agent.agents.session_controller.tools import (  #
     SessionControllerTools,
 )
 from backend_business.config import settings  # noqa: E402
+
+
+def _extract_candidate_template_id(system_prompt: str) -> str:
+    match = re.search(r"\[([^\]]+)\]", system_prompt)
+    if not match:
+        raise AssertionError(f"candidate template id not found in prompt: {system_prompt}")
+    return match.group(1)
 
 
 class FakeChatStorage:
@@ -252,6 +260,28 @@ class DelegatingGraphAIProxy:
         system_prompt = str(messages[0].get("content") or "")
         has_tool_result = any(message.get("role") == "tool" for message in messages)
 
+        if "意图分类器兼拓扑图选择器" in system_prompt:
+            return {
+                "content": "",
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": "call-judge-expand",
+                        "function": {
+                            "name": "complete_phase",
+                            "arguments": json.dumps(
+                                {
+                                    "conclusion": "需要展开拓扑图并委托需求 Agent。",
+                                    "expand_topology": True,
+                                    "target_template_graph_id": _extract_candidate_template_id(system_prompt),
+                                },
+                                ensure_ascii=False,
+                            ),
+                        },
+                    }
+                ],
+            }
+
         if "总控决策阶段" in system_prompt and not has_tool_result:
             return {
                 "content": "",
@@ -294,13 +324,19 @@ class DelegatingGraphAIProxy:
                                         },
                                         ensure_ascii=False,
                                     ),
-                                    "route_key": "reply",
+                                    "route_key": "invoke_requirement",
                                 },
                                 ensure_ascii=False,
                             ),
                         },
                     }
                 ],
+            }
+        if "你是需求管理 Agent" in system_prompt:
+            return {
+                "content": "已读取需求详情",
+                "finish_reason": "stop",
+                "tool_calls": [],
             }
         if "最终回复阶段" in system_prompt:
             return {
@@ -328,12 +364,36 @@ class DelegatingGraphAIProxy:
 class ClarifyThenResumeAIProxy:
     def __init__(self) -> None:
         self.calls = 0
+        self.decision_calls = 0
 
     def chat_completion_with_tools(self, *, messages, tools, **_kwargs) -> dict:
         self.calls += 1
         system_prompt = str(messages[0].get("content") or "")
 
-        if self.calls == 1 and "总控决策阶段" in system_prompt:
+        if "意图分类器兼拓扑图选择器" in system_prompt:
+            return {
+                "content": "",
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": "call-judge-expand",
+                        "function": {
+                            "name": "complete_phase",
+                            "arguments": json.dumps(
+                                {
+                                    "conclusion": "这是复杂任务，需要展开拓扑图处理。",
+                                    "expand_topology": True,
+                                    "target_template_graph_id": _extract_candidate_template_id(system_prompt),
+                                },
+                                ensure_ascii=False,
+                            ),
+                        },
+                    }
+                ],
+            }
+        if "总控决策阶段" in system_prompt:
+            self.decision_calls += 1
+        if self.decision_calls == 1 and "总控决策阶段" in system_prompt:
             return {
                 "content": "",
                 "finish_reason": "tool_calls",
@@ -359,6 +419,7 @@ class ClarifyThenResumeAIProxy:
                                         },
                                         ensure_ascii=False,
                                     ),
+                                    "route_key": "suspend",
                                 },
                                 ensure_ascii=False,
                             ),
@@ -366,7 +427,7 @@ class ClarifyThenResumeAIProxy:
                     }
                 ],
             }
-        if self.calls == 2 and "挂起回复阶段" in system_prompt:
+        if "挂起回复阶段" in system_prompt:
             return {
                 "content": "",
                 "finish_reason": "tool_calls",
@@ -383,7 +444,7 @@ class ClarifyThenResumeAIProxy:
                     }
                 ],
             }
-        if self.calls == 3 and "总控决策阶段" in system_prompt:
+        if self.decision_calls == 2 and "总控决策阶段" in system_prompt:
             return {
                 "content": "",
                 "finish_reason": "tool_calls",
@@ -416,7 +477,7 @@ class ClarifyThenResumeAIProxy:
                     }
                 ],
             }
-        if self.calls == 4 and "最终回复阶段" in system_prompt:
+        if "最终回复阶段" in system_prompt:
             return {
                 "content": "",
                 "finish_reason": "tool_calls",
@@ -439,9 +500,49 @@ class ClarifyThenResumeAIProxy:
         return {"content": "本轮已记录会话摘要。"}
 
 
+class NoTopologySessionControllerAIProxy:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def chat_completion_with_tools(self, *, messages, tools, **_kwargs) -> dict:
+        self.calls += 1
+        system_prompt = str(messages[0].get("content") or "")
+        if self.calls == 1 and "意图分类器兼拓扑图选择器" in system_prompt:
+            return {
+                "content": "",
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": "call-judge-no-topology",
+                        "function": {
+                            "name": "complete_phase",
+                            "arguments": json.dumps(
+                                {
+                                    "conclusion": "用户只是随口聊一句，不需要展开拓扑图。",
+                                    "expand_topology": False,
+                                },
+                                ensure_ascii=False,
+                            ),
+                        },
+                    }
+                ],
+            }
+        if self.calls == 2:
+            return {
+                "content": "这只是一个普通回复，不需要调度复杂执行图。",
+                "finish_reason": "stop",
+                "tool_calls": [],
+            }
+        raise AssertionError(f"unexpected prompt sequence call={self.calls}: {system_prompt}")
+
+    def chat_completion(self, **_kwargs) -> dict:
+        return {"content": "本轮是普通对话，无需展开拓扑图。"}
+
+
 class FakeRequirementAgentService:
     def __init__(self) -> None:
         self.inline_calls: list[dict] = []
+        self.tools = _FakeDelegatedTools()
 
     def run_inline_tool_loop(self, **kwargs):
         self.inline_calls.append(dict(kwargs))
@@ -467,11 +568,26 @@ class FakeRequirementAgentService:
 
 
 class FakeConflictAgentService:
+    def __init__(self) -> None:
+        self.tools = _FakeDelegatedTools()
+
     def run_inline_tool_loop(self, **kwargs):
         return {"status": "success", "tool_loop_reply": "冲突检测完成"}
 
     def stream_inline_tool_loop(self, **kwargs):
         return self.run_inline_tool_loop(**kwargs)
+
+
+class _FakeDelegatedTools:
+    def __init__(self) -> None:
+        self.context_snapshots: list[dict] = []
+
+    def get_tools_list(self, context=None):
+        self.context_snapshots.append(dict(context or {}))
+        return []
+
+    def execute(self, tool_name, arguments, context):
+        raise AssertionError(f"unexpected delegated tool call: {tool_name}")
 
 
 def _build_service(ai_proxy, *, requirement_agent_service=None):
@@ -497,7 +613,7 @@ def _build_service(ai_proxy, *, requirement_agent_service=None):
 
 def test_stream_graph_executor_reply_delegates_requirement_agent_and_succeeds(monkeypatch):
     monkeypatch.setattr(settings, "SESSION_CONTROLLER_GRAPH_ENABLED", True)
-    service, chat_storage, graph_service, _ = _build_service(DelegatingGraphAIProxy())
+    service, chat_storage, graph_service, requirement_agent_service = _build_service(DelegatingGraphAIProxy())
 
     events = list(
         service.stream_session_controller_reply(
@@ -523,7 +639,8 @@ def test_stream_graph_executor_reply_delegates_requirement_agent_and_succeeds(mo
     assert assistant_event["data"]["content"] == "这是一个需求的完整信息摘要"
 
     assert any(event["data"]["tool"] == "invoke_requirement_agent" for event in tool_result_events)
-    assert sum(1 for event in subgraph_events if event["data"]["status"] == "completed") >= 2
+    assert sum(1 for event in subgraph_events if event["data"]["status"] == "completed") >= 3
+    assert requirement_agent_service.inline_calls == []
 
     runtime_graph = graph_service.get_execution_graph(graph_event["data"]["graph_id"])
     assert runtime_graph["status"] == "succeeded"
@@ -583,6 +700,41 @@ def test_stream_graph_executor_reply_suspends_and_resumes_same_graph(monkeypatch
     assert chat_storage.sessions["session-1"]["active_graph_id"] == first_graph_event["data"]["graph_id"]
 
 
+def test_stream_graph_executor_reply_skips_topology_for_simple_message(monkeypatch):
+    monkeypatch.setattr(settings, "SESSION_CONTROLLER_GRAPH_ENABLED", True)
+    service, _chat_storage, graph_service, _ = _build_service(
+        NoTopologySessionControllerAIProxy()
+    )
+
+    events = list(
+        service.stream_session_controller_reply(
+            session_id="session-1",
+            user_id="user-1",
+            project_id="project-1",
+            user_message="花",
+            execution_mode="graph",
+        )
+    )
+
+    result_event = next(event for event in events if event["event"] == "result")
+    graph_id = result_event["data"]["graph_id"]
+    graph_detail = graph_service.get_graph_detail(graph_id)
+    runtime_graph = graph_service.get_execution_graph(graph_id)
+
+    assert result_event["data"]["status"] == "succeeded"
+    assert result_event["data"]["mode"] == "direct_reply"
+    assert result_event["data"]["reply_text"] == "这只是一个普通回复，不需要调度复杂执行图。"
+    assert runtime_graph["status"] == "succeeded"
+    assert runtime_graph["meta_json"]["session_controller_mode"] == "direct_reply"
+    assert runtime_graph["meta_json"].get("source_template_id") is None
+    assert [item["container_key"] for item in graph_detail["containers"]] == ["conductor"]
+    assert graph_detail["subgraphs"] == []
+    assert not any(
+        node["node_type"] in {"start", "end"} and node["node_key"] != "start"
+        for node in graph_detail["nodes"]
+    )
+
+
 def test_stream_graph_executor_reply_forwards_delegated_round_limit(monkeypatch):
     monkeypatch.setattr(settings, "SESSION_CONTROLLER_GRAPH_ENABLED", True)
     requirement_agent_service = FakeRequirementAgentService()
@@ -602,5 +754,7 @@ def test_stream_graph_executor_reply_forwards_delegated_round_limit(monkeypatch)
         )
     )
 
-    assert requirement_agent_service.inline_calls
-    assert requirement_agent_service.inline_calls[0]["max_tool_call_rounds"] == 7
+    assert requirement_agent_service.inline_calls == []
+    delegated_contexts = requirement_agent_service.tools.context_snapshots
+    assert delegated_contexts
+    assert any(context.get("max_tool_call_rounds") == 7 for context in delegated_contexts)

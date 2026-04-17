@@ -31,6 +31,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v2/session-controller", tags=["session-controller"])
 
 
+def _default_execution_mode_value() -> str:
+    return "graph" if settings.SESSION_CONTROLLER_GRAPH_ENABLED else "classic"
+
+
+def _session_controller_capabilities() -> dict[str, Any]:
+    graph_enabled = bool(settings.SESSION_CONTROLLER_GRAPH_ENABLED)
+    allowed_execution_modes = ["classic"]
+    if graph_enabled:
+        allowed_execution_modes.insert(0, "graph")
+    return {
+        "graph_execution_enabled": graph_enabled,
+        "default_execution_mode": _default_execution_mode_value(),
+        "allowed_execution_modes": allowed_execution_modes,
+    }
+
+
 def _normalize_execution_mode_value(value: str) -> str:
     text = value.strip().lower()
     if text not in {"classic", "graph"}:
@@ -45,7 +61,7 @@ class SessionControllerMessageRequest(BaseModel):
 
     project_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
-    execution_mode: str = Field(default="classic")
+    execution_mode: str = Field(default_factory=_default_execution_mode_value)
     use_thinking_mode: bool = True
     delegated_max_tool_call_rounds: int = Field(default=15, ge=1, le=50)
 
@@ -198,6 +214,13 @@ def get_session_graph_chain(
         raise ErrorResponse(str(exc), 500)
 
 
+@router.get("/capabilities")
+def get_capabilities(
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    return _session_controller_capabilities()
+
+
 @router.post("/sessions/{session_id}/messages/stream")
 def stream_message(
     session_id: str,
@@ -271,7 +294,7 @@ class MobileMessageRequest(BaseModel):
 
     project_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
-    execution_mode: str = Field(default="classic")
+    execution_mode: str = Field(default_factory=_default_execution_mode_value)
     use_thinking_mode: bool = True
     delegated_max_tool_call_rounds: int = Field(default=15, ge=1, le=50)
 

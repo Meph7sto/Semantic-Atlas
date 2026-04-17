@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from dataclasses import dataclass
+import json
 from typing import Any
 
 from backend_business.services.agent.runtime.context import ExecutionContext
@@ -41,7 +42,7 @@ from .topology_instantiator import (
 class ContainerResult:
     """Outcome of executing a single container's subgraph sequence."""
 
-    conclusion: str
+    conclusion: Any
     """Last subgraph's complete_phase conclusion (return-edge payload)."""
 
     scratchpad_snapshot: list[dict[str, Any]]
@@ -282,6 +283,7 @@ class SubgraphRunner:
             tracker=tracker,
             pad=pad,
             execution_context=execution_context,
+            runtime_context=None,
         ))
 
     # -- container-level orchestration ----------------------------------------
@@ -298,6 +300,7 @@ class SubgraphRunner:
         user_message: str,
         tracker: _SubgraphStatusTracker,
         pad: Scratchpad | None = None,
+        runtime_context: dict[str, Any] | None = None,
     ) -> Generator[dict[str, Any], None, ContainerResult]:
         """Execute all subgraphs in *container* sequentially."""
         runtime_pad = pad if pad is not None else Scratchpad()
@@ -320,6 +323,7 @@ class SubgraphRunner:
             tracker=tracker,
             pad=runtime_pad,
             execution_context=execution_context,
+            runtime_context=runtime_context,
         ))
 
     def _continue_from(
@@ -337,9 +341,10 @@ class SubgraphRunner:
         tracker: _SubgraphStatusTracker,
         pad: Scratchpad,
         execution_context: ExecutionContext,
+        runtime_context: dict[str, Any] | None,
     ) -> Generator[dict[str, Any], None, ContainerResult]:
         """Drive subgraphs starting from *start_sg* until no more remain."""
-        last_conclusion = ""
+        last_conclusion: Any = ""
         current_sg: RuntimeSubgraph | None = start_sg
 
         while current_sg is not None:
@@ -366,6 +371,7 @@ class SubgraphRunner:
                     user_message=user_message,
                     tracker=tracker,
                     execution_context=execution_context,
+                    runtime_context=runtime_context,
                 )
                 # _advance_subgraph transitions to COMPLETED internally
                 last_conclusion = (
@@ -426,6 +432,7 @@ class SubgraphRunner:
         user_message: str,
         tracker: _SubgraphStatusTracker,
         execution_context: ExecutionContext,
+        runtime_context: dict[str, Any] | None,
     ) -> Generator[dict[str, Any], None, str | None]:
         """Advance a single subgraph.  Returns ``route_key`` (may be None).
 
@@ -445,10 +452,12 @@ class SubgraphRunner:
                 user_message=user_message,
                 tracker=tracker,
                 execution_context=execution_context,
+                runtime_context=runtime_context,
             ))
         elif node_type == "invoke":
-            yield from self._advance_invoke(
+            return (yield from self._advance_invoke(
                 sg=sg,
+                container=container,
                 skeleton=skeleton,
                 pad=pad,
                 tool_executor=tool_executor,
@@ -458,8 +467,7 @@ class SubgraphRunner:
                 user_message=user_message,
                 tracker=tracker,
                 execution_context=execution_context,
-            )
-            return None
+            ))
         elif node_type == "handoff":
             self._advance_handoff(sg)
             return None  # unreachable — _advance_handoff always raises
@@ -480,10 +488,17 @@ class SubgraphRunner:
         user_message: str,
         tracker: _SubgraphStatusTracker,
         execution_context: ExecutionContext,
+        runtime_context: dict[str, Any] | None,
     ) -> Generator[dict[str, Any], None, str | None]:
         """Execute an llm subgraph via ToolLoopRunner."""
         execution_context.begin_subgraph(sg.subgraph_key)
-        context = _build_subgraph_context(sg=sg, recorder=recorder, pad=pad)
+        context = _build_subgraph_context(
+            sg=sg,
+            container=container,
+            recorder=recorder,
+            pad=pad,
+            runtime_context=runtime_context,
+        )
         prompt_builder = _resolve_prompt_builder(
             sg=sg,
             pad=pad,
@@ -494,8 +509,9 @@ class SubgraphRunner:
             ai_proxy_client=ai_proxy_client,
             tool_executor=tool_executor,
             prompt_builder=prompt_builder,
+            max_tool_call_rounds=_resolve_tool_loop_round_limit(context),
             scratchpad=pad,
-            enable_complete_phase=True,
+            enable_complete_phase=_should_enable_complete_phase(sg),
             stage_container_key=_container_key_for_container(
                 container=container,
                 recorder=recorder,
@@ -546,13 +562,10 @@ class SubgraphRunner:
                 created_by=actor,
             )
 
+        output = _build_subgraph_output(sg=sg, result=result)
         execution_context.end_subgraph(
             sg.subgraph_key,
-            output=(
-                result.conclusion
-                if result and result.conclusion is not None
-                else (result.tool_loop_reply if result else None)
-            ),
+            output=output,
         )
         tracker.transition(sg.subgraph_id, SubgraphStatus.COMPLETED)
         return result.route_key if result else None
@@ -561,6 +574,7 @@ class SubgraphRunner:
         self,
         *,
         sg: RuntimeSubgraph,
+        container: RuntimeContainer,
         skeleton: RuntimeGraphSkeleton,
         pad: Scratchpad,
         tool_executor: Any,
@@ -570,7 +584,7 @@ class SubgraphRunner:
         user_message: str,
         tracker: _SubgraphStatusTracker,
         execution_context: ExecutionContext,
-    ) -> Generator[dict[str, Any], None, None]:
+    ) -> Generator[dict[str, Any], None, str | None]:
         """Execute an invoke subgraph: synchronously call target container."""
         # Find the call edge originating from this subgraph
         outgoing = skeleton.get_outgoing_edges(sg.subgraph_id)
@@ -585,6 +599,23 @@ class SubgraphRunner:
         # Find target subgraph's container
         target_sg = _find_subgraph_by_node_id(skeleton, call_edge.target_node_id)
         target_container = _find_container(skeleton, target_sg.container_id)
+        caller_sg = _find_latest_completed_subgraph_in_container(
+            skeleton=skeleton,
+            container=container,
+            current_subgraph=sg,
+            tracker=tracker,
+        )
+        invoke_request = _resolve_invoke_request(
+            current_sg=sg,
+            caller_sg=caller_sg,
+            execution_context=execution_context,
+        )
+        delegated_user_message = str(
+            invoke_request.get("task_description") or user_message
+        ).strip() or user_message
+        child_runtime_context = _build_invoke_runtime_context(
+            invoke_request=invoke_request,
+        )
 
         # Synchronously execute target container
         target_result: ContainerResult = yield from self._execute_container(
@@ -594,17 +625,24 @@ class SubgraphRunner:
             ai_proxy_client=ai_proxy_client,
             recorder=recorder,
             actor=actor,
-            user_message=user_message,
+            user_message=delegated_user_message,
             tracker=tracker,
+            pad=pad,
+            runtime_context=child_runtime_context,
         )
 
-        # Inject return conclusion into caller's scratchpad
+        controller_decision = _build_session_controller_invoke_decision(
+            invoke_subgraph=sg,
+            invoke_request=invoke_request,
+            target_result=target_result.conclusion,
+        )
         pad.append_stage_output(
             sg.subgraph_key,
-            f"[跨容器调用返回] {target_result.conclusion}",
+            json.dumps(controller_decision, ensure_ascii=False),
         )
 
         tracker.transition(sg.subgraph_id, SubgraphStatus.COMPLETED)
+        return "suspend" if controller_decision.get("should_suspend") else "reply"
 
     @staticmethod
     def _advance_handoff(sg: RuntimeSubgraph) -> None:
@@ -703,24 +741,27 @@ def _find_subgraph_boundary_node_id(
     return None
 
 
-def _latest_stage_output(pad: Scratchpad) -> str:
+def _latest_stage_output(pad: Scratchpad) -> Any:
     """Return the content of the most recent ``stage_output`` entry."""
     entries = pad.read(filter_type="stage_output")
     if not entries:
         return ""
-    return str(entries[-1].content)
+    return entries[-1].content
 
 
 def _build_subgraph_context(
     *,
     sg: RuntimeSubgraph,
+    container: RuntimeContainer,
     recorder: Any,
     pad: Scratchpad,
+    runtime_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Seed ToolLoopRunner context with recorder task metadata when available."""
     context: dict[str, Any] = {
         "_current_subgraph": sg.subgraph_key,
         "_graph_recorder": recorder,
+        "_tool_scope": str((sg.config_json or {}).get("tool_scope") or container.container_key or ""),
     }
     task_context = getattr(recorder, "_task_context", None)
     if isinstance(task_context, dict):
@@ -752,8 +793,18 @@ def _build_subgraph_context(
             graph = None
         meta = (graph or {}).get("meta_json") or {}
         resolved_requirement_id = meta.get("resolved_requirement_id")
+        for key in (
+            "classification_result",
+            "last_write_result",
+            "last_approval_result",
+            "approval_pending",
+        ):
+            if key in meta:
+                context[key] = meta.get(key)
     if resolved_requirement_id:
         context["resolved_requirement_id"] = resolved_requirement_id
+    if runtime_context:
+        context.update(runtime_context)
     prompt_builder_kind = str(config.get("prompt_builder") or "").strip()
     if prompt_builder_kind.startswith("session_controller_") and user_message:
         from backend_business.services.agent.agents.session_controller.prompt_builder import (
@@ -761,6 +812,8 @@ def _build_subgraph_context(
         )
 
         context["routing_hint"] = infer_routing_hint(user_message)
+    if prompt_builder_kind == "session_controller_decision":
+        context["_native_invoke_enabled"] = True
     return context
 
 
@@ -790,11 +843,261 @@ def _resolve_prompt_builder(
         )
 
         return SessionControllerReplyGraphPromptBuilder(reply_kind="suspend")
+    if prompt_builder_kind == "session_controller_requirement_delegate":
+        from backend_business.services.agent.agents.session_controller.graph_prompt_builders import (
+            SessionControllerRequirementDelegatePromptBuilder,
+        )
+
+        return SessionControllerRequirementDelegatePromptBuilder()
+    if prompt_builder_kind == "session_controller_conflict_delegate":
+        from backend_business.services.agent.agents.session_controller.graph_prompt_builders import (
+            SessionControllerConflictDelegatePromptBuilder,
+        )
+
+        return SessionControllerConflictDelegatePromptBuilder()
+    if prompt_builder_kind == "session_controller_classification_delegate":
+        from backend_business.services.agent.agents.session_controller.graph_prompt_builders import (
+            SessionControllerClassificationDelegatePromptBuilder,
+        )
+
+        return SessionControllerClassificationDelegatePromptBuilder()
     return SubgraphPromptBuilder(
         task_description=sg.task_description,
         scratchpad=pad,
         extra_system_context=str(context.get("_extra_system_context") or ""),
     )
+
+
+def _should_enable_complete_phase(sg: RuntimeSubgraph) -> bool:
+    prompt_builder_kind = str((sg.config_json or {}).get("prompt_builder") or "").strip()
+    return prompt_builder_kind not in {
+        "session_controller_requirement_delegate",
+        "session_controller_conflict_delegate",
+        "session_controller_classification_delegate",
+    }
+
+
+def _resolve_tool_loop_round_limit(context: dict[str, Any]) -> int:
+    raw_value = context.get("max_tool_call_rounds")
+    try:
+        normalized = int(raw_value)
+    except (TypeError, ValueError):
+        return 50
+    return max(1, normalized)
+
+
+def _build_subgraph_output(
+    *,
+    sg: RuntimeSubgraph,
+    result: ToolLoopResult | None,
+) -> Any:
+    if result is None:
+        return None
+    config = sg.config_json or {}
+    contract_kind = str(config.get("result_contract") or "").strip()
+    if contract_kind == "requirement_agent":
+        context = dict(result.context or {})
+        raw_mode = str(
+            context.get("mode")
+            or (
+                "approval_pending"
+                if context.get("approval_pending")
+                else "clarification"
+                if context.get("clarification_required")
+                else "chat"
+            )
+        ).strip().lower()
+        return {
+            "status": "success",
+            "tool_loop_reply": result.tool_loop_reply,
+            "resolved_requirement_id": context.get("resolved_requirement_id"),
+            "write_result": context.get("last_write_result"),
+            "mode": raw_mode,
+            "clarification_required": raw_mode == "clarification",
+            "approval_pending": bool(context.get("approval_pending")),
+            "approval_result": context.get("last_approval_result"),
+        }
+    if contract_kind == "conflict_detection":
+        return {
+            "status": "success",
+            "tool_loop_reply": result.tool_loop_reply,
+        }
+    if contract_kind == "requirement_classification":
+        context = dict(result.context or {})
+        return {
+            "status": "success",
+            "tool_loop_reply": result.tool_loop_reply,
+            "resolved_requirement_id": context.get("resolved_requirement_id"),
+            "classification_result": context.get("classification_result"),
+        }
+    if result.conclusion is not None:
+        return result.conclusion
+    return result.tool_loop_reply
+
+
+def _find_latest_completed_subgraph_in_container(
+    *,
+    skeleton: RuntimeGraphSkeleton,
+    container: RuntimeContainer,
+    current_subgraph: RuntimeSubgraph,
+    tracker: _SubgraphStatusTracker,
+) -> RuntimeSubgraph | None:
+    candidates = [
+        sg
+        for sg in skeleton.get_subgraphs_for_container(container.container_id)
+        if sg.order_index < current_subgraph.order_index
+        and tracker.get(sg.subgraph_id) == SubgraphStatus.COMPLETED
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item.order_index)
+
+
+def _resolve_invoke_request(
+    *,
+    current_sg: RuntimeSubgraph,
+    caller_sg: RuntimeSubgraph | None,
+    execution_context: ExecutionContext,
+) -> dict[str, Any]:
+    if caller_sg is None:
+        raise ValueError(f"invoke subgraph '{current_sg.subgraph_key}' 缺少调用来源")
+    expected_agent = str((current_sg.config_json or {}).get("delegate_agent") or "").strip()
+    entries = execution_context.local_entries(caller_sg.subgraph_key)
+    phase_payload: dict[str, Any] = {}
+    for entry in reversed(entries):
+        if entry.kind != "phase_conclusion":
+            continue
+        value = entry.value if isinstance(entry.value, dict) else {}
+        conclusion = value.get("conclusion")
+        if not isinstance(conclusion, str) or not conclusion.strip():
+            continue
+        try:
+            parsed = json.loads(conclusion)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            phase_payload = parsed
+            break
+    for entry in reversed(entries):
+        if entry.kind != "tool_result":
+            continue
+        value = entry.value if isinstance(entry.value, dict) else {}
+        tool_result = value.get("result") if isinstance(value.get("result"), dict) else {}
+        if not tool_result.get("native_invoke"):
+            continue
+        delegated_agent = str(tool_result.get("delegated_agent") or "").strip()
+        if expected_agent and delegated_agent != expected_agent:
+            continue
+        merged = dict(tool_result)
+        for key in (
+            "resolved_requirement_id",
+            "assistant_reply_seed",
+            "tool_loop_reply",
+            "clarification_question",
+            "approval_pending",
+            "approval_result",
+            "should_suspend",
+            "suspend_reason",
+        ):
+            if phase_payload.get(key) is not None and merged.get(key) is None:
+                merged[key] = phase_payload.get(key)
+        return merged
+    raise ValueError(
+        f"invoke subgraph '{current_sg.subgraph_key}' 未找到匹配的原生 invoke 请求"
+    )
+
+
+def _build_invoke_runtime_context(
+    *,
+    invoke_request: dict[str, Any],
+) -> dict[str, Any]:
+    delegated_agent = str(invoke_request.get("delegated_agent") or "").strip()
+    requirement_id = str(invoke_request.get("requirement_id") or "").strip() or None
+    context: dict[str, Any] = {
+        "_tool_scope": delegated_agent,
+        "_native_invoke_enabled": False,
+        "delegated_agent": delegated_agent,
+    }
+    if delegated_agent == "requirement_agent":
+        context["selected_requirement_id"] = requirement_id
+        context["prompt_payload_format"] = invoke_request.get("prompt_payload_format") or "markdown"
+        context["historical_node_context"] = []
+        context["max_tool_call_rounds"] = invoke_request.get("max_tool_call_rounds")
+    elif delegated_agent == "requirement_classification_agent":
+        context["selected_requirement_id"] = requirement_id
+        context["selected_requirement_locked"] = bool(requirement_id)
+        context["max_tool_call_rounds"] = invoke_request.get("max_tool_call_rounds")
+    elif delegated_agent == "conflict_detection":
+        context["max_tool_call_rounds"] = invoke_request.get("max_tool_call_rounds")
+    if requirement_id:
+        context["resolved_requirement_id"] = requirement_id
+    return context
+
+
+def _build_session_controller_invoke_decision(
+    *,
+    invoke_subgraph: RuntimeSubgraph,
+    invoke_request: dict[str, Any],
+    target_result: Any,
+) -> dict[str, Any]:
+    delegated_agent = str(invoke_request.get("delegated_agent") or "").strip()
+    result = target_result if isinstance(target_result, dict) else {
+        "status": "success",
+        "tool_loop_reply": str(target_result or "").strip(),
+    }
+    tool_loop_reply = str(result.get("tool_loop_reply") or result.get("reply") or "").strip()
+    resolved_requirement_id = str(
+        result.get("resolved_requirement_id")
+        or invoke_request.get("resolved_requirement_id")
+        or invoke_request.get("requirement_id")
+        or ""
+    ).strip() or None
+    raw_mode = str(result.get("mode") or "").strip().lower()
+    if raw_mode == "clarification":
+        raw_mode = "clarify"
+    approval_pending = bool(result.get("approval_pending"))
+    should_suspend = False
+    suspend_reason = None
+    mode = {
+        "requirement_agent": "delegate_requirement",
+        "conflict_detection": "delegate_conflict",
+        "requirement_classification_agent": "delegate_classification",
+    }.get(delegated_agent, "direct_reply")
+    clarification_question = None
+    context: dict[str, Any] = {}
+
+    if raw_mode == "clarify":
+        mode = "clarify"
+        should_suspend = True
+        suspend_reason = "clarification"
+        clarification_question = tool_loop_reply or None
+    elif approval_pending:
+        mode = "approval_pending"
+        should_suspend = True
+        suspend_reason = "approval_pending"
+
+    if result.get("write_result") is not None:
+        context["last_write_result"] = result.get("write_result")
+    if result.get("approval_result") is not None:
+        context["last_approval_result"] = result.get("approval_result")
+    if result.get("classification_result") is not None:
+        context["classification_result"] = result.get("classification_result")
+
+    return {
+        "mode": mode,
+        "tool_loop_reply": tool_loop_reply,
+        "assistant_reply_seed": tool_loop_reply or None,
+        "clarification_question": clarification_question,
+        "delegated_agent": delegated_agent or None,
+        "resolved_requirement_id": resolved_requirement_id,
+        "dispatched_agents": [delegated_agent] if delegated_agent else [],
+        "approval_pending": approval_pending,
+        "approval_result": result.get("approval_result"),
+        "should_suspend": should_suspend,
+        "suspend_reason": suspend_reason,
+        "context": context,
+        "source_subgraph": invoke_subgraph.subgraph_key,
+    }
 
 
 def _container_key_for_container(

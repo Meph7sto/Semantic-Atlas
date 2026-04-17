@@ -21,6 +21,24 @@ import SubgraphTracePanel from '@/components/alpha/SubgraphTracePanel.vue'
 import { createEmptyGraphDetail, buildMergedSessionGraphDetail } from '@/utils/sessionGraphLayout'
 import { buildExecutionGraphExportPayload, downloadExecutionGraphFile } from '@/utils/executionGraphExport'
 
+const EXECUTION_MODE_OPTIONS = [
+  { value: 'graph', label: 'Graph', description: 'GraphExecutor 默认主路径' },
+  { value: 'classic', label: 'Classic', description: '兼容回滚链路' }
+]
+const DEFAULT_EXECUTION_MODE = 'classic'
+const resolveStoredExecutionMode = (capabilities = null) => {
+  const allowedExecutionModes = Array.isArray(capabilities?.allowed_execution_modes)
+    ? capabilities.allowed_execution_modes
+    : [DEFAULT_EXECUTION_MODE]
+  const defaultExecutionMode = allowedExecutionModes.includes(capabilities?.default_execution_mode)
+    ? capabilities.default_execution_mode
+    : allowedExecutionModes[0]
+  const storedMode = localStorage.getItem('session_controller_execution_mode')
+  return allowedExecutionModes.includes(storedMode)
+    ? storedMode
+    : defaultExecutionMode
+}
+
 const projects = ref([])
 const sessions = ref([])
 const selectedProjectId = ref('')
@@ -43,6 +61,12 @@ const isAssistantOpen = ref(false)
 const lastDispatchedAgents = ref([])
 const detailPanelRef = ref(null)
 const delegatedMaxToolCallRounds = ref(15)
+const sessionControllerCapabilities = ref({
+  graph_execution_enabled: false,
+  default_execution_mode: DEFAULT_EXECUTION_MODE,
+  allowed_execution_modes: [DEFAULT_EXECUTION_MODE]
+})
+const executionModeDraft = ref(resolveStoredExecutionMode(sessionControllerCapabilities.value))
 
 const GRAPH_CHAIN_REFRESH_DEBOUNCE_MS = 180
 const DEFAULT_DELEGATED_MAX_TOOL_CALL_ROUNDS = 15
@@ -66,6 +90,13 @@ const selectedEdge = computed(() => {
 })
 
 const latestGraphStatus = computed(() => graphDetail.value.graph?.status || 'idle')
+const graphExecutionEnabled = computed(() => Boolean(sessionControllerCapabilities.value?.graph_execution_enabled))
+const selectedExecutionModeOption = computed(() => {
+  return (
+    EXECUTION_MODE_OPTIONS.find((option) => option.value === executionModeDraft.value)
+    || EXECUTION_MODE_OPTIONS[0]
+  )
+})
 
 const detailPanelTitle = computed(() => {
   if (selectedNode.value) {
@@ -147,6 +178,30 @@ const normalizeDelegatedMaxToolCallRounds = () => {
     Math.max(MIN_DELEGATED_MAX_TOOL_CALL_ROUNDS, parsed)
   )
   return delegatedMaxToolCallRounds.value
+}
+
+const setExecutionMode = (mode) => {
+  const allowedExecutionModes = sessionControllerCapabilities.value?.allowed_execution_modes || [DEFAULT_EXECUTION_MODE]
+  if (!allowedExecutionModes.includes(mode)) return
+  executionModeDraft.value = mode
+  localStorage.setItem('session_controller_execution_mode', mode)
+}
+
+const applySessionControllerCapabilities = (capabilities) => {
+  const nextCapabilities = {
+    graph_execution_enabled: Boolean(capabilities?.graph_execution_enabled),
+    default_execution_mode: capabilities?.default_execution_mode || DEFAULT_EXECUTION_MODE,
+    allowed_execution_modes: Array.isArray(capabilities?.allowed_execution_modes) && capabilities.allowed_execution_modes.length
+      ? capabilities.allowed_execution_modes
+      : [DEFAULT_EXECUTION_MODE]
+  }
+  sessionControllerCapabilities.value = nextCapabilities
+
+  const resolvedMode = resolveStoredExecutionMode(nextCapabilities)
+  if (executionModeDraft.value !== resolvedMode) {
+    executionModeDraft.value = resolvedMode
+  }
+  localStorage.setItem('session_controller_execution_mode', resolvedMode)
 }
 
 const resetSessionView = () => {
@@ -388,6 +443,16 @@ const loadProjects = async () => {
   }
 }
 
+const loadCapabilities = async () => {
+  try {
+    const payload = await sessionControllerChatApi.getCapabilities()
+    applySessionControllerCapabilities(payload)
+  } catch (err) {
+    console.error('加载会话总控能力配置失败', err)
+    applySessionControllerCapabilities(null)
+  }
+}
+
 const loadSessionContent = async (session) => {
   if (!session?.session_id) {
     sessionId.value = ''
@@ -614,12 +679,14 @@ const sendMessage = async () => {
       sessionId: sessionId.value,
       projectId: selectedProjectId.value,
       message,
+      executionMode: executionModeDraft.value,
       useThinkingMode: useThinkingMode.value,
       delegatedMaxToolCallRounds: effectiveDelegatedMaxToolCallRounds
     })
     inputMessage.value = ''
     appendTimeline('submit', {
       message,
+      execution_mode: executionModeDraft.value,
       delegated_max_tool_call_rounds: effectiveDelegatedMaxToolCallRounds
     })
     upsertSessionPatch(sessionId.value, { updated_at: new Date().toISOString() })
@@ -670,6 +737,7 @@ watch(selectedProjectId, async (projectId) => {
 })
 
 onMounted(async () => {
+  await loadCapabilities()
   await loadProjects()
 })
 
@@ -775,6 +843,9 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-stone-500">
+            <span class="flex items-center gap-1 bg-stone-900 px-1.5 py-0.5 text-white" :title="selectedExecutionModeOption.description">
+              Mode: <span class="font-medium">{{ selectedExecutionModeOption.label }}</span>
+            </span>
             <span v-if="sessionId" class="flex items-center gap-1 bg-stone-200/50 px-1.5 py-0.5">
               Current: <span class="font-medium text-stone-700">{{ activeGraphId || '无' }}</span>
             </span>
@@ -847,18 +918,38 @@ onBeforeUnmount(() => {
                 </span>
                 <span>{{ useThinkingMode ? 'Reasoner 模式' : 'Chat 模式' }}</span>
               </label>
-              <label class="flex items-center gap-2 text-xs font-medium text-stone-600">
-                <span>子Agent最大调用</span>
-                <input
-                  v-model.number="delegatedMaxToolCallRounds"
-                  type="number"
-                  min="1"
-                  max="50"
-                  class="w-20 border border-stone-300 bg-white px-2 py-1 text-right text-xs text-stone-800 outline-none transition focus:border-stone-500 disabled:cursor-not-allowed disabled:opacity-60"
-                  :disabled="isSending || !sessionId"
-                  @blur="normalizeDelegatedMaxToolCallRounds"
-                >
-              </label>
+              <div class="flex items-center gap-3">
+                <div class="inline-flex items-center border border-stone-300 bg-white p-0.5 shadow-sm">
+                  <button
+                    v-for="option in EXECUTION_MODE_OPTIONS"
+                    :key="option.value"
+                    type="button"
+                    class="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] transition"
+                    :class="executionModeDraft === option.value
+                      ? 'bg-stone-900 text-white'
+                      : 'bg-transparent text-stone-500 hover:bg-stone-100 hover:text-stone-800'"
+                    :disabled="isSending || (option.value === 'graph' && !graphExecutionEnabled)"
+                    :title="option.value === 'graph' && !graphExecutionEnabled
+                      ? 'GraphExecutor 当前未启用'
+                      : option.description"
+                    @click="setExecutionMode(option.value)"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
+                <label class="flex items-center gap-2 text-xs font-medium text-stone-600">
+                  <span>子Agent最大调用</span>
+                  <input
+                    v-model.number="delegatedMaxToolCallRounds"
+                    type="number"
+                    min="1"
+                    max="50"
+                    class="w-20 border border-stone-300 bg-white px-2 py-1 text-right text-xs text-stone-800 outline-none transition focus:border-stone-500 disabled:cursor-not-allowed disabled:opacity-60"
+                    :disabled="isSending || !sessionId"
+                    @blur="normalizeDelegatedMaxToolCallRounds"
+                  >
+                </label>
+              </div>
             </div>
             <div class="border border-stone-300 bg-white p-2">
               <textarea

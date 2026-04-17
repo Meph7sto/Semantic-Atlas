@@ -34,6 +34,20 @@ from .tools import SessionControllerTools
 
 logger = logging.getLogger(__name__)
 
+_NORMAL_CONVERSATION_TOOL_TO_MODE = {
+    "invoke_requirement_agent": SessionControllerDecisionMode.DELEGATE_REQUIREMENT,
+    "invoke_conflict_detection": SessionControllerDecisionMode.DELEGATE_CONFLICT,
+    "invoke_requirement_classification_agent": SessionControllerDecisionMode.DELEGATE_CLASSIFICATION,
+    "list_requirements": SessionControllerDecisionMode.BROWSE,
+    "search_requirements": SessionControllerDecisionMode.BROWSE,
+}
+
+_NORMAL_CONVERSATION_TOOL_TO_AGENT = {
+    "invoke_requirement_agent": "requirement_agent",
+    "invoke_conflict_detection": "conflict_detection",
+    "invoke_requirement_classification_agent": "requirement_classification_agent",
+}
+
 
 class SessionControllerService:
     MAX_TOOL_CALL_ROUNDS = 8
@@ -63,6 +77,14 @@ class SessionControllerService:
     @staticmethod
     def _is_graph_execution_enabled() -> bool:
         return bool(settings.SESSION_CONTROLLER_GRAPH_ENABLED)
+
+    def _resolve_execution_mode(self, execution_mode: str | None) -> str:
+        if execution_mode is None:
+            return "graph" if self._is_graph_execution_enabled() else "classic"
+        normalized = str(execution_mode).strip().lower()
+        if normalized not in {"classic", "graph"}:
+            raise ValueError("execution_mode 必须是 classic 或 graph")
+        return normalized
 
     def _ensure_execution_mode_enabled(self, execution_mode: str) -> None:
         if execution_mode == "graph" and not self._is_graph_execution_enabled():
@@ -661,7 +683,13 @@ class SessionControllerService:
         snapshot = list(meta.get("scratchpad_snapshot") or [])
         decision_content = self._find_latest_stage_output_for_sources(
             snapshot,
-            source_subgraphs={"sg_controller_intake", "sg_controller_resume_intake"},
+            source_subgraphs={
+                "sg_controller_intake",
+                "sg_controller_resume_intake",
+                "sg_invoke_requirement_agent",
+                "sg_invoke_conflict_detection",
+                "sg_invoke_requirement_classification_agent",
+            },
         )
         try:
             decision_payload = (
@@ -690,6 +718,106 @@ class SessionControllerService:
         if loop_result.approval_result:
             context.setdefault("last_approval_result", loop_result.approval_result)
         return loop_result, context, assistant_reply
+
+    @staticmethod
+    def _load_normal_conversation_graph_mode_state(
+        *,
+        result: Any,
+    ) -> tuple[SessionControllerLoopResult, dict[str, Any], str]:
+        metadata = result.metadata if isinstance(getattr(result, "metadata", None), dict) else {}
+        tool_loop_payload = (
+            metadata.get("tool_loop_result")
+            if isinstance(metadata.get("tool_loop_result"), dict)
+            else {}
+        )
+        context = (
+            dict(tool_loop_payload.get("context") or {})
+            if isinstance(tool_loop_payload.get("context"), dict)
+            else {}
+        )
+        assistant_reply = str(
+            result.final_output
+            or tool_loop_payload.get("tool_loop_reply")
+            or ""
+        ).strip()
+
+        tool_results = context.get("tool_results") or []
+        last_tool_entry = tool_results[-1] if tool_results else {}
+        last_tool_name = str(last_tool_entry.get("tool_name") or "").strip()
+        last_tool_result = (
+            last_tool_entry.get("result")
+            if isinstance(last_tool_entry.get("result"), dict)
+            else {}
+        )
+        mode = _NORMAL_CONVERSATION_TOOL_TO_MODE.get(
+            last_tool_name,
+            SessionControllerDecisionMode.DIRECT_REPLY,
+        )
+        delegated_agent = _NORMAL_CONVERSATION_TOOL_TO_AGENT.get(last_tool_name)
+        approval_pending = bool(last_tool_result.get("approval_pending"))
+        approval_result = (
+            context.get("last_approval_result")
+            if isinstance(context.get("last_approval_result"), dict)
+            else None
+        )
+        status = str(last_tool_result.get("status") or "").strip().lower()
+        clarification_required = bool(
+            last_tool_result.get("clarification_required")
+            or SessionControllerService._normalize_graph_mode_loop_result(
+                {"mode": last_tool_result.get("mode")}
+            ).mode
+            == SessionControllerDecisionMode.CLARIFY
+        )
+        tool_loop_reply = str(
+            tool_loop_payload.get("tool_loop_reply")
+            or last_tool_result.get("tool_loop_reply")
+            or last_tool_result.get("reply")
+            or assistant_reply
+        ).strip()
+        clarification_question = tool_loop_reply if clarification_required else None
+        should_suspend = False
+        suspend_reason: SuspendReason | None = None
+
+        if status == "error":
+            mode = SessionControllerDecisionMode.ERROR
+        elif approval_pending:
+            mode = SessionControllerDecisionMode.APPROVAL_PENDING
+            should_suspend = True
+            suspend_reason = SuspendReason.APPROVAL_PENDING
+        elif clarification_required:
+            mode = SessionControllerDecisionMode.CLARIFY
+            should_suspend = True
+            suspend_reason = SuspendReason.CLARIFICATION
+
+        dispatched_agents = [
+            str(item).strip()
+            for item in (context.get("dispatched_agents") or [])
+            if str(item).strip()
+        ]
+        if not dispatched_agents and delegated_agent:
+            dispatched_agents = [delegated_agent]
+
+        return (
+            SessionControllerLoopResult(
+                mode=mode,
+                tool_loop_reply=tool_loop_reply,
+                assistant_reply_seed=assistant_reply or tool_loop_reply or None,
+                clarification_question=clarification_question,
+                delegated_agent=delegated_agent,
+                resolved_requirement_id=(
+                    str(context.get("resolved_requirement_id") or "").strip() or None
+                ),
+                dispatched_agents=dispatched_agents,
+                approval_pending=approval_pending,
+                approval_result=approval_result,
+                should_suspend=should_suspend,
+                suspend_reason=suspend_reason,
+                context=context,
+                rounds=int(tool_loop_payload.get("rounds") or 0),
+            ),
+            context,
+            assistant_reply,
+        )
 
     @staticmethod
     def _build_runtime_skeleton_from_detail(detail: dict[str, Any]) -> RuntimeGraphSkeleton:
@@ -816,6 +944,7 @@ class SessionControllerService:
                 "delegated_prompt_payload_format": "markdown",
                 "delegated_context_mode": "full",
             },
+            container_keys=("conductor",),
         )
         self._inherit_session_scratchpad(
             graph_id=recorder.graph_id,
@@ -860,8 +989,20 @@ class SessionControllerService:
                     project_id=project_id,
                     actor=user_id,
                 )
+                template_graph = (
+                    self.execution_graph_service.get_execution_graph(template_graph_id) or {}
+                )
                 gen = executor.execute(
-                    template_graph_id=template_graph_id,
+                    candidate_templates=[
+                        {
+                            "graph_id": template_graph_id,
+                            "name": str(template_graph.get("name") or "Session Controller"),
+                            "description": str(
+                                template_graph.get("description")
+                                or "Session Controller GraphExecutor builtin template"
+                            ),
+                        }
+                    ],
                     project_id=project_id,
                     user_message=user_message,
                     tool_executor=self.tools,
@@ -883,9 +1024,17 @@ class SessionControllerService:
                     break
                 yield event
 
-            loop_result, context, assistant_content = self._load_graph_mode_state(
-                graph_id=recorder.graph_id,
-            )
+            if (
+                isinstance(getattr(result, "metadata", None), dict)
+                and result.metadata.get("execution_path") == "normal_conversation"
+            ):
+                loop_result, context, assistant_content = (
+                    self._load_normal_conversation_graph_mode_state(result=result)
+                )
+            else:
+                loop_result, context, assistant_content = self._load_graph_mode_state(
+                    graph_id=recorder.graph_id,
+                )
             if result.status == "failed":
                 loop_result = SessionControllerLoopResult(
                     mode=SessionControllerDecisionMode.ERROR,
@@ -998,11 +1147,12 @@ class SessionControllerService:
         user_id: str,
         project_id: str,
         user_message: str,
-        execution_mode: str = "classic",
+        execution_mode: str | None = None,
         use_thinking_mode: bool = True,
         delegated_max_tool_call_rounds: int = 15,
         skip_user_message_creation: bool = False,
     ) -> Generator[dict[str, Any], None, None]:
+        execution_mode = self._resolve_execution_mode(execution_mode)
         self._ensure_execution_mode_enabled(execution_mode)
         if execution_mode == "graph":
             yield from self.stream_graph_executor_reply(

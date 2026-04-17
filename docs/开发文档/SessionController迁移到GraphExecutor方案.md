@@ -1,31 +1,36 @@
-# Phase 1: SessionController 非拓扑收敛方案（classic 为生产默认）
+# SessionController 迁移到 GraphExecutor 统一方案
 
 ## 1. 文档定位
 
-这是一份 **Phase 1** 方案文档，不是实现说明。
+这份文档是 `SessionController` 从当前实现演进到 `GraphExecutor` 的统一主方案，用来替代原先拆开的 Phase 1 / Phase 2 两份文档。
 
-当前边界非常明确：
+本文档统一回答四件事：
 
-- 先**不引入拓扑图**
-- 先**不把 SessionController 迁到 GraphExecutor / SubgraphRunner**
-- 先**不做 runtime 原生 `invoke/handoff`**
-- 先**不进入实现阶段**
+- 当前正式架构是什么
+- 为什么要先做 classic 收敛
+- GraphExecutor 迁移在什么前提下开始、怎么推进
+- 什么时候可以把 `graph` 从实验链路切成默认链路
 
-本阶段只做一件事：
+这是一份方案文档，不是实现说明。
 
-**把现有 SessionController 架构收敛成一套清晰、可维护、可测试的非拓扑图方案。**
+## 2. 当前状态与边界
 
-拓扑图化迁移放到后续阶段单独设计。
+当前口径必须统一为：
+
+- `classic` 仍是生产默认链路
+- `graph` 只能作为实验链路存在
+- 实验链路必须由显式开关控制：`SESSION_CONTROLLER_GRAPH_ENABLED`
+- 未开启时，公开 API 不接受 `execution_mode="graph"`
 
 补充边界：
 
-- 仓库里如果存在 `execution_mode="graph"` 相关代码或开关，只视为 **Phase 2 实验链路**
-- **当前正式架构** 仍以 `classic` 为生产默认与验收口径
-- 实验链路不代表迁移已完成，更不代表可以替代本阶段收敛要求
+- 仓库里如果已经存在 `execution_mode="graph"`、`GraphExecutor`、拓扑图建模代码，只能视为后续阶段预研或实验实现
+- 实验链路可存在，但不代表迁移完成
+- 迁移完成的判断标准不是“graph 能跑”，而是“graph 可以替代 classic 成为默认主路径”
 
-## 2. 背景与当前问题
+## 3. 背景与问题
 
-当前 `SessionController` 在业务定位上是用户唯一看到的高层总控 Agent，但在代码实现上，它同时承担了三种不同层次的职责：
+当前 `SessionController` 在业务上是用户唯一看到的总控 Agent，但在实现上同时承担了三层职责：
 
 1. 高层对话决策
    - 理解用户意图
@@ -40,19 +45,75 @@
 
 3. 工具层流程控制
    - 通过工具副作用控制主循环结束
-   - 通过 context 注入强行改写父流程行为
+   - 通过 context 注入改写父流程行为
    - 在工具返回后隐式决定是否停止、是否总结
 
-问题不在于功能不能用，而在于职责边界混杂，导致：
+问题核心不是功能不能用，而是职责边界混杂：
 
-- `SessionControllerService` 既是入口 service，又像 orchestration engine
-- `SessionControllerTools` 既是工具适配层，又偷偷承担部分流程控制
-- 高层决策没有清晰的结构化输出协议，只能从若干 context 字段和副作用中推断
-- 后续无论是否迁移到拓扑图，当前代码都不够干净
+- `SessionControllerService` 既像 service，又像 orchestration engine
+- `SessionControllerTools` 既做能力适配，又偷偷控制父流程
+- 高层决策没有统一的结构化协议，只能靠零散 context 字段和副作用推断
+- 这会同时阻碍 classic 稳定性和后续 GraphExecutor 迁移
 
-## 3. 本阶段目标
+因此，迁移不能直接从“老结构”跳到“graph 默认”，而要分阶段推进。
 
-### 3.1 保持不变的东西
+## 4. 总体迁移原则
+
+### 4.1 原则一：先收敛职责，再切执行框架
+
+如果不先把职责边界理清，直接迁到 `GraphExecutor` 只会把现有隐式耦合搬进图里，复杂度不会下降。
+
+### 4.2 原则二：总控决策必须显式化
+
+无论在 `classic` 还是 `graph`，`SessionController` 的高层决策都必须通过统一结构化结果表达，不能依赖工具副作用和零散上下文字段。
+
+### 4.3 原则三：tools 只做能力，不做父流程控制
+
+tools 可以调用浏览能力和子 Agent，但不能决定父循环何时结束、如何收尾、向用户回复什么。
+
+### 4.4 原则四：service 只负责状态机
+
+service 负责 session 校验、graph 生命周期、SSE、挂起恢复、消息持久化；不负责猜测业务语义。
+
+### 4.5 原则五：双轨期间必须有明确默认与回滚口径
+
+在 `classic` 和 `graph` 并存阶段，必须始终明确：
+
+- 哪条是生产默认链路
+- 哪条是实验入口
+- 关闭实验链路后系统是否能完全回退到 classic
+
+## 5. 总体阶段划分
+
+整个迁移统一拆成三个阶段：
+
+### 5.1 Phase 1：classic 架构收敛
+
+目标不是引入拓扑图，而是把当前 `SessionController` 收敛成一套清晰、可维护、可测试的非拓扑方案。
+
+本阶段明确不做：
+
+- 不把 `SessionController` 主流程迁到 `GraphExecutor / SubgraphRunner`
+- 不引入 `controller_intake_llm / handoff / invoke` 的图节点建模
+- 不把 runtime 原生 `invoke/handoff` 作为正式依赖
+
+本阶段完成后，`classic` 仍是生产默认。
+
+### 5.2 Phase 2：GraphExecutor 迁移落地
+
+在 Phase 1 收敛完成后，再让 `GraphExecutor` 接管 `SessionController` 主流程，并把 `clarify / suspend / final_reply` 变成图中的显式阶段。
+
+本阶段的 `graph` 仍默认视为实验链路，直到满足切默认条件。
+
+### 5.3 Phase 3：graph 切默认
+
+当 `graph` 方案经过联调、回归、灰度和回滚验证后，才允许把默认执行路径从 `classic` 切到 `graph`。
+
+## 6. Phase 1：classic 收敛方案
+
+### 6.1 目标
+
+保持不变的东西：
 
 - `SessionController` 仍然是用户唯一入口
 - `SessionController` 仍然保留高层决策权
@@ -60,64 +121,15 @@
 - 现有 session graph、SSE、挂起恢复能力继续保留
 - 现有 `ToolLoopRunner` 继续作为基础能力使用
 
-### 3.2 本阶段要改变的东西
+本阶段要改变的东西：
 
 - 不再让工具层承担父流程控制
-- 让高层决策输出变成**显式结构化协议**
+- 让高层决策输出变成显式结构化协议
 - 让 `SessionControllerService` 只负责 service 该做的事
-- 让 `SessionControllerToolLoopRunner` 只负责“意图识别 + 调度 + 结构化结果产出”
-- 把“最终回复”和“是否挂起”的判断口径从隐式副作用改成显式字段
+- 让 `SessionControllerToolLoopRunner` 只负责意图识别、调度和结构化结果产出
+- 把“最终回复”和“是否挂起”的判断从隐式副作用改成显式字段
 
-## 4. 核心原则
-
-### 4.1 原则一：当前阶段不碰拓扑图
-
-当前阶段不讨论：
-
-- `session_controller_agent.json`
-- `controller_intake_llm / handoff / invoke` 子图建模
-- GraphExecutor 接管 SessionController 主流程
-
-这些内容全部下放到后续阶段。
-
-### 4.2 原则二：决策归总控 tool loop，不归 tools 副作用
-
-在当前非拓扑图方案下，高层决策仍由 `SessionController` 的 LLM tool loop 完成，但必须满足：
-
-- 决策由 `SessionControllerToolLoopRunner` 的结构化结果显式表达
-- 决策**不能**继续通过 `SessionControllerTools` 的副作用偷偷完成
-
-也就是说：
-
-- 决策属于总控 Agent
-- 执行属于 tools / 子 Agent
-- 状态流转属于 service
-
-### 4.3 原则三：tools 只做能力，不做父流程控制
-
-`SessionControllerTools` 可以保留这些能力：
-
-- `list_requirements`
-- `search_requirements`
-- `invoke_requirement_agent`
-- `invoke_conflict_detection`
-- `invoke_requirement_classification_agent`
-
-但必须去掉以下职责：
-
-- `_mark_tool_loop_should_stop(...)`
-- `_stop_after_tool_round`
-- `_forced_tool_loop_reply`
-- 通过 context 副作用提前终止父流程
-- 隐式决定“父流程接下来该如何收尾”
-
-### 4.4 原则四：service 只负责状态机，不负责业务猜测
-
-`SessionControllerService` 在本阶段仍保留流程骨架，但它的判断依据必须来自显式结构化结果，而不是零散 context 字段和工具副作用。
-
-## 5. 目标结构
-
-本阶段收敛后的结构如下：
+### 6.2 目标结构
 
 ```text
 用户输入
@@ -141,15 +153,11 @@ SessionControllerTools
   └── classification agent 调用
 ```
 
-这套结构里最重要的变化不是“换框架”，而是：
+这一步最关键的变化不是换框架，而是把总控 Agent 的输出从隐式副作用收敛成显式协议。
 
-**要把总控 agent 的输出，从一堆隐式 context 副作用，收敛成一份显式的结构化结果。**
+### 6.3 统一结果协议
 
-## 6. 结构化结果协议
-
-这是当前阶段最关键的设计点。
-
-建议新增统一结果结构，例如：
+建议引入统一结果结构，例如：
 
 ```json
 {
@@ -167,245 +175,185 @@ SessionControllerTools
 }
 ```
 
-### 6.1 `mode` 的建议枚举
+`mode` 建议统一为：
 
 - `direct_reply`
-  - 本轮不需要委托，SessionController 可直接回复
-
 - `clarify`
-  - 信息不足，必须先向用户提最小必要问题
-
 - `browse`
-  - 本轮主要是浏览型查询，可在总控层直接总结
-
 - `delegate_requirement`
-  - 需要委托需求管理 Agent
-
 - `delegate_conflict`
-  - 需要委托冲突检测 Agent
-
 - `delegate_classification`
-  - 需要委托需求分类 Agent
-
 - `approval_pending`
-  - 子 Agent 已发起审批，当前轮需要告知用户并挂起
-
 - `error`
-  - 当前轮无法完成，需要统一错误处理
 
-### 6.2 `should_suspend` 与 `suspend_reason`
+挂起字段统一为：
 
-当前阶段不引入 `handoff` 拓扑节点，因此挂起仍在 service 层执行，但必须通过显式字段驱动：
+- `should_suspend = true | false`
+- `suspend_reason = clarification | approval_pending | external_wait | null`
 
-- `should_suspend = true`
-- `suspend_reason = clarification | approval_pending | external_wait`
+这样 service 不再自行猜测业务语义，而是消费统一协议。
 
-这样 service 不再自己猜测是否挂起，而是消费统一结果协议。
+### 6.4 各层职责
 
-## 7. 各层职责调整
+`SessionControllerService`：
 
-### 7.1 `SessionControllerService`
+- 保留 session 校验、消息持久化、`active_graph_id` 维护、runtime graph 生命周期、SSE 转发
+- 根据结构化结果决定 `succeed_graph / suspend_graph / fail_graph`
+- 不再依赖工具副作用或零散 context 字段收尾
 
-保留职责：
-
-- session 访问校验
-- user/assistant message 持久化
-- `active_graph_id` 维护
-- runtime graph 生命周期控制
-- SSE 事件转发
-- 根据结构化结果决定 `succeed_graph` / `suspend_graph` / `fail_graph`
-
-应收缩的职责：
-
-- 不再自己从若干零散 context 字段推导完整业务含义
-- 不再依赖工具层副作用决定流程何时结束
-- 不再把“工具返回了什么”和“父流程该怎么收尾”混在一起
-
-### 7.2 `SessionControllerToolLoopRunner`
-
-保留职责：
+`SessionControllerToolLoopRunner`：
 
 - 驱动总控 Agent 的 LLM + tool loop
-- 组织 prompt
-- 维护总控上下文
-- 返回结构化结果协议
+- 维护 prompt 与总控上下文
+- 返回显式结构化结果
+- 必须显式包含 `mode / should_suspend / delegated_agent / suspend_reason`
 
-新增要求：
+`SessionControllerTools`：
 
-- 返回值必须显式包含 `mode`
-- 显式包含 `should_suspend`
-- 显式包含 `delegated_agent`
-- 显式包含最终给 service 使用的收尾信息
-
-### 7.3 `SessionControllerTools`
-
-保留职责：
-
-- 实际调用浏览类接口
-- 实际调用各子 Agent
+- 只负责浏览能力与子 Agent 调用
 - 标准化工具结果
 - 回填最小必要上下文，例如 `resolved_requirement_id`
+- 不再负责终止父循环、指定父层回复、指定父层总结策略
 
-必须移除的职责：
+### 6.5 最终回复与挂起策略
 
-- 终止父循环
-- 强行指定父层回复文本
-- 强行指定父层总结策略
-- 通过隐藏字段替代正式协议
+最终回复分两层：
 
-## 8. 最终回复策略
+- `tool_loop_reply`：结构化、中间态、面向系统与日志
+- `assistant_reply`：面向用户的自然语言输出，由 service 在显式“最终回复阶段”统一生成
 
-当前阶段先不把最终回复迁入拓扑图，但要把回复策略收敛清楚。
+挂起策略统一为：
 
-建议分两层：
+- `mode == clarify` 时，`clarification_question` 非空，`should_suspend == true`，`suspend_reason == clarification`
+- `mode == approval_pending` 时，`approval_pending == true`，`should_suspend == true`，`suspend_reason == approval_pending`
 
-1. `tool_loop_reply`
-   - 结构化、偏中间态
-   - 面向系统与日志
+service 的职责是按统一口径先发送 assistant message，再切 graph 状态，而不是自行拼接业务判断。
 
-2. `assistant_reply`
-   - 面向用户的自然语言输出
-   - 由 service 在一个明确的“最终回复阶段”统一生成
+### 6.6 Phase 1 文件改造清单
 
-关键不是是否还留在 service，而是：
-
-**最终回复必须只由一个显式阶段生成，不能由工具副作用和 service if-else 混合拼装。**
-
-## 9. 挂起策略
-
-当前阶段仍由 service 执行挂起，但口径必须统一。
-
-### 9.1 澄清挂起
-
-当 `mode == clarify` 时：
-
-- `clarification_question` 必须非空
-- `should_suspend == true`
-- `suspend_reason == clarification`
-
-service 负责：
-
-- 先把澄清问题作为 assistant message 发给用户
-- 再把 graph 状态置为 `suspended`
-
-### 9.2 审批挂起
-
-当 `mode == approval_pending` 时：
-
-- `approval_pending == true`
-- `should_suspend == true`
-- `suspend_reason == approval_pending`
-
-service 负责：
-
-- 告知用户审批已发送
-- 将 graph 置为 `suspended`
-
-## 10. 文件改造清单
-
-### 10.1 本阶段必须修改的文件
+必须修改：
 
 - `backend_business/services/agent/agents/session_controller/service.py`
-  - 收敛流程控制
-  - 改为消费显式结构化结果协议
-  - 删除依赖隐式 context 副作用的收尾逻辑
-
 - `backend_business/services/agent/agents/session_controller/tool_loop_runner.py`
-  - 定义并返回结构化结果协议
-  - 明确 `mode / should_suspend / delegated_agent`
-
 - `backend_business/services/agent/agents/session_controller/tools.py`
-  - 删除 `_mark_tool_loop_should_stop`
-  - 删除 `_stop_after_tool_round`
-  - 删除 `_forced_tool_loop_reply`
-  - 保留能力适配
-
 - `backend_business/services/agent/agents/session_controller/prompt_builder.py`
-  - 强化对总控 LLM 的输出约束
-  - 明确要求模型产出可映射到结构化结果协议的行为
 
-### 10.2 建议新增的文件
+建议新增：
 
 - `backend_business/services/agent/agents/session_controller/contracts.py`
-  - 定义 `SessionControllerDecisionMode`
-  - 定义 `SessionControllerLoopResult`
-  - 定义 `SuspendReason`
 
-如果不想新增文件，也至少应在现有 runner 中引入清晰的数据结构，而不是裸 dict。
-
-### 10.3 本阶段需要同步修改的测试
+建议同步测试：
 
 - `tests/agent_chat/test_session_controller_service.py`
-  - 改为校验 service 是否正确消费结构化结果
-
 - `tests/agent_chat/test_session_controller_tools.py`
-  - 删除依赖 `_stop_after_tool_round` 的断言
-  - 强化“tools 不控制父流程”的约束测试
+- `tests/agent_chat/test_session_controller_result_contract.py`
 
-- 建议新增：
-  - `tests/agent_chat/test_session_controller_result_contract.py`
-  - 专门测试 `mode / should_suspend / delegated_agent / suspend_reason`
+### 6.7 Phase 1 验收标准
 
-## 11. 删除候选
+本阶段完成后应满足：
 
-### 11.1 本阶段完成后可删除或废弃
+1. `SessionController` 仍然是用户唯一入口。
+2. tools 不再控制父流程的停止与收尾。
+3. `SessionControllerToolLoopRunner` 返回显式结构化结果。
+4. service 只根据结构化结果处理成功、挂起、失败。
+5. 澄清与审批挂起有统一字段表达。
+6. 现有 SSE 与会话链能力继续可用。
 
-- `SessionControllerTools` 中：
-  - `_mark_tool_loop_should_stop`
-  - `_stop_after_tool_round`
-  - `_forced_tool_loop_reply`
+## 7. Phase 2：迁移到 GraphExecutor
 
-### 11.2 后续阶段可删除
+### 7.1 启动前提
 
-- `SessionControllerService` 中依赖零散 context 字段做业务分支的老代码
-- 各子 Agent service 的 inline 兼容调用路径
+Phase 2 只能在 Phase 1 完成后开始。判断标准不是“代码里已经有 graph 入口”，而是：
 
-## 12. 验收标准
+- classic 职责边界已经收敛
+- 结构化结果协议已经稳定
+- 现有挂起 / 恢复 / SSE / 消息持久化口径已统一
 
-本阶段方案落地后，应满足：
+### 7.2 迁移目标
 
-1. `SessionController` 仍然是用户唯一入口
-2. tools 不再控制父流程的停止与收尾
-3. `SessionControllerToolLoopRunner` 返回显式结构化结果
-4. service 只根据结构化结果进行挂起、成功、失败处理
-5. 澄清与审批挂起有统一字段表达
-6. 现有 SSE 与会话链能力继续可用
+Phase 2 的目标是：
 
-## 13. 风险与注意事项
+- 让 `GraphExecutor` 接管 `SessionController` 主流程
+- 将 `clarify / suspend / final_reply` 变成图中的显式阶段
+- 将子 Agent 委托从兼容工具调用升级为 runtime 原生调度
+- 继续保留 classic 作为可回滚链路，直到 graph 满足切默认条件
 
-### 13.1 风险一：只改字段名，不改职责边界
+### 7.3 Graph 方案边界
 
-如果只是把旧的隐式 context 副作用重新包装成几个新字段，但 tools 仍然在控制父流程，那这次收敛就是假的。
+Phase 2 中允许引入：
 
-### 13.2 风险二：service 继续保留过多业务分支
+- `session_controller_agent.json`
+- `controller_intake_llm / handoff / invoke / final_reply` 等图节点
+- runtime 原生 `invoke/handoff`
+- 由图显式表达的挂起与恢复阶段
 
-如果 service 仍然在自己判断“这是不是澄清”“这是不是审批”“这是不是直接回复”，而不是消费显式 `mode`，则边界仍未清楚。
+但必须满足：
 
-### 13.3 风险三：提前混入拓扑图方案
+- `graph` 仍由显式开关控制
+- 未开启开关时，外部请求不能进入 graph 默认路径
+- graph 实现不能破坏 classic 现有回滚能力
 
-当前阶段如果又把文档和代码拉回拓扑图，会把问题重新搞复杂。此阶段应当聚焦在：
+### 7.4 迁移方式
 
-- 收敛职责
-- 明确协议
-- 去掉工具副作用
+推荐按“先图内对齐语义，再替换入口”的方式推进：
 
-## 14. 后续阶段预留
+1. 先用与 Phase 1 相同的结构化协议定义图节点边界。
+2. 再把 `clarify / approval_pending / final_reply` 从 service 收尾迁到图中的显式阶段。
+3. 再把子 Agent 委托从工具兼容层迁到 runtime 原生 `invoke`。
+4. 最后才评估是否把公开入口默认切到 graph。
 
-等当前阶段完成并稳定后，再进入后续阶段：
+这样做的目的，是避免在“执行框架切换”和“业务语义重写”两个维度同时失控。
 
-1. 将 `SessionController` 迁移到拓扑图 / GraphExecutor
-2. 将 `clarify / suspend / final_reply` 转成图中的显式阶段
-3. 将子 Agent 委托从工具兼容层升级为 runtime 原生 `invoke`
+## 8. Phase 3：切默认与回滚
 
-但这些都**不属于当前阶段**。
+### 8.1 切默认前提
 
-## 15. 结论
+只有在以下条件全部满足后，才允许把 `graph` 设为默认主链路：
 
-当前阶段的正确做法不是“马上拓扑图化”，而是先把现有 `SessionController` 清理干净：
+- 前后端明确切换到 `graph` 入口
+- 推理服务、工具调用提供方、Postgres、挂起恢复链路全部完成联调
+- SSE、会话持久化、审批挂起、澄清挂起全链路验证通过
+- 回滚开关明确可用，关闭后可完整退回 classic
+- 验收口径从“实验可运行”升级为“默认主路径稳定”
 
-- 总控决策留在总控 Agent
-- tools 只负责能力
-- service 只负责状态机
-- 所有关键收尾行为通过显式结果协议驱动
+### 8.2 双轨并存要求
 
-这一步做完，后面无论是否迁移到拓扑图，都会更稳、更容易实施。
+在切默认前，必须始终明确区分：
+
+- 生产默认链路
+- 实验入口
+- 回滚方式
+
+任何时候都不能出现“graph 已经部分接管，但默认和回滚口径不清楚”的状态。
+
+## 9. 风险与注意事项
+
+### 9.1 风险一：只改字段名，不改职责边界
+
+如果只是把旧的隐式 context 副作用包装成几个新字段，但 tools 仍然控制父流程，那 Phase 1 就没有真正完成。
+
+### 9.2 风险二：service 继续承载业务猜测
+
+如果 service 仍然自己判断“这是澄清还是审批还是直接回复”，而不是消费显式 `mode`，则 classic 收敛仍然失败。
+
+### 9.3 风险三：跳过 Phase 1 直接图化
+
+如果直接把当前隐式逻辑搬进 GraphExecutor，图只会成为新的耦合承载体，不会自动带来清晰边界。
+
+### 9.4 风险四：graph 入口先于回滚口径落地
+
+如果 graph 能进但没有明确开关、默认口径和回滚方案，就会把实验链路误当成正式架构。
+
+## 10. 统一结论
+
+`SessionController -> GraphExecutor` 的正确路径不是“一步到位切 graph 默认”，而是：
+
+1. 先完成 classic 收敛，清理职责边界。
+2. 再把稳定的语义迁入 GraphExecutor。
+3. 最后在双轨可回滚的前提下切换默认链路。
+
+统一后的架构判断标准也应固定为：
+
+- 当前正式架构：`classic`
+- 当前迁移方向：`GraphExecutor`
+- 当前实施顺序：先收敛、再迁移、后切默认

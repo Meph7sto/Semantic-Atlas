@@ -653,8 +653,8 @@ if ($doFrontend) {
       Write-Host "[start] Frontend entry set to: all (全部模式+引导页)" -ForegroundColor Yellow
     }
     else {
-      $routerContent = $routerContent -replace "redirect: '/alpha/conflict'", "redirect: '/main/login'"
-      $routerContent = $routerContent -replace "redirect: '/guide'", "redirect: '/main/login'"
+      $routerContent = $routerContent -replace "redirect: '/alpha/conflict'", "redirect: '/guide'"
+      $routerContent = $routerContent -replace "redirect: '/main/login'", "redirect: '/guide'"
       Write-Host "[start] Frontend entry set to: main (正式页面)" -ForegroundColor Yellow
     }
     Set-Content -Path $routerPath -Value $routerContent -Encoding UTF8 -NoNewline

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import logging
 from typing import Any
 
@@ -85,7 +86,39 @@ class SessionControllerTools:
         self._requirement_classification_agent_service = requirement_classification_agent_service
 
     @staticmethod
-    def get_tools_list() -> list[dict[str, Any]]:
+    def _resolve_tool_scope(context: dict[str, Any] | None) -> str:
+        if not isinstance(context, dict):
+            return "session_controller"
+        scope = str(context.get("_tool_scope") or "").strip()
+        return scope or "session_controller"
+
+    @staticmethod
+    def _uses_native_invoke(context: dict[str, Any]) -> bool:
+        return bool(context.get("_native_invoke_enabled"))
+
+    def _get_delegated_tool_executor(self, scope: str) -> Any:
+        if scope == "requirement_agent":
+            return getattr(self._requirement_agent_service, "tools", None)
+        if scope == "conflict_detection":
+            return getattr(self._conflict_agent_service, "tools", None)
+        if scope == "requirement_classification_agent":
+            service = self._requirement_classification_agent_service
+            return getattr(service, "tools", None) if service is not None else None
+        return None
+
+    def get_tools_list(
+        self,
+        context: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        scope = self._resolve_tool_scope(context)
+        delegated_executor = self._get_delegated_tool_executor(scope)
+        if delegated_executor is not None:
+            get_tools_list = getattr(delegated_executor, "get_tools_list")
+            signature = inspect.signature(get_tools_list)
+            if "context" in signature.parameters:
+                return get_tools_list(context=context)
+            return get_tools_list()
+
         window_properties = {
             "start_index": {
                 "type": "integer",
@@ -215,6 +248,10 @@ class SessionControllerTools:
         context: dict[str, Any],
     ) -> dict[str, Any]:
         parsed_arguments = self._parse_arguments(arguments)
+        scope = self._resolve_tool_scope(context)
+        delegated_executor = self._get_delegated_tool_executor(scope)
+        if delegated_executor is not None:
+            return delegated_executor.execute(tool_name, parsed_arguments, context)
         if tool_name == "list_requirements":
             return self._execute_list_requirements(parsed_arguments, context)
         if tool_name == "search_requirements":
@@ -234,6 +271,13 @@ class SessionControllerTools:
         context: dict[str, Any],
     ):
         parsed_arguments = self._parse_arguments(arguments)
+        scope = self._resolve_tool_scope(context)
+        delegated_executor = self._get_delegated_tool_executor(scope)
+        if delegated_executor is not None:
+            execute_streaming = getattr(delegated_executor, "execute_streaming", None)
+            if callable(execute_streaming):
+                return execute_streaming(tool_name, parsed_arguments, context)
+            return delegated_executor.execute(tool_name, parsed_arguments, context)
         if tool_name == "invoke_requirement_agent":
             return self._stream_invoke_requirement_agent(parsed_arguments, context)
         if tool_name == "invoke_conflict_detection":
@@ -257,6 +301,103 @@ class SessionControllerTools:
                 raise ValueError("tool arguments 必须是对象")
             return parsed
         raise ValueError("tool arguments 格式无效")
+
+    @staticmethod
+    def _build_native_invoke_result(
+        *,
+        delegated_agent: str,
+        route_key: str,
+        task_description: str,
+        requirement_id: str | None = None,
+        max_tool_call_rounds: int | None = None,
+        prompt_payload_format: str | None = None,
+        context_mode: str | None = None,
+    ) -> dict[str, Any]:
+        result = {
+            "status": "accepted",
+            "native_invoke": True,
+            "delegated_agent": delegated_agent,
+            "invoke_route_key": route_key,
+            "task_description": task_description,
+        }
+        if requirement_id:
+            result["requirement_id"] = requirement_id
+        if max_tool_call_rounds is not None:
+            result["max_tool_call_rounds"] = max_tool_call_rounds
+        if prompt_payload_format:
+            result["prompt_payload_format"] = prompt_payload_format
+        if context_mode:
+            result["context_mode"] = context_mode
+        return result
+
+    def _queue_native_requirement_invoke(
+        self,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        task_description = str(arguments.get("task_description") or "").strip()
+        if not task_description:
+            raise ValueError("task_description 不能为空")
+        requirement_id = str(arguments.get("requirement_id") or "").strip() or None
+        if not requirement_id:
+            requirement_id = str(context.get("resolved_requirement_id") or "").strip() or None
+        prompt_payload_format = (
+            str(context.get("delegated_prompt_payload_format") or "").strip() or "markdown"
+        )
+        context_mode = str(context.get("delegated_context_mode") or "").strip() or "full"
+        max_tool_call_rounds = _resolve_delegated_max_tool_call_rounds(context)
+        self._mark_dispatched_agent(context, "requirement_agent")
+        if requirement_id:
+            context["resolved_requirement_id"] = requirement_id
+        return self._build_native_invoke_result(
+            delegated_agent="requirement_agent",
+            route_key="invoke_requirement",
+            task_description=task_description,
+            requirement_id=requirement_id,
+            max_tool_call_rounds=max_tool_call_rounds,
+            prompt_payload_format=prompt_payload_format,
+            context_mode=context_mode,
+        )
+
+    def _queue_native_conflict_invoke(
+        self,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        task_description = str(arguments.get("task_description") or "").strip()
+        if not task_description:
+            raise ValueError("task_description 不能为空")
+        max_tool_call_rounds = _resolve_delegated_max_tool_call_rounds(context)
+        self._mark_dispatched_agent(context, "conflict_detection")
+        return self._build_native_invoke_result(
+            delegated_agent="conflict_detection",
+            route_key="invoke_conflict",
+            task_description=task_description,
+            max_tool_call_rounds=max_tool_call_rounds,
+        )
+
+    def _queue_native_classification_invoke(
+        self,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        task_description = str(arguments.get("task_description") or "").strip()
+        if not task_description:
+            raise ValueError("task_description 不能为空")
+        requirement_id = str(arguments.get("requirement_id") or "").strip() or None
+        if not requirement_id:
+            requirement_id = str(context.get("resolved_requirement_id") or "").strip() or None
+        max_tool_call_rounds = _resolve_delegated_max_tool_call_rounds(context)
+        self._mark_dispatched_agent(context, "requirement_classification_agent")
+        if requirement_id:
+            context["resolved_requirement_id"] = requirement_id
+        return self._build_native_invoke_result(
+            delegated_agent="requirement_classification_agent",
+            route_key="invoke_classification",
+            task_description=task_description,
+            requirement_id=requirement_id,
+            max_tool_call_rounds=max_tool_call_rounds,
+        )
 
     def _execute_list_requirements(
         self,
@@ -315,6 +456,8 @@ class SessionControllerTools:
         arguments: dict[str, Any],
         context: dict[str, Any],
     ) -> dict[str, Any]:
+        if self._uses_native_invoke(context):
+            return self._queue_native_requirement_invoke(arguments, context)
         task_description = str(arguments.get("task_description") or "").strip()
         if not task_description:
             raise ValueError("task_description 不能为空")
@@ -461,6 +604,8 @@ class SessionControllerTools:
         arguments: dict[str, Any],
         context: dict[str, Any],
     ):
+        if self._uses_native_invoke(context):
+            return self._queue_native_requirement_invoke(arguments, context)
         task_description = str(arguments.get("task_description") or "").strip()
         if not task_description:
             raise ValueError("task_description 不能为空")
@@ -633,6 +778,8 @@ class SessionControllerTools:
         arguments: dict[str, Any],
         context: dict[str, Any],
     ) -> dict[str, Any]:
+        if self._uses_native_invoke(context):
+            return self._queue_native_conflict_invoke(arguments, context)
         task_description = str(arguments.get("task_description") or "").strip()
         if not task_description:
             raise ValueError("task_description 不能为空")
@@ -740,6 +887,8 @@ class SessionControllerTools:
         arguments: dict[str, Any],
         context: dict[str, Any],
     ):
+        if self._uses_native_invoke(context):
+            return self._queue_native_conflict_invoke(arguments, context)
         task_description = str(arguments.get("task_description") or "").strip()
         if not task_description:
             raise ValueError("task_description 不能为空")
@@ -873,6 +1022,8 @@ class SessionControllerTools:
         arguments: dict[str, Any],
         context: dict[str, Any],
     ) -> dict[str, Any]:
+        if self._uses_native_invoke(context):
+            return self._queue_native_classification_invoke(arguments, context)
         task_description = str(arguments.get("task_description") or "").strip()
         if not task_description:
             raise ValueError("task_description 不能为空")
@@ -993,6 +1144,8 @@ class SessionControllerTools:
         arguments: dict[str, Any],
         context: dict[str, Any],
     ):
+        if self._uses_native_invoke(context):
+            return self._queue_native_classification_invoke(arguments, context)
         task_description = str(arguments.get("task_description") or "").strip()
         if not task_description:
             raise ValueError("task_description 不能为空")

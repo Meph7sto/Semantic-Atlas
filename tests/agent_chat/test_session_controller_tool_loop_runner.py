@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import sys
 
+import pytest
+
 os.environ["SKIP_DB_INIT"] = "1"
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -193,3 +195,44 @@ def test_session_controller_tool_loop_runner_requires_structured_finish_after_de
     assert result.tool_loop_reply == "已读取需求详情并准备向用户汇总。"
     assert "_stop_after_tool_round" not in result.context
     assert "_forced_tool_loop_reply" not in result.context
+
+
+def test_session_controller_tool_loop_runner_surfaces_empty_model_reply_diagnostics():
+    class _EmptyAIProxy:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        def chat_completion_with_tools(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "content": "",
+                "tool_calls": [],
+                "reasoning_content": "模型只返回了思维链片段。",
+                "finish_reason": "stop",
+            }
+
+    runner = SessionControllerToolLoopRunner(
+        ai_proxy_client=_EmptyAIProxy(),
+        tools=_FakeTools(),
+        execution_graph_service=_FakeExecutionGraphService(),
+        prompt_builder=SessionControllerPromptBuilder(),
+        max_tool_call_rounds=2,
+    )
+
+    generator = runner.run(
+        recorder=_FakeRecorder(),
+        user_id="u-1",
+        user_message="给我 REQ-9 的完整信息",
+        project_id="p-1",
+        session_id="sess-1",
+    )
+
+    assert next(generator)["event"] == "stage"
+    with pytest.raises(ValueError) as exc_info:
+        next(generator)
+
+    error_text = str(exc_info.value)
+    assert "模型未返回文本或工具调用" in error_text
+    assert "finish_reason='stop'" in error_text
+    assert "reasoning_content_present=True" in error_text
+    assert "tool_call_count=0" in error_text

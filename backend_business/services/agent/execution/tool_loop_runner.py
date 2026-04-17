@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import inspect
+import json
+import logging
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -14,8 +15,14 @@ from backend_business.services.agent.runtime.scratchpad import Scratchpad
 from .prompt_interface import PromptBuilderProtocol
 
 
+logger = logging.getLogger(__name__)
+
+
 class ToolExecutorProtocol(Protocol):
-    def get_tools_list(self) -> list[dict[str, Any]]:
+    def get_tools_list(
+        self,
+        context: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         ...
 
     def execute(self, tool_name: str, arguments: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
@@ -44,6 +51,24 @@ def _coerce_tool_arguments(raw_arguments: Any) -> dict[str, Any]:
             raise ValueError("tool arguments 必须是对象")
         return parsed
     raise ValueError("tool arguments 格式无效")
+
+
+def _summarize_model_response_for_diagnostics(response: dict[str, Any]) -> dict[str, Any]:
+    tool_calls = response.get("tool_calls")
+    normalized_tool_calls = tool_calls if isinstance(tool_calls, list) else []
+    reasoning_text = str(response.get("reasoning_content") or "").strip()
+    return {
+        "finish_reason": response.get("finish_reason"),
+        "content_present": bool(str(response.get("content") or "").strip()),
+        "reasoning_content_present": bool(reasoning_text),
+        "tool_call_count": len(normalized_tool_calls),
+        "tool_call_names": [
+            str(((item.get("function") or {}).get("name")) or "").strip()
+            for item in normalized_tool_calls[:5]
+            if isinstance(item, dict)
+        ],
+        "response_keys": sorted(str(key) for key in response.keys()),
+    }
 
 
 @dataclass(frozen=True)
@@ -218,6 +243,20 @@ class ToolLoopRunner:
 
         return execution
 
+    def _get_tools_list(
+        self,
+        *,
+        context: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        get_tools_list = getattr(self.tool_executor, "get_tools_list")
+        try:
+            signature = inspect.signature(get_tools_list)
+        except (TypeError, ValueError):
+            signature = None
+        if signature is not None and "context" in signature.parameters:
+            return get_tools_list(context=context)
+        return get_tools_list()
+
     @staticmethod
     def _build_stage_event_payload(recorder: Any, node_key: str, *, status: str, **extra: Any) -> dict[str, Any]:
         builder = getattr(recorder, "build_stage_event_data", None)
@@ -319,7 +358,7 @@ class ToolLoopRunner:
                 ),
             }
 
-            tools_list = self.tool_executor.get_tools_list()
+            tools_list = self._get_tools_list(context=normalized_context)
             if self.scratchpad is not None:
                 # Inject scratchpad_write tool when scratchpad mode is active
                 if not any(
@@ -537,7 +576,21 @@ class ToolLoopRunner:
                 continue
 
             if not assistant_content:
-                raise ValueError("模型未返回文本或工具调用")
+                diagnostics = _summarize_model_response_for_diagnostics(response)
+                logger.warning(
+                    "Model returned empty tool-loop response: graph_id=%s node_key=%s round=%s diagnostics=%s",
+                    recorder.graph_id,
+                    node_key,
+                    round_index,
+                    json.dumps(diagnostics, ensure_ascii=False),
+                )
+                raise ValueError(
+                    "模型未返回文本或工具调用 "
+                    f"(finish_reason={diagnostics['finish_reason']!r}, "
+                    f"reasoning_content_present={diagnostics['reasoning_content_present']}, "
+                    f"tool_call_count={diagnostics['tool_call_count']}, "
+                    f"response_keys={diagnostics['response_keys']})"
+                )
 
             self._complete_round_and_patch_meta(
                 recorder=recorder,

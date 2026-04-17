@@ -33,13 +33,22 @@ class SessionControllerGraphRecorder(RuntimeGraphRecorder):
         graph_id: str | None = None,
         prev_graph_id: str | None = None,
         task_context: dict[str, object] | None = None,
+        container_keys: tuple[str, ...] | None = None,
     ) -> None:
+        selected_keys = tuple(container_keys or tuple(key for key, _label, _role in self._CONTAINERS))
+        selected_key_set = set(selected_keys)
+        container_configs = [
+            ContainerConfig(container_key=key, label=label, role_type=role_type)
+            for key, label, role_type in self._CONTAINERS
+            if key in selected_key_set
+        ]
+        if len(container_configs) != len(selected_key_set):
+            known_keys = ", ".join(key for key, _label, _role in self._CONTAINERS)
+            missing = ", ".join(sorted(selected_key_set - {cfg.container_key for cfg in container_configs}))
+            raise ValueError(f"未知 container_keys: {missing}; 已知容器: {known_keys}")
         super().__init__(
             execution_graph_service=execution_graph_service,
-            container_configs=[
-                ContainerConfig(container_key=key, label=label, role_type=role_type)
-                for key, label, role_type in self._CONTAINERS
-            ],
+            container_configs=container_configs,
             project_id=project_id,
             user_id=user_id,
             session_id=session_id,

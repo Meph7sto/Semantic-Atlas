@@ -378,6 +378,7 @@ def test_stream_session_controller_reply_persists_turn_summary_to_scratchpad(mon
             user_id="u-1",
             project_id="p-1",
             user_message="把 actor视觉测试 的优先级设置为高",
+            execution_mode="classic",
         )
     )
 
@@ -445,6 +446,7 @@ def test_stream_session_controller_reply_inherits_scratchpad_into_next_turn_prom
             user_id="u-1",
             project_id="p-1",
             user_message="把他的优先级设置为高",
+            execution_mode="classic",
         )
     )
 
@@ -488,6 +490,7 @@ def test_stream_session_controller_reply_consumes_structured_loop_result(monkeyp
             user_id="u-1",
             project_id="p-1",
             user_message="现在系统需要我做什么？",
+            execution_mode="classic",
         )
     )
 
@@ -590,6 +593,7 @@ def test_stream_session_controller_reply_waits_for_structured_controller_result_
             user_id="u-1",
             project_id="p-1",
             user_message="随便给我一个需求的完整信息",
+            execution_mode="classic",
         )
     )
 
@@ -691,6 +695,7 @@ def test_stream_session_controller_reply_suspends_on_delegated_clarification(mon
             user_id="u-1",
             project_id="p-1",
             user_message="把这条需求优先级改成高",
+            execution_mode="classic",
         )
     )
 
@@ -719,5 +724,61 @@ def test_stream_session_controller_reply_rejects_graph_mode_when_disabled(monkey
                 project_id="p-1",
                 user_message="测试 graph",
                 execution_mode="graph",
+            )
+        )
+
+
+def test_stream_session_controller_reply_defaults_to_graph_when_enabled(monkeypatch):
+    monkeypatch.setattr(settings, "SESSION_CONTROLLER_GRAPH_ENABLED", True)
+    service = SessionControllerService(
+        chat_storage=_FakeChatStorage(),
+        execution_graph_service=_FakeExecutionGraphService(),
+        tools=_FakeTools([]),
+        ai_proxy_client=_FakeAiProxy(),
+    )
+    captured = {}
+
+    def _fake_graph_reply(**kwargs):
+        captured.update(kwargs)
+        yield {"event": "result", "data": {"graph_id": "graph-1", "mode": "direct_reply"}}
+
+    monkeypatch.setattr(service, "stream_graph_executor_reply", _fake_graph_reply)
+
+    events = list(
+        service.stream_session_controller_reply(
+            session_id="sess-1",
+            user_id="u-1",
+            project_id="p-1",
+            user_message="测试默认 graph",
+        )
+    )
+
+    assert events[-1]["event"] == "result"
+    assert captured == {
+        "session_id": "sess-1",
+        "user_id": "u-1",
+        "project_id": "p-1",
+        "user_message": "测试默认 graph",
+        "delegated_max_tool_call_rounds": 15,
+        "skip_user_message_creation": False,
+    }
+
+
+def test_stream_session_controller_reply_rejects_unknown_execution_mode():
+    service = SessionControllerService(
+        chat_storage=_FakeChatStorage(),
+        execution_graph_service=_FakeExecutionGraphService(),
+        tools=_FakeTools([]),
+        ai_proxy_client=_FakeAiProxy(),
+    )
+
+    with pytest.raises(ValueError, match="execution_mode 必须是 classic 或 graph"):
+        list(
+            service.stream_session_controller_reply(
+                session_id="sess-1",
+                user_id="u-1",
+                project_id="p-1",
+                user_message="测试非法模式",
+                execution_mode="invalid-mode",
             )
         )

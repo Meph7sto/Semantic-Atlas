@@ -13,6 +13,42 @@ from backend_business.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _truncate_log_text(value: Any, limit: int = 160) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 3]}..."
+
+
+def _summarize_tool_completion_response(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        return {"response_type": type(data).__name__}
+
+    raw_tool_calls = data.get("tool_calls")
+    tool_calls = raw_tool_calls if isinstance(raw_tool_calls, list) else []
+    tool_call_names = []
+    for item in tool_calls[:5]:
+        if not isinstance(item, dict):
+            continue
+        function_payload = item.get("function") or {}
+        tool_name = str(function_payload.get("name") or "").strip()
+        if tool_name:
+            tool_call_names.append(tool_name)
+
+    content_text = str(data.get("content") or "").strip()
+    reasoning_text = str(data.get("reasoning_content") or "").strip()
+    return {
+        "finish_reason": data.get("finish_reason"),
+        "content_present": bool(content_text),
+        "content_preview": _truncate_log_text(content_text),
+        "reasoning_content_present": bool(reasoning_text),
+        "reasoning_preview": _truncate_log_text(reasoning_text),
+        "tool_call_count": len(tool_calls),
+        "tool_call_names": tool_call_names,
+        "response_keys": sorted(str(key) for key in data.keys()),
+    }
+
+
 class AIProxy:
     """
     业务后端调用推理后端（backend_inference）的客户端封装。
@@ -541,7 +577,21 @@ class AIProxy:
                     timeout=timeout,
                 )
                 resp.raise_for_status()
-                return resp.json()
+                data = resp.json()
+                summary = _summarize_tool_completion_response(data)
+                logger.debug(
+                    "Tool completion response summary: %s",
+                    json.dumps(summary, ensure_ascii=False),
+                )
+                if (
+                    summary.get("content_present") is False
+                    and summary.get("tool_call_count") == 0
+                ):
+                    logger.warning(
+                        "Tool completion response contained neither content nor tool calls: %s",
+                        json.dumps(summary, ensure_ascii=False),
+                    )
+                return data
             except (requests.Timeout, requests.ConnectionError) as exc:
                 if attempt >= resolved_max_retries:
                     raise
