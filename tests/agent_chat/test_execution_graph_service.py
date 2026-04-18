@@ -116,3 +116,33 @@ def test_execution_schema_uses_generic_node_type_constraint_rewrite():
     assert "invoke" in node_type_migration_sql
     assert "UPDATE execution_nodes SET node_type = 'node' WHERE node_type = 'task'" in node_type_migration_sql
     assert "LIKE '%node_type IN (''start'', ''node'', ''decision'', ''handoff'', ''end'')%'" not in node_type_migration_sql
+
+
+def test_execution_schema_creates_agent_runtime_tables():
+    cursor = _RecordingCursor()
+
+    init_execution_schema(cursor)
+
+    joined = "\n".join(cursor.statements)
+    assert "CREATE TABLE IF NOT EXISTS agent_runtime_registry" in joined
+    assert "CREATE TABLE IF NOT EXISTS agent_runs" in joined
+    assert "CREATE TABLE IF NOT EXISTS container_state_store" in joined
+
+
+def test_execution_schema_agent_run_statuses_cover_runtime_lifecycle():
+    cursor = _RecordingCursor()
+
+    init_execution_schema(cursor)
+
+    agent_runs_sql = next(
+        statement
+        for statement in cursor.statements
+        if "CREATE TABLE IF NOT EXISTS agent_runs" in statement
+    )
+    assert "queued" in agent_runs_sql
+    assert "running" in agent_runs_sql
+    assert "waiting_user" in agent_runs_sql
+    assert "succeeded" in agent_runs_sql
+    assert "failed" in agent_runs_sql
+    assert "timed_out" in agent_runs_sql
+    assert "cancelled" in agent_runs_sql

@@ -16,9 +16,11 @@ from backend_business.services.agent.execution_graph_service._container_reposito
 from backend_business.services.agent.execution_graph_service._subgraph_repository import _SubgraphMixin
 from backend_business.services.agent.execution_graph_service._node_repository import _NodeMixin
 from backend_business.services.agent.execution_graph_service._edge_repository import _EdgeMixin
+from backend_business.services.agent.execution_graph_service._runtime_state_repository import _RuntimeStateMixin
 
 
 class ExecutionGraphService(
+    _RuntimeStateMixin,
     _GraphMixin,
     _ContainerMixin,
     _SubgraphMixin,

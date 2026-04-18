@@ -186,6 +186,63 @@ def _edge_row(**overrides) -> Dict[str, Any]:
     return defaults
 
 
+def _runtime_binding_row(**overrides) -> Dict[str, Any]:
+    defaults = {
+        "runtime_id": str(uuid.uuid4()),
+        "container_key": "requirement_agent",
+        "agent_type": "requirement_agent",
+        "runtime_profile": "default",
+        "implementation_type": "local",
+        "endpoint": None,
+        "enabled": True,
+        "capability_policy_json": {"tools": ["read_requirement"]},
+        "quota_policy_json": {"max_parallel_runs": 2},
+        "memory_policy_json": {"scope": "container"},
+        "created_at": "2026-01-01T00:00:00+00",
+        "updated_at": "2026-01-01T00:00:00+00",
+    }
+    defaults.update(overrides)
+    return defaults
+
+
+def _agent_run_row(**overrides) -> Dict[str, Any]:
+    defaults = {
+        "run_id": str(uuid.uuid4()),
+        "graph_id": str(uuid.uuid4()),
+        "subgraph_id": str(uuid.uuid4()),
+        "container_key": "requirement_agent",
+        "agent_type": "requirement_agent",
+        "runtime_id": str(uuid.uuid4()),
+        "parent_run_id": None,
+        "status": "queued",
+        "input_ref": {"task": "inspect"},
+        "output_ref": None,
+        "usage_json": None,
+        "error_code": None,
+        "error_message": None,
+        "resume_token": None,
+        "created_at": "2026-01-01T00:00:00+00",
+        "updated_at": "2026-01-01T00:00:00+00",
+        "started_at": None,
+        "completed_at": None,
+    }
+    defaults.update(overrides)
+    return defaults
+
+
+def _container_state_row(**overrides) -> Dict[str, Any]:
+    defaults = {
+        "graph_id": str(uuid.uuid4()),
+        "container_key": "requirement_agent",
+        "state_json": {"scratchpad_snapshot": [{"content": "secret"}]},
+        "updated_by": "tester",
+        "created_at": "2026-01-01T00:00:00+00",
+        "updated_at": "2026-01-01T00:00:00+00",
+    }
+    defaults.update(overrides)
+    return defaults
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  1. _base.py — Helpers & Constants
 # ═══════════════════════════════════════════════════════════════════
@@ -213,6 +270,110 @@ class TestBaseHelpers:
 
     def test_allowed_graph_types_complete(self):
         assert _ALLOWED_GRAPH_TYPES == {"execution_topology_template", "agent_runtime_execution"}
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  1b. Runtime Registry / Agent Runs / Container State
+# ═══════════════════════════════════════════════════════════════════
+
+class TestRuntimeStateCRUD:
+
+    def test_create_agent_runtime_binding(self):
+        row = _runtime_binding_row()
+        svc, cur = _build_service(fetchone_result=row)
+
+        result = svc.create_agent_runtime_binding(
+            container_key="requirement_agent",
+            agent_type="requirement_agent",
+            runtime_profile="default",
+            implementation_type="local",
+            capability_policy_json={"tools": ["read_requirement"]},
+            quota_policy_json={"max_parallel_runs": 2},
+            memory_policy_json={"scope": "container"},
+        )
+
+        assert result == row
+        sql, params = cur.executed[0]
+        assert "INSERT INTO agent_runtime_registry" in sql
+        assert "requirement_agent" in params
+
+    def test_list_agent_runtime_bindings_filters_enabled(self):
+        rows = [_runtime_binding_row()]
+        svc, cur = _build_service(fetchall_result=rows)
+
+        result = svc.list_agent_runtime_bindings(
+            container_key="requirement_agent",
+            enabled_only=True,
+        )
+
+        assert result == rows
+        sql, params = cur.executed[0]
+        assert "FROM agent_runtime_registry" in sql
+        assert "enabled = TRUE" in sql
+        assert "requirement_agent" in params
+
+    def test_create_agent_run(self):
+        row = _agent_run_row()
+        svc, cur = _build_service(fetchone_result=row)
+
+        result = svc.create_agent_run(
+            graph_id=row["graph_id"],
+            subgraph_id=row["subgraph_id"],
+            container_key=row["container_key"],
+            agent_type=row["agent_type"],
+            runtime_id=row["runtime_id"],
+            status="queued",
+            input_ref={"task": "inspect"},
+        )
+
+        assert result == row
+        sql, params = cur.executed[0]
+        assert "INSERT INTO agent_runs" in sql
+        assert "queued" in params
+
+    def test_update_agent_run(self):
+        row = _agent_run_row(status="succeeded", output_ref={"reply": "done"})
+        svc, cur = _build_service(fetchone_result=row)
+
+        result = svc.update_agent_run(
+            row["run_id"],
+            status="succeeded",
+            output_ref={"reply": "done"},
+            usage_json={"total_tokens": 123},
+        )
+
+        assert result == row
+        sql, _params = cur.executed[0]
+        assert "UPDATE agent_runs SET" in sql
+        assert "output_ref = %s" in sql
+        assert "usage_json = %s" in sql
+
+    def test_upsert_and_get_container_state(self):
+        row = _container_state_row()
+        svc, cur = _build_service(fetchone_result=row)
+
+        result = svc.upsert_container_state(
+            graph_id=row["graph_id"],
+            container_key=row["container_key"],
+            state_json=row["state_json"],
+            updated_by="tester",
+        )
+
+        assert result == row
+        sql, _params = cur.executed[0]
+        assert "INSERT INTO container_state_store" in sql
+        assert "ON CONFLICT (graph_id, container_key)" in sql
+
+    def test_list_container_states(self):
+        rows = [_container_state_row(container_key="requirement_agent")]
+        svc, cur = _build_service(fetchall_result=rows)
+
+        result = svc.list_container_states(rows[0]["graph_id"])
+
+        assert result == rows
+        sql, params = cur.executed[0]
+        assert "FROM container_state_store" in sql
+        assert rows[0]["graph_id"] in params
 
 
 # ═══════════════════════════════════════════════════════════════════

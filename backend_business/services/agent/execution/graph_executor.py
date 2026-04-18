@@ -486,7 +486,7 @@ class GraphExecutor:
         # Succeeded
         scratchpad_service.save_snapshot(
             skeleton.graph_id,
-            container_result.scratchpad_snapshot,
+            container_result.scratchpad_store_snapshot,
             updated_by=actor,
         )
         _persist_graph_status(
@@ -776,7 +776,7 @@ class GraphExecutor:
         # Succeeded
         scratchpad_service.save_snapshot(
             skeleton.graph_id,
-            container_result.scratchpad_snapshot,
+            container_result.scratchpad_store_snapshot,
             updated_by=actor,
         )
         _persist_graph_status(
@@ -1167,6 +1167,20 @@ def _parse_judge_decision(
 
 
 def _latest_scratchpad_output(scratchpad: Any) -> str:
+    snapshot_all = getattr(scratchpad, "snapshot_all", None)
+    if callable(snapshot_all):
+        try:
+            entries = snapshot_all()
+        except Exception:
+            entries = []
+        stage_outputs = [
+            entry
+            for entry in entries
+            if entry.get("entry_type") == "stage_output"
+        ]
+        if stage_outputs:
+            return str(stage_outputs[-1].get("content") or "")
+
     read = getattr(scratchpad, "read", None)
     if not callable(read):
         return ""

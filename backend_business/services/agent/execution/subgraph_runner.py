@@ -12,10 +12,17 @@ from __future__ import annotations
 from collections.abc import Generator
 from dataclasses import dataclass
 import json
+import queue
+import threading
 from typing import Any
 
 from backend_business.services.agent.runtime.context import ExecutionContext
 from backend_business.services.agent.runtime.scratchpad import Scratchpad
+from backend_business.services.agent.runtime.agent_runtime import (
+    AgentRunResult,
+    AgentRuntimeRegistry,
+    RunRequest,
+)
 
 from .subgraph_state import (
     ContainerExecutionError,
@@ -46,7 +53,17 @@ class ContainerResult:
     """Last subgraph's complete_phase conclusion (return-edge payload)."""
 
     scratchpad_snapshot: list[dict[str, Any]]
-    """Serialised scratchpad entries for persistence / debugging."""
+    """Serialised entries for the executed container's scratchpad."""
+
+    scratchpad_store_snapshot: list[dict[str, Any]]
+    """Serialised entries for every container's scratchpad."""
+
+
+@dataclass(frozen=True)
+class _InvokeBranchResult:
+    call_edge: RuntimeEdge
+    target_container: RuntimeContainer
+    result: ContainerResult
 
 
 # ---------------------------------------------------------------------------
@@ -127,23 +144,27 @@ class _SubgraphStatusTracker:
 
     def __init__(self) -> None:
         self._statuses: dict[str, SubgraphStatus] = {}
+        self._lock = threading.RLock()
 
     def init(self, subgraph_id: str, status: SubgraphStatus) -> None:
-        self._statuses[subgraph_id] = status
+        with self._lock:
+            self._statuses[subgraph_id] = status
 
     def get(self, subgraph_id: str) -> SubgraphStatus:
-        return self._statuses.get(subgraph_id, SubgraphStatus.PENDING)
+        with self._lock:
+            return self._statuses.get(subgraph_id, SubgraphStatus.PENDING)
 
     def transition(
         self, subgraph_id: str, target: SubgraphStatus
     ) -> None:
-        current = self.get(subgraph_id)
-        if not validate_subgraph_transition(current, target):
-            raise ValueError(
-                f"非法状态转移: {current.value} → {target.value} "
-                f"(subgraph {subgraph_id})"
-            )
-        self._statuses[subgraph_id] = target
+        with self._lock:
+            current = self._statuses.get(subgraph_id, SubgraphStatus.PENDING)
+            if not validate_subgraph_transition(current, target):
+                raise ValueError(
+                    f"非法状态转移: {current.value} → {target.value} "
+                    f"(subgraph {subgraph_id})"
+                )
+            self._statuses[subgraph_id] = target
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +194,13 @@ class SubgraphRunner:
         for event in events:
             send_to_client(event)
     """
+
+    def __init__(
+        self,
+        *,
+        agent_runtime_registry: AgentRuntimeRegistry | None = None,
+    ) -> None:
+        self._agent_runtime_registry = agent_runtime_registry
 
     # -- public API -----------------------------------------------------------
 
@@ -248,7 +276,8 @@ class SubgraphRunner:
         subgraphs = skeleton.get_subgraphs_for_container(container.container_id)
 
         # Create scratchpad and inject user input
-        pad = scratchpad if scratchpad is not None else Scratchpad()
+        root_pad = scratchpad if scratchpad is not None else Scratchpad()
+        pad = root_pad.for_container(container.container_key)
         execution_context = ExecutionContext(scratchpad=pad)
         pad.append_stage_output(
             suspended_sg.subgraph_key,
@@ -270,6 +299,7 @@ class SubgraphRunner:
             return ContainerResult(
                 conclusion=user_input,
                 scratchpad_snapshot=pad.snapshot(),
+                scratchpad_store_snapshot=pad.snapshot_all(),
             )
 
         # Continue from the next subgraph
@@ -308,11 +338,17 @@ class SubgraphRunner:
         runtime_context: dict[str, Any] | None = None,
     ) -> Generator[dict[str, Any], None, ContainerResult]:
         """Execute all subgraphs in *container* sequentially."""
-        runtime_pad = pad if pad is not None else Scratchpad()
+        runtime_pad = (
+            (pad if pad is not None else Scratchpad()).for_container(container.container_key)
+        )
         execution_context = ExecutionContext(scratchpad=runtime_pad)
         subgraphs = skeleton.get_subgraphs_for_container(container.container_id)
         if not subgraphs:
-            return ContainerResult(conclusion="", scratchpad_snapshot=[])
+            return ContainerResult(
+                conclusion="",
+                scratchpad_snapshot=[],
+                scratchpad_store_snapshot=runtime_pad.snapshot_all(),
+            )
 
         first_sg = subgraphs[0]
         return (yield from self._continue_from(
@@ -436,6 +472,7 @@ class SubgraphRunner:
         return ContainerResult(
             conclusion=last_conclusion,
             scratchpad_snapshot=pad.snapshot(),
+            scratchpad_store_snapshot=pad.snapshot_all(),
         )
 
     # -- single-subgraph advance ----------------------------------------------
@@ -612,20 +649,30 @@ class SubgraphRunner:
         tracker: _SubgraphStatusTracker,
         execution_context: ExecutionContext,
     ) -> Generator[dict[str, Any], None, str | None]:
-        """Execute an invoke subgraph: synchronously call target container."""
-        # Find the call edge originating from this subgraph
+        """Execute an invoke subgraph, fan-outing over every call edge in parallel."""
         outgoing = skeleton.get_outgoing_edges(sg.subgraph_id)
-        call_edge = next(
-            (e for e in outgoing if e.edge_type == "call"), None
+        call_edges = sorted(
+            (edge for edge in outgoing if edge.edge_type == "call"),
+            key=lambda edge: (edge.order_index, edge.edge_id),
         )
-        if call_edge is None:
+        if not call_edges:
             raise ValueError(
                 f"invoke subgraph '{sg.subgraph_key}' 缺少 call 出边"
             )
 
-        # Find target subgraph's container
-        target_sg = _find_subgraph_by_node_id(skeleton, call_edge.target_node_id)
-        target_container = _find_container(skeleton, target_sg.container_id)
+        target_containers: list[tuple[RuntimeEdge, RuntimeContainer]] = []
+        seen_target_containers: set[str] = set()
+        for call_edge in call_edges:
+            target_sg = _find_subgraph_by_node_id(skeleton, call_edge.target_node_id)
+            target_container = _find_container(skeleton, target_sg.container_id)
+            if target_container.container_id in seen_target_containers:
+                raise ValueError(
+                    f"invoke subgraph '{sg.subgraph_key}' 指向了重复的目标容器 "
+                    f"'{target_container.container_key}'"
+                )
+            seen_target_containers.add(target_container.container_id)
+            target_containers.append((call_edge, target_container))
+
         caller_sg = _find_latest_completed_subgraph_in_container(
             skeleton=skeleton,
             container=container,
@@ -672,9 +719,8 @@ class SubgraphRunner:
             },
         )
 
-        # Synchronously execute target container
-        target_result: ContainerResult = yield from self._execute_container(
-            container=target_container,
+        branch_results = yield from self._execute_invoke_branches(
+            target_containers=target_containers,
             skeleton=skeleton,
             tool_executor=tool_executor,
             ai_proxy_client=ai_proxy_client,
@@ -686,44 +732,49 @@ class SubgraphRunner:
             pad=pad,
             runtime_context=child_runtime_context,
         )
-        target_terminal_subgraph = _find_last_completed_subgraph_in_container(
-            skeleton=skeleton,
-            container=target_container,
-            tracker=tracker,
-        )
-        target_end_node_id = (
-            _find_subgraph_boundary_node_id(
-                skeleton,
-                target_terminal_subgraph.subgraph_id,
-                "end",
+
+        target_payloads: list[Any] = []
+        for branch in branch_results:
+            target_payloads.append(branch.result.conclusion)
+            target_terminal_subgraph = _find_last_completed_subgraph_in_container(
+                skeleton=skeleton,
+                container=branch.target_container,
+                tracker=tracker,
             )
-            if target_terminal_subgraph is not None
-            else None
-        )
-        _ensure_runtime_edge(
-            graph_service=resolved_graph_service,
-            graph_id=skeleton.graph_id,
-            source_node_id=target_end_node_id,
-            target_node_id=invoke_end_node_id,
-            edge_type="return",
-            label="return",
-            actor=actor,
-            config_json={
-                "runtime": True,
-                "invoke_return": True,
-                "source_subgraph": (
-                    target_terminal_subgraph.subgraph_key
-                    if target_terminal_subgraph is not None
-                    else None
-                ),
-                "target_subgraph": sg.subgraph_key,
-            },
-        )
+            target_end_node_id = (
+                _find_subgraph_boundary_node_id(
+                    skeleton,
+                    target_terminal_subgraph.subgraph_id,
+                    "end",
+                )
+                if target_terminal_subgraph is not None
+                else None
+            )
+            _ensure_runtime_edge(
+                graph_service=resolved_graph_service,
+                graph_id=skeleton.graph_id,
+                source_node_id=target_end_node_id,
+                target_node_id=invoke_end_node_id,
+                edge_type="return",
+                label="return",
+                actor=actor,
+                config_json={
+                    "runtime": True,
+                    "invoke_return": True,
+                    "source_subgraph": (
+                        target_terminal_subgraph.subgraph_key
+                        if target_terminal_subgraph is not None
+                        else None
+                    ),
+                    "target_subgraph": sg.subgraph_key,
+                    "target_container_key": branch.target_container.container_key,
+                },
+            )
 
         controller_decision = _build_session_controller_invoke_decision(
             invoke_subgraph=sg,
             invoke_request=invoke_request,
-            target_result=target_result.conclusion,
+            target_result=target_payloads[0] if len(target_payloads) == 1 else target_payloads,
         )
         pad.append_stage_output(
             sg.subgraph_key,
@@ -732,6 +783,219 @@ class SubgraphRunner:
 
         tracker.transition(sg.subgraph_id, SubgraphStatus.COMPLETED)
         return "suspend" if controller_decision.get("should_suspend") else "reply"
+
+    def _execute_invoke_branches(
+        self,
+        *,
+        target_containers: list[tuple[RuntimeEdge, RuntimeContainer]],
+        skeleton: RuntimeGraphSkeleton,
+        tool_executor: Any,
+        ai_proxy_client: Any,
+        graph_service: Any | None,
+        recorder: Any,
+        actor: str,
+        user_message: str,
+        tracker: _SubgraphStatusTracker,
+        pad: Scratchpad,
+        runtime_context: dict[str, Any] | None,
+    ) -> Generator[dict[str, Any], None, list[_InvokeBranchResult]]:
+        result_queue: queue.Queue[tuple[str, int, Any]] = queue.Queue()
+        branch_threads: list[threading.Thread] = []
+        recorder_cursor = getattr(recorder, "capture_cursor", lambda: None)()
+        runtime_registry = self._resolve_agent_runtime_registry(graph_service)
+
+        for branch_index, (call_edge, target_container) in enumerate(target_containers):
+            runtime_binding = runtime_registry.resolve(
+                container_key=target_container.container_key,
+                agent_type=target_container.container_key or target_container.role_type or "agent",
+                runtime_profile=str(
+                    (
+                        _find_container_runtime_profile(
+                            skeleton=skeleton,
+                            container=target_container,
+                        )
+                        or "default"
+                    )
+                ),
+            )
+            worker = threading.Thread(
+                target=self._run_container_worker,
+                args=(
+                    result_queue,
+                    branch_index,
+                    recorder_cursor,
+                    call_edge,
+                    target_container,
+                    runtime_binding,
+                    skeleton,
+                    tool_executor,
+                    ai_proxy_client,
+                    graph_service,
+                    recorder,
+                    actor,
+                    user_message,
+                    tracker,
+                    pad,
+                    runtime_context,
+                ),
+                name=f"invoke-{target_container.container_key or branch_index}",
+                daemon=True,
+            )
+            worker.start()
+            branch_threads.append(worker)
+
+        results: dict[int, _InvokeBranchResult] = {}
+        first_error: Exception | None = None
+        completed_branches = 0
+
+        while completed_branches < len(branch_threads):
+            item_type, branch_index, payload = result_queue.get()
+            if item_type == "event":
+                yield payload
+                continue
+            completed_branches += 1
+            if item_type == "error":
+                if first_error is None:
+                    first_error = payload
+                continue
+            results[branch_index] = payload
+
+        for worker in branch_threads:
+            worker.join()
+
+        if first_error is not None:
+            raise first_error
+
+        return [results[index] for index in sorted(results)]
+
+    def _run_container_worker(
+        self,
+        result_queue: "queue.Queue[tuple[str, int, Any]]",
+        branch_index: int,
+        recorder_cursor: dict[str, Any] | None,
+        call_edge: RuntimeEdge,
+        target_container: RuntimeContainer,
+        runtime_binding: Any,
+        skeleton: RuntimeGraphSkeleton,
+        tool_executor: Any,
+        ai_proxy_client: Any,
+        graph_service: Any | None,
+        recorder: Any,
+        actor: str,
+        user_message: str,
+        tracker: _SubgraphStatusTracker,
+        pad: Scratchpad,
+        runtime_context: dict[str, Any] | None,
+    ) -> None:
+        bind_cursor = getattr(recorder, "bind_cursor", None)
+        if callable(bind_cursor):
+            bind_cursor(recorder_cursor)
+
+        try:
+            run_request = self._build_container_run_request(
+                target_container=target_container,
+                runtime_binding=runtime_binding,
+                call_edge=call_edge,
+                skeleton=skeleton,
+                tool_executor=tool_executor,
+                ai_proxy_client=ai_proxy_client,
+                graph_service=graph_service,
+                recorder=recorder,
+                actor=actor,
+                user_message=user_message,
+                tracker=tracker,
+                pad=pad,
+                runtime_context=runtime_context,
+            )
+            agent_run_id = runtime_binding.runtime.submit(run_request)
+            for event in runtime_binding.runtime.stream(agent_run_id):
+                result_queue.put(("event", branch_index, event))
+            runtime_result = runtime_binding.runtime.await_result(agent_run_id)
+            if runtime_result.status != "succeeded":
+                raise ContainerExecutionError(
+                    container_id=target_container.container_id,
+                    subgraph_id=(
+                        skeleton.get_subgraphs_for_container(target_container.container_id)[0].subgraph_id
+                        if skeleton.get_subgraphs_for_container(target_container.container_id)
+                        else ""
+                    ),
+                    cause=RuntimeError(runtime_result.error_message or runtime_result.status),
+                    agent_run_id=agent_run_id,
+                    error_code=runtime_result.error_code,
+                )
+            result_queue.put(
+                (
+                    "result",
+                    branch_index,
+                    _InvokeBranchResult(
+                        call_edge=call_edge,
+                        target_container=target_container,
+                        result=runtime_result.return_payload,
+                    ),
+                )
+            )
+        except Exception as exc:
+            result_queue.put(("error", branch_index, exc))
+
+    def _resolve_agent_runtime_registry(
+        self,
+        graph_service: Any | None,
+    ) -> AgentRuntimeRegistry:
+        if self._agent_runtime_registry is not None:
+            return self._agent_runtime_registry
+        return AgentRuntimeRegistry(execution_graph_service=graph_service)
+
+    def _build_container_run_request(
+        self,
+        *,
+        target_container: RuntimeContainer,
+        runtime_binding: Any,
+        call_edge: RuntimeEdge,
+        skeleton: RuntimeGraphSkeleton,
+        tool_executor: Any,
+        ai_proxy_client: Any,
+        graph_service: Any | None,
+        recorder: Any,
+        actor: str,
+        user_message: str,
+        tracker: _SubgraphStatusTracker,
+        pad: Scratchpad,
+        runtime_context: dict[str, Any] | None,
+    ) -> RunRequest:
+        def _run_target_container() -> Generator[dict[str, Any], None, ContainerResult]:
+            return self._execute_container(
+                container=target_container,
+                skeleton=skeleton,
+                tool_executor=tool_executor,
+                ai_proxy_client=ai_proxy_client,
+                graph_service=graph_service,
+                recorder=recorder,
+                actor=actor,
+                user_message=user_message,
+                tracker=tracker,
+                pad=pad,
+                runtime_context=runtime_context,
+            )
+
+        subgraphs = skeleton.get_subgraphs_for_container(target_container.container_id)
+        target_subgraph_id = subgraphs[0].subgraph_id if subgraphs else None
+        return RunRequest(
+            graph_id=skeleton.graph_id,
+            subgraph_id=target_subgraph_id,
+            container_key=target_container.container_key,
+            agent_type=target_container.container_key or target_container.role_type or "agent",
+            input_payload={
+                "runner": _run_target_container,
+                "input_ref": {
+                    "source_edge_id": call_edge.edge_id,
+                    "target_container_key": target_container.container_key,
+                    "user_message": user_message,
+                },
+            },
+            memory_scope_ref=f"{skeleton.graph_id}:{target_container.container_key}",
+            tool_policy_id=str((runtime_binding.capability_policy or {}).get("policy_id") or target_container.container_key),
+            quota_policy_id=str((runtime_binding.quota_policy or {}).get("policy_id") or "default"),
+        )
 
     @staticmethod
     def _advance_handoff(sg: RuntimeSubgraph) -> None:
@@ -794,6 +1058,19 @@ def _find_container(
         if c.container_id == container_id:
             return c
     raise ValueError(f"container 不存在: {container_id}")
+
+
+def _find_container_runtime_profile(
+    *,
+    skeleton: RuntimeGraphSkeleton,
+    container: RuntimeContainer,
+) -> str | None:
+    subgraphs = skeleton.get_subgraphs_for_container(container.container_id)
+    for subgraph in subgraphs:
+        profile = str((subgraph.config_json or {}).get("runtime_profile") or "").strip()
+        if profile:
+            return profile
+    return None
 
 
 def _find_subgraph_by_node_id(
@@ -1241,10 +1518,70 @@ def _build_session_controller_invoke_decision(
     target_result: Any,
 ) -> dict[str, Any]:
     delegated_agent = str(invoke_request.get("delegated_agent") or "").strip()
-    result = target_result if isinstance(target_result, dict) else {
-        "status": "success",
-        "tool_loop_reply": str(target_result or "").strip(),
-    }
+    if isinstance(target_result, list):
+        normalized_results = [
+            item
+            if isinstance(item, dict)
+            else {
+                "status": "success",
+                "tool_loop_reply": str(item or "").strip(),
+            }
+            for item in target_result
+        ]
+        combined_reply = "\n\n".join(
+            str(item.get("tool_loop_reply") or item.get("reply") or "").strip()
+            for item in normalized_results
+            if str(item.get("tool_loop_reply") or item.get("reply") or "").strip()
+        )
+        result = {
+            "status": "success",
+            "tool_loop_reply": combined_reply,
+            "approval_pending": any(
+                bool(item.get("approval_pending")) for item in normalized_results
+            ),
+            "mode": next(
+                (
+                    str(item.get("mode") or "").strip()
+                    for item in normalized_results
+                    if str(item.get("mode") or "").strip()
+                    in {"clarify", "clarification", "approval_pending"}
+                ),
+                "",
+            ),
+            "write_result": next(
+                (item.get("write_result") for item in normalized_results if item.get("write_result") is not None),
+                None,
+            ),
+            "approval_result": next(
+                (
+                    item.get("approval_result")
+                    for item in normalized_results
+                    if item.get("approval_result") is not None
+                ),
+                None,
+            ),
+            "classification_result": next(
+                (
+                    item.get("classification_result")
+                    for item in normalized_results
+                    if item.get("classification_result") is not None
+                ),
+                None,
+            ),
+            "resolved_requirement_id": next(
+                (
+                    str(item.get("resolved_requirement_id") or "").strip()
+                    for item in normalized_results
+                    if str(item.get("resolved_requirement_id") or "").strip()
+                ),
+                "",
+            ),
+        }
+    else:
+        result = target_result if isinstance(target_result, dict) else {
+            "status": "success",
+            "tool_loop_reply": str(target_result or "").strip(),
+        }
     tool_loop_reply = str(result.get("tool_loop_reply") or result.get("reply") or "").strip()
     resolved_requirement_id = str(
         result.get("resolved_requirement_id")

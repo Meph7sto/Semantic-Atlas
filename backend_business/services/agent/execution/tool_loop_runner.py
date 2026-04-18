@@ -5,6 +5,8 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import queue
+import threading
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -80,6 +82,16 @@ class ToolCallEvent:
     arguments: dict[str, Any]
     result: dict[str, Any] | None = None
     error: str | None = None
+
+
+@dataclass(frozen=True)
+class _ToolExecutionOutcome:
+    tool_name: str
+    tool_call_id: str
+    arguments: dict[str, Any]
+    result: dict[str, Any]
+    context_updates: dict[str, Any]
+    phase_completion: dict[str, Any] | None = None
 
 
 class CompletePhaseSignal(Exception):
@@ -306,6 +318,196 @@ class ToolLoopRunner:
             "result": result,
         }
 
+    @staticmethod
+    def _context_values_equal(left: Any, right: Any) -> bool:
+        try:
+            return left == right
+        except Exception:
+            return left is right
+
+    def _extract_context_updates(
+        self,
+        *,
+        before: dict[str, Any],
+        after: dict[str, Any],
+    ) -> dict[str, Any]:
+        updates: dict[str, Any] = {}
+        for key, value in after.items():
+            if key == "tool_results" or str(key).startswith("_"):
+                continue
+            if not self._context_values_equal(before.get(key), value):
+                updates[key] = value
+        return updates
+
+    def _normalize_phase_completion(
+        self,
+        *,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        raw_target_container_keys = arguments.get("target_container_keys")
+        target_container_keys = (
+            tuple(
+                str(item).strip()
+                for item in raw_target_container_keys
+                if str(item).strip()
+            )
+            if isinstance(raw_target_container_keys, list)
+            else ()
+        )
+        return {
+            "conclusion": arguments.get("conclusion", ""),
+            "route_key": arguments.get("route_key"),
+            "expand_topology": arguments.get("expand_topology"),
+            "target_template_graph_id": arguments.get("target_template_graph_id"),
+            "target_container_keys": target_container_keys,
+        }
+
+    def _execute_tool_batch(
+        self,
+        *,
+        tool_calls: list[dict[str, Any]],
+        recorder: Any,
+        node_key: str,
+        normalized_context: dict[str, Any],
+    ) -> Generator[dict[str, Any], None, list[_ToolExecutionOutcome]]:
+        result_queue: queue.Queue[tuple[str, int, Any]] = queue.Queue()
+        worker_threads: list[threading.Thread] = []
+
+        for tool_index, tool_call in enumerate(tool_calls, start=1):
+            function_payload = tool_call.get("function") or {}
+            tool_name = function_payload.get("name") or ""
+            arguments = _coerce_tool_arguments(function_payload.get("arguments"))
+            tool_call_id = tool_call.get("id") or f"{node_key}-tool-{tool_index}"
+
+            yield {
+                "event": "tool_call",
+                "data": {
+                    "graph_id": recorder.graph_id,
+                    "node_key": node_key,
+                    "tool": tool_name,
+                    "tool_call_id": tool_call_id,
+                    "arguments": arguments,
+                },
+            }
+
+            tool_context = dict(normalized_context)
+            if "tool_results" in normalized_context:
+                tool_context["tool_results"] = list(
+                    normalized_context.get("tool_results") or []
+                )
+
+            worker = threading.Thread(
+                target=self._run_tool_worker,
+                args=(
+                    result_queue,
+                    tool_index - 1,
+                    tool_name,
+                    tool_call_id,
+                    arguments,
+                    normalized_context,
+                    tool_context,
+                ),
+                name=f"tool-loop-{tool_index}",
+                daemon=True,
+            )
+            worker.start()
+            worker_threads.append(worker)
+
+        outcomes: dict[int, _ToolExecutionOutcome] = {}
+        completed_workers = 0
+
+        while completed_workers < len(worker_threads):
+            item_type, index, payload = result_queue.get()
+            if item_type == "event":
+                yield payload
+                continue
+            if item_type == "result":
+                completed_workers += 1
+                outcomes[index] = payload
+
+        for worker in worker_threads:
+            worker.join()
+
+        return [outcomes[index] for index in sorted(outcomes)]
+
+    def _run_tool_worker(
+        self,
+        result_queue: "queue.Queue[tuple[str, int, Any]]",
+        index: int,
+        tool_name: str,
+        tool_call_id: str,
+        arguments: dict[str, Any],
+        base_context: dict[str, Any],
+        tool_context: dict[str, Any],
+    ) -> None:
+        try:
+            phase_completion: dict[str, Any] | None = None
+            if tool_name == "complete_phase" and self.enable_complete_phase:
+                phase_completion = self._normalize_phase_completion(arguments=arguments)
+                tool_result = {"ok": True, "message": "阶段完成信号已确认"}
+            elif tool_name == "scratchpad_write" and self.scratchpad is not None:
+                self.scratchpad.write(
+                    entry_type=arguments.get("entry_type", "note"),
+                    content=arguments.get("content", ""),
+                    source_subgraph=tool_context.get("_current_subgraph"),
+                    readonly=(arguments.get("entry_type") == "tool_excerpt"),
+                )
+                tool_result = {"ok": True, "message": "已写入 Scratchpad"}
+            else:
+                execute_streaming = getattr(self.tool_executor, "execute_streaming", None)
+                if callable(execute_streaming):
+                    execution = execute_streaming(tool_name, arguments, tool_context)
+                else:
+                    execution = self.tool_executor.execute(tool_name, arguments, tool_context)
+
+                if inspect.isgenerator(execution):
+                    try:
+                        while True:
+                            result_queue.put(("event", index, next(execution)))
+                    except StopIteration as stop:
+                        tool_result = stop.value or {}
+                else:
+                    tool_result = execution
+
+            result_queue.put(
+                (
+                    "result",
+                    index,
+                    _ToolExecutionOutcome(
+                        tool_name=tool_name,
+                        tool_call_id=tool_call_id,
+                        arguments=arguments,
+                        result=tool_result,
+                        context_updates=self._extract_context_updates(
+                            before=base_context,
+                            after=tool_context,
+                        ),
+                        phase_completion=phase_completion,
+                    ),
+                )
+            )
+        except Exception as exc:
+            result_queue.put(
+                (
+                    "result",
+                    index,
+                    _ToolExecutionOutcome(
+                        tool_name=tool_name,
+                        tool_call_id=tool_call_id,
+                        arguments=arguments,
+                        result={
+                            "error": str(exc),
+                            "is_error": True,
+                        },
+                        context_updates=self._extract_context_updates(
+                            before=base_context,
+                            after=tool_context,
+                        ),
+                        phase_completion=None,
+                    ),
+                )
+            )
+
     def run(
         self,
         *,
@@ -411,141 +613,51 @@ class ToolLoopRunner:
             }
 
             if tool_calls:
-                for tool_index, tool_call in enumerate(tool_calls, start=1):
-                    function_payload = tool_call.get("function") or {}
-                    tool_name = function_payload.get("name") or ""
-                    arguments = _coerce_tool_arguments(function_payload.get("arguments"))
-                    tool_call_id = tool_call.get("id") or f"{node_key}-tool-{tool_index}"
+                outcomes = yield from self._execute_tool_batch(
+                    tool_calls=tool_calls,
+                    recorder=recorder,
+                    node_key=node_key,
+                    normalized_context=normalized_context,
+                )
+                phase_completion: dict[str, Any] | None = None
 
-                    yield {
-                        "event": "tool_call",
-                        "data": {
-                            "graph_id": recorder.graph_id,
-                            "node_key": node_key,
-                            "tool": tool_name,
-                            "tool_call_id": tool_call_id,
-                            "arguments": arguments,
-                        },
-                    }
-
-                    try:
-                        if tool_name == "complete_phase" and self.enable_complete_phase:
-                            # Built-in complete_phase handling: explicit phase completion signal
-                            conclusion = arguments.get("conclusion", "")
-                            route_key = arguments.get("route_key")
-                            expand_topology = arguments.get("expand_topology")
-                            target_template_graph_id = arguments.get("target_template_graph_id")
-                            raw_target_container_keys = arguments.get("target_container_keys")
-                            target_container_keys = tuple(
-                                str(item).strip()
-                                for item in raw_target_container_keys
-                                if str(item).strip()
-                            ) if isinstance(raw_target_container_keys, list) else ()
-                            tool_result = {"ok": True, "message": "阶段完成信号已确认"}
-
-                            recorder.record_tool_call_result(
-                                node_key,
-                                created_by=user_id,
-                                tool_name=tool_name,
-                                request_payload={
-                                    "tool_call_id": tool_call_id,
-                                    "arguments": arguments,
-                                },
-                                result_payload=tool_result,
-                            )
-
-                            if execution_context is not None:
-                                execution_context.add(
-                                    ContextEntry(
-                                        kind="phase_conclusion",
-                                        value={
-                                            "conclusion": conclusion,
-                                            "route_key": route_key,
-                                            "expand_topology": expand_topology,
-                                            "target_template_graph_id": target_template_graph_id,
-                                            "target_container_keys": list(target_container_keys),
-                                        },
-                                        node_key=node_key,
-                                    )
-                                )
-                            # Backward-compatible fallback when no ExecutionContext lifecycle is active
-                            if self.scratchpad is not None and execution_context is None:
-                                self.scratchpad.append_stage_output(
-                                    normalized_context.get("_current_subgraph") or "unknown",
-                                    conclusion,
-                                )
-
-                            output_summary["phase_completed"] = True
-                            output_summary["route_key"] = route_key
-                            output_summary["expand_topology"] = expand_topology
-                            output_summary["target_template_graph_id"] = target_template_graph_id
-                            output_summary["target_container_keys"] = list(target_container_keys)
-                            output_summary["conclusion"] = conclusion
-
-                            self._complete_round_and_patch_meta(
-                                recorder=recorder,
-                                node_key=node_key,
-                                user_id=user_id,
-                                output_summary=output_summary,
-                                context=normalized_context,
-                            )
-                            yield {
-                                "event": "stage",
-                                "data": self._build_stage_event_payload(
-                                    recorder,
-                                    node_key,
-                                    status="succeeded",
-                                    phase_completed=True,
-                                ),
-                            }
-                            return ToolLoopResult(
-                                tool_loop_reply=conclusion or assistant_content,
-                                context=normalized_context,
-                                rounds=round_index,
-                                phase_completed=True,
-                                route_key=route_key,
-                                expand_topology=expand_topology,
-                                target_template_graph_id=target_template_graph_id,
-                                target_container_keys=target_container_keys,
-                                conclusion=conclusion,
-                            )
-
-                        elif tool_name == "scratchpad_write" and self.scratchpad is not None:
-                            # Built-in scratchpad_write handling
-                            self.scratchpad.write(
-                                entry_type=arguments.get("entry_type", "note"),
-                                content=arguments.get("content", ""),
-                                source_subgraph=normalized_context.get("_current_subgraph"),
-                                readonly=(arguments.get("entry_type") == "tool_excerpt"),
-                            )
-                            tool_result = {"ok": True, "message": "已写入 Scratchpad"}
-                        else:
-                            tool_result = yield from self._execute_tool_with_streaming_support(
-                                tool_name=tool_name,
-                                arguments=arguments,
-                                context=normalized_context,
-                            )
-                    except Exception as exc:
-                        tool_result = {
-                            "error": str(exc),
-                            "is_error": True,
-                        }
-
+                for outcome in outcomes:
                     recorder.record_tool_call_result(
                         node_key,
                         created_by=user_id,
-                        tool_name=tool_name,
+                        tool_name=outcome.tool_name,
                         request_payload={
-                            "tool_call_id": tool_call_id,
-                            "arguments": arguments,
+                            "tool_call_id": outcome.tool_call_id,
+                            "arguments": outcome.arguments,
                         },
-                        result_payload=tool_result,
+                        result_payload=outcome.result,
                     )
+                    if phase_completion is None and outcome.phase_completion is not None:
+                        phase_completion = outcome.phase_completion
+                        if execution_context is not None:
+                            execution_context.add(
+                                ContextEntry(
+                                    kind="phase_conclusion",
+                                    value={
+                                        "conclusion": outcome.phase_completion["conclusion"],
+                                        "route_key": outcome.phase_completion["route_key"],
+                                        "expand_topology": outcome.phase_completion["expand_topology"],
+                                        "target_template_graph_id": outcome.phase_completion["target_template_graph_id"],
+                                        "target_container_keys": list(
+                                            outcome.phase_completion["target_container_keys"]
+                                        ),
+                                    },
+                                    node_key=node_key,
+                                )
+                            )
+                        continue
+
+                    normalized_context.update(outcome.context_updates)
                     normalized_context.setdefault("tool_results", []).append(
                         {
-                            "tool_name": tool_name,
-                            "arguments": arguments,
-                            "result": tool_result,
+                            "tool_name": outcome.tool_name,
+                            "arguments": outcome.arguments,
+                            "result": outcome.result,
                         }
                     )
                     if execution_context is not None:
@@ -553,9 +665,9 @@ class ToolLoopRunner:
                             ContextEntry(
                                 kind="tool_result",
                                 value={
-                                    "tool_name": tool_name,
-                                    "arguments": arguments,
-                                    "result": tool_result,
+                                    "tool_name": outcome.tool_name,
+                                    "arguments": outcome.arguments,
+                                    "result": outcome.result,
                                 },
                                 node_key=node_key,
                             )
@@ -563,8 +675,8 @@ class ToolLoopRunner:
                     messages.append(
                         {
                             "role": "tool",
-                            "tool_call_id": tool_call_id,
-                            "content": json.dumps(tool_result, ensure_ascii=False),
+                            "tool_call_id": outcome.tool_call_id,
+                            "content": json.dumps(outcome.result, ensure_ascii=False),
                         }
                     )
                     yield {
@@ -572,11 +684,55 @@ class ToolLoopRunner:
                         "data": self._build_tool_result_event_payload(
                             recorder,
                             node_key,
-                            tool=tool_name,
-                            tool_call_id=tool_call_id,
-                            result=tool_result,
+                            tool=outcome.tool_name,
+                            tool_call_id=outcome.tool_call_id,
+                            result=outcome.result,
                         ),
                     }
+
+                if phase_completion is not None:
+                    if self.scratchpad is not None and execution_context is None:
+                        self.scratchpad.append_stage_output(
+                            normalized_context.get("_current_subgraph") or "unknown",
+                            phase_completion["conclusion"],
+                        )
+
+                    output_summary["phase_completed"] = True
+                    output_summary["route_key"] = phase_completion["route_key"]
+                    output_summary["expand_topology"] = phase_completion["expand_topology"]
+                    output_summary["target_template_graph_id"] = phase_completion["target_template_graph_id"]
+                    output_summary["target_container_keys"] = list(
+                        phase_completion["target_container_keys"]
+                    )
+                    output_summary["conclusion"] = phase_completion["conclusion"]
+
+                    self._complete_round_and_patch_meta(
+                        recorder=recorder,
+                        node_key=node_key,
+                        user_id=user_id,
+                        output_summary=output_summary,
+                        context=normalized_context,
+                    )
+                    yield {
+                        "event": "stage",
+                        "data": self._build_stage_event_payload(
+                            recorder,
+                            node_key,
+                            status="succeeded",
+                            phase_completed=True,
+                        ),
+                    }
+                    return ToolLoopResult(
+                        tool_loop_reply=phase_completion["conclusion"] or assistant_content,
+                        context=normalized_context,
+                        rounds=round_index,
+                        phase_completed=True,
+                        route_key=phase_completion["route_key"],
+                        expand_topology=phase_completion["expand_topology"],
+                        target_template_graph_id=phase_completion["target_template_graph_id"],
+                        target_container_keys=phase_completion["target_container_keys"],
+                        conclusion=phase_completion["conclusion"],
+                    )
 
                 self._complete_round_and_patch_meta(
                     recorder=recorder,

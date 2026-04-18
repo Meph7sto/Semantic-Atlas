@@ -12,15 +12,22 @@ class ScratchpadService:
 
     META_KEY = "scratchpad_snapshot"
     ENTRY_COUNT_KEY = "scratchpad_entry_count"
+    STATE_KEY = "scratchpad_snapshot"
+    _SHARED_CONTAINER_KEY = "__shared__"
 
     def __init__(self, *, execution_graph_service: Any) -> None:
         self._service = execution_graph_service
 
-    def load(self, graph_id: str) -> Scratchpad:
+    def load(self, graph_id: str, container_key: str | None = None) -> Scratchpad:
         """Load the current Scratchpad for a runtime graph."""
-        graph = self._get_graph(graph_id)
-        meta = dict((graph or {}).get("meta_json") or {})
-        return Scratchpad.from_snapshot(meta.get(self.META_KEY) or [])
+        state_snapshot = self._load_state_snapshot(graph_id)
+        if state_snapshot:
+            pad = Scratchpad.from_store_snapshot(state_snapshot)
+        else:
+            graph = self._get_graph(graph_id)
+            meta = dict((graph or {}).get("meta_json") or {})
+            pad = Scratchpad.from_store_snapshot(meta.get(self.META_KEY) or [])
+        return pad.for_container(container_key) if container_key else pad
 
     def save(
         self,
@@ -32,7 +39,7 @@ class ScratchpadService:
         """Persist the full Scratchpad snapshot into graph metadata."""
         return self.save_snapshot(
             graph_id,
-            scratchpad.snapshot(),
+            scratchpad.snapshot_all(),
             updated_by=updated_by,
         )
 
@@ -44,6 +51,11 @@ class ScratchpadService:
         updated_by: str,
     ) -> dict[str, Any]:
         normalized_snapshot = list(snapshot or [])
+        self._save_container_state_snapshot(
+            graph_id=graph_id,
+            snapshot=normalized_snapshot,
+            updated_by=updated_by,
+        )
         return self._service.patch_graph_meta(
             graph_id,
             {
@@ -67,3 +79,55 @@ class ScratchpadService:
                 return detail.get("graph")
 
         return None
+
+    def _load_state_snapshot(self, graph_id: str) -> list[dict[str, Any]]:
+        list_container_states = getattr(self._service, "list_container_states", None)
+        if not callable(list_container_states):
+            return []
+
+        rows = list_container_states(graph_id)
+        snapshots: list[dict[str, Any]] = []
+        for row in rows or []:
+            state_json = dict(row.get("state_json") or {})
+            container_key = row.get("container_key")
+            for entry in state_json.get(self.STATE_KEY) or []:
+                normalized_entry = dict(entry)
+                if container_key == self._SHARED_CONTAINER_KEY:
+                    normalized_entry["container_key"] = None
+                elif normalized_entry.get("container_key") is None:
+                    normalized_entry["container_key"] = container_key
+                snapshots.append(normalized_entry)
+        return snapshots
+
+    def _save_container_state_snapshot(
+        self,
+        *,
+        graph_id: str,
+        snapshot: list[dict[str, Any]],
+        updated_by: str,
+    ) -> None:
+        upsert_container_state = getattr(self._service, "upsert_container_state", None)
+        if not callable(upsert_container_state):
+            return
+
+        grouped_entries: dict[str, list[dict[str, Any]]] = {}
+        for entry in snapshot:
+            normalized_entry = dict(entry)
+            raw_container_key = normalized_entry.get("container_key")
+            if raw_container_key is None:
+                container_key = self._SHARED_CONTAINER_KEY
+                normalized_entry["container_key"] = None
+            else:
+                container_key = str(raw_container_key)
+            grouped_entries.setdefault(container_key, []).append(normalized_entry)
+
+        for container_key, entries in grouped_entries.items():
+            upsert_container_state(
+                graph_id=graph_id,
+                container_key=container_key,
+                state_json={
+                    self.STATE_KEY: entries,
+                    self.ENTRY_COUNT_KEY: len(entries),
+                },
+                updated_by=updated_by,
+            )

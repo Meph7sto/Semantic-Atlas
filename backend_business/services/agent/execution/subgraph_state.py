@@ -170,10 +170,15 @@ class ContainerExecutionError(Exception):
         container_id: str,
         subgraph_id: str,
         cause: Exception,
+        *,
+        agent_run_id: str | None = None,
+        error_code: str | None = None,
     ) -> None:
         self.container_id = container_id
         self.subgraph_id = subgraph_id
         self.cause = cause
+        self.agent_run_id = agent_run_id
+        self.error_code = error_code
         super().__init__(
             f"Container {container_id} failed at subgraph {subgraph_id}: {cause}"
         )

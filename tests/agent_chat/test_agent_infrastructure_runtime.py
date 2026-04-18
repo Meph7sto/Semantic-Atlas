@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import threading
 from typing import Any
 
 import pytest
@@ -211,6 +212,23 @@ class _FakeToolExecutor:
         if not self._handlers:
             return {"ok": True}
         return self._handlers.pop(0)(tool_name, arguments, context)
+
+
+class _BarrierToolExecutor:
+    def __init__(self) -> None:
+        self._barrier = threading.Barrier(2, timeout=1.0)
+
+    def get_tools_list(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "function",
+                "function": {"name": "dummy", "parameters": {"type": "object"}},
+            }
+        ]
+
+    def execute(self, tool_name: str, arguments: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        self._barrier.wait()
+        return {"ok": True, "value": arguments.get("value")}
 
 
 class _FakePromptBuilder:
@@ -465,6 +483,60 @@ def test_tool_loop_runner_executes_multi_round_and_patches_meta():
     assert len(result.context["tool_results"]) == 1
     assert len(meta_patches) == 2
     assert meta_patches[-1][1]["resolved_requirement_id"] == "r-1"
+
+
+def test_tool_loop_runner_executes_same_round_tool_calls_concurrently():
+    graph_service = _FakeExecutionGraphService()
+    recorder = RuntimeGraphRecorder(
+        execution_graph_service=graph_service,
+        container_configs=[ContainerConfig("agent_main", "Agent Main", "agent")],
+        project_id="p-1",
+        user_id="u-1",
+        session_id="s-1",
+        user_message="hello",
+    )
+    runner = ToolLoopRunner(
+        ai_proxy_client=_FakeAiProxy(
+            [
+                {
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "tc-1",
+                            "type": "function",
+                            "function": {"name": "dummy", "arguments": "{\"value\":\"a\"}"},
+                        },
+                        {
+                            "id": "tc-2",
+                            "type": "function",
+                            "function": {"name": "dummy", "arguments": "{\"value\":\"b\"}"},
+                        },
+                    ],
+                    "finish_reason": "tool_calls",
+                },
+                {"content": "done", "tool_calls": [], "finish_reason": "stop"},
+            ]
+        ),
+        tool_executor=_BarrierToolExecutor(),
+        prompt_builder=_FakePromptBuilder(),
+        max_tool_call_rounds=3,
+        stage_container_key="agent_main",
+    )
+
+    events, result = _run_tool_loop_to_completion(
+        runner.run(
+            recorder=recorder,
+            user_id="u-1",
+            user_message="hello",
+            context={"project_id": "p-1", "tool_results": []},
+        )
+    )
+
+    tool_results = result.context["tool_results"]
+    assert len(tool_results) == 2
+    assert [item["result"]["value"] for item in tool_results] == ["a", "b"]
+    assert sum(1 for event in events if event["event"] == "tool_call") == 2
+    assert sum(1 for event in events if event["event"] == "tool_result") == 2
 
 
 def test_tool_loop_runner_rejects_empty_model_reply_without_tool_calls():

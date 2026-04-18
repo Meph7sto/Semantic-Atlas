@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 import uuid
 
 os.environ["SKIP_DB_INIT"] = "1"
@@ -252,6 +253,43 @@ class FailingAIProxy:
         raise RuntimeError("LLM API 调用失败")
 
 
+class ConcurrentInvokeAIProxy:
+    """Requires delegated child LLM calls to reach the proxy concurrently."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._child_barrier = threading.Barrier(2, timeout=1.0)
+        self._call_count = 0
+
+    def chat_completion_with_tools(self, *, messages, tools, **_kw) -> dict:
+        with self._lock:
+            self._call_count += 1
+            call_index = self._call_count
+
+        if call_index >= 2:
+            self._child_barrier.wait()
+
+        conclusion = f"阶段{call_index}完成"
+        import json
+
+        return {
+            "content": "",
+            "finish_reason": "tool_calls",
+            "tool_calls": [
+                {
+                    "id": f"call_{call_index}",
+                    "function": {
+                        "name": "complete_phase",
+                        "arguments": json.dumps(
+                            {"conclusion": conclusion},
+                            ensure_ascii=False,
+                        ),
+                    },
+                }
+            ],
+        }
+
+
 # =========================================================================
 # Template fixtures
 # =========================================================================
@@ -331,6 +369,39 @@ def _make_invoke_skeleton(svc: FakeGraphService) -> RuntimeGraphSkeleton:
     )
     return TopologyInstantiator().instantiate(
         template_graph_id="tpl-invoke", project_id="proj-1", graph_service=svc,
+    )
+
+
+def _make_parallel_invoke_skeleton(svc: FakeGraphService) -> RuntimeGraphSkeleton:
+    """Cross-container invoke fan-out: one invoke calls two worker containers."""
+    svc.seed_template(
+        graph_id="tpl-invoke-parallel",
+        project_id="proj-1",
+        containers=[
+            {"container_id": "ca", "container_key": "session", "label": "Session", "role_type": "agent", "order_index": 0},
+            {"container_id": "cb", "container_key": "worker_a", "label": "Worker A", "role_type": "agent", "order_index": 1},
+            {"container_id": "cc", "container_key": "worker_b", "label": "Worker B", "role_type": "agent", "order_index": 2},
+        ],
+        nodes=[
+            {"node_id": "na-1", "node_key": "parse", "label": "Parse", "node_type": "llm", "role_type": "agent",
+             "container_id": "ca", "phase_label": "解析", "task_prompt": "解析意图", "conditional_edges": None, "order_index": 0},
+            {"node_id": "na-2", "node_key": "call_workers", "label": "Call Workers", "node_type": "invoke", "role_type": "agent",
+             "container_id": "ca", "phase_label": "调用", "task_prompt": "", "conditional_edges": None, "order_index": 1},
+            {"node_id": "nb-1", "node_key": "do_work_a", "label": "Do Work A", "node_type": "llm", "role_type": "agent",
+             "container_id": "cb", "phase_label": "执行A", "task_prompt": "执行任务A", "conditional_edges": None, "order_index": 0},
+            {"node_id": "nc-1", "node_key": "do_work_b", "label": "Do Work B", "node_type": "llm", "role_type": "agent",
+             "container_id": "cc", "phase_label": "执行B", "task_prompt": "执行任务B", "conditional_edges": None, "order_index": 0},
+        ],
+        edges=[
+            {"edge_id": "e-seq", "source_node_id": "na-1", "target_node_id": "na-2", "edge_type": "seq", "order_index": 0},
+            {"edge_id": "e-call-a", "source_node_id": "na-2", "target_node_id": "nb-1", "edge_type": "call", "order_index": 1},
+            {"edge_id": "e-call-b", "source_node_id": "na-2", "target_node_id": "nc-1", "edge_type": "call", "order_index": 2},
+            {"edge_id": "e-ret-a", "source_node_id": "nb-1", "target_node_id": "na-2", "edge_type": "return", "order_index": 3},
+            {"edge_id": "e-ret-b", "source_node_id": "nc-1", "target_node_id": "na-2", "edge_type": "return", "order_index": 4},
+        ],
+    )
+    return TopologyInstantiator().instantiate(
+        template_graph_id="tpl-invoke-parallel", project_id="proj-1", graph_service=svc,
     )
 
 
@@ -528,8 +599,56 @@ class TestInvokeSubgraph:
         events, result = _drain_with_result(gen)
         assert isinstance(result, ContainerResult)
 
-    def test_invoke_return_conclusion_in_scratchpad(self):
-        ai = FakeAIProxy(conclusions=["解析完成", "工作结果XYZ"])
+    def test_invoke_child_scratchpad_does_not_leak_into_parent_container(self):
+        import json
+
+        ai = PromptCapturingAIProxy([
+            {
+                "content": "",
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "function": {
+                            "name": "complete_phase",
+                            "arguments": json.dumps({"conclusion": "解析完成"}, ensure_ascii=False),
+                        },
+                    }
+                ],
+            },
+            {
+                "content": "",
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": "call-2",
+                        "function": {
+                            "name": "scratchpad_write",
+                            "arguments": json.dumps(
+                                {
+                                    "entry_type": "note",
+                                    "content": "child secret note",
+                                },
+                                ensure_ascii=False,
+                            ),
+                        },
+                    }
+                ],
+            },
+            {
+                "content": "",
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": "call-3",
+                        "function": {
+                            "name": "complete_phase",
+                            "arguments": json.dumps({"conclusion": "工作结果XYZ"}, ensure_ascii=False),
+                        },
+                    }
+                ],
+            },
+        ])
         gen = self.runner.run(
             skeleton=self.skeleton,
             tool_executor=FakeToolExecutor(),
@@ -538,9 +657,30 @@ class TestInvokeSubgraph:
             actor="test",
         )
         _, result = _drain_with_result(gen)
-        # The invoke subgraph's scratchpad should contain the return conclusion
-        found = any("工作结果XYZ" in str(entry.get("content", "")) for entry in result.scratchpad_snapshot)
-        assert found, f"Return conclusion not found in scratchpad: {result.scratchpad_snapshot}"
+        found_in_parent = any(
+            "child secret note" in str(entry.get("content", ""))
+            for entry in result.scratchpad_snapshot
+        )
+        found_in_store = any(
+            "child secret note" in str(entry.get("content", ""))
+            for entry in result.scratchpad_store_snapshot
+        )
+        assert found_in_parent is False
+        assert found_in_store is True
+
+    def test_invoke_fans_out_to_multiple_target_containers_concurrently(self):
+        parallel_skeleton = _make_parallel_invoke_skeleton(self.svc)
+        ai = ConcurrentInvokeAIProxy()
+        gen = self.runner.run(
+            skeleton=parallel_skeleton,
+            tool_executor=FakeToolExecutor(),
+            ai_proxy_client=ai,
+            recorder=FakeRecorder(parallel_skeleton.graph_id),
+            actor="test",
+        )
+        events, result = _drain_with_result(gen)
+        assert isinstance(result, ContainerResult)
+        assert len([e for e in events if e.get("event") == "subgraph_status" and e["data"].get("status") == "completed"]) >= 4
 
 
 # =========================================================================

@@ -48,6 +48,20 @@ class TestScratchpadBasicReadWrite:
         pad.write("tool_excerpt", "data", readonly=False)  # explicit False ignored
         assert pad.read()[0].readonly is True
 
+    def test_container_views_are_isolated(self):
+        root = Scratchpad()
+        parent = root.for_container("parent")
+        child = root.for_container("child")
+
+        parent.write("note", "parent only", source_subgraph="sg_parent")
+        child.write("note", "child only", source_subgraph="sg_child")
+
+        assert [entry.content for entry in parent.read()] == ["parent only"]
+        assert [entry.content for entry in child.read()] == ["child only"]
+        snapshot_all = root.snapshot_all()
+        assert len(snapshot_all) == 2
+        assert {entry.get("container_key") for entry in snapshot_all} == {"parent", "child"}
+
 
 class TestScratchpadFiltering:
     def test_filter_by_type(self):

@@ -1,0 +1,18 @@
+invoke 和 tool-call 的并发语义还停留在设计层，运行时实际是串行的。subgraph_runner.py (line 615) 明写了 invoke 是 “synchronously call target container”，
+并且在 675 (line 675) 直接 yield from self._execute_container(...)；tool 调用也在 tool_loop_runner.py (line 413) 开始逐个 for tool_call 执行。与此同时，状态机里又保留了 WAITING（subgraph_state.py (line 48)），设计文档也把它定义成并发等待态。这会带来两个后果：性能上没有真正的 fan-out，语义上文档/代码不一致，后续接手的人很容易按“支持并发委托”来做错误设计。
+
+Scratchpad 的隔离层级不对，代码里实际上是 graph 级共享，而不是 container 级私有。scratchpad.py (line 55) 只有 source_subgraph，
+没有 container 维度；SubgraphPromptBuilder (line 79) 会把整个 scratchpad 注入每个子图提示词；
+而 invoke 时又把同一个 pad 传给子容器（subgraph_runner.py (line 676)）。这意味着子 agent 能看到父 agent 的工作记忆，
+父 agent 也能读回子 agent 的内部痕迹，和“return 只回传结论、内部记忆不外泄”的边界并不一致。
+
+现在的“多 agent”更像 scope 切换，不是强隔离的 agent runtime。session_controller/tools.py (line 99) 
+通过 _get_delegated_tool_executor() 按 scope 切工具；252 (line 252) 直接把执行转发给 delegated executor；
+模板里也是靠 tool_scope 标识不同 agent（graph_template.py (line 209)）。这当然比一个巨型 prompt 好很多，
+但它的真实边界还是“同一运行时里的不同模式”，不是独立 agent 沙箱。权限、记忆、失败域、资源配额以后都会比较难分开治理。
+
+Runtime graph 的所有权有点分裂，Recorder 和 Instantiator 都在参与“建图”。REST 执行入口先让 RuntimeGraphRecorder 
+按模板容器预建一批容器（graph_executor_topology_service.py (line 72)），
+之后 TopologyInstantiator 又会对已有容器做匹配/复用/再创建（topology_instantiator.py (line 294)）；
+Recorder 自己还专门写了“图可能被别的组件扩展过，所以要 refresh cache”的补偿逻辑（graph_recorder.py (line 325)）。
+这说明边界还没完全收敛，短期能靠兼容代码顶住，长期会增加调试和演进成本。
