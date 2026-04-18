@@ -380,6 +380,13 @@ class GraphExecutor:
                 },
             }
 
+        if candidate_templates is not None:
+            _ensure_judge_to_entry_edge(
+                graph_service=graph_service,
+                skeleton=skeleton,
+                actor=actor,
+            )
+
         # 2. Run SubgraphRunner -------------------------------------------------
         return (yield from self._drive_runner(
             skeleton=skeleton,
@@ -417,6 +424,7 @@ class GraphExecutor:
                 user_input=user_input,
                 tool_executor=tool_executor,
                 ai_proxy_client=ai_proxy_client,
+                graph_service=graph_service,
                 recorder=recorder,
                 actor=actor,
                 scratchpad=scratchpad,
@@ -705,6 +713,7 @@ class GraphExecutor:
                 skeleton=skeleton,
                 tool_executor=tool_executor,
                 ai_proxy_client=ai_proxy_client,
+                graph_service=graph_service,
                 recorder=recorder,
                 actor=actor,
                 user_message=user_message,
@@ -950,6 +959,74 @@ def _ensure_start_to_judge_edge(
         source_node_id=start_node_id,
         target_node_id=first_judge_node["node_id"],
         edge_type="seq",
+        order_index=next_order_index,
+        created_by=actor,
+    )
+
+
+def _ensure_judge_to_entry_edge(
+    *,
+    graph_service: Any,
+    skeleton: RuntimeGraphSkeleton,
+    actor: str,
+) -> None:
+    entry_container = skeleton.get_entry_container()
+    entry_subgraphs = skeleton.get_subgraphs_for_container(entry_container.container_id)
+    if not entry_subgraphs:
+        return
+
+    first_subgraph = min(entry_subgraphs, key=lambda item: item.order_index)
+    entry_start_node_id = None
+    for node in skeleton.nodes:
+        if node.subgraph_id == first_subgraph.subgraph_id and node.node_type == "start":
+            entry_start_node_id = node.node_id
+            break
+    if not entry_start_node_id:
+        return
+
+    detail = graph_service.get_graph_detail(skeleton.graph_id)
+    nodes = detail.get("nodes") or []
+    judge_nodes = sorted(
+        (
+            node
+            for node in nodes
+            if str(node.get("node_key") or "").startswith("turn_")
+            and "intent_judge_r" in str(node.get("node_key") or "")
+        ),
+        key=lambda node: (
+            int(node.get("order_index") or 0),
+            str(node.get("created_at") or ""),
+            str(node.get("node_id") or ""),
+        ),
+    )
+    if not judge_nodes:
+        return
+
+    last_judge_node = judge_nodes[-1]
+    edges = detail.get("edges") or []
+    for edge in edges:
+        if (
+            edge.get("source_node_id") == last_judge_node.get("node_id")
+            and edge.get("target_node_id") == entry_start_node_id
+            and edge.get("edge_type") == "seq"
+        ):
+            return
+
+    next_order_index = max(
+        (int(edge.get("order_index") or 0) for edge in edges),
+        default=-1,
+    ) + 1
+    graph_service.create_edge(
+        graph_id=skeleton.graph_id,
+        source_node_id=last_judge_node["node_id"],
+        target_node_id=entry_start_node_id,
+        edge_type="seq",
+        label="seq",
+        config_json={
+            "runtime": True,
+            "intent_gate_bridge": True,
+            "target_subgraph": first_subgraph.subgraph_key,
+        },
         order_index=next_order_index,
         created_by=actor,
     )

@@ -279,6 +279,20 @@ class RuntimeGraphRecorder:
         self._node_edge_ids.setdefault(child_node_key, []).append(edge["edge_id"])
         self._node_edge_ids.setdefault(parent_node_key, []).append(edge["edge_id"])
 
+    def _refresh_container_cache(self) -> None:
+        """Sync local container cache with containers already persisted on the graph."""
+        try:
+            detail = self._service.get_graph_detail(self.graph_id)
+        except Exception:
+            return
+
+        containers = detail.get("containers") or []
+        for container in containers:
+            container_key = container.get("container_key")
+            container_id = container.get("container_id")
+            if container_key and container_id:
+                self._containers[container_key] = container_id
+
     def _ensure_containers(self, user_id: str) -> None:
         for order_index, container_config in enumerate(self._container_configs):
             container_key = container_config.container_key
@@ -308,15 +322,30 @@ class RuntimeGraphRecorder:
         if container_key in self._containers:
             return self._containers[container_key]
 
-        container = self._service.create_container(
-            graph_id=self.graph_id,
-            container_key=container_key,
-            label=label,
-            role_type=role_type,
-            config_json=config_json or {"runtime": True},
-            order_index=len(self._containers),
-            created_by=created_by,
-        )
+        # The runtime graph may have been expanded by another component
+        # (for example TopologyInstantiator) after this recorder was created.
+        self._refresh_container_cache()
+        if container_key in self._containers:
+            return self._containers[container_key]
+
+        try:
+            container = self._service.create_container(
+                graph_id=self.graph_id,
+                container_key=container_key,
+                label=label,
+                role_type=role_type,
+                config_json=config_json or {"runtime": True},
+                order_index=len(self._containers),
+                created_by=created_by,
+            )
+        except ValueError as exc:
+            if "容器 key" not in str(exc):
+                raise
+            self._refresh_container_cache()
+            if container_key in self._containers:
+                return self._containers[container_key]
+            raise
+
         self._containers[container_key] = container["container_id"]
         return container["container_id"]
 

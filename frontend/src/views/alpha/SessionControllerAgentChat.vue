@@ -22,7 +22,10 @@ import { buildExecutionGraphExportPayload, downloadExecutionGraphFile } from '@/
 
 const GRAPH_EXECUTION_MODE = 'graph'
 const SESSION_GRAPH_LAYOUT_OPTIONS = {
-  filterDelegatedContainers: true
+  filterDelegatedContainers: true,
+  hideSubgraphBoundaryNodes: true,
+  stackGraphsByRow: true,
+  alignLaneStarts: true
 }
 
 const projects = ref([])

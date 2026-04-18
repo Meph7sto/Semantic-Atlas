@@ -182,6 +182,7 @@ class SubgraphRunner:
         skeleton: RuntimeGraphSkeleton,
         tool_executor: Any,
         ai_proxy_client: Any,
+        graph_service: Any | None = None,
         recorder: Any,
         actor: str,
         user_message: str = "",
@@ -201,6 +202,7 @@ class SubgraphRunner:
             skeleton=skeleton,
             tool_executor=tool_executor,
             ai_proxy_client=ai_proxy_client,
+            graph_service=graph_service,
             recorder=recorder,
             actor=actor,
             user_message=user_message,
@@ -216,6 +218,7 @@ class SubgraphRunner:
         user_input: str,
         tool_executor: Any,
         ai_proxy_client: Any,
+        graph_service: Any | None = None,
         recorder: Any,
         actor: str,
         scratchpad: Scratchpad | None = None,
@@ -277,6 +280,7 @@ class SubgraphRunner:
             skeleton=skeleton,
             tool_executor=tool_executor,
             ai_proxy_client=ai_proxy_client,
+            graph_service=graph_service,
             recorder=recorder,
             actor=actor,
             user_message=user_input,
@@ -295,6 +299,7 @@ class SubgraphRunner:
         skeleton: RuntimeGraphSkeleton,
         tool_executor: Any,
         ai_proxy_client: Any,
+        graph_service: Any | None,
         recorder: Any,
         actor: str,
         user_message: str,
@@ -317,6 +322,7 @@ class SubgraphRunner:
             skeleton=skeleton,
             tool_executor=tool_executor,
             ai_proxy_client=ai_proxy_client,
+            graph_service=graph_service,
             recorder=recorder,
             actor=actor,
             user_message=user_message,
@@ -335,6 +341,7 @@ class SubgraphRunner:
         skeleton: RuntimeGraphSkeleton,
         tool_executor: Any,
         ai_proxy_client: Any,
+        graph_service: Any | None,
         recorder: Any,
         actor: str,
         user_message: str,
@@ -366,6 +373,7 @@ class SubgraphRunner:
                     pad=pad,
                     tool_executor=tool_executor,
                     ai_proxy_client=ai_proxy_client,
+                    graph_service=graph_service,
                     recorder=recorder,
                     actor=actor,
                     user_message=user_message,
@@ -404,12 +412,26 @@ class SubgraphRunner:
                     cause=exc,
                 ) from exc
 
-            current_sg = self._resolve_next_subgraph(
+            next_sg = self._resolve_next_subgraph(
                 current_sg=current_sg,
                 route_key=route_key,
                 container_subgraphs=container_subgraphs,
                 skeleton=skeleton,
             )
+            if next_sg is not None:
+                _ensure_runtime_transition_edge(
+                    graph_service=_resolve_graph_service(
+                        graph_service=graph_service,
+                        recorder=recorder,
+                    ),
+                    graph_id=skeleton.graph_id,
+                    skeleton=skeleton,
+                    source_subgraph=current_sg,
+                    target_subgraph=next_sg,
+                    actor=actor,
+                    route_key=route_key,
+                )
+            current_sg = next_sg
 
         return ContainerResult(
             conclusion=last_conclusion,
@@ -427,6 +449,7 @@ class SubgraphRunner:
         pad: Scratchpad,
         tool_executor: Any,
         ai_proxy_client: Any,
+        graph_service: Any | None,
         recorder: Any,
         actor: str,
         user_message: str,
@@ -447,6 +470,7 @@ class SubgraphRunner:
                 pad=pad,
                 tool_executor=tool_executor,
                 ai_proxy_client=ai_proxy_client,
+                graph_service=graph_service,
                 recorder=recorder,
                 actor=actor,
                 user_message=user_message,
@@ -462,6 +486,7 @@ class SubgraphRunner:
                 pad=pad,
                 tool_executor=tool_executor,
                 ai_proxy_client=ai_proxy_client,
+                graph_service=graph_service,
                 recorder=recorder,
                 actor=actor,
                 user_message=user_message,
@@ -483,6 +508,7 @@ class SubgraphRunner:
         pad: Scratchpad,
         tool_executor: Any,
         ai_proxy_client: Any,
+        graph_service: Any | None,
         recorder: Any,
         actor: str,
         user_message: str,
@@ -579,6 +605,7 @@ class SubgraphRunner:
         pad: Scratchpad,
         tool_executor: Any,
         ai_proxy_client: Any,
+        graph_service: Any | None,
         recorder: Any,
         actor: str,
         user_message: str,
@@ -616,6 +643,34 @@ class SubgraphRunner:
         child_runtime_context = _build_invoke_runtime_context(
             invoke_request=invoke_request,
         )
+        resolved_graph_service = _resolve_graph_service(
+            graph_service=graph_service,
+            recorder=recorder,
+        )
+        invoke_start_node_id = _find_subgraph_boundary_node_id(
+            skeleton,
+            sg.subgraph_id,
+            "start",
+        )
+        invoke_end_node_id = _find_subgraph_boundary_node_id(
+            skeleton,
+            sg.subgraph_id,
+            "end",
+        )
+        _ensure_runtime_edge(
+            graph_service=resolved_graph_service,
+            graph_id=skeleton.graph_id,
+            source_node_id=invoke_start_node_id,
+            target_node_id=invoke_end_node_id,
+            edge_type="seq",
+            label="seq",
+            actor=actor,
+            config_json={
+                "runtime": True,
+                "invoke_passthrough": True,
+                "subgraph_key": sg.subgraph_key,
+            },
+        )
 
         # Synchronously execute target container
         target_result: ContainerResult = yield from self._execute_container(
@@ -623,12 +678,46 @@ class SubgraphRunner:
             skeleton=skeleton,
             tool_executor=tool_executor,
             ai_proxy_client=ai_proxy_client,
+            graph_service=resolved_graph_service,
             recorder=recorder,
             actor=actor,
             user_message=delegated_user_message,
             tracker=tracker,
             pad=pad,
             runtime_context=child_runtime_context,
+        )
+        target_terminal_subgraph = _find_last_completed_subgraph_in_container(
+            skeleton=skeleton,
+            container=target_container,
+            tracker=tracker,
+        )
+        target_end_node_id = (
+            _find_subgraph_boundary_node_id(
+                skeleton,
+                target_terminal_subgraph.subgraph_id,
+                "end",
+            )
+            if target_terminal_subgraph is not None
+            else None
+        )
+        _ensure_runtime_edge(
+            graph_service=resolved_graph_service,
+            graph_id=skeleton.graph_id,
+            source_node_id=target_end_node_id,
+            target_node_id=invoke_end_node_id,
+            edge_type="return",
+            label="return",
+            actor=actor,
+            config_json={
+                "runtime": True,
+                "invoke_return": True,
+                "source_subgraph": (
+                    target_terminal_subgraph.subgraph_key
+                    if target_terminal_subgraph is not None
+                    else None
+                ),
+                "target_subgraph": sg.subgraph_key,
+            },
         )
 
         controller_decision = _build_session_controller_invoke_decision(
@@ -747,6 +836,112 @@ def _latest_stage_output(pad: Scratchpad) -> Any:
     if not entries:
         return ""
     return entries[-1].content
+
+
+def _find_last_completed_subgraph_in_container(
+    *,
+    skeleton: RuntimeGraphSkeleton,
+    container: RuntimeContainer,
+    tracker: _SubgraphStatusTracker,
+) -> RuntimeSubgraph | None:
+    candidates = [
+        sg
+        for sg in skeleton.get_subgraphs_for_container(container.container_id)
+        if tracker.get(sg.subgraph_id) == SubgraphStatus.COMPLETED
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item.order_index)
+
+
+def _resolve_graph_service(
+    *,
+    graph_service: Any | None,
+    recorder: Any,
+) -> Any | None:
+    if graph_service is not None:
+        return graph_service
+    return getattr(recorder, "_service", None)
+
+
+def _ensure_runtime_edge(
+    *,
+    graph_service: Any | None,
+    graph_id: str,
+    source_node_id: str | None,
+    target_node_id: str | None,
+    edge_type: str,
+    label: str | None,
+    actor: str,
+    condition_expr: str | None = None,
+    config_json: dict[str, Any] | None = None,
+) -> None:
+    if graph_service is None or not source_node_id or not target_node_id:
+        return
+    if source_node_id == target_node_id:
+        return
+
+    detail = graph_service.get_graph_detail(graph_id)
+    edges = detail.get("edges") or []
+    for edge in edges:
+        if (
+            edge.get("source_node_id") == source_node_id
+            and edge.get("target_node_id") == target_node_id
+            and edge.get("edge_type") == edge_type
+        ):
+            return
+
+    next_order_index = max(
+        (int(edge.get("order_index") or 0) for edge in edges),
+        default=-1,
+    ) + 1
+    graph_service.create_edge(
+        graph_id=graph_id,
+        source_node_id=source_node_id,
+        target_node_id=target_node_id,
+        edge_type=edge_type,
+        label=label,
+        condition_expr=condition_expr,
+        config_json=config_json,
+        order_index=next_order_index,
+        created_by=actor,
+    )
+
+
+def _ensure_runtime_transition_edge(
+    *,
+    graph_service: Any | None,
+    graph_id: str,
+    skeleton: RuntimeGraphSkeleton,
+    source_subgraph: RuntimeSubgraph,
+    target_subgraph: RuntimeSubgraph,
+    actor: str,
+    route_key: str | None,
+) -> None:
+    _ensure_runtime_edge(
+        graph_service=graph_service,
+        graph_id=graph_id,
+        source_node_id=_find_subgraph_boundary_node_id(
+            skeleton,
+            source_subgraph.subgraph_id,
+            "end",
+        ),
+        target_node_id=_find_subgraph_boundary_node_id(
+            skeleton,
+            target_subgraph.subgraph_id,
+            "start",
+        ),
+        edge_type="seq",
+        label="seq",
+        actor=actor,
+        config_json={
+            "runtime": True,
+            "subgraph_transition": True,
+            "route_key": route_key,
+            "source_subgraph": source_subgraph.subgraph_key,
+            "target_subgraph": target_subgraph.subgraph_key,
+        },
+    )
 
 
 def _build_subgraph_context(
@@ -1002,6 +1197,11 @@ def _resolve_invoke_request(
             if phase_payload.get(key) is not None and merged.get(key) is None:
                 merged[key] = phase_payload.get(key)
         return merged
+    if not expected_agent:
+        fallback_request = dict(phase_payload)
+        fallback_request.setdefault("delegated_agent", None)
+        fallback_request.setdefault("task_description", "")
+        return fallback_request
     raise ValueError(
         f"invoke subgraph '{current_sg.subgraph_key}' 未找到匹配的原生 invoke 请求"
     )

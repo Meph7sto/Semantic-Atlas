@@ -248,6 +248,23 @@ class FakeGraphService:
         return dict(graph)
 
 
+class StrictFakeGraphService(FakeGraphService):
+    def create_container(self, *, graph_id, container_key, label, role_type, **kwargs):
+        for container in self.containers.values():
+            if (
+                container.get("graph_id") == graph_id
+                and container.get("container_key") == container_key
+            ):
+                raise ValueError(f"容器 key '{container_key}' 在图中已存在")
+        return super().create_container(
+            graph_id=graph_id,
+            container_key=container_key,
+            label=label,
+            role_type=role_type,
+            **kwargs,
+        )
+
+
 class DelegatingGraphAIProxy:
     def __init__(self) -> None:
         self.calls = 0
@@ -589,9 +606,9 @@ class _FakeDelegatedTools:
         raise AssertionError(f"unexpected delegated tool call: {tool_name}")
 
 
-def _build_service(ai_proxy, *, requirement_agent_service=None):
+def _build_service(ai_proxy, *, requirement_agent_service=None, graph_service=None):
     chat_storage = FakeChatStorage()
-    graph_service = FakeGraphService()
+    graph_service = graph_service or FakeGraphService()
     requirements_service = FakeRequirementsService()
     requirement_agent_service = requirement_agent_service or FakeRequirementAgentService()
     tools = SessionControllerTools(
@@ -658,6 +675,77 @@ def test_stream_graph_executor_reply_delegates_requirement_agent_and_succeeds():
     )
     snapshot = runtime_graph["meta_json"]["scratchpad_snapshot"]
     assert any(entry.get("entry_type") == "note" for entry in snapshot)
+
+    def _node_id_containing(fragment: str) -> str:
+        for node in runtime_detail["nodes"]:
+            if fragment in str(node.get("node_key") or ""):
+                return str(node["node_id"])
+        raise AssertionError(f"node fragment not found: {fragment}")
+
+    def _has_edge(*, source_fragment: str, target_fragment: str, edge_type: str) -> bool:
+        source_node_id = _node_id_containing(source_fragment)
+        target_node_id = _node_id_containing(target_fragment)
+        return any(
+            edge.get("source_node_id") == source_node_id
+            and edge.get("target_node_id") == target_node_id
+            and edge.get("edge_type") == edge_type
+            for edge in runtime_detail["edges"]
+        )
+
+    assert _has_edge(
+        source_fragment="intent_judge_r1",
+        target_fragment="controller_intake_start",
+        edge_type="seq",
+    )
+    assert _has_edge(
+        source_fragment="controller_intake_end",
+        target_fragment="invoke_requirement_agent_start",
+        edge_type="seq",
+    )
+    assert _has_edge(
+        source_fragment="invoke_requirement_agent_start",
+        target_fragment="invoke_requirement_agent_end",
+        edge_type="seq",
+    )
+    assert _has_edge(
+        source_fragment="requirement_agent_runtime_end",
+        target_fragment="invoke_requirement_agent_end",
+        edge_type="return",
+    )
+    assert _has_edge(
+        source_fragment="invoke_requirement_agent_end",
+        target_fragment="final_reply_start",
+        edge_type="seq",
+    )
+
+
+def test_stream_graph_executor_reply_reuses_instantiated_requirement_container():
+    graph_service = StrictFakeGraphService()
+    service, _chat_storage, graph_service, requirement_agent_service = _build_service(
+        DelegatingGraphAIProxy(),
+        graph_service=graph_service,
+    )
+
+    events = list(
+        service.stream_session_controller_reply(
+            session_id="session-1",
+            user_id="user-1",
+            project_id="project-1",
+            user_message="帮我看看现在一共有多少个需求",
+            execution_mode="graph",
+        )
+    )
+
+    result_event = next(event for event in events if event["event"] == "result")
+    assert result_event["data"]["status"] == "succeeded"
+    assert requirement_agent_service.inline_calls == []
+
+    runtime_detail = graph_service.get_graph_detail(result_event["data"]["graph_id"])
+    requirement_containers = [
+        item for item in runtime_detail["containers"]
+        if item["container_key"] == "requirement_agent"
+    ]
+    assert len(requirement_containers) == 1
 
 
 def test_stream_graph_executor_reply_suspends_and_resumes_same_graph():
