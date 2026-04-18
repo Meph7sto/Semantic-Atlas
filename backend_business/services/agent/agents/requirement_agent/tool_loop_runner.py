@@ -8,6 +8,7 @@ from typing import Any
 from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner
 from backend_business.services.agent.execution_graph_service import ExecutionGraphService
 from backend_business.services.agent.runtime.scratchpad import Scratchpad
+from backend_business.services.agent.runtime.scratchpad_service import ScratchpadService
 from backend_business.services.agent.tools import RequirementAgentTools
 
 from .constants import DEFAULT_PROMPT_PAYLOAD_FORMAT
@@ -95,10 +96,9 @@ class RequirementAgentToolLoopRunner:
         if context_mode == "scratchpad":
             # Scratchpad 蒸馏模式：不传递全量历史，从 graph meta 恢复 Scratchpad
             effective_historical_context: list[dict[str, Any]] = []
-            graph = self._execution_graph_service.get_execution_graph(recorder.graph_id)
-            meta = (graph.get("meta_json") or {}) if graph else {}
-            existing_entries = meta.get("scratchpad_entries") or []
-            scratchpad = Scratchpad.from_snapshot(existing_entries)
+            scratchpad = ScratchpadService(
+                execution_graph_service=self._execution_graph_service,
+            ).load(recorder.graph_id, container_key=self._stage_container_key)
             scratchpad_prompt_text = scratchpad.format_for_prompt()
         elif context_mode == "incremental":
             # 增量模式：仅保留架构和文件上下文，不传递具体执行结果
@@ -157,9 +157,11 @@ class RequirementAgentToolLoopRunner:
 
         # Persist scratchpad state back to graph meta after tool loop completes
         if scratchpad and context_mode == "scratchpad":
-            self._execution_graph_service.patch_graph_meta(
+            ScratchpadService(
+                execution_graph_service=self._execution_graph_service,
+            ).save(
                 recorder.graph_id,
-                {"scratchpad_entries": scratchpad.snapshot()},
+                scratchpad,
                 updated_by=user_id,
             )
 
@@ -171,4 +173,3 @@ class RequirementAgentToolLoopRunner:
             "route_key": result.route_key,
             "conclusion": result.conclusion,
         }
-

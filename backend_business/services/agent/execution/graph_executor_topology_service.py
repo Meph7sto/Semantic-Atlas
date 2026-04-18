@@ -6,7 +6,11 @@ import json
 from typing import Any
 
 from backend_business.services.ai_proxy import ai_proxy
-from backend_business.services.agent.runtime import ContainerConfig, RuntimeGraphRecorder
+from backend_business.services.agent.runtime import (
+    ContainerConfig,
+    RuntimeGraphRecorder,
+    with_runtime_state_contract,
+)
 
 from .graph_executor import ExecutionResult, GraphExecutor
 
@@ -69,6 +73,23 @@ class GraphExecutorTopologyRuntimeService:
 
         normalized_payload = dict(input_payload or {})
         user_message = _build_user_message(normalized_payload)
+        runtime_graph = self._service.create_runtime_graph(
+            project_id=str(graph.get("project_id") or ""),
+            name=runtime_graph_name or f"{graph.get('name') or 'Topology'} Runtime",
+            description=runtime_graph_description
+            or graph.get("description")
+            or "拓扑模板运行时图",
+            created_by=actor,
+            meta_json=with_runtime_state_contract(
+                {
+                    "template_graph_id": template_graph_id,
+                    "input_payload": normalized_payload,
+                    "execution_mode": "graph_executor",
+                    "max_steps": max_steps,
+                }
+            ),
+            status="running",
+        )
         recorder = RuntimeGraphRecorder(
             execution_graph_service=self._service,
             container_configs=[
@@ -88,18 +109,9 @@ class GraphExecutorTopologyRuntimeService:
             user_id=actor,
             session_id=f"rest_execute::{template_graph_id}",
             user_message=user_message,
-            graph_name=runtime_graph_name
-            or f"{graph.get('name') or 'Topology'} Runtime",
-            graph_description=runtime_graph_description
-            or graph.get("description")
-            or "拓扑模板运行时图",
-            initial_graph_meta={
-                "template_graph_id": template_graph_id,
-                "input_payload": normalized_payload,
-                "execution_mode": "graph_executor",
-                "max_steps": max_steps,
-            },
+            graph_id=str(runtime_graph.get("graph_id") or ""),
             task_context={"max_tool_call_rounds": max_steps},
+            attach_only=True,
         )
 
         events, result = _drain_execution(

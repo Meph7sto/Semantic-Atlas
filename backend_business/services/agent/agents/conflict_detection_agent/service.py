@@ -17,6 +17,10 @@ from backend_business.services.agent.execution.graph_executor import (
     ExecutionResult,
     GraphExecutor,
 )
+from backend_business.services.agent.runtime.binding_bootstrap import (
+    ensure_runtime_bindings,
+    extract_tool_names,
+)
 from backend_business.services.agent.tools import ConflictDetectionTools
 from backend_business.services.requirements_manage_service import RequirementsManageService
 
@@ -55,6 +59,26 @@ class ConflictDetectionAgentService:
             requirements_service=self.requirements_service,
             conflict_check_fn=self.ai_proxy.conflict_check,
         )
+
+    def _ensure_graph_runtime_bindings(self) -> None:
+        binding_specs = [
+            {
+                "container_key": "conflict_detection_agent",
+                "agent_type": "conflict_detection_agent",
+                "runtime_profile": "default",
+                "capability_policy_json": {
+                    "policy_id": "conflict_detection::runtime",
+                    "scope": "conflict_detection_agent",
+                    "tool_names": extract_tool_names(self.tools),
+                },
+                "quota_policy_json": {
+                    "policy_id": "conflict_detection::runtime::quota",
+                    "max_rounds": self.MAX_TOOL_CALL_ROUNDS,
+                },
+                "memory_policy_json": {"scope": "container"},
+            }
+        ]
+        ensure_runtime_bindings(self.execution_graph_service, binding_specs)
 
     # ---- session helpers (modeled after RequirementAgentChatService) ----
 
@@ -503,6 +527,7 @@ class ConflictDetectionAgentService:
             session_id=session_id,
             active_graph_id=recorder.graph_id,
         )
+        self._ensure_graph_runtime_bindings()
         yield {"event": "graph", "data": {"graph_id": recorder.graph_id}}
 
         executor = GraphExecutor()

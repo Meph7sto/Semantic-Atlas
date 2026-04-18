@@ -9,6 +9,7 @@ from typing import Any
 from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner
 from backend_business.services.agent.execution_graph_service import ExecutionGraphService
 from backend_business.services.agent.runtime.scratchpad import Scratchpad
+from backend_business.services.agent.runtime.scratchpad_service import ScratchpadService
 
 from .contracts import (
     SessionControllerDecisionMode,
@@ -59,9 +60,11 @@ class SessionControllerToolLoopRunner:
         project_id: str,
         session_id: str,
     ) -> Generator[dict[str, Any], None, SessionControllerLoopResult]:
+        scratchpad = ScratchpadService(
+            execution_graph_service=self._execution_graph_service,
+        ).load(recorder.graph_id, container_key="conductor")
         graph = self._execution_graph_service.get_execution_graph(recorder.graph_id)
         meta = (graph.get("meta_json") or {}) if graph else {}
-        scratchpad = Scratchpad.from_snapshot(meta.get("scratchpad_entries") or [])
         resolved_requirement_id = meta.get("resolved_requirement_id")
         context: dict[str, Any] = {
             "project_id": project_id,

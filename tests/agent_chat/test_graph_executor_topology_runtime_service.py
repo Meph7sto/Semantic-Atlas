@@ -15,6 +15,10 @@ from backend_business.services.agent.execution.graph_executor import ExecutionRe
 from backend_business.services.agent.execution.graph_executor_topology_service import (
     GraphExecutorTopologyRuntimeService,
 )
+from backend_business.services.agent.runtime.state_contract import (
+    RUN_STATE_SOURCE_OF_TRUTH,
+    SCRATCHPAD_STATE_BACKEND,
+)
 
 
 class _StubGraphService:
@@ -164,3 +168,10 @@ def test_execute_template_routes_rest_execution_through_graph_executor():
         "}"
     )
     assert executor.last_execute_kwargs["runtime_graph_id"] == "runtime-1"
+    assert graph_service.created_containers == []
+    assert result["runtime_graph"]["meta_json"]["scratchpad_state_backend"] == (
+        SCRATCHPAD_STATE_BACKEND
+    )
+    assert result["runtime_graph"]["meta_json"]["run_state_source_of_truth"] == (
+        RUN_STATE_SOURCE_OF_TRUTH
+    )

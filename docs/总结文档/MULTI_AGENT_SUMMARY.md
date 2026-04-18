@@ -110,7 +110,7 @@ Scratchpad 是当前容器级共享工作记忆：
 
 - 同一容器内的多个 subgraph 可读写。
 - 常见条目类型包括 `note`、`tool_excerpt`、`stage_output`。
-- Session controller 会把跨轮摘要写入 graph meta 中的 `scratchpad_entries`。
+- Session controller 会通过 `ScratchpadService` 持久化 scratchpad；运行时主存储已切到 `container_state_store`，graph meta 中保留 `scratchpad_snapshot` 作为兼容快照。
 - 新一轮 graph 可通过 `prev_graph_id` 继承上一轮 scratchpad。
 
 ### 3.4 执行状态
@@ -120,10 +120,12 @@ Scratchpad 是当前容器级共享工作记忆：
 | 状态 | 含义 |
 |------|------|
 | `running` | 正在执行 |
-| `waiting` | 有 `invoke` 子图在推进 |
+| `delegating` | 有 `invoke` 委托分支正在执行，这是 graph 级聚合态 |
 | `suspended` | 卡在 `handoff` 等待用户输入 |
 | `succeeded` | 正常完成 |
 | `failed` | 执行失败 |
+
+当前多 Agent 的运行边界是 in-process runtime binding + policy enforcement，不是独立 sandbox runtime。
 
 **Subgraph 级状态：**
 
@@ -190,9 +192,10 @@ RequirementActor / EventStore
 
 ### 4.5 旧执行器仍存在
 
-`TopologyExecutionService` 仍被 `execution_graph` 路由使用，用于“模板克隆后单路径执行”。它和 `GraphExecutor + SubgraphRunner` 是两套并存实现：
+`execution_graph` 路由的模板执行入口当前已接到 `GraphExecutorTopologyRuntimeService`。仓库里仍保留 `TopologyExecutionService` 作为旧实现痕迹，但主入口已经切到 `GraphExecutor + SubgraphRunner` 这条链路：
 
-- `TopologyExecutionService`：偏旧，按模板节点直接克隆并执行单一路径。
+- `GraphExecutorTopologyRuntimeService`：路由层模板执行入口，负责创建 runtime graph 并调用 `GraphExecutor`。
+- `TopologyExecutionService`：旧版模板执行器，已不再是当前主入口。
 - `GraphExecutor`：偏新，带 judge、subgraph、scratchpad、complete_phase 等能力。
 
 ---
@@ -224,7 +227,7 @@ session_id
 1. **图即轨迹**：跨容器调用、阶段推进、工具执行都会尽量落到 execution graph 中。
 2. **委托显式化**：Session controller 的“调用别的 Agent”要显式形成 `call/return` 轨迹。
 3. **领域写入收口**：需求状态修改继续通过 Actor / EventStore 收口。
-4. **上下文可继承**：通过 `prev_graph_id` 和 `scratchpad_entries` 保留多轮上下文。
+4. **上下文可继承**：通过 `prev_graph_id` 和 scratchpad snapshot / container state 保留多轮上下文。
 5. **新旧链路并存**：当前仓库同时存在 `GraphExecutor` 新链路和 `TopologyExecutionService` 旧链路，文档必须区分主路径与兼容路径。
 
 ---
@@ -237,7 +240,8 @@ session_id
 | `backend_business/services/agent/execution/topology_instantiator.py` | 拓扑模板 → runtime skeleton |
 | `backend_business/services/agent/execution/subgraph_runner.py` | 按 subgraph 推进 `llm/invoke/handoff` |
 | `backend_business/services/agent/execution/tool_loop_runner.py` | 通用 LLM + tool call 循环，支持 `complete_phase` |
-| `backend_business/services/agent/execution/topology_execution_service.py` | 旧版模板执行器，仍被 execution_graph 路由使用 |
+| `backend_business/services/agent/execution/graph_executor_topology_service.py` | execution_graph 路由的模板执行入口，封装 runtime graph 创建与 `GraphExecutor` 调用 |
+| `backend_business/services/agent/execution/topology_execution_service.py` | 旧版模板执行器，当前主要作为兼容遗留实现存在 |
 | `backend_business/services/agent/runtime/graph_recorder.py` | 记录运行时 graph / node / edge / meta |
 | `backend_business/services/agent/runtime/scratchpad.py` | 容器级 scratchpad |
 | `backend_business/services/agent/agents/session_controller/service.py` | 会话总控 Agent service |

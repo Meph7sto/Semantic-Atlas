@@ -423,6 +423,16 @@ def init_execution_schema(cur):
     cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_agent_runtime_registry_enabled ON agent_runtime_registry(enabled)"
     )
+    cur.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_runtime_registry_identity
+        ON agent_runtime_registry(
+            (COALESCE(container_key, '')),
+            (COALESCE(agent_type, '')),
+            runtime_profile
+        )
+        """
+    )
 
     # agent_runs: every runtime execution request and its lifecycle
     cur.execute(

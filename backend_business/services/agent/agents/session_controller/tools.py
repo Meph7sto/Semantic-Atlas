@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import inspect
 import logging
 from typing import Any
 
@@ -86,22 +85,18 @@ class SessionControllerTools:
         self._requirement_classification_agent_service = requirement_classification_agent_service
 
     @staticmethod
-    def _resolve_tool_scope(context: dict[str, Any] | None) -> str:
-        if not isinstance(context, dict):
-            return "session_controller"
-        scope = str(context.get("_tool_scope") or "").strip()
-        return scope or "session_controller"
-
-    @staticmethod
     def _uses_native_invoke(context: dict[str, Any]) -> bool:
         return bool(context.get("_native_invoke_enabled"))
 
-    def _get_delegated_tool_executor(self, scope: str) -> Any:
-        if scope == "requirement_agent":
+    def resolve_runtime_tool_executor(self, *, container_key: str) -> Any:
+        """Resolve the tool executor bound to a runtime container."""
+        if container_key in {"conductor", "session_controller", ""}:
+            return self
+        if container_key == "requirement_agent":
             return getattr(self._requirement_agent_service, "tools", None)
-        if scope == "conflict_detection":
+        if container_key == "conflict_detection":
             return getattr(self._conflict_agent_service, "tools", None)
-        if scope == "requirement_classification_agent":
+        if container_key == "requirement_classification_agent":
             service = self._requirement_classification_agent_service
             return getattr(service, "tools", None) if service is not None else None
         return None
@@ -110,15 +105,6 @@ class SessionControllerTools:
         self,
         context: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        scope = self._resolve_tool_scope(context)
-        delegated_executor = self._get_delegated_tool_executor(scope)
-        if delegated_executor is not None:
-            get_tools_list = getattr(delegated_executor, "get_tools_list")
-            signature = inspect.signature(get_tools_list)
-            if "context" in signature.parameters:
-                return get_tools_list(context=context)
-            return get_tools_list()
-
         window_properties = {
             "start_index": {
                 "type": "integer",
@@ -248,10 +234,6 @@ class SessionControllerTools:
         context: dict[str, Any],
     ) -> dict[str, Any]:
         parsed_arguments = self._parse_arguments(arguments)
-        scope = self._resolve_tool_scope(context)
-        delegated_executor = self._get_delegated_tool_executor(scope)
-        if delegated_executor is not None:
-            return delegated_executor.execute(tool_name, parsed_arguments, context)
         if tool_name == "list_requirements":
             return self._execute_list_requirements(parsed_arguments, context)
         if tool_name == "search_requirements":
@@ -271,13 +253,6 @@ class SessionControllerTools:
         context: dict[str, Any],
     ):
         parsed_arguments = self._parse_arguments(arguments)
-        scope = self._resolve_tool_scope(context)
-        delegated_executor = self._get_delegated_tool_executor(scope)
-        if delegated_executor is not None:
-            execute_streaming = getattr(delegated_executor, "execute_streaming", None)
-            if callable(execute_streaming):
-                return execute_streaming(tool_name, parsed_arguments, context)
-            return delegated_executor.execute(tool_name, parsed_arguments, context)
         if tool_name == "invoke_requirement_agent":
             return self._stream_invoke_requirement_agent(parsed_arguments, context)
         if tool_name == "invoke_conflict_detection":

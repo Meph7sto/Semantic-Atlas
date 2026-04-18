@@ -13,6 +13,11 @@ from backend_business.services.ai_proxy import ai_proxy
 from backend_business.services.agent.execution.graph_executor import GraphExecutor
 from backend_business.services.agent.execution_graph_service import ExecutionGraphService
 from backend_business.services.agent.runtime.scratchpad import Scratchpad
+from backend_business.services.agent.runtime.scratchpad_service import ScratchpadService
+from backend_business.services.agent.runtime.binding_bootstrap import (
+    ensure_runtime_bindings,
+    extract_tool_names,
+)
 from backend_business.services.requirements_manage_service import RequirementsManageService
 from backend_business.services.agent.execution.topology_instantiator import (
     RuntimeContainer,
@@ -100,6 +105,86 @@ class SessionControllerService:
         }
         return {key: value for key, value in compact.items() if value is not None}
 
+    def _ensure_graph_runtime_bindings(self) -> None:
+        conductor_tool_names = extract_tool_names(self.tools)
+        requirement_tool_names = extract_tool_names(
+            self.tools.resolve_runtime_tool_executor(container_key="requirement_agent")
+            if self.tools is not None
+            else None
+        )
+        conflict_tool_names = extract_tool_names(
+            self.tools.resolve_runtime_tool_executor(container_key="conflict_detection")
+            if self.tools is not None
+            else None
+        )
+        classification_tool_names = extract_tool_names(
+            self.tools.resolve_runtime_tool_executor(
+                container_key="requirement_classification_agent"
+            )
+            if self.tools is not None
+            else None
+        )
+        binding_specs = [
+            {
+                "container_key": "conductor",
+                "agent_type": "session_controller",
+                "runtime_profile": "default",
+                "capability_policy_json": {
+                    "policy_id": "session_controller::conductor",
+                    "scope": "conductor",
+                    "tool_names": conductor_tool_names,
+                },
+                "quota_policy_json": {
+                    "policy_id": "session_controller::conductor::quota",
+                    "max_rounds": self.MAX_TOOL_CALL_ROUNDS,
+                },
+                "memory_policy_json": {"scope": "container"},
+            },
+            {
+                "container_key": "requirement_agent",
+                "agent_type": "requirement_agent",
+                "runtime_profile": "default",
+                "capability_policy_json": {
+                    "policy_id": "session_controller::requirement_agent",
+                    "scope": "delegated_requirement",
+                    "tool_names": requirement_tool_names,
+                },
+                "quota_policy_json": {
+                    "policy_id": "session_controller::requirement_agent::quota",
+                },
+                "memory_policy_json": {"scope": "container"},
+            },
+            {
+                "container_key": "conflict_detection",
+                "agent_type": "conflict_detection",
+                "runtime_profile": "default",
+                "capability_policy_json": {
+                    "policy_id": "session_controller::conflict_detection",
+                    "scope": "delegated_conflict",
+                    "tool_names": conflict_tool_names,
+                },
+                "quota_policy_json": {
+                    "policy_id": "session_controller::conflict_detection::quota",
+                },
+                "memory_policy_json": {"scope": "container"},
+            },
+            {
+                "container_key": "requirement_classification_agent",
+                "agent_type": "requirement_classification_agent",
+                "runtime_profile": "default",
+                "capability_policy_json": {
+                    "policy_id": "session_controller::requirement_classification_agent",
+                    "scope": "delegated_classification",
+                    "tool_names": classification_tool_names,
+                },
+                "quota_policy_json": {
+                    "policy_id": "session_controller::requirement_classification_agent::quota",
+                },
+                "memory_policy_json": {"scope": "container"},
+            },
+        ]
+        ensure_runtime_bindings(self.execution_graph_service, binding_specs)
+
     def _inherit_session_scratchpad(
         self,
         *,
@@ -109,31 +194,36 @@ class SessionControllerService:
     ) -> None:
         if not prev_graph_id:
             return
-        current_graph = self.execution_graph_service.get_execution_graph(graph_id)
-        current_meta = (current_graph.get("meta_json") or {}) if current_graph else {}
-        if current_meta.get("scratchpad_entries"):
+        scratchpad_service = ScratchpadService(
+            execution_graph_service=self.execution_graph_service,
+        )
+        existing_snapshot = scratchpad_service.load(graph_id).snapshot_all()
+        if existing_snapshot:
             return
 
         previous_graph = self.execution_graph_service.get_execution_graph(prev_graph_id)
         previous_meta = (previous_graph.get("meta_json") or {}) if previous_graph else {}
-        inherited_entries = previous_meta.get("scratchpad_entries") or []
-        inherited_snapshot = previous_meta.get("scratchpad_snapshot") or inherited_entries
+        inherited_snapshot = scratchpad_service.load(prev_graph_id).snapshot_all()
         inherited_requirement_id = previous_meta.get("resolved_requirement_id")
-        if not inherited_entries and not inherited_snapshot and not inherited_requirement_id:
+        if not inherited_snapshot and not inherited_requirement_id:
             return
 
         meta_patch: dict[str, Any] = {}
-        if inherited_entries:
-            meta_patch["scratchpad_entries"] = inherited_entries
         if inherited_snapshot:
+            scratchpad_service.save_snapshot(
+                graph_id,
+                inherited_snapshot,
+                updated_by=updated_by,
+            )
             meta_patch["scratchpad_snapshot"] = inherited_snapshot
         if inherited_requirement_id:
             meta_patch["resolved_requirement_id"] = inherited_requirement_id
-        self.execution_graph_service.patch_graph_meta(
-            graph_id,
-            meta_patch,
-            updated_by=updated_by,
-        )
+        if meta_patch:
+            self.execution_graph_service.patch_graph_meta(
+                graph_id,
+                meta_patch,
+                updated_by=updated_by,
+            )
 
     def _generate_turn_summary(
         self,
@@ -210,9 +300,9 @@ class SessionControllerService:
     ) -> None:
         scratchpad = context.get("_scratchpad")
         if not isinstance(scratchpad, Scratchpad):
-            graph = self.execution_graph_service.get_execution_graph(graph_id)
-            meta = (graph.get("meta_json") or {}) if graph else {}
-            scratchpad = Scratchpad.from_snapshot(meta.get("scratchpad_entries") or [])
+            scratchpad = ScratchpadService(
+                execution_graph_service=self.execution_graph_service,
+            ).load(graph_id, container_key="conductor")
 
         summary = self._generate_turn_summary(
             user_message=user_message,
@@ -234,13 +324,17 @@ class SessionControllerService:
         )
         context["_scratchpad"] = scratchpad
         context["_scratchpad_prompt_text"] = scratchpad.format_for_prompt()
-        snapshot = scratchpad.snapshot()
+        scratchpad_service = ScratchpadService(
+            execution_graph_service=self.execution_graph_service,
+        )
+        scratchpad_service.save(
+            graph_id,
+            scratchpad,
+            updated_by=user_id,
+        )
         self.execution_graph_service.patch_graph_meta(
             graph_id,
             {
-                "scratchpad_entries": snapshot,
-                "scratchpad_snapshot": snapshot,
-                "scratchpad_entry_count": len(snapshot),
                 "resolved_requirement_id": context.get("resolved_requirement_id"),
             },
             updated_by=user_id,
@@ -580,7 +674,9 @@ class SessionControllerService:
     ) -> tuple[SessionControllerLoopResult, dict[str, Any], str]:
         graph = self.execution_graph_service.get_execution_graph(graph_id) or {}
         meta = graph.get("meta_json") or {}
-        snapshot = list(meta.get("scratchpad_snapshot") or [])
+        snapshot = ScratchpadService(
+            execution_graph_service=self.execution_graph_service,
+        ).load(graph_id).snapshot_all()
         decision_content = self._find_latest_stage_output_for_sources(
             snapshot,
             source_subgraphs={
@@ -855,6 +951,7 @@ class SessionControllerService:
             session_id=session_id,
             active_graph_id=recorder.graph_id,
         )
+        self._ensure_graph_runtime_bindings()
         yield {"event": "graph", "data": {"graph_id": recorder.graph_id}}
 
         executor = GraphExecutor()

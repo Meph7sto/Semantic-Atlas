@@ -30,6 +30,61 @@ _ALLOWED_AGENT_RUN_STATUSES = {
 class _RuntimeStateMixin:
     """Runtime registry, run journal, and container state CRUD."""
 
+    def ensure_agent_runtime_binding(
+        self,
+        *,
+        container_key: str | None = None,
+        agent_type: str | None = None,
+        runtime_profile: str = "default",
+        implementation_type: str = "local",
+        endpoint: str | None = None,
+        enabled: bool = True,
+        capability_policy_json: Dict[str, Any] | None = None,
+        quota_policy_json: Dict[str, Any] | None = None,
+        memory_policy_json: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        runtime_id = str(uuid.uuid4())
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    INSERT INTO agent_runtime_registry(
+                        runtime_id, container_key, agent_type, runtime_profile,
+                        implementation_type, endpoint, enabled,
+                        capability_policy_json, quota_policy_json, memory_policy_json,
+                        created_at, updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                    ON CONFLICT ((COALESCE(container_key, '')), (COALESCE(agent_type, '')), runtime_profile)
+                    DO UPDATE SET
+                        implementation_type = EXCLUDED.implementation_type,
+                        endpoint = EXCLUDED.endpoint,
+                        enabled = EXCLUDED.enabled,
+                        capability_policy_json = EXCLUDED.capability_policy_json,
+                        quota_policy_json = EXCLUDED.quota_policy_json,
+                        memory_policy_json = EXCLUDED.memory_policy_json,
+                        updated_at = NOW()
+                    RETURNING runtime_id, container_key, agent_type, runtime_profile,
+                              implementation_type, endpoint, enabled,
+                              capability_policy_json, quota_policy_json, memory_policy_json,
+                              created_at::text AS created_at,
+                              updated_at::text AS updated_at
+                    """,
+                    (
+                        runtime_id,
+                        container_key,
+                        agent_type,
+                        runtime_profile,
+                        implementation_type,
+                        endpoint,
+                        enabled,
+                        json.dumps(capability_policy_json) if capability_policy_json is not None else None,
+                        json.dumps(quota_policy_json) if quota_policy_json is not None else None,
+                        json.dumps(memory_policy_json) if memory_policy_json is not None else None,
+                    ),
+                )
+                return dict(cur.fetchone())
+
     def create_agent_runtime_binding(
         self,
         *,

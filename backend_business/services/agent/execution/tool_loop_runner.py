@@ -339,6 +339,51 @@ class ToolLoopRunner:
                 updates[key] = value
         return updates
 
+    @staticmethod
+    def _clone_parallel_context_snapshot(
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Clone the per-round context snapshot visible to parallel tool calls.
+
+        Parallel tool calls within the same round all read from the same
+        pre-dispatch snapshot. They do not observe each other's writes.
+        """
+        snapshot = dict(context)
+        if "tool_results" in context:
+            snapshot["tool_results"] = list(context.get("tool_results") or [])
+        return snapshot
+
+    @staticmethod
+    def _merge_parallel_tool_outcomes(
+        *,
+        normalized_context: dict[str, Any],
+        outcomes: list[_ToolExecutionOutcome],
+    ) -> None:
+        """Deterministically merge same-round tool outcomes back into context.
+
+        Merge semantics:
+        - Each tool call sees only the round-start snapshot.
+        - Same-round tool calls are isolated from each other's writes.
+        - Context updates replay in original tool index order.
+        - ``tool_results`` are appended in that same deterministic order.
+        """
+        for outcome in outcomes:
+            normalized_context.update(outcome.context_updates)
+            normalized_context.setdefault("tool_results", []).append(
+                {
+                    "tool_name": outcome.tool_name,
+                    "arguments": outcome.arguments,
+                    "result": outcome.result,
+                }
+            )
+
+    @staticmethod
+    def _raise_if_cancellation_requested(context: dict[str, Any]) -> None:
+        for key in ("_runtime_cancel_event", "_branch_stop_token"):
+            token = context.get(key)
+            if token is not None and callable(getattr(token, "is_set", None)) and token.is_set():
+                raise RuntimeError("runtime execution cancelled")
+
     def _normalize_phase_completion(
         self,
         *,
@@ -372,6 +417,9 @@ class ToolLoopRunner:
     ) -> Generator[dict[str, Any], None, list[_ToolExecutionOutcome]]:
         result_queue: queue.Queue[tuple[str, int, Any]] = queue.Queue()
         worker_threads: list[threading.Thread] = []
+        round_context_snapshot = self._clone_parallel_context_snapshot(
+            normalized_context,
+        )
 
         for tool_index, tool_call in enumerate(tool_calls, start=1):
             function_payload = tool_call.get("function") or {}
@@ -390,11 +438,9 @@ class ToolLoopRunner:
                 },
             }
 
-            tool_context = dict(normalized_context)
-            if "tool_results" in normalized_context:
-                tool_context["tool_results"] = list(
-                    normalized_context.get("tool_results") or []
-                )
+            tool_context = self._clone_parallel_context_snapshot(
+                round_context_snapshot,
+            )
 
             worker = threading.Thread(
                 target=self._run_tool_worker,
@@ -404,7 +450,7 @@ class ToolLoopRunner:
                     tool_name,
                     tool_call_id,
                     arguments,
-                    normalized_context,
+                    round_context_snapshot,
                     tool_context,
                 ),
                 name=f"tool-loop-{tool_index}",
@@ -543,6 +589,7 @@ class ToolLoopRunner:
             )
 
         for round_index in range(1, self.max_tool_call_rounds + 1):
+            self._raise_if_cancellation_requested(normalized_context)
             messages[0]["content"] = self.prompt_builder.build_system_prompt(
                 context=normalized_context,
             )
@@ -619,6 +666,7 @@ class ToolLoopRunner:
                     node_key=node_key,
                     normalized_context=normalized_context,
                 )
+                self._raise_if_cancellation_requested(normalized_context)
                 phase_completion: dict[str, Any] | None = None
 
                 for outcome in outcomes:
@@ -652,13 +700,9 @@ class ToolLoopRunner:
                             )
                         continue
 
-                    normalized_context.update(outcome.context_updates)
-                    normalized_context.setdefault("tool_results", []).append(
-                        {
-                            "tool_name": outcome.tool_name,
-                            "arguments": outcome.arguments,
-                            "result": outcome.result,
-                        }
+                    self._merge_parallel_tool_outcomes(
+                        normalized_context=normalized_context,
+                        outcomes=[outcome],
                     )
                     if execution_context is not None:
                         execution_context.add(

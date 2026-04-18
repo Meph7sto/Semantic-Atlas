@@ -10,6 +10,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from backend_business.services.agent.execution_graph_service import ExecutionGraphService
+from backend_business.services.agent.runtime.state_contract import (
+    with_runtime_state_contract,
+)
 
 
 def _utc_now_iso() -> str:
@@ -61,13 +64,17 @@ class RuntimeGraphRecorder:
         graph_description: str = "Agent 运行轨迹",
         initial_graph_meta: dict[str, Any] | None = None,
         task_context: dict[str, Any] | None = None,
+        attach_only: bool = False,
     ) -> None:
         if not container_configs:
             raise ValueError("container_configs 不能为空")
+        if attach_only and not graph_id:
+            raise ValueError("attach_only 模式要求提供现有 graph_id")
 
         self._service = execution_graph_service
         self._container_configs = list(container_configs)
         self._container_config_map = {cfg.container_key: cfg for cfg in container_configs}
+        self._attach_only = attach_only
         self._containers: dict[str, str] = {}
         self._nodes: dict[str, StageNode] = {}
         self._node_edge_ids: dict[str, list[str]] = {}
@@ -104,7 +111,10 @@ class RuntimeGraphRecorder:
             **(task_context or {}),
         }
         self._context_entries: list[dict[str, Any]] = list(self._seed_context_entries)
-        self._ensure_containers(user_id)
+        if self._attach_only:
+            self._refresh_container_cache()
+        else:
+            self._ensure_containers(user_id)
 
     def _cursor_state(self) -> dict[str, Any]:
         cursor = getattr(self._thread_local, "cursor", None)
@@ -160,18 +170,20 @@ class RuntimeGraphRecorder:
         if prev_graph_id:
             self._hydrate_previous_graph(prev_graph_id)
 
-        normalized_meta = {
-            "session_id": session_id,
-            "prev_graph_id": prev_graph_id,
-            "user_id": user_id,
-            "project_id": project_id,
-            "current_node_key": None,
-            "final_reply": None,
-            "user_message": user_message,
-            "created_at": _utc_now_iso(),
-            "turn_count": 0,
-        }
-        normalized_meta.update(initial_graph_meta or {})
+        normalized_meta = with_runtime_state_contract(
+            {
+                "session_id": session_id,
+                "prev_graph_id": prev_graph_id,
+                "user_id": user_id,
+                "project_id": project_id,
+                "current_node_key": None,
+                "final_reply": None,
+                "user_message": user_message,
+                "created_at": _utc_now_iso(),
+                "turn_count": 0,
+                **(initial_graph_meta or {}),
+            }
+        )
         normalized_name = graph_name or f"Agent Run {datetime.now(timezone.utc).strftime('%H:%M:%S')}"
 
         return self._service.create_runtime_graph(
@@ -365,6 +377,8 @@ class RuntimeGraphRecorder:
         self._refresh_container_cache()
         if container_key in self._containers:
             return self._containers[container_key]
+        if self._attach_only:
+            raise KeyError(f"container_key 未在运行时图中预建: {container_key}")
 
         try:
             container = self._service.create_container(

@@ -23,6 +23,9 @@ from backend_business.services.agent.runtime.agent_runtime import (
     AgentRuntimeRegistry,
     RunRequest,
 )
+from backend_business.services.agent.runtime.tool_capability import (
+    ToolCapabilityExecutor,
+)
 
 from .subgraph_state import (
     ContainerExecutionError,
@@ -64,6 +67,12 @@ class _InvokeBranchResult:
     call_edge: RuntimeEdge
     target_container: RuntimeContainer
     result: ContainerResult
+
+
+@dataclass(frozen=True)
+class _InvokeBranchRuntimeHandle:
+    runtime: Any
+    agent_run_id: str
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +400,7 @@ class SubgraphRunner:
         current_sg: RuntimeSubgraph | None = start_sg
 
         while current_sg is not None:
+            _raise_if_runtime_cancelled(runtime_context)
             # Transition Pending → Running
             tracker.transition(current_sg.subgraph_id, SubgraphStatus.RUNNING)
             yield {
@@ -448,6 +458,7 @@ class SubgraphRunner:
                     cause=exc,
                 ) from exc
 
+            _raise_if_runtime_cancelled(runtime_context)
             next_sg = self._resolve_next_subgraph(
                 current_sg=current_sg,
                 route_key=route_key,
@@ -553,85 +564,66 @@ class SubgraphRunner:
         execution_context: ExecutionContext,
         runtime_context: dict[str, Any] | None,
     ) -> Generator[dict[str, Any], None, str | None]:
-        """Execute an llm subgraph via ToolLoopRunner."""
+        """Execute an llm subgraph via AgentRuntime."""
         execution_context.begin_subgraph(sg.subgraph_key)
-        context = _build_subgraph_context(
-            sg=sg,
+        runtime_registry = self._resolve_agent_runtime_registry(graph_service)
+        runtime_binding = runtime_registry.resolve(
+            container_key=container.container_key,
+            agent_type=container.container_key or container.role_type or "agent",
+            runtime_profile=str(
+                _find_container_runtime_profile(
+                    skeleton=skeleton,
+                    container=container,
+                )
+                or "default"
+            ),
+        )
+        runtime_tool_executor = self._resolve_runtime_tool_executor(
             container=container,
-            recorder=recorder,
-            pad=pad,
+            tool_executor=tool_executor,
+            runtime_binding=runtime_binding,
             runtime_context=runtime_context,
         )
-        prompt_builder = _resolve_prompt_builder(
+        run_request = self._build_llm_run_request(
             sg=sg,
+            container=container,
+            skeleton=skeleton,
             pad=pad,
-            context=context,
-        )
-
-        runner = ToolLoopRunner(
+            tool_executor=runtime_tool_executor,
             ai_proxy_client=ai_proxy_client,
-            tool_executor=tool_executor,
-            prompt_builder=prompt_builder,
-            max_tool_call_rounds=_resolve_tool_loop_round_limit(context),
-            scratchpad=pad,
-            enable_complete_phase=_should_enable_complete_phase(sg),
-            stage_container_key=_container_key_for_container(
-                container=container,
-                recorder=recorder,
-                actor=actor,
-            ),
-            stage_node_key_builder=lambda r: f"sg_{sg.subgraph_key}_r{r}",
-            stage_label_builder=lambda r: f"{sg.label} Round {r}",
-        )
-
-        # Locate the subgraph's start/end node IDs for recorder context
-        start_node_id = _find_subgraph_boundary_node_id(
-            skeleton, sg.subgraph_id, "start",
-        )
-        end_node_id = _find_subgraph_boundary_node_id(
-            skeleton, sg.subgraph_id, "end",
-        )
-
-        # Enter subgraph context so recorder assigns subgraph_id to LLM nodes
-        enter_subgraph = getattr(recorder, "enter_subgraph", None)
-        if callable(enter_subgraph) and start_node_id:
-            enter_subgraph(
-                subgraph_id=sg.subgraph_id,
-                start_node_id=start_node_id,
-            )
-
-        context["_execution_context"] = execution_context
-        result: ToolLoopResult | None = None
-
-        gen = runner.run(
+            graph_service=graph_service,
             recorder=recorder,
-            user_id=actor,
+            actor=actor,
             user_message=user_message,
-            context=context,
+            execution_context=execution_context,
+            runtime_context=runtime_context,
+            runtime_binding=runtime_binding,
         )
-        try:
-            event = next(gen)
-            while True:
-                yield event
-                event = gen.send(None)
-        except StopIteration as stop:
-            result = stop.value
-
-        # Leave subgraph context — creates LLM→end edge
-        leave_subgraph = getattr(recorder, "leave_subgraph", None)
-        if callable(leave_subgraph) and end_node_id:
-            leave_subgraph(
-                end_node_id=end_node_id,
-                created_by=actor,
+        agent_run_id = runtime_binding.runtime.submit(run_request)
+        for event in runtime_binding.runtime.stream(agent_run_id):
+            yield event
+        runtime_result = runtime_binding.runtime.await_result(agent_run_id)
+        if runtime_result.status != "succeeded":
+            raise ContainerExecutionError(
+                container_id=container.container_id,
+                subgraph_id=sg.subgraph_id,
+                cause=RuntimeError(runtime_result.error_message or runtime_result.status),
+                agent_run_id=agent_run_id,
+                error_code=runtime_result.error_code,
             )
 
-        output = _build_subgraph_output(sg=sg, result=result)
+        runtime_payload = (
+            dict(runtime_result.return_payload or {})
+            if isinstance(runtime_result.return_payload, dict)
+            else {}
+        )
+        output = runtime_payload.get("output")
         execution_context.end_subgraph(
             sg.subgraph_key,
             output=output,
         )
         tracker.transition(sg.subgraph_id, SubgraphStatus.COMPLETED)
-        return result.route_key if result else None
+        return str(runtime_payload.get("route_key") or "").strip() or None
 
     def _advance_invoke(
         self,
@@ -687,6 +679,10 @@ class SubgraphRunner:
         delegated_user_message = str(
             invoke_request.get("task_description") or user_message
         ).strip() or user_message
+        invoke_payload = _build_invoke_payload_snapshot(
+            invoke_request=invoke_request,
+            delegated_user_message=delegated_user_message,
+        )
         child_runtime_context = _build_invoke_runtime_context(
             invoke_request=invoke_request,
         )
@@ -731,6 +727,7 @@ class SubgraphRunner:
             tracker=tracker,
             pad=pad,
             runtime_context=child_runtime_context,
+            invoke_payload=invoke_payload,
         )
 
         target_payloads: list[Any] = []
@@ -798,9 +795,15 @@ class SubgraphRunner:
         tracker: _SubgraphStatusTracker,
         pad: Scratchpad,
         runtime_context: dict[str, Any] | None,
+        invoke_payload: dict[str, Any],
     ) -> Generator[dict[str, Any], None, list[_InvokeBranchResult]]:
         result_queue: queue.Queue[tuple[str, int, Any]] = queue.Queue()
         branch_threads: list[threading.Thread] = []
+        branch_stop_token = threading.Event()
+        branch_runtime_context = dict(runtime_context or {})
+        branch_runtime_context["_branch_stop_token"] = branch_stop_token
+        branch_runtime_handles: dict[int, _InvokeBranchRuntimeHandle] = {}
+        branch_runtime_handles_lock = threading.RLock()
         recorder_cursor = getattr(recorder, "capture_cursor", lambda: None)()
         runtime_registry = self._resolve_agent_runtime_registry(graph_service)
 
@@ -836,7 +839,11 @@ class SubgraphRunner:
                     user_message,
                     tracker,
                     pad,
-                    runtime_context,
+                    branch_runtime_context,
+                    invoke_payload,
+                    branch_stop_token,
+                    branch_runtime_handles,
+                    branch_runtime_handles_lock,
                 ),
                 name=f"invoke-{target_container.container_key or branch_index}",
                 daemon=True,
@@ -853,10 +860,20 @@ class SubgraphRunner:
             if item_type == "event":
                 yield payload
                 continue
+            if item_type == "submitted":
+                continue
             completed_branches += 1
             if item_type == "error":
                 if first_error is None:
                     first_error = payload
+                    branch_stop_token.set()
+                    self._cancel_pending_invoke_branches(
+                        active_handles=branch_runtime_handles,
+                        active_handles_lock=branch_runtime_handles_lock,
+                        exclude_branch_index=branch_index,
+                    )
+                continue
+            if item_type == "cancelled":
                 continue
             results[branch_index] = payload
 
@@ -867,6 +884,25 @@ class SubgraphRunner:
             raise first_error
 
         return [results[index] for index in sorted(results)]
+
+    @staticmethod
+    def _cancel_pending_invoke_branches(
+        *,
+        active_handles: dict[int, _InvokeBranchRuntimeHandle],
+        active_handles_lock: threading.RLock,
+        exclude_branch_index: int | None = None,
+    ) -> None:
+        with active_handles_lock:
+            handles = [
+                handle
+                for branch_index, handle in active_handles.items()
+                if branch_index != exclude_branch_index
+            ]
+        for handle in handles:
+            try:
+                handle.runtime.cancel(handle.agent_run_id)
+            except Exception:
+                continue
 
     def _run_container_worker(
         self,
@@ -886,12 +922,26 @@ class SubgraphRunner:
         tracker: _SubgraphStatusTracker,
         pad: Scratchpad,
         runtime_context: dict[str, Any] | None,
+        invoke_payload: dict[str, Any],
+        branch_stop_token: threading.Event,
+        branch_runtime_handles: dict[int, _InvokeBranchRuntimeHandle],
+        branch_runtime_handles_lock: threading.RLock,
     ) -> None:
         bind_cursor = getattr(recorder, "bind_cursor", None)
         if callable(bind_cursor):
             bind_cursor(recorder_cursor)
 
         try:
+            if branch_stop_token.is_set():
+                result_queue.put(("cancelled", branch_index, None))
+                return
+            self._annotate_call_edge(
+                graph_service=graph_service,
+                call_edge=call_edge,
+                actor=actor,
+                target_container=target_container,
+                invoke_payload=invoke_payload,
+            )
             run_request = self._build_container_run_request(
                 target_container=target_container,
                 runtime_binding=runtime_binding,
@@ -906,11 +956,25 @@ class SubgraphRunner:
                 tracker=tracker,
                 pad=pad,
                 runtime_context=runtime_context,
+                invoke_payload=invoke_payload,
             )
             agent_run_id = runtime_binding.runtime.submit(run_request)
+            with branch_runtime_handles_lock:
+                branch_runtime_handles[branch_index] = _InvokeBranchRuntimeHandle(
+                    runtime=runtime_binding.runtime,
+                    agent_run_id=agent_run_id,
+                )
+            result_queue.put(("submitted", branch_index, agent_run_id))
+            if branch_stop_token.is_set():
+                runtime_binding.runtime.cancel(agent_run_id)
             for event in runtime_binding.runtime.stream(agent_run_id):
+                if branch_stop_token.is_set():
+                    runtime_binding.runtime.cancel(agent_run_id)
                 result_queue.put(("event", branch_index, event))
             runtime_result = runtime_binding.runtime.await_result(agent_run_id)
+            if runtime_result.status == "cancelled":
+                result_queue.put(("cancelled", branch_index, runtime_result))
+                return
             if runtime_result.status != "succeeded":
                 raise ContainerExecutionError(
                     container_id=target_container.container_id,
@@ -936,6 +1000,9 @@ class SubgraphRunner:
             )
         except Exception as exc:
             result_queue.put(("error", branch_index, exc))
+        finally:
+            with branch_runtime_handles_lock:
+                branch_runtime_handles.pop(branch_index, None)
 
     def _resolve_agent_runtime_registry(
         self,
@@ -961,7 +1028,10 @@ class SubgraphRunner:
         tracker: _SubgraphStatusTracker,
         pad: Scratchpad,
         runtime_context: dict[str, Any] | None,
+        invoke_payload: dict[str, Any],
     ) -> RunRequest:
+        effective_runtime_context = dict(runtime_context or {})
+
         def _run_target_container() -> Generator[dict[str, Any], None, ContainerResult]:
             return self._execute_container(
                 container=target_container,
@@ -974,7 +1044,7 @@ class SubgraphRunner:
                 user_message=user_message,
                 tracker=tracker,
                 pad=pad,
-                runtime_context=runtime_context,
+                runtime_context=effective_runtime_context,
             )
 
         subgraphs = skeleton.get_subgraphs_for_container(target_container.container_id)
@@ -986,15 +1056,233 @@ class SubgraphRunner:
             agent_type=target_container.container_key or target_container.role_type or "agent",
             input_payload={
                 "runner": _run_target_container,
+                "runtime_context": effective_runtime_context,
                 "input_ref": {
                     "source_edge_id": call_edge.edge_id,
                     "target_container_key": target_container.container_key,
                     "user_message": user_message,
+                    "task_description": str(
+                        invoke_payload.get("task_description") or user_message or ""
+                    ).strip(),
+                    "invoke_payload": dict(invoke_payload),
                 },
             },
             memory_scope_ref=f"{skeleton.graph_id}:{target_container.container_key}",
             tool_policy_id=str((runtime_binding.capability_policy or {}).get("policy_id") or target_container.container_key),
             quota_policy_id=str((runtime_binding.quota_policy or {}).get("policy_id") or "default"),
+        )
+
+    def _build_llm_run_request(
+        self,
+        *,
+        sg: RuntimeSubgraph,
+        container: RuntimeContainer,
+        skeleton: RuntimeGraphSkeleton,
+        pad: Scratchpad,
+        tool_executor: Any,
+        ai_proxy_client: Any,
+        graph_service: Any | None,
+        recorder: Any,
+        actor: str,
+        user_message: str,
+        execution_context: ExecutionContext,
+        runtime_context: dict[str, Any] | None,
+        runtime_binding: Any,
+    ) -> RunRequest:
+        effective_runtime_context = dict(runtime_context or {})
+
+        def _run_llm_subgraph() -> Generator[dict[str, Any], None, dict[str, Any]]:
+            return self._run_llm_subgraph_locally(
+                sg=sg,
+                container=container,
+                skeleton=skeleton,
+                pad=pad,
+                tool_executor=tool_executor,
+                ai_proxy_client=ai_proxy_client,
+                graph_service=graph_service,
+                recorder=recorder,
+                actor=actor,
+                user_message=user_message,
+                execution_context=execution_context,
+                runtime_context=effective_runtime_context,
+            )
+
+        return RunRequest(
+            graph_id=skeleton.graph_id,
+            subgraph_id=sg.subgraph_id,
+            container_key=container.container_key,
+            agent_type=container.container_key or container.role_type or "agent",
+            input_payload={
+                "runner": _run_llm_subgraph,
+                "runtime_context": effective_runtime_context,
+                "input_ref": {
+                    "subgraph_key": sg.subgraph_key,
+                    "node_type": sg.node_type,
+                    "user_message": user_message,
+                },
+            },
+            memory_scope_ref=f"{skeleton.graph_id}:{container.container_key}",
+            tool_policy_id=str((runtime_binding.capability_policy or {}).get("policy_id") or container.container_key),
+            quota_policy_id=str((runtime_binding.quota_policy or {}).get("policy_id") or "default"),
+        )
+
+    def _run_llm_subgraph_locally(
+        self,
+        *,
+        sg: RuntimeSubgraph,
+        container: RuntimeContainer,
+        skeleton: RuntimeGraphSkeleton,
+        pad: Scratchpad,
+        tool_executor: Any,
+        ai_proxy_client: Any,
+        graph_service: Any | None,
+        recorder: Any,
+        actor: str,
+        user_message: str,
+        execution_context: ExecutionContext,
+        runtime_context: dict[str, Any] | None,
+    ) -> Generator[dict[str, Any], None, dict[str, Any]]:
+        context = _build_subgraph_context(
+            sg=sg,
+            container=container,
+            recorder=recorder,
+            pad=pad,
+            runtime_context=runtime_context,
+        )
+        prompt_builder = _resolve_prompt_builder(
+            sg=sg,
+            pad=pad,
+            context=context,
+        )
+
+        runner = ToolLoopRunner(
+            ai_proxy_client=ai_proxy_client,
+            tool_executor=tool_executor,
+            prompt_builder=prompt_builder,
+            max_tool_call_rounds=_resolve_tool_loop_round_limit(context),
+            scratchpad=pad,
+            enable_complete_phase=_should_enable_complete_phase(sg),
+            stage_container_key=_container_key_for_container(
+                container=container,
+                recorder=recorder,
+                actor=actor,
+            ),
+            stage_node_key_builder=lambda r: f"sg_{sg.subgraph_key}_r{r}",
+            stage_label_builder=lambda r: f"{sg.label} Round {r}",
+        )
+
+        start_node_id = _find_subgraph_boundary_node_id(
+            skeleton, sg.subgraph_id, "start",
+        )
+        end_node_id = _find_subgraph_boundary_node_id(
+            skeleton, sg.subgraph_id, "end",
+        )
+        enter_subgraph = getattr(recorder, "enter_subgraph", None)
+        if callable(enter_subgraph) and start_node_id:
+            enter_subgraph(
+                subgraph_id=sg.subgraph_id,
+                start_node_id=start_node_id,
+            )
+
+        context["_execution_context"] = execution_context
+        result: ToolLoopResult | None = None
+        gen = runner.run(
+            recorder=recorder,
+            user_id=actor,
+            user_message=user_message,
+            context=context,
+        )
+        try:
+            event = next(gen)
+            while True:
+                yield event
+                event = gen.send(None)
+        except StopIteration as stop:
+            result = stop.value
+
+        leave_subgraph = getattr(recorder, "leave_subgraph", None)
+        if callable(leave_subgraph) and end_node_id:
+            leave_subgraph(
+                end_node_id=end_node_id,
+                created_by=actor,
+            )
+
+        return {
+            "route_key": result.route_key if result else None,
+            "output": _build_subgraph_output(sg=sg, result=result),
+        }
+
+    def _resolve_runtime_tool_executor(
+        self,
+        *,
+        container: RuntimeContainer,
+        tool_executor: Any,
+        runtime_binding: Any,
+        runtime_context: dict[str, Any] | None,
+    ) -> Any:
+        resolved_executor = tool_executor
+        container_executor_resolver = getattr(
+            tool_executor,
+            "resolve_runtime_tool_executor",
+            None,
+        )
+        if callable(container_executor_resolver):
+            container_executor = container_executor_resolver(
+                container_key=container.container_key,
+            )
+            if container_executor is not None:
+                resolved_executor = container_executor
+
+        capability_policy = dict(runtime_binding.capability_policy or {})
+        explicit_tool_names = {
+            str(name).strip()
+            for name in (
+                capability_policy.get("tool_names")
+                or capability_policy.get("tools")
+                or []
+            )
+            if str(name).strip()
+        }
+        return ToolCapabilityExecutor(
+            tool_executor=resolved_executor,
+            allowed_tool_names=explicit_tool_names or None,
+            policy_id=str(
+                capability_policy.get("policy_id")
+                or capability_policy.get("scope")
+                or container.container_key
+            ),
+        )
+
+    @staticmethod
+    def _annotate_call_edge(
+        *,
+        graph_service: Any | None,
+        call_edge: RuntimeEdge,
+        actor: str,
+        target_container: RuntimeContainer,
+        invoke_payload: dict[str, Any],
+    ) -> None:
+        if graph_service is None or not hasattr(graph_service, "update_edge"):
+            return
+        merged_config = (
+            dict(call_edge.config_json)
+            if isinstance(call_edge.config_json, dict)
+            else {}
+        )
+        merged_config.update(
+            {
+                "runtime": True,
+                "target_container_key": target_container.container_key,
+                "task_description": str(
+                    invoke_payload.get("task_description") or ""
+                ).strip(),
+                "invoke_payload": dict(invoke_payload),
+            }
+        )
+        graph_service.update_edge(
+            call_edge.edge_id,
+            config_json=merged_config,
+            updated_by=actor,
         )
 
     @staticmethod
@@ -1233,7 +1521,6 @@ def _build_subgraph_context(
     context: dict[str, Any] = {
         "_current_subgraph": sg.subgraph_key,
         "_graph_recorder": recorder,
-        "_tool_scope": str((sg.config_json or {}).get("tool_scope") or container.container_key or ""),
     }
     task_context = getattr(recorder, "_task_context", None)
     if isinstance(task_context, dict):
@@ -1491,7 +1778,6 @@ def _build_invoke_runtime_context(
     delegated_agent = str(invoke_request.get("delegated_agent") or "").strip()
     requirement_id = str(invoke_request.get("requirement_id") or "").strip() or None
     context: dict[str, Any] = {
-        "_tool_scope": delegated_agent,
         "_native_invoke_enabled": False,
         "delegated_agent": delegated_agent,
     }
@@ -1509,6 +1795,17 @@ def _build_invoke_runtime_context(
     if requirement_id:
         context["resolved_requirement_id"] = requirement_id
     return context
+
+
+def _raise_if_runtime_cancelled(
+    runtime_context: dict[str, Any] | None,
+) -> None:
+    if not runtime_context:
+        return
+    for key in ("_runtime_cancel_event", "_branch_stop_token"):
+        token = runtime_context.get(key)
+        if token is not None and callable(getattr(token, "is_set", None)) and token.is_set():
+            raise RuntimeError("runtime execution cancelled")
 
 
 def _build_session_controller_invoke_decision(
@@ -1635,6 +1932,62 @@ def _build_session_controller_invoke_decision(
         "context": context,
         "source_subgraph": invoke_subgraph.subgraph_key,
     }
+
+
+def _build_invoke_payload_snapshot(
+    *,
+    invoke_request: dict[str, Any],
+    delegated_user_message: str,
+) -> dict[str, Any]:
+    excluded_keys = {
+        "approval_pending",
+        "approval_result",
+        "assistant_reply_seed",
+        "classification_result",
+        "clarification_question",
+        "clarification_required",
+        "mode",
+        "native_invoke",
+        "reply",
+        "should_suspend",
+        "status",
+        "suspend_reason",
+        "tool_loop_reply",
+        "write_result",
+    }
+    payload: dict[str, Any] = {}
+    for key, value in invoke_request.items():
+        if key in excluded_keys:
+            continue
+        normalized = _normalize_invoke_payload_value(value)
+        if normalized in (None, "", [], {}):
+            continue
+        payload[key] = normalized
+    if not str(payload.get("task_description") or "").strip() and delegated_user_message:
+        payload["task_description"] = delegated_user_message
+    return payload
+
+
+def _normalize_invoke_payload_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        normalized_dict: dict[str, Any] = {}
+        for key, item in value.items():
+            normalized_item = _normalize_invoke_payload_value(item)
+            if normalized_item in (None, "", [], {}):
+                continue
+            normalized_dict[str(key)] = normalized_item
+        return normalized_dict
+    if isinstance(value, (list, tuple, set)):
+        normalized_list = []
+        for item in value:
+            normalized_item = _normalize_invoke_payload_value(item)
+            if normalized_item in (None, "", [], {}):
+                continue
+            normalized_list.append(normalized_item)
+        return normalized_list
+    return str(value)
 
 
 def _container_key_for_container(

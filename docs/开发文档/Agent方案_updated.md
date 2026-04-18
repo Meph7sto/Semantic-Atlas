@@ -73,7 +73,8 @@ call列表的输出，表达模型希望对系统执行的动作序列。列表�
 call列表中，有一类工具具有特殊的控制流语义：complete_phase。该工具由运行时为每个subgraph自动注入。模型在判断当前阶段任务已完成时调用complete_phase，运行时收到此调用即标记当前subgraph完成并激活出边，不对参数做结构校验，调用本身即完成信号。complete_phase与业务工具的核心区别在于：业务工具的执行结果回填后，模型继续在当前subgraph内推理；complete_phase的调用直接终结当前subgraph，触发阶段流转。这一设计将阶段完成信号从被动的输出结构匹配变为模型的主动显式声明，彻底消除了中间输出碰巧匹配而导致阶段被误判为完成的风险。
 
 tool call results：仅在output含有tool
-call时出现。系统并行执行所有调用后，将全部结果追加到本节点的上下文中，供模型完成后续推理或供下一节点的input选取。至此，节点完成。若output不含tool
+call时出现。系统会并发执行同轮全部调用，但语义上采用“同轮快照隔离 + 按tool index确定性回写”的规则：每个tool
+call只读取该轮开始前的上下文快照，不可见同轮其他tool call的新写入；所有结果在回收时按原始tool index顺序回放，`tool_results`也按该顺序稳定追加。若output不含tool
 call，则本段不发生，节点在output产出后直接完成。
 
 3.  handoff节点
@@ -103,9 +104,9 @@ seq边连接container内部的执行节点，表达节点间的顺序流转关�
 
 容器间边连接不同的container，表达跨容器的协作关系。共三种类型：
 
-call边表示一个容器向另一个容器发起调用。调用方将payload投递给目标container的入口节点，目标container开始执行。call边发出后，调用方容器进入Waiting状态，等待对应的return到达（多个call边可同时处于Active，各目标container的LLM调用因此并发执行，而非逐条串行等待）。
+call边表示一个容器向另一个容器发起调用。调用方将payload投递给目标container的入口节点，目标container开始执行。call边发出后，发起调用的invoke subgraph本身仍处于Running，其所在graph会派生为`DELEGATING`这一图级聚合态，表示当前存在跨container委托正在执行。多个call边可同时处于Active，各目标container的LLM调用因此并发执行，而非逐条串行等待。
 
-return边表示被调用container将执行结果回流给调用方。目标container的end节点触发return边，回流的内容是被调用container末尾subgraph通过complete_phase提交的结构化结论；Scratchpad作为container内部的工作记忆，不随return边对外暴露。结论注入调用方发起调用的节点上下文，调用方从Waiting恢复为Running，继续推进后续节点。call与return成对出现，共同构成一次完整的跨容器调用闭环。
+return边表示被调用container将执行结果回流给调用方。目标container的end节点触发return边，回流的内容是被调用container末尾subgraph通过complete_phase提交的结构化结论；Scratchpad作为container内部的工作记忆，不随return边对外暴露。结论注入调用方发起调用的节点上下文后，invoke subgraph完成，graph从`DELEGATING`恢复为`Running`或推进到更高优先级的其他聚合态。call与return成对出现，共同构成一次完整的跨容器调用闭环。
 
 retry边表示调用方在收到返回结论后，决定以新的约束条件重新发起调用。与call边的区别在于语义：call是首次委托，retry是基于上一次返回结论的修正重试，执行图中会记录重试次数与每次的约束变化，使重试过程完整可追溯。典型场景是质检不通过后，会话总控将质检结论作为新约束重新委托需求管理Agent。
 
@@ -209,7 +210,9 @@ call
 results作为subgraph内部的增量累积。然后，发起一次LLM推理调用，在subgraph内部追加一个llm执行节点，记录本轮的input与output。若output中包含普通业务工具调用（如actor_ask、scratchpad_write），运行时并行执行全部tool
 call，将results追加到当前subgraph的上下文，随即进入下一轮循环，继续发起LLM推理。若output中包含complete_phase调用，运行时将其参数内容自动追加到所属container的Scratchpad中，标记该subgraph为Completed，退出循环。subgraph内部经历了多少轮循环、产生了多少个llm执行节点，完全由LLM的推理过程决定，拓扑图对此不做约束，这正是subgraph作为确定性拓扑与非确定性执行之间缓冲层的核心价值。
 
-对于invoke类型的subgraph，推进过程不涉及LLM推理。subgraph激活后，运行时直接从start节点读取payload，沿call边将其投递给目标container的入口subgraph，随即将当前subgraph的状态切换为Waiting。当目标container执行完成、return边将结论回流后，运行时将返回内容注入当前subgraph的上下文，标记subgraph为Completed。invoke类型的subgraph内部通常只有start、invoke、end三个执行节点，执行轨迹是确定的。
+对于invoke类型的subgraph，推进过程不涉及LLM推理。subgraph激活后，运行时直接从start节点读取payload，沿call边将其并发投递给目标container的入口subgraph。invoke subgraph自身在整个委托期间保持Running；对应graph会派生为`DELEGATING`，用于表达“当前存在委托执行中”的图级聚合态，而不是独立的subgraph lifecycle。若并行分支中出现首个错误，运行时会对其余未完成分支发出协作式cancel，并在等待线程收尾后只上抛首个主错误；已写入的trace/run记录保留，不做回滚。invoke类型的subgraph内部通常只有start、invoke、end三个执行节点，执行轨迹整体仍是可推理且可复现的。
+
+需要额外说明的是，当前多Agent运行边界采用的是in-process runtime binding + policy enforcement。容器通过runtime binding、container级memory scope与tool capability allowlist进行约束，但这不是独立sandbox runtime；权限、超时、崩溃传播与资源配额仍主要受共享宿主进程治理。
 
 对于handoff类型的subgraph，运行时在激活后将当前上下文整理呈现给用户，将执行图状态切换为Suspended。用户输入到达后，新输入作为增量消息注入subgraph的上下文，subgraph标记为Completed，执行图恢复为Running并继续推进。
 
@@ -243,21 +246,20 @@ call的发起与结果、跨容器边的流转时序，以及执行中途发生�
 系统定义五种执行状态：
 
   ------------------------------------------------------------------------------------------
-  状态        含义                         进入条件
-  ----------- ---------------------------- -------------------------------------------------
-  Running     节点序列正在推进             执行图创建后初始状态，或从Waiting/Suspended恢复
+  状态         含义                               进入条件
+  ------------ ---------------------------------- -------------------------------------------------
+  Running      节点序列正在推进                   执行图创建后初始状态，或从DELEGATING/Suspended恢复
 
-  Waiting     等待系统内部的异步结果返回   invoke节点已发出调用，return尚未到达
+  DELEGATING   存在invoke分支正在被委托执行       至少一个invoke类型subgraph处于Running并已发出call
 
-  Suspended   等待用户的外部输入           重试耗尽、Actor校验失败、或handoff节点触发
+  Suspended    等待用户的外部输入                 重试耗尽、Actor校验失败、或handoff节点触发
 
-  Succeeded   执行图正常结束               end节点完成
+  Succeeded    执行图正常结束                     end节点完成
 
-  Failed      发生不可恢复错误             执行异常且无降级路径
+  Failed       发生不可恢复错误                   执行异常且无降级路径
   ------------------------------------------------------------------------------------------
 
-Waiting与Suspended是两种性质不同的等待状态。Waiting等待的是系统内部的异步结果，结果到达后由运行时自动恢复推进，无需用户介入；Suspended等待的是用户的外部输入，系统在此主动将控制权交还给用户，直到用户补充输入后才能继续。Waiting状态的异步设计动机不是解决数据底座的状态并发问题------DB随时可读写，Actor的串行信箱已从架构层面消除写入冲突------而是使多个container的LLM
-API调用能够并发执行。LLM调用是I/O密集型操作，将多个并行invoke的等待时间叠加为一次Waiting而非逐条串行阻塞，可显著降低整体响应延迟。
+`DELEGATING`与Suspended是两种性质不同的聚合状态。`DELEGATING`表示系统内部存在跨container委托正在执行，结果返回后由运行时自动恢复推进，无需用户介入；Suspended等待的是用户的外部输入，系统在此主动将控制权交还给用户，直到用户补充输入后才能继续。`DELEGATING`的设计动机不是引入新的subgraph生命周期，而是把多个并行invoke压缩成一个可观测、可解释的graph级聚合态，使整体响应延迟与失败传播规则都更清晰。
 
 Suspended恢复时，运行时不创建新的执行图，而是在原执行图上追加新的输入节点，将用户输入作为增量消息注入到挂起节点的上下文末尾，执行图从Suspended恢复为Running，从挂起点继续推进。一次用户意图始终对应同一张执行图，挂起前后的完整轨迹保持连续。
 
@@ -269,16 +271,15 @@ subgraph 状态派生得出，不由 subgraph 直接设置。
 
 subgraph 的四种状态定义如下：Pending
 表示骨架实例化时已创建但尚未被激活；Running 表示当前正在推进，对于 llm
-类型即 LLM 推理循环正在执行，对于 invoke 类型即已发出 call 边正在等待
-return，对于 handoff 类型即正在等待用户输入；Completed
+类型即 LLM 推理循环正在执行，对于 invoke 类型即委托分支已发出且运行时正在收集return或错误，对于 handoff 类型即正在等待用户输入；Completed
 表示阶段任务已完成，完成信号因类型而异（llm 类型为 complete_phase
 调用、invoke 类型为 return 边到达、handoff 类型为用户输入到达）；Failed
 表示发生不可恢复错误。
 
 graph 级状态的派生规则如下：若某个 invoke 类型的 subgraph 进入 Running
-状态（已发出 call、等待 return），graph 进入 Waiting；若某个 handoff
+状态并存在活跃委托分支，graph 进入 `DELEGATING`；若某个 handoff
 类型的 subgraph 进入 Running 状态（等待用户输入），graph 进入
-Suspended；return 边到达或用户输入到达后，对应 subgraph 标记为
+Suspended；return 边到达、invoke分支全部收敛或用户输入到达后，对应 subgraph 标记为
 Completed，graph 恢复为 Running；所有 container 的末尾 subgraph 均为
 Completed 时，graph 进入 Succeeded；任何 subgraph 进入 Failed
 且无降级路径时，graph 进入 Failed。subgraph 只负责推进自身，graph

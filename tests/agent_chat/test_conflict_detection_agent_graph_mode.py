@@ -106,6 +106,7 @@ class FakeGraphService:
         self.subgraphs: dict[str, dict] = {}
         self.nodes: dict[str, dict] = {}
         self.edges: dict[str, dict] = {}
+        self.runtime_bindings: dict[tuple[str | None, str | None, str], dict] = {}
         self._seed_template()
 
     def _seed_template(self) -> None:
@@ -232,6 +233,34 @@ class FakeGraphService:
         }
         self.graphs[graph_id] = graph
         return graph
+
+    def ensure_agent_runtime_binding(
+        self,
+        *,
+        container_key=None,
+        agent_type=None,
+        runtime_profile="default",
+        implementation_type="local",
+        endpoint=None,
+        enabled=True,
+        capability_policy_json=None,
+        quota_policy_json=None,
+        memory_policy_json=None,
+    ) -> dict:
+        binding = {
+            "runtime_id": str(uuid.uuid4()),
+            "container_key": container_key,
+            "agent_type": agent_type,
+            "runtime_profile": runtime_profile,
+            "implementation_type": implementation_type,
+            "endpoint": endpoint,
+            "enabled": enabled,
+            "capability_policy_json": dict(capability_policy_json or {}),
+            "quota_policy_json": dict(quota_policy_json or {}),
+            "memory_policy_json": dict(memory_policy_json or {}),
+        }
+        self.runtime_bindings[(container_key, agent_type, runtime_profile)] = binding
+        return binding
 
     def create_container(self, *, graph_id, container_key, label, role_type, **kwargs) -> dict:
         container_id = str(uuid.uuid4())
@@ -531,3 +560,40 @@ def test_stream_graph_executor_reply_uses_internal_judge_on_same_runtime_graph()
     container_keys = {container.get("container_key") for container in runtime_containers}
     assert {"human_input", "conductor", "conflict_detection_agent"} <= container_keys
     assert "topology_conflict_agent" in container_keys
+
+
+def test_stream_graph_executor_reply_registers_runtime_binding_with_tool_allowlist():
+    chat_storage = FakeChatStorage()
+    graph_service = FakeGraphService()
+    requirements_service = FakeRequirementsService()
+    ai_proxy = FakeJudgeThenGraphAIProxy()
+    tools = ConflictDetectionTools(
+        requirements_service=requirements_service,
+        conflict_check_fn=ai_proxy.conflict_check,
+    )
+    service = ConflictDetectionAgentService(
+        chat_storage=chat_storage,
+        execution_graph_service=graph_service,
+        requirements_service=requirements_service,
+        tools=tools,
+        ai_proxy_client=ai_proxy,
+    )
+
+    list(
+        service.stream_conflict_agent_reply(
+            session_id="session-1",
+            user_id="user-1",
+            project_id="project-1",
+            user_message="请检测 r-1 和 r-2 的需求冲突",
+            execution_mode="graph",
+        )
+    )
+
+    binding = graph_service.runtime_bindings[
+        ("conflict_detection_agent", "conflict_detection_agent", "default")
+    ]
+    assert set(binding["capability_policy_json"]["tool_names"]) == {
+        "list_requirements",
+        "get_requirement_detail",
+        "check_conflict",
+    }

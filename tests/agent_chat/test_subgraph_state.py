@@ -128,13 +128,13 @@ class TestDeriveGraphStatus:
         ]
         assert derive_graph_status(sgs) == GraphStatus.SUSPENDED
 
-    def test_invoke_running_means_waiting(self):
-        """A running invoke subgraph → graph is Waiting."""
+    def test_invoke_running_means_delegating(self):
+        """A running invoke subgraph → graph is in graph-level Delegating state."""
         sgs = [
             _sg(SubgraphStatus.COMPLETED),
             _sg(SubgraphStatus.RUNNING, node_type="invoke"),
         ]
-        assert derive_graph_status(sgs) == GraphStatus.WAITING
+        assert derive_graph_status(sgs) == GraphStatus.DELEGATING
 
     def test_failed_takes_precedence_over_suspended(self):
         """FAILED should win over SUSPENDED in priority."""
@@ -144,8 +144,8 @@ class TestDeriveGraphStatus:
         ]
         assert derive_graph_status(sgs) == GraphStatus.FAILED
 
-    def test_suspended_takes_precedence_over_waiting(self):
-        """SUSPENDED should win over WAITING in priority."""
+    def test_suspended_takes_precedence_over_delegating(self):
+        """SUSPENDED should win over DELEGATING in priority."""
         sgs = [
             _sg(SubgraphStatus.RUNNING, node_type="handoff"),
             _sg(SubgraphStatus.RUNNING, node_type="invoke"),

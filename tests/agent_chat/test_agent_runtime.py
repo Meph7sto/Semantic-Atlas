@@ -17,6 +17,14 @@ from backend_business.services.agent.runtime.agent_runtime import (
 )
 from backend_business.services.agent.runtime.scratchpad import Scratchpad
 from backend_business.services.agent.runtime.scratchpad_service import ScratchpadService
+from backend_business.services.agent.runtime.state_contract import (
+    SCRATCHPAD_STATE_VERSION,
+    with_runtime_state_contract,
+)
+from backend_business.services.agent.runtime.tool_capability import (
+    ToolCapabilityError,
+    ToolCapabilityExecutor,
+)
 
 
 class _FakeExecutionGraphService:
@@ -170,6 +178,111 @@ def test_scratchpad_service_uses_container_state_store_with_graph_meta_fallback(
         for entry in restored.snapshot_all()
     )
     assert service.graphs["g-1"]["meta_json"]["scratchpad_snapshot"]
+
+
+def test_scratchpad_service_does_not_fallback_to_graph_meta_for_versioned_graphs():
+    service = _FakeExecutionGraphService()
+    service.graphs["g-1"]["meta_json"] = with_runtime_state_contract(
+        {
+            "scratchpad_snapshot": [
+                {
+                    "entry_type": "note",
+                    "content": "legacy only",
+                    "container_key": "conductor",
+                }
+            ]
+        }
+    )
+    scratchpad_service = ScratchpadService(execution_graph_service=service)
+
+    restored = scratchpad_service.load("g-1")
+
+    assert restored.snapshot_all() == []
+    assert service.graphs["g-1"]["meta_json"]["scratchpad_state_version"] == (
+        SCRATCHPAD_STATE_VERSION
+    )
+
+
+def test_scratchpad_service_clears_stale_container_state_entries():
+    service = _FakeExecutionGraphService()
+    scratchpad_service = ScratchpadService(execution_graph_service=service)
+
+    initial_pad = Scratchpad()
+    initial_pad.for_container("requirement_agent").write(
+        "note",
+        "stale note",
+        source_subgraph="worker",
+    )
+    scratchpad_service.save("g-1", initial_pad, updated_by="tester")
+
+    replacement_pad = Scratchpad()
+    replacement_pad.for_container("conductor").write(
+        "note",
+        "fresh reply",
+        source_subgraph="reply",
+    )
+    scratchpad_service.save("g-1", replacement_pad, updated_by="tester")
+
+    restored = scratchpad_service.load("g-1")
+    snapshot = restored.snapshot_all()
+
+    assert not any(
+        entry.get("container_key") == "requirement_agent"
+        for entry in snapshot
+    )
+    assert any(
+        entry.get("container_key") == "conductor"
+        and entry.get("content") == "fresh reply"
+        for entry in snapshot
+    )
+    assert service.container_states[("g-1", "requirement_agent")]["state_json"][
+        "scratchpad_snapshot"
+    ] == []
+
+
+class _FakeTools:
+    def __init__(self) -> None:
+        self.executed: list[str] = []
+
+    def get_tools_list(self, context=None):
+        _ = context
+        return [
+            {"type": "function", "function": {"name": "allowed_tool"}},
+            {"type": "function", "function": {"name": "blocked_tool"}},
+        ]
+
+    def execute(self, tool_name, arguments, context):
+        _ = arguments, context
+        self.executed.append(tool_name)
+        return {"tool_name": tool_name}
+
+
+def test_tool_capability_executor_blocks_unauthorized_tool_calls():
+    wrapped = ToolCapabilityExecutor(
+        tool_executor=_FakeTools(),
+        allowed_tool_names={"allowed_tool"},
+        policy_id="policy-test",
+    )
+
+    assert wrapped.execute("allowed_tool", {}, {}) == {"tool_name": "allowed_tool"}
+
+    try:
+        wrapped.execute("blocked_tool", {}, {})
+        raise AssertionError("blocked tool should not be allowed")
+    except ToolCapabilityError as exc:
+        assert exc.tool_name == "blocked_tool"
+
+
+def test_tool_capability_executor_discovers_allowed_tools_from_delegate():
+    wrapped = ToolCapabilityExecutor(tool_executor=_FakeTools())
+
+    tools = wrapped.get_tools_list(context={})
+
+    assert len(tools) == 2
+    assert {tool["function"]["name"] for tool in tools} == {
+        "allowed_tool",
+        "blocked_tool",
+    }
 
 
 def _runtime_runner(*, events, result):

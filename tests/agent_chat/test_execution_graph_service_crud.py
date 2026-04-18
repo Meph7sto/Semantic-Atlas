@@ -312,6 +312,27 @@ class TestRuntimeStateCRUD:
         assert "enabled = TRUE" in sql
         assert "requirement_agent" in params
 
+    def test_ensure_agent_runtime_binding_uses_upsert_semantics(self):
+        row = _runtime_binding_row()
+        svc, cur = _build_service(fetchone_result=row)
+
+        result = svc.ensure_agent_runtime_binding(
+            container_key="requirement_agent",
+            agent_type="requirement_agent",
+            runtime_profile="default",
+            implementation_type="local",
+            capability_policy_json={"tool_names": ["search_requirements"]},
+            quota_policy_json={"max_parallel_runs": 2},
+            memory_policy_json={"scope": "container"},
+        )
+
+        assert result == row
+        sql, params = cur.executed[0]
+        assert "INSERT INTO agent_runtime_registry" in sql
+        assert "ON CONFLICT" in sql
+        assert "DO UPDATE SET" in sql
+        assert "requirement_agent" in params
+
     def test_create_agent_run(self):
         row = _agent_run_row()
         svc, cur = _build_service(fetchone_result=row)

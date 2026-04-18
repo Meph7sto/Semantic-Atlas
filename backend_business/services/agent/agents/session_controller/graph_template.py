@@ -209,7 +209,6 @@ def ensure_session_controller_template(
         config_json={
             "prompt_builder": "session_controller_requirement_delegate",
             "result_contract": "requirement_agent",
-            "tool_scope": "requirement_agent",
         },
         order_index=0,
         created_by=actor,
@@ -227,7 +226,6 @@ def ensure_session_controller_template(
         config_json={
             "prompt_builder": "session_controller_conflict_delegate",
             "result_contract": "conflict_detection",
-            "tool_scope": "conflict_detection",
         },
         order_index=0,
         created_by=actor,
@@ -245,7 +243,6 @@ def ensure_session_controller_template(
         config_json={
             "prompt_builder": "session_controller_classification_delegate",
             "result_contract": "requirement_classification",
-            "tool_scope": "requirement_classification_agent",
         },
         order_index=0,
         created_by=actor,

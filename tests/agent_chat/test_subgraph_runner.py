@@ -24,6 +24,8 @@ import pytest
 from backend_business.services.agent.execution.subgraph_runner import (
     ContainerResult,
     SubgraphRunner,
+    _build_invoke_runtime_context,
+    _build_subgraph_context,
 )
 from backend_business.services.agent.execution.subgraph_state import (
     ContainerExecutionError,
@@ -32,6 +34,12 @@ from backend_business.services.agent.execution.subgraph_state import (
 from backend_business.services.agent.execution.topology_instantiator import (
     RuntimeGraphSkeleton,
     TopologyInstantiator,
+)
+from backend_business.services.agent.runtime import (
+    AgentRunResult,
+    LocalAgentRuntime,
+    RuntimeBinding,
+    Scratchpad,
 )
 
 
@@ -49,6 +57,7 @@ class FakeGraphService:
         self.subgraphs: dict[str, dict] = {}
         self.nodes: dict[str, dict] = {}
         self.edges: dict[str, dict] = {}
+        self.agent_runs: dict[str, dict] = {}
 
     def seed_template(
         self,
@@ -135,6 +144,11 @@ class FakeGraphService:
         self.edges[eid] = e
         return e
 
+    def update_edge(self, edge_id: str, **kw) -> dict:
+        edge = self.edges.get(edge_id, {})
+        edge.update({k: v for k, v in kw.items() if v is not None})
+        return dict(edge)
+
     def get_node(self, node_id: str) -> dict:
         return dict(self.nodes.get(node_id, {}))
 
@@ -151,6 +165,16 @@ class FakeGraphService:
         if status:
             g["status"] = status
         return dict(g)
+
+    def create_agent_run(self, **kwargs) -> dict:
+        row = dict(kwargs)
+        self.agent_runs[row["run_id"]] = row
+        return row
+
+    def update_agent_run(self, run_id, **kwargs) -> dict:
+        row = self.agent_runs[run_id]
+        row.update({key: value for key, value in kwargs.items() if value is not None})
+        return dict(row)
 
 
 class FakeAIProxy:
@@ -288,6 +312,126 @@ class ConcurrentInvokeAIProxy:
                 }
             ],
         }
+
+
+class _ImmediateFailRuntime:
+    def __init__(self, graph_service: FakeGraphService) -> None:
+        self._graph_service = graph_service
+
+    def submit(self, run_request) -> str:
+        run_id = "run-fail"
+        self._graph_service.create_agent_run(
+            run_id=run_id,
+            graph_id=run_request.graph_id,
+            subgraph_id=run_request.subgraph_id,
+            container_key=run_request.container_key,
+            agent_type=run_request.agent_type,
+            runtime_id="rt::worker-a",
+            status="queued",
+            input_ref=(run_request.input_payload or {}).get("input_ref"),
+            parent_run_id=None,
+            resume_token=None,
+        )
+        self._graph_service.update_agent_run(run_id, status="running", started=True)
+        return run_id
+
+    def stream(self, agent_run_id: str):
+        _ = agent_run_id
+        if False:
+            yield {}
+
+    def await_result(self, agent_run_id: str) -> AgentRunResult:
+        self._graph_service.update_agent_run(
+            agent_run_id,
+            status="failed",
+            error_code="branch_failed",
+            error_message="worker branch failed",
+            completed=True,
+        )
+        return AgentRunResult(
+            status="failed",
+            error_code="branch_failed",
+            error_message="worker branch failed",
+        )
+
+    def resume(self, agent_run_id: str, user_input):
+        _ = agent_run_id, user_input
+        raise RuntimeError("not supported")
+
+    def cancel(self, agent_run_id: str) -> None:
+        _ = agent_run_id
+
+
+class _CancellableRuntime:
+    def __init__(self, graph_service: FakeGraphService) -> None:
+        self._graph_service = graph_service
+        self.cancelled_runs: list[str] = []
+        self.submitted_runs: list[str] = []
+        self._cancel_events: dict[str, threading.Event] = {}
+
+    def submit(self, run_request) -> str:
+        run_id = f"run-{len(self.submitted_runs) + 1}"
+        self.submitted_runs.append(run_id)
+        self._cancel_events[run_id] = threading.Event()
+        self._graph_service.create_agent_run(
+            run_id=run_id,
+            graph_id=run_request.graph_id,
+            subgraph_id=run_request.subgraph_id,
+            container_key=run_request.container_key,
+            agent_type=run_request.agent_type,
+            runtime_id="rt::worker-b",
+            status="queued",
+            input_ref=(run_request.input_payload or {}).get("input_ref"),
+            parent_run_id=None,
+            resume_token=None,
+        )
+        self._graph_service.update_agent_run(run_id, status="running", started=True)
+        return run_id
+
+    def stream(self, agent_run_id: str):
+        _ = agent_run_id
+        if False:
+            yield {}
+
+    def await_result(self, agent_run_id: str) -> AgentRunResult:
+        cancelled = self._cancel_events[agent_run_id].wait(timeout=1.0)
+        if not cancelled:
+            raise AssertionError("expected branch to be cancelled after sibling failure")
+        self._graph_service.update_agent_run(
+            agent_run_id,
+            status="cancelled",
+            error_code="cancelled",
+            error_message="branch cancelled",
+            completed=True,
+        )
+        return AgentRunResult(
+            status="cancelled",
+            error_code="cancelled",
+            error_message="branch cancelled",
+        )
+
+    def resume(self, agent_run_id: str, user_input):
+        _ = agent_run_id, user_input
+        raise RuntimeError("not supported")
+
+    def cancel(self, agent_run_id: str) -> None:
+        self.cancelled_runs.append(agent_run_id)
+        self._cancel_events[agent_run_id].set()
+
+
+class _StubRuntimeRegistry:
+    def __init__(self, bindings: dict[str, RuntimeBinding]) -> None:
+        self._bindings = dict(bindings)
+
+    def resolve(
+        self,
+        *,
+        container_key: str,
+        agent_type: str,
+        runtime_profile: str | None = None,
+    ) -> RuntimeBinding:
+        _ = agent_type, runtime_profile
+        return self._bindings[container_key]
 
 
 # =========================================================================
@@ -466,6 +610,40 @@ def _drain_with_result(gen) -> tuple[list[dict], ContainerResult]:
     raise RuntimeError("Generator did not return a result")
 
 
+def test_invoke_runtime_context_and_subgraph_context_do_not_include_tool_scope():
+    runtime_context = _build_invoke_runtime_context(
+        invoke_request={
+            "delegated_agent": "requirement_agent",
+            "requirement_id": "REQ-1",
+            "max_tool_call_rounds": 4,
+        }
+    )
+    assert "tool_scope" not in runtime_context
+    assert "_tool_scope" not in runtime_context
+
+    svc = FakeGraphService()
+    skeleton = _make_invoke_skeleton(svc)
+    session_container = next(
+        container for container in skeleton.containers if container.container_key == "session"
+    )
+    session_subgraph = next(
+        subgraph
+        for subgraph in skeleton.subgraphs
+        if subgraph.container_id == session_container.container_id
+    )
+    context = _build_subgraph_context(
+        sg=session_subgraph,
+        container=session_container,
+        recorder=FakeRecorder(skeleton.graph_id),
+        pad=Scratchpad(),
+        runtime_context=runtime_context,
+    )
+
+    assert "tool_scope" not in context
+    assert "_tool_scope" not in context
+    assert context["delegated_agent"] == "requirement_agent"
+
+
 # =========================================================================
 # Tests — LLM Subgraph Execution
 # =========================================================================
@@ -530,6 +708,19 @@ class TestLlmSubgraphExecution:
         )
         _, result = _drain_with_result(gen)
         assert len(result.scratchpad_snapshot) > 0
+
+    def test_llm_subgraphs_create_agent_runs(self):
+        ai = FakeAIProxy(conclusions=["c1", "c2", "c3"])
+        gen = self.runner.run(
+            skeleton=self.skeleton,
+            tool_executor=FakeToolExecutor(),
+            ai_proxy_client=ai,
+            graph_service=self.svc,
+            recorder=FakeRecorder(self.skeleton.graph_id),
+            actor="test",
+        )
+        _events, _result = _drain_with_result(gen)
+        assert len(self.svc.agent_runs) == 3
 
 
 # =========================================================================
@@ -598,6 +789,44 @@ class TestInvokeSubgraph:
         )
         events, result = _drain_with_result(gen)
         assert isinstance(result, ContainerResult)
+
+    def test_invoke_call_edge_payload_includes_task_description(self):
+        import json
+
+        ai = FakeAIProxy(
+            conclusions=[
+                json.dumps(
+                    {
+                        "task_description": "用户要求检测 R-1 和 R-2 之间是否存在语义冲突",
+                        "operation": "detect_conflict",
+                        "requirement_ids": ["R-1", "R-2"],
+                    },
+                    ensure_ascii=False,
+                ),
+                "工作完成",
+            ]
+        )
+        gen = self.runner.run(
+            skeleton=self.skeleton,
+            tool_executor=FakeToolExecutor(),
+            ai_proxy_client=ai,
+            graph_service=self.svc,
+            recorder=FakeRecorder(self.skeleton.graph_id),
+            actor="test",
+        )
+        _events, result = _drain_with_result(gen)
+
+        assert isinstance(result, ContainerResult)
+        runtime_detail = self.svc.get_graph_detail(self.skeleton.graph_id)
+        call_edges = [
+            edge for edge in runtime_detail["edges"] if edge.get("edge_type") == "call"
+        ]
+        assert len(call_edges) == 1
+        call_config = call_edges[0].get("config_json") or {}
+        assert call_config["task_description"] == "用户要求检测 R-1 和 R-2 之间是否存在语义冲突"
+        assert call_config["invoke_payload"]["task_description"] == "用户要求检测 R-1 和 R-2 之间是否存在语义冲突"
+        assert call_config["invoke_payload"]["operation"] == "detect_conflict"
+        assert call_config["invoke_payload"]["requirement_ids"] == ["R-1", "R-2"]
 
     def test_invoke_child_scratchpad_does_not_leak_into_parent_container(self):
         import json
@@ -681,6 +910,60 @@ class TestInvokeSubgraph:
         events, result = _drain_with_result(gen)
         assert isinstance(result, ContainerResult)
         assert len([e for e in events if e.get("event") == "subgraph_status" and e["data"].get("status") == "completed"]) >= 4
+
+    def test_invoke_cancels_other_branches_after_first_failure(self):
+        parallel_skeleton = _make_parallel_invoke_skeleton(self.svc)
+        failing_runtime = _ImmediateFailRuntime(self.svc)
+        cancellable_runtime = _CancellableRuntime(self.svc)
+        runner = SubgraphRunner(
+            agent_runtime_registry=_StubRuntimeRegistry(
+                {
+                    "session": RuntimeBinding(
+                        runtime_id="rt::session",
+                        runtime=LocalAgentRuntime(
+                            runtime_id="rt::session",
+                            execution_graph_service=self.svc,
+                        ),
+                        implementation_type="local",
+                    ),
+                    "worker_a": RuntimeBinding(
+                        runtime_id="rt::worker-a",
+                        runtime=failing_runtime,
+                        implementation_type="stub",
+                    ),
+                    "worker_b": RuntimeBinding(
+                        runtime_id="rt::worker-b",
+                        runtime=cancellable_runtime,
+                        implementation_type="stub",
+                    ),
+                }
+            )
+        )
+
+        gen = runner.run(
+            skeleton=parallel_skeleton,
+            tool_executor=FakeToolExecutor(),
+            ai_proxy_client=FakeAIProxy(conclusions=["解析完成"]),
+            graph_service=self.svc,
+            recorder=FakeRecorder(parallel_skeleton.graph_id),
+            actor="test",
+        )
+
+        with pytest.raises(ContainerExecutionError) as exc_info:
+            _drain_with_result(gen)
+
+        root_cause = exc_info.value.cause
+        assert isinstance(root_cause, ContainerExecutionError)
+        assert root_cause.error_code == "branch_failed"
+        assert root_cause.agent_run_id == "run-fail"
+        assert cancellable_runtime.cancelled_runs == ["run-1"]
+        cancelled_runs = [
+            row
+            for row in self.svc.agent_runs.values()
+            if row.get("container_key") == "worker_b"
+        ]
+        assert len(cancelled_runs) == 1
+        assert cancelled_runs[0]["status"] == "cancelled"
 
 
 # =========================================================================
@@ -999,6 +1282,9 @@ class TestScratchpadContext:
         ])
 
         tool_executor = FakeToolExecutor()
+        tool_executor.get_tools_list = lambda: [
+            {"type": "function", "function": {"name": "dummy"}}
+        ]
         tool_executor.execute = lambda tool_name, arguments, context: {"ok": True, "req_id": "r-1"}
 
         _, result = _drain_with_result(runner.run(

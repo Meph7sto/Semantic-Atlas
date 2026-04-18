@@ -15,6 +15,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
+from backend_business.services.agent.runtime.state_contract import (
+    with_runtime_state_contract,
+)
+
 
 # ---------------------------------------------------------------------------
 # Business node types eligible for subgraph mapping
@@ -515,7 +519,9 @@ class TopologyInstantiator:
                 try:
                     runtime_graph = patch_graph_meta(
                         runtime_graph_id,
-                        {"source_template_id": template_graph_id},
+                        with_runtime_state_contract(
+                            {"source_template_id": template_graph_id}
+                        ),
                         status="running",
                         updated_by=created_by,
                     )
@@ -529,7 +535,9 @@ class TopologyInstantiator:
             description=f"Runtime execution instantiated from template {template_graph_id}",
             created_by=created_by,
             status="running",
-            meta_json={"source_template_id": template_graph_id},
+            meta_json=with_runtime_state_contract(
+                {"source_template_id": template_graph_id}
+            ),
         )
 
 

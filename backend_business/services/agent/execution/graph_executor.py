@@ -17,7 +17,10 @@ from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Any
 
-from backend_business.services.agent.runtime import ScratchpadService
+from backend_business.services.agent.runtime import (
+    ScratchpadService,
+    with_runtime_state_contract,
+)
 
 from .subgraph_runner import ContainerResult, SubgraphRunner
 from .subgraph_state import (
@@ -836,7 +839,7 @@ def _create_gate_runtime_graph(
         description="Runtime execution graph",
         created_by=actor,
         status="running",
-        meta_json={"phase": "intent_gate"},
+        meta_json=with_runtime_state_contract({"phase": "intent_gate"}),
     )
 
 

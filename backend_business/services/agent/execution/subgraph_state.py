@@ -49,7 +49,7 @@ class GraphStatus(str, Enum):
     """Graph-level status, derived from the collective subgraph states."""
 
     RUNNING = "running"
-    WAITING = "waiting"
+    DELEGATING = "delegating"
     SUSPENDED = "suspended"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
@@ -96,9 +96,14 @@ def derive_graph_status(subgraphs: Sequence[SubgraphInfo]) -> GraphStatus:
     Rules (evaluated in priority order):
     1. Any subgraph FAILED → GraphStatus.FAILED
     2. Any 'handoff' subgraph RUNNING → GraphStatus.SUSPENDED
-    3. Any 'invoke' subgraph RUNNING → GraphStatus.WAITING
+    3. Any 'invoke' subgraph RUNNING → GraphStatus.DELEGATING
     4. All last-in-container subgraphs COMPLETED → GraphStatus.SUCCEEDED
     5. Otherwise → GraphStatus.RUNNING
+
+    ``DELEGATING`` is a graph-level aggregate state only. It means one or more
+    invoke subgraphs are actively delegating work to other containers; it is
+    not an additional subgraph lifecycle state and does not imply resumable
+    "waiting" semantics outside the running graph.
     """
     if not subgraphs:
         return GraphStatus.SUCCEEDED
@@ -124,7 +129,7 @@ def derive_graph_status(subgraphs: Sequence[SubgraphInfo]) -> GraphStatus:
         return GraphStatus.SUSPENDED
 
     if has_running_invoke:
-        return GraphStatus.WAITING
+        return GraphStatus.DELEGATING
 
     # All containers' last subgraphs completed → graph succeeded
     if last_subgraphs and all(

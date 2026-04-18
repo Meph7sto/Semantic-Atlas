@@ -89,6 +89,7 @@ class _FakeRequirementAgentService:
 
     def __init__(self, *, inline_result=None):
         self.inline_calls = []
+        self.tools = object()
         self._inline_result = inline_result or {
             "status": "success",
             "tool_loop_reply": "已读取需求详情",
@@ -170,6 +171,7 @@ class _FakeConflictAgentService:
 
     def __init__(self):
         self.inline_calls = []
+        self.tools = object()
 
     def run_inline_tool_loop(
         self, *, recorder, user_id, user_message, project_id,
@@ -232,6 +234,7 @@ class _FakeRequirementClassificationAgentService:
 
     def __init__(self, *, inline_result=None):
         self.inline_calls = []
+        self.tools = object()
         self._inline_result = inline_result or {
             "status": "success",
             "tool_loop_reply": "已完成需求分类",
@@ -748,6 +751,28 @@ def test_no_recorder_returns_error():
 
     assert result["status"] == "error"
     assert "recorder" in result["error"].lower()
+
+
+def test_resolve_runtime_tool_executor_uses_container_key_instead_of_scope_context():
+    tools = _make_tools()
+
+    assert tools.resolve_runtime_tool_executor(container_key="conductor") is tools
+    assert tools.resolve_runtime_tool_executor(container_key="session_controller") is tools
+    assert (
+        tools.resolve_runtime_tool_executor(container_key="requirement_agent")
+        is tools._requirement_agent_service.tools
+    )
+    assert (
+        tools.resolve_runtime_tool_executor(container_key="conflict_detection")
+        is tools._conflict_agent_service.tools
+    )
+    assert (
+        tools.resolve_runtime_tool_executor(
+            container_key="requirement_classification_agent"
+        )
+        is tools._requirement_classification_agent_service.tools
+    )
+    assert tools.resolve_runtime_tool_executor(container_key="unknown") is None
 
 
 def test_infer_routing_hint_prefers_requirement_agent_for_priority_updates():

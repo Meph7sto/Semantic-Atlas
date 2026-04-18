@@ -24,6 +24,10 @@ from backend_business.services.agent.execution.topology_instantiator import (
     RuntimeGraphSkeleton,
     TopologyInstantiator,
 )
+from backend_business.services.agent.runtime.state_contract import (
+    RUN_STATE_SOURCE_OF_TRUTH,
+    SCRATCHPAD_STATE_BACKEND,
+)
 
 
 # =========================================================================
@@ -822,6 +826,12 @@ class TestMetaJsonPreserved:
 
         runtime_graph = svc.graphs[sk.graph_id]
         assert runtime_graph["meta_json"]["source_template_id"] == tpl_id
+        assert runtime_graph["meta_json"]["scratchpad_state_backend"] == (
+            SCRATCHPAD_STATE_BACKEND
+        )
+        assert runtime_graph["meta_json"]["run_state_source_of_truth"] == (
+            RUN_STATE_SOURCE_OF_TRUTH
+        )
 
 
 class TestExistingRuntimeGraphReuse:

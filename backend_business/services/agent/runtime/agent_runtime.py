@@ -69,7 +69,10 @@ class _InMemoryRunState:
     events: list[dict[str, Any]] = field(default_factory=list)
     result: AgentRunResult | None = None
     executed: bool = False
+    running: bool = False
     cancelled: bool = False
+    cancel_event: threading.Event = field(default_factory=threading.Event)
+    completion_event: threading.Event = field(default_factory=threading.Event)
     lock: threading.RLock = field(default_factory=threading.RLock)
 
 
@@ -118,7 +121,11 @@ class LocalAgentRuntime:
             state.events = []
             state.result = None
             state.executed = False
+            state.running = False
             payload["runner"] = lambda: resume_runner(user_input)
+            state.cancelled = False
+            state.cancel_event = threading.Event()
+            state.completion_event = threading.Event()
         self._persist_update(agent_run_id, status="running", started=True)
         self._ensure_executed(agent_run_id, state)
         return self.await_result(agent_run_id)
@@ -127,12 +134,14 @@ class LocalAgentRuntime:
         state = self._get_state(agent_run_id)
         with state.lock:
             state.cancelled = True
+            state.cancel_event.set()
             state.result = AgentRunResult(
                 status="cancelled",
                 error_code="cancelled",
                 error_message="agent run cancelled",
             )
             state.executed = True
+            state.completion_event.set()
         self._persist_update(
             agent_run_id,
             status="cancelled",
@@ -149,16 +158,34 @@ class LocalAgentRuntime:
         return state
 
     def _ensure_executed(self, agent_run_id: str, state: _InMemoryRunState) -> None:
+        runner: Callable[[], Any] | None = None
+        should_wait = False
         with state.lock:
             if state.executed:
                 return
             if state.cancelled:
                 return
-            self._persist_update(agent_run_id, status="running", started=True)
-            runner = self._resolve_runner(state.request.input_payload)
-            try:
-                events, result = self._run_runner(runner)
-            except Exception as exc:
+            if state.running:
+                should_wait = True
+            else:
+                state.running = True
+                self._bind_runtime_cancel_context(state)
+                runner = self._resolve_runner(state.request.input_payload)
+        if should_wait:
+            state.completion_event.wait()
+            return
+        if runner is None:
+            return
+
+        self._persist_update(agent_run_id, status="running", started=True)
+        try:
+            events, result = self._run_runner(runner)
+        except Exception as exc:
+            with state.lock:
+                if state.cancelled:
+                    state.running = False
+                    state.completion_event.set()
+                    return
                 state.events = []
                 state.result = AgentRunResult(
                     status="failed",
@@ -166,19 +193,39 @@ class LocalAgentRuntime:
                     error_message=str(exc),
                 )
                 state.executed = True
-                self._persist_update(
-                    agent_run_id,
-                    status="failed",
-                    error_code=exc.__class__.__name__,
-                    error_message=str(exc),
-                    completed=True,
-                )
-                return
+                state.running = False
+                state.completion_event.set()
+            self._persist_update(
+                agent_run_id,
+                status="failed",
+                error_code=exc.__class__.__name__,
+                error_message=str(exc),
+                completed=True,
+            )
+            return
 
+        with state.lock:
+            if state.cancelled:
+                state.running = False
+                state.completion_event.set()
+                return
             state.events = events
             state.result = result
             state.executed = True
-            self._persist_result(agent_run_id, result)
+            state.running = False
+            state.completion_event.set()
+        self._persist_result(agent_run_id, result)
+
+    @staticmethod
+    def _bind_runtime_cancel_context(state: _InMemoryRunState) -> None:
+        payload = (
+            state.request.input_payload
+            if isinstance(state.request.input_payload, dict)
+            else {}
+        )
+        runtime_context = payload.get("runtime_context")
+        if isinstance(runtime_context, dict):
+            runtime_context["_runtime_cancel_event"] = state.cancel_event
 
     @staticmethod
     def _resolve_runner(input_payload: Any) -> Callable[[], Any]:

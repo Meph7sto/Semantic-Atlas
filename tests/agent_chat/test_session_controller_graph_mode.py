@@ -90,6 +90,7 @@ class FakeGraphService:
         self.subgraphs: dict[str, dict] = {}
         self.nodes: dict[str, dict] = {}
         self.edges: dict[str, dict] = {}
+        self.runtime_bindings: dict[tuple[str | None, str | None, str], dict] = {}
 
     def create_execution_graph(self, *, project_id, name, description="", created_by="", meta_json=None):
         graph_id = str(uuid.uuid4())
@@ -152,6 +153,34 @@ class FakeGraphService:
         }
         self.graphs[graph_id] = graph
         return graph
+
+    def ensure_agent_runtime_binding(
+        self,
+        *,
+        container_key=None,
+        agent_type=None,
+        runtime_profile="default",
+        implementation_type="local",
+        endpoint=None,
+        enabled=True,
+        capability_policy_json=None,
+        quota_policy_json=None,
+        memory_policy_json=None,
+    ):
+        binding = {
+            "runtime_id": str(uuid.uuid4()),
+            "container_key": container_key,
+            "agent_type": agent_type,
+            "runtime_profile": runtime_profile,
+            "implementation_type": implementation_type,
+            "endpoint": endpoint,
+            "enabled": enabled,
+            "capability_policy_json": dict(capability_policy_json or {}),
+            "quota_policy_json": dict(quota_policy_json or {}),
+            "memory_policy_json": dict(memory_policy_json or {}),
+        }
+        self.runtime_bindings[(container_key, agent_type, runtime_profile)] = binding
+        return binding
 
     def get_graph_detail(self, graph_id: str, **_kwargs) -> dict:
         return {
@@ -606,6 +635,18 @@ class _FakeDelegatedTools:
         raise AssertionError(f"unexpected delegated tool call: {tool_name}")
 
 
+class _NamedTools:
+    def __init__(self, tool_names: list[str]) -> None:
+        self._tool_names = list(tool_names)
+
+    def get_tools_list(self, context=None):
+        _ = context
+        return [
+            {"type": "function", "function": {"name": tool_name}}
+            for tool_name in self._tool_names
+        ]
+
+
 def _build_service(ai_proxy, *, requirement_agent_service=None, graph_service=None):
     chat_storage = FakeChatStorage()
     graph_service = graph_service or FakeGraphService()
@@ -853,3 +894,86 @@ def test_stream_graph_executor_reply_forwards_delegated_round_limit():
     delegated_contexts = requirement_agent_service.tools.context_snapshots
     assert delegated_contexts
     assert any(context.get("max_tool_call_rounds") == 7 for context in delegated_contexts)
+
+
+def test_ensure_graph_runtime_bindings_persists_explicit_tool_allowlists():
+    graph_service = FakeGraphService()
+    requirement_agent_service = FakeRequirementAgentService()
+    conflict_agent_service = FakeConflictAgentService()
+    classification_agent_service = FakeConflictAgentService()
+    requirement_agent_service.tools = _NamedTools(
+        [
+            "search_requirements",
+            "list_requirements",
+            "get_requirement_state",
+            "update_requirement_content",
+        ]
+    )
+    conflict_agent_service.tools = _NamedTools(
+        ["list_requirements", "get_requirement_detail", "check_conflict"]
+    )
+    classification_agent_service.tools = _NamedTools(
+        [
+            "list_requirements",
+            "search_requirements",
+            "get_requirement_detail",
+            "classify_requirement",
+        ]
+    )
+    tools = SessionControllerTools(
+        requirements_service=FakeRequirementsService(),
+        requirement_agent_service=requirement_agent_service,
+        conflict_agent_service=conflict_agent_service,
+        requirement_classification_agent_service=classification_agent_service,
+    )
+    service = SessionControllerService(
+        chat_storage=FakeChatStorage(),
+        execution_graph_service=graph_service,
+        requirements_service=FakeRequirementsService(),
+        tools=tools,
+        ai_proxy_client=DelegatingGraphAIProxy(),
+    )
+
+    service._ensure_graph_runtime_bindings()
+
+    conductor_binding = graph_service.runtime_bindings[
+        ("conductor", "session_controller", "default")
+    ]
+    requirement_binding = graph_service.runtime_bindings[
+        ("requirement_agent", "requirement_agent", "default")
+    ]
+    conflict_binding = graph_service.runtime_bindings[
+        ("conflict_detection", "conflict_detection", "default")
+    ]
+    classification_binding = graph_service.runtime_bindings[
+        (
+            "requirement_classification_agent",
+            "requirement_classification_agent",
+            "default",
+        )
+    ]
+
+    assert set(conductor_binding["capability_policy_json"]["tool_names"]) == {
+        "list_requirements",
+        "search_requirements",
+        "invoke_requirement_agent",
+        "invoke_conflict_detection",
+        "invoke_requirement_classification_agent",
+    }
+    assert set(requirement_binding["capability_policy_json"]["tool_names"]) == {
+        "search_requirements",
+        "list_requirements",
+        "get_requirement_state",
+        "update_requirement_content",
+    }
+    assert set(conflict_binding["capability_policy_json"]["tool_names"]) == {
+        "list_requirements",
+        "get_requirement_detail",
+        "check_conflict",
+    }
+    assert set(classification_binding["capability_policy_json"]["tool_names"]) == {
+        "list_requirements",
+        "search_requirements",
+        "get_requirement_detail",
+        "classify_requirement",
+    }

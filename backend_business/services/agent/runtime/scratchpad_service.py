@@ -5,6 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from .scratchpad import Scratchpad
+from .state_contract import (
+    SCRATCHPAD_STATE_VERSION,
+    with_runtime_state_contract,
+)
 
 
 class ScratchpadService:
@@ -20,13 +24,25 @@ class ScratchpadService:
 
     def load(self, graph_id: str, container_key: str | None = None) -> Scratchpad:
         """Load the current Scratchpad for a runtime graph."""
-        state_snapshot = self._load_state_snapshot(graph_id)
+        graph = self._get_graph(graph_id)
+        supports_state_store = callable(
+            getattr(self._service, "list_container_states", None)
+        )
+        state_snapshot = (
+            self._load_state_snapshot(graph_id)
+            if supports_state_store
+            else []
+        )
         if state_snapshot:
             pad = Scratchpad.from_store_snapshot(state_snapshot)
-        else:
-            graph = self._get_graph(graph_id)
+        elif self._should_fallback_to_graph_meta(
+            graph,
+            supports_state_store=supports_state_store,
+        ):
             meta = dict((graph or {}).get("meta_json") or {})
             pad = Scratchpad.from_store_snapshot(meta.get(self.META_KEY) or [])
+        else:
+            pad = Scratchpad()
         return pad.for_container(container_key) if container_key else pad
 
     def save(
@@ -58,12 +74,30 @@ class ScratchpadService:
         )
         return self._service.patch_graph_meta(
             graph_id,
-            {
-                self.META_KEY: normalized_snapshot,
-                self.ENTRY_COUNT_KEY: len(normalized_snapshot),
-            },
+            with_runtime_state_contract(
+                {
+                    self.META_KEY: normalized_snapshot,
+                    self.ENTRY_COUNT_KEY: len(normalized_snapshot),
+                }
+            ),
             updated_by=updated_by,
         )
+
+    @staticmethod
+    def _should_fallback_to_graph_meta(
+        graph: dict[str, Any] | None,
+        *,
+        supports_state_store: bool,
+    ) -> bool:
+        if not supports_state_store:
+            return True
+        meta = dict((graph or {}).get("meta_json") or {})
+        raw_version = meta.get("scratchpad_state_version")
+        try:
+            version = int(raw_version)
+        except (TypeError, ValueError):
+            return True
+        return version < SCRATCHPAD_STATE_VERSION
 
     def _get_graph(self, graph_id: str) -> dict[str, Any] | None:
         get_execution_graph = getattr(self._service, "get_execution_graph", None)
@@ -121,6 +155,14 @@ class ScratchpadService:
                 container_key = str(raw_container_key)
             grouped_entries.setdefault(container_key, []).append(normalized_entry)
 
+        existing_container_keys = {
+            str(row.get("container_key"))
+            for row in (self._load_container_state_rows(graph_id) or [])
+            if row.get("container_key") is not None
+        }
+        for stale_container_key in existing_container_keys - set(grouped_entries):
+            grouped_entries[stale_container_key] = []
+
         for container_key, entries in grouped_entries.items():
             upsert_container_state(
                 graph_id=graph_id,
@@ -131,3 +173,9 @@ class ScratchpadService:
                 },
                 updated_by=updated_by,
             )
+
+    def _load_container_state_rows(self, graph_id: str) -> list[dict[str, Any]]:
+        list_container_states = getattr(self._service, "list_container_states", None)
+        if not callable(list_container_states):
+            return []
+        return list(list_container_states(graph_id) or [])
