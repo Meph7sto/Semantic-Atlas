@@ -3,5 +3,4 @@ setlocal
 cd /d "%~dp0"
 echo Starting Semantic-Atlas Services...
 pwsh -ExecutionPolicy Bypass -NoProfile -File ".\deploy\start.ps1" %*
-echo.
-pause
+exit /b %errorlevel%

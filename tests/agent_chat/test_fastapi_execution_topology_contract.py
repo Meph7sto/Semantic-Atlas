@@ -16,7 +16,7 @@ from backend_business.api.routers import execution_graph
 from backend_business.services.auth_service import get_auth_service
 
 
-class _StubTopologyExecutionService:
+class _StubGraphExecutorRuntimeService:
     def __init__(self):
         self.last_execute_args = None
 
@@ -63,8 +63,8 @@ def _auth_headers() -> dict:
 
 @pytest.fixture
 async def fastapi_client(monkeypatch):
-    stub = _StubTopologyExecutionService()
-    monkeypatch.setattr(execution_graph, "_topology_execution_service", stub)
+    stub = _StubGraphExecutorRuntimeService()
+    monkeypatch.setattr(execution_graph, "_graph_executor_runtime_service", stub)
 
     app = build_test_app(execution_graph.router)
 

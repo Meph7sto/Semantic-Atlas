@@ -73,19 +73,34 @@ export const sessionControllerChatApi = {
     useThinkingMode = true,
     delegatedMaxToolCallRounds = 15
   }) {
+    const payload = {
+      project_id: projectId,
+      message,
+      execution_mode: 'graph',
+      use_thinking_mode: useThinkingMode,
+      delegated_max_tool_call_rounds: delegatedMaxToolCallRounds
+    }
+
     const response = await fetch(`/api/v2/session-controller/sessions/${encodeURIComponent(sessionId)}/messages/stream`, {
       method: 'POST',
       headers: buildAuthHeaders(),
-      body: JSON.stringify({
-        project_id: projectId,
-        message,
-        use_thinking_mode: useThinkingMode,
-        delegated_max_tool_call_rounds: delegatedMaxToolCallRounds,
-      })
+      body: JSON.stringify(payload)
     })
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
+      let detail = ''
+      try {
+        const errorPayload = await response.json()
+        const responseDetail = errorPayload?.detail
+        if (typeof responseDetail === 'string') {
+          detail = responseDetail
+        } else if (Array.isArray(responseDetail) && responseDetail.length) {
+          detail = responseDetail.map((item) => item?.msg || JSON.stringify(item)).join('; ')
+        }
+      } catch (_err) {
+        detail = ''
+      }
+      throw new Error(detail || `HTTP error! status: ${response.status}`)
     }
 
     return response.body

@@ -1,5 +1,28 @@
 import axios from 'axios'
 
+function clearAuthStorage() {
+    localStorage.removeItem('token')
+    localStorage.removeItem('user')
+    localStorage.removeItem('actor')
+    localStorage.removeItem('role')
+}
+
+function buildUnauthorizedRedirectTarget() {
+    const { pathname, search } = window.location
+    const currentTarget = `${pathname}${search || ''}`
+    const query = new URLSearchParams({ redirect: currentTarget }).toString()
+
+    if (pathname === '/beta/login' || pathname.startsWith('/guide')) {
+        return null
+    }
+
+    if (pathname === '/alpha' || pathname.startsWith('/alpha/')) {
+        return `/guide?${query}`
+    }
+
+    return `/beta/login?${query}`
+}
+
 // 约定：
 // - 开发环境通过 Vite 代理 /api/v2 到业务后端 (5002)
 // - 业务接口统一走 /api/v2/*
@@ -21,12 +44,13 @@ api.interceptors.response.use(
     (err) => {
         // 处理 401 未授权错误，清除本地存储的认证信息
         if (err.response?.status === 401) {
-            // 清除认证信息
-            localStorage.removeItem('token')
-            localStorage.removeItem('user')
-            // 如果不是在登录页面，可以重定向到登录页
-            if (window.location.pathname !== '/beta/login' && !window.location.pathname.startsWith('/guide')) {
-                window.location.href = '/beta/login'
+            clearAuthStorage()
+
+            if (err.config?.skipAuthRedirect !== true) {
+                const target = buildUnauthorizedRedirectTarget()
+                if (target) {
+                    window.location.assign(target)
+                }
             }
         }
         const detail = err.response?.data?.detail

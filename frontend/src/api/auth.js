@@ -31,7 +31,7 @@ export const authApi = {
 
     // 验证 Token
     async verify() {
-        const resp = await api.get('/auth/verify')
+        const resp = await api.get('/auth/verify', { skipAuthRedirect: true })
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || 'Token 无效')
         }
@@ -49,7 +49,7 @@ export const authApi = {
 
     // 登出
     async logout() {
-        const resp = await api.post('/auth/logout')
+        const resp = await api.post('/auth/logout', null, { skipAuthRedirect: true })
         return resp.data
     },
 
@@ -207,4 +207,3 @@ export const authApi = {
         return resp.data
     },
 }
-

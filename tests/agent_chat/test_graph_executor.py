@@ -517,6 +517,7 @@ class TestHandoffAndResume:
         graph = self.svc.graphs.get(skeleton.graph_id, {})
         snapshot = (graph.get("meta_json") or {}).get("scratchpad_snapshot") or []
         assert any("前置完成" in str(entry.get("content", "")) for entry in snapshot)
+        assert all(entry.get("container_key") is not None for entry in snapshot)
 
     def test_resume_restores_scratchpad_into_prompt(self):
         ai_run = FakeAIProxy(conclusions=["前置完成"])

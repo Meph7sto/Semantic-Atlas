@@ -84,9 +84,10 @@
 
 <script setup>
 import { ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/auth.js";
 
+const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
 
@@ -136,13 +137,12 @@ const showMessage = (text, type = "success") => {
   messageType.value = type;
 };
 
-const clearAuthStorage = () => {
-  try {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
-  } catch (_) {
-    // ignore
+const getRedirectTarget = () => {
+  const candidate = typeof route.query.redirect === "string" ? route.query.redirect : "";
+  if (!candidate.startsWith("/") || candidate.startsWith("//")) {
+    return null;
   }
+  return candidate;
 };
 
 const handleEnter = async () => {
@@ -167,8 +167,13 @@ const handleEnter = async () => {
 
     showMessage("登录成功", "success");
 
-    // Navigate to dashboard
-    router.push({ name: 'beta-dashboard' });
+    const redirectTarget = getRedirectTarget();
+
+    if (redirectTarget) {
+      router.push(redirectTarget);
+    } else {
+      router.push({ name: 'beta-dashboard' });
+    }
 
     emit("enter", {
       role: result.role || selectedRole.value,

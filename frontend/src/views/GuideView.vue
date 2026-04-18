@@ -103,12 +103,20 @@
 </template>
 
 <script setup>
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { Home, Beaker, ArrowRight, CheckCircle2, Sparkles } from 'lucide-vue-next'
 
+const route = useRoute()
 const router = useRouter()
 
 const navigateTo = (path) => {
+  const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
+
+  if (path === '/beta/login' && redirect) {
+    router.push({ path, query: { redirect } })
+    return
+  }
+
   router.push(path)
 }
 </script>

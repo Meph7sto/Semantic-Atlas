@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import threading
 from typing import Any
 
 import pytest
@@ -20,9 +21,16 @@ from backend_business.services.agent.agents.requirement_agent.actor_runtime impo
     RequirementAgentActorRuntime,
 )
 from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner
+from backend_business.services.agent.runtime import LocalAgentRuntime, RunRequest
 from backend_business.services.agent.runtime.graph_recorder import (
     ContainerConfig,
     RuntimeGraphRecorder,
+)
+from backend_business.services.agent.runtime.state_contract import (
+    RUN_STATE_SOURCE_OF_TRUTH,
+    RUN_STATE_VERSION,
+    SCRATCHPAD_STATE_BACKEND,
+    SCRATCHPAD_STATE_VERSION,
 )
 
 
@@ -36,6 +44,7 @@ class _FakeExecutionGraphService:
         self.containers: dict[str, dict[str, Any]] = {}
         self.nodes: dict[str, dict[str, Any]] = {}
         self.edges: dict[str, dict[str, Any]] = {}
+        self.agent_runs: dict[str, dict[str, Any]] = {}
 
     def create_runtime_graph(
         self,
@@ -192,6 +201,16 @@ class _FakeExecutionGraphService:
         self.edges[edge_id] = edge
         return dict(edge)
 
+    def create_agent_run(self, **kwargs):
+        row = dict(kwargs)
+        self.agent_runs[row["run_id"]] = row
+        return dict(row)
+
+    def update_agent_run(self, run_id: str, **kwargs):
+        row = self.agent_runs[run_id]
+        row.update({k: v for k, v in kwargs.items() if v is not None})
+        return dict(row)
+
 
 class _FakeToolExecutor:
     def __init__(self, handlers: list[Any]) -> None:
@@ -211,6 +230,23 @@ class _FakeToolExecutor:
         if not self._handlers:
             return {"ok": True}
         return self._handlers.pop(0)(tool_name, arguments, context)
+
+
+class _BarrierToolExecutor:
+    def __init__(self) -> None:
+        self._barrier = threading.Barrier(2, timeout=1.0)
+
+    def get_tools_list(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "function",
+                "function": {"name": "dummy", "parameters": {"type": "object"}},
+            }
+        ]
+
+    def execute(self, tool_name: str, arguments: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        self._barrier.wait()
+        return {"ok": True, "value": arguments.get("value")}
 
 
 class _FakePromptBuilder:
@@ -318,6 +354,76 @@ def test_runtime_graph_recorder_supports_configurable_containers_and_task_contex
     assert node["config_json"]["input"][0]["value"]["scope"] == "unit-test"
     assert recorder.last_node_key == node_key
     assert graph_service.graphs[recorder.graph_id]["meta_json"]["domain"] == "generic"
+    assert graph_service.graphs[recorder.graph_id]["meta_json"]["scratchpad_state_version"] == (
+        SCRATCHPAD_STATE_VERSION
+    )
+    assert graph_service.graphs[recorder.graph_id]["meta_json"]["scratchpad_state_backend"] == (
+        SCRATCHPAD_STATE_BACKEND
+    )
+    assert graph_service.graphs[recorder.graph_id]["meta_json"]["run_state_version"] == (
+        RUN_STATE_VERSION
+    )
+    assert graph_service.graphs[recorder.graph_id]["meta_json"]["run_state_source_of_truth"] == (
+        RUN_STATE_SOURCE_OF_TRUTH
+    )
+
+
+def test_tool_loop_stage_binds_agent_run_ref_into_trace():
+    graph_service = _FakeExecutionGraphService()
+    recorder = RuntimeGraphRecorder(
+        execution_graph_service=graph_service,
+        container_configs=[
+            ContainerConfig(
+                container_key="agent",
+                label="Agent",
+                role_type="agent",
+            )
+        ],
+        project_id="proj-1",
+        user_id="u-1",
+        session_id="s-1",
+        user_message="hello",
+    )
+    runner = ToolLoopRunner(
+        ai_proxy_client=_FakeAiProxy(
+            responses=[
+                {
+                    "content": "done",
+                    "finish_reason": "stop",
+                }
+            ]
+        ),
+        tool_executor=_FakeToolExecutor([]),
+        prompt_builder=_FakePromptBuilder(),
+    )
+
+    events = list(
+        runner.run(
+            user_message="hello",
+            recorder=recorder,
+            user_id="u-1",
+            context={
+                "graph_id": recorder.graph_id,
+                "user_id": "u-1",
+                "_graph_recorder": recorder,
+                "_agent_run_ref": {
+                    "run_id": "run-123",
+                    "runtime_id": "rt-local",
+                    "source_of_truth": RUN_STATE_SOURCE_OF_TRUTH,
+                },
+            },
+        )
+    )
+
+    stage_events = [item for item in events if item.get("event") == "stage"]
+    assert stage_events
+    node_key = stage_events[0]["data"]["node_key"]
+    node = next(item for item in graph_service.nodes.values() if item["node_key"] == node_key)
+    assert node["config_json"]["run_ref"] == {
+        "run_id": "run-123",
+        "runtime_id": "rt-local",
+        "source_of_truth": RUN_STATE_SOURCE_OF_TRUTH,
+    }
 
 
 def test_runtime_graph_recorder_rehydrates_history_and_increments_turn():
@@ -396,6 +502,83 @@ def test_runtime_graph_recorder_rejects_unknown_container_key():
         )
 
 
+def test_runtime_graph_recorder_attach_only_reuses_existing_topology_containers():
+    graph_service = _FakeExecutionGraphService()
+    recorder = RuntimeGraphRecorder(
+        execution_graph_service=graph_service,
+        container_configs=[ContainerConfig("agent_main", "Agent Main", "agent")],
+        project_id="p-1",
+        user_id="u-1",
+        session_id="s-1",
+        user_message="hello",
+    )
+    initial_container_ids = sorted(graph_service.containers)
+
+    attached = RuntimeGraphRecorder(
+        execution_graph_service=graph_service,
+        container_configs=[ContainerConfig("agent_main", "Agent Main", "agent")],
+        project_id="p-1",
+        user_id="u-1",
+        session_id="s-1",
+        user_message="follow-up",
+        graph_id=recorder.graph_id,
+        attach_only=True,
+    )
+    node_key = attached.stage_node_key("analysis")
+    attached.start_stage(
+        node_key=node_key,
+        label=attached.stage_label("Analysis"),
+        node_type="llm",
+        role_type="agent",
+        container_key="agent_main",
+        created_by="u-1",
+        input_summary={"round": 2},
+    )
+
+    assert sorted(graph_service.containers) == initial_container_ids
+    started_node = next(
+        node for node in graph_service.nodes.values() if node["node_key"] == node_key
+    )
+    assert started_node["container_id"] == next(iter(graph_service.containers))
+
+
+def test_runtime_graph_recorder_attach_only_rejects_missing_container_instead_of_creating():
+    graph_service = _FakeExecutionGraphService()
+    recorder = RuntimeGraphRecorder(
+        execution_graph_service=graph_service,
+        container_configs=[ContainerConfig("agent_main", "Agent Main", "agent")],
+        project_id="p-1",
+        user_id="u-1",
+        session_id="s-1",
+        user_message="hello",
+    )
+    initial_container_count = len(graph_service.containers)
+
+    attached = RuntimeGraphRecorder(
+        execution_graph_service=graph_service,
+        container_configs=[ContainerConfig("other_agent", "Other Agent", "agent")],
+        project_id="p-1",
+        user_id="u-1",
+        session_id="s-1",
+        user_message="follow-up",
+        graph_id=recorder.graph_id,
+        attach_only=True,
+    )
+
+    with pytest.raises(KeyError, match="other_agent"):
+        attached.start_stage(
+            node_key=attached.stage_node_key("analysis"),
+            label=attached.stage_label("Analysis"),
+            node_type="llm",
+            role_type="agent",
+            container_key="other_agent",
+            created_by="u-1",
+            input_summary={"round": 2},
+        )
+
+    assert len(graph_service.containers) == initial_container_count
+
+
 def test_tool_loop_runner_executes_multi_round_and_patches_meta():
     graph_service = _FakeExecutionGraphService()
     recorder = RuntimeGraphRecorder(
@@ -467,6 +650,148 @@ def test_tool_loop_runner_executes_multi_round_and_patches_meta():
     assert meta_patches[-1][1]["resolved_requirement_id"] == "r-1"
 
 
+def test_tool_loop_runner_executes_same_round_tool_calls_concurrently():
+    graph_service = _FakeExecutionGraphService()
+    recorder = RuntimeGraphRecorder(
+        execution_graph_service=graph_service,
+        container_configs=[ContainerConfig("agent_main", "Agent Main", "agent")],
+        project_id="p-1",
+        user_id="u-1",
+        session_id="s-1",
+        user_message="hello",
+    )
+    runner = ToolLoopRunner(
+        ai_proxy_client=_FakeAiProxy(
+            [
+                {
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "tc-1",
+                            "type": "function",
+                            "function": {"name": "dummy", "arguments": "{\"value\":\"a\"}"},
+                        },
+                        {
+                            "id": "tc-2",
+                            "type": "function",
+                            "function": {"name": "dummy", "arguments": "{\"value\":\"b\"}"},
+                        },
+                    ],
+                    "finish_reason": "tool_calls",
+                },
+                {"content": "done", "tool_calls": [], "finish_reason": "stop"},
+            ]
+        ),
+        tool_executor=_BarrierToolExecutor(),
+        prompt_builder=_FakePromptBuilder(),
+        max_tool_call_rounds=3,
+        stage_container_key="agent_main",
+    )
+
+    events, result = _run_tool_loop_to_completion(
+        runner.run(
+            recorder=recorder,
+            user_id="u-1",
+            user_message="hello",
+            context={"project_id": "p-1", "tool_results": []},
+        )
+    )
+
+    tool_results = result.context["tool_results"]
+    assert len(tool_results) == 2
+    assert [item["result"]["value"] for item in tool_results] == ["a", "b"]
+    assert sum(1 for event in events if event["event"] == "tool_call") == 2
+    assert sum(1 for event in events if event["event"] == "tool_result") == 2
+
+
+def test_tool_loop_runner_uses_snapshot_isolation_and_deterministic_merge_for_parallel_calls():
+    graph_service = _FakeExecutionGraphService()
+    recorder = RuntimeGraphRecorder(
+        execution_graph_service=graph_service,
+        container_configs=[ContainerConfig("agent_main", "Agent Main", "agent")],
+        project_id="p-1",
+        user_id="u-1",
+        session_id="s-1",
+        user_message="hello",
+    )
+    second_tool_finished = threading.Event()
+    observed_contexts: list[tuple[str, str | None, str | None]] = []
+
+    def _first_handler(_tool_name, _arguments, context):
+        observed_contexts.append(
+            (
+                "first",
+                context.get("shared_value"),
+                context.get("second_visible"),
+            )
+        )
+        context["shared_value"] = "from-first"
+        context["first_visible"] = "yes"
+        second_tool_finished.wait(timeout=1.0)
+        return {"ok": True, "worker": "first"}
+
+    def _second_handler(_tool_name, _arguments, context):
+        observed_contexts.append(
+            (
+                "second",
+                context.get("shared_value"),
+                context.get("first_visible"),
+            )
+        )
+        context["shared_value"] = "from-second"
+        context["second_visible"] = "yes"
+        second_tool_finished.set()
+        return {"ok": True, "worker": "second"}
+
+    runner = ToolLoopRunner(
+        ai_proxy_client=_FakeAiProxy(
+            [
+                {
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "tc-1",
+                            "type": "function",
+                            "function": {"name": "dummy", "arguments": "{}"},
+                        },
+                        {
+                            "id": "tc-2",
+                            "type": "function",
+                            "function": {"name": "dummy", "arguments": "{}"},
+                        },
+                    ],
+                    "finish_reason": "tool_calls",
+                },
+                {"content": "done", "tool_calls": [], "finish_reason": "stop"},
+            ]
+        ),
+        tool_executor=_FakeToolExecutor([_first_handler, _second_handler]),
+        prompt_builder=_FakePromptBuilder(),
+        max_tool_call_rounds=3,
+        stage_container_key="agent_main",
+    )
+
+    _events, result = _run_tool_loop_to_completion(
+        runner.run(
+            recorder=recorder,
+            user_id="u-1",
+            user_message="hello",
+            context={"project_id": "p-1", "tool_results": [], "shared_value": "initial"},
+        )
+    )
+
+    assert observed_contexts == [
+        ("first", "initial", None),
+        ("second", "initial", None),
+    ]
+    assert result.context["shared_value"] == "from-second"
+    assert result.context["first_visible"] == "yes"
+    assert result.context["second_visible"] == "yes"
+    assert [
+        item["result"]["worker"] for item in result.context["tool_results"]
+    ] == ["first", "second"]
+
+
 def test_tool_loop_runner_rejects_empty_model_reply_without_tool_calls():
     graph_service = _FakeExecutionGraphService()
     recorder = RuntimeGraphRecorder(
@@ -478,7 +803,16 @@ def test_tool_loop_runner_rejects_empty_model_reply_without_tool_calls():
         user_message="hello",
     )
     runner = ToolLoopRunner(
-        ai_proxy_client=_FakeAiProxy([{"content": "", "tool_calls": [], "finish_reason": "stop"}]),
+        ai_proxy_client=_FakeAiProxy(
+            [
+                {
+                    "content": "",
+                    "tool_calls": [],
+                    "reasoning_content": "我还在想，但没有给出最终输出。",
+                    "finish_reason": "stop",
+                }
+            ]
+        ),
         tool_executor=_FakeToolExecutor([]),
         prompt_builder=_FakePromptBuilder(),
         stage_container_key="agent_main",
@@ -491,8 +825,13 @@ def test_tool_loop_runner_rejects_empty_model_reply_without_tool_calls():
         context={"project_id": "p-1", "tool_results": []},
     )
     assert next(generator)["event"] == "stage"
-    with pytest.raises(ValueError, match="模型未返回文本或工具调用"):
+    with pytest.raises(ValueError) as exc_info:
         next(generator)
+    error_text = str(exc_info.value)
+    assert "模型未返回文本或工具调用" in error_text
+    assert "finish_reason='stop'" in error_text
+    assert "reasoning_content_present=True" in error_text
+    assert "tool_call_count=0" in error_text
 
 
 def test_tool_loop_runner_raises_when_round_limit_exceeded():
@@ -538,6 +877,52 @@ def test_tool_loop_runner_raises_when_round_limit_exceeded():
             context={"project_id": "p-1", "tool_results": []},
         ):
             pass
+
+
+def test_local_agent_runtime_cancel_marks_run_cancelled_without_waiting_for_runner_lock():
+    graph_service = _FakeExecutionGraphService()
+    runtime = LocalAgentRuntime(
+        runtime_id="local::test",
+        execution_graph_service=graph_service,
+    )
+    runtime_context: dict[str, Any] = {}
+    runner_started = threading.Event()
+    result_holder: dict[str, Any] = {}
+
+    def _runner():
+        runner_started.set()
+        while not runtime_context["_runtime_cancel_event"].is_set():
+            yield {"event": "heartbeat"}
+            threading.Event().wait(0.01)
+        return {"cancel_observed": True}
+
+    run_id = runtime.submit(
+        RunRequest(
+            graph_id="graph-1",
+            subgraph_id="sg-1",
+            container_key="agent_main",
+            agent_type="agent_main",
+            input_payload={
+                "runner": _runner,
+                "runtime_context": runtime_context,
+                "input_ref": {"source_edge_id": "edge-1"},
+            },
+        )
+    )
+
+    await_thread = threading.Thread(
+        target=lambda: result_holder.setdefault("result", runtime.await_result(run_id)),
+        daemon=True,
+    )
+    await_thread.start()
+    assert runner_started.wait(timeout=1.0) is True
+
+    runtime.cancel(run_id)
+    await_thread.join(timeout=1.0)
+
+    assert result_holder["result"].status == "cancelled"
+    assert graph_service.agent_runs[run_id]["status"] == "cancelled"
+    assert graph_service.agent_runs[run_id]["error_code"] == "cancelled"
 
 
 def test_agent_actor_runtime_supports_query_and_write():

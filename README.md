@@ -16,7 +16,7 @@ Semantic-Atlas 是面向需求工程的语义分析平台，覆盖会议转写�
 - **用户认证与权限**：JWT 认证、RBAC 权限管理、系统身份控制
 - **执行图管理**：Agent 执行拓扑结构与可视化
 - **需求 Actor**：需求执行者分配与管理
-- **多 Agent 协作**：基于 MessageBus + Channel 的多 Agent 通信架构（详见 [AGENT_ARCHITECTURE.md](./AGENT_ARCHITECTURE.md)）
+- **Agent 编排与协作**：基于执行图、工具调用、委托子图与需求 Actor 的组合式运行时
 - **通用对话**：流式 chat（`/inference/chat/stream`）
 - **移动端支持**：移动端消息桥接与推送通知
 
@@ -286,7 +286,7 @@ JWT_SECRET_KEY=your_secret_key_here
 | `manage_milestones`   | 里程碑                                 |
 | `manage_branches`     | 分支管理                               |
 
-### Agent 通信层
+### 对话与协作层
 
 | 表                      | 说明                                             |
 | ----------------------- | ------------------------------------------------ |
@@ -294,7 +294,6 @@ JWT_SECRET_KEY=your_secret_key_here
 | `agent_channels`        | 通信通道（direct / group / broadcast）           |
 | `agent_channel_members` | 通道成员                                         |
 | `agent_messages`        | Agent 消息记录                                   |
-| `agent_pending_tasks`   | Agent 待处理任务                                 |
 | `ai_chat_sessions`      | AI 对话会话                                      |
 
 ### 认证与权限层
@@ -314,28 +313,28 @@ JWT_SECRET_KEY=your_secret_key_here
 | `execution_nodes`    | 执行节点       |
 | `requirement_actors` | 需求执行者分配 |
 
-## 多 Agent 架构
+## Agent 运行时结构
 
-系统采用 **MessageBus + Channel** 通信模型，支持多 Agent 去中心化协作。
+当前仓库中的 Agent 框架以执行图、子图运行时、工具调用循环和需求 Actor 为核心。
 
 ```
 backend_business/services/agent/
-├── context/          # 组合式上下文（execution, messaging, workflow, memory）
-├── messaging/        # 消息总线、通道管理、路由策略、中间件
-├── orchestration/    # 编排层（supervisor, workflow, strategies）
-├── agents/           # Agent 定义（conductor, requirements）
-├── tools/            # 工具层（requirement_tools, messaging_tools）
-├── topology/         # Agent 拓扑与容器管理
-├── engines/          # 思考工具引擎
-└── tasks/            # 任务队列与执行器
+├── actor/                   # Agent 与 RequirementActor 的运行时接入
+├── agents/                  # 具体 agent 服务（session controller / requirement / conflict / classification）
+├── compat/                  # 兼容旧导入路径的 shim
+├── coordinator/             # 分布式协调组件（Redis 锁）
+├── execution/               # GraphExecutor、SubgraphRunner、ToolLoopRunner
+├── execution_graph_service/ # 执行图、容器、子图、节点、边 CRUD
+├── runtime/                 # Scratchpad、ExecutionContext、图记录器
+├── tools/                   # 各 agent 可调用工具
+└── topology/                # 拓扑结构构建、校验与序列化
 ```
 
-通信模式:
-- **Direct**: 1:1 私聊（Agent 间请求/回复）
-- **Group**: 多人协作（如需求评审会议）
-- **Broadcast**: 系统级广播通知
-
-详见 [AGENT_ARCHITECTURE.md](./AGENT_ARCHITECTURE.md)。
+当前主要执行路径：
+- **经典对话模式**：Agent service + ToolLoopRunner 直接完成单轮或多轮工具调用
+- **执行图模式**：GraphExecutor 将模板实例化为 runtime graph，再由 SubgraphRunner 推进各阶段
+- **委托子图模式**：Session Controller 通过 `invoke` 子图把任务转交给 requirement / conflict / classification agent
+- **Requirement Actor 模式**：针对单个 requirement_id 的状态查询、写入和审批流转由 ActorManager 协调
 
 ## 目录结构
 
@@ -392,7 +391,7 @@ backend_business/                  # FastAPI 业务编排 + 存储
     execution_topology_structure.py #   执行拓扑结构
     requirement_actor.py            #   需求 Actor 管理
   services/
-    agent/                         # 多 Agent 架构
+    agent/                         # Agent 运行时与编排
     context_builder/               # Phase 2 上下文构建
     requirements_extraction/       # Phase 3 需求抽取
     requirements_deduplication/    #   需求去重

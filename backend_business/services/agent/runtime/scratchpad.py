@@ -1,8 +1,8 @@
-"""Scratchpad — container-level persistent working memory for cross-subgraph context distillation.
+"""Scratchpad — container-scoped persistent working memory for cross-subgraph context distillation.
 
 Design reference: docs/Agent方案_updated(1).md §上下文管理 (lines 324-348).
 
-Scratchpad sits at the container level.  All subgraphs within the same
+Each container owns its own scratchpad view. All subgraphs within the same
 container can read and write to it, but it is invisible across containers.
 
 Three entry types:
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import threading
 from typing import Any
 
 
@@ -29,6 +30,7 @@ class ScratchpadEntry:
     entry_type: str  # "note" | "tool_excerpt" | "stage_output"
     content: Any
     source_subgraph: str | None = None
+    container_key: str | None = None
     readonly: bool = False
     created_at: str = field(default_factory=_utc_now_iso)
 
@@ -37,6 +39,7 @@ class ScratchpadEntry:
             "entry_type": self.entry_type,
             "content": self.content,
             "source_subgraph": self.source_subgraph,
+            "container_key": self.container_key,
             "readonly": self.readonly,
             "created_at": self.created_at,
         }
@@ -47,13 +50,21 @@ class ScratchpadEntry:
             entry_type=data.get("entry_type", "note"),
             content=data.get("content"),
             source_subgraph=data.get("source_subgraph"),
+            container_key=data.get("container_key"),
             readonly=data.get("readonly", False),
             created_at=data.get("created_at") or _utc_now_iso(),
         )
 
 
+@dataclass
+class _ScratchpadState:
+    entries: list[ScratchpadEntry] = field(default_factory=list)
+    lock: threading.RLock = field(default_factory=threading.RLock)
+    legacy_shared_visible: bool = False
+
+
 class Scratchpad:
-    """Container-level persistent working memory.
+    """Container-scoped persistent working memory.
 
     Usage:
         pad = Scratchpad()
@@ -63,8 +74,86 @@ class Scratchpad:
         entries = pad.read(filter_type="note")     # only notes
     """
 
-    def __init__(self, *, initial_entries: list[ScratchpadEntry] | None = None) -> None:
-        self._entries: list[ScratchpadEntry] = list(initial_entries or [])
+    def __init__(
+        self,
+        *,
+        initial_entries: list[ScratchpadEntry] | None = None,
+        _state: _ScratchpadState | None = None,
+        _bound_container_key: str | None = None,
+    ) -> None:
+        self._state = _state or _ScratchpadState(entries=list(initial_entries or []))
+        self._bound_container_key = _bound_container_key
+
+    @property
+    def bound_container_key(self) -> str | None:
+        return self._bound_container_key
+
+    def for_container(self, container_key: str | None) -> "Scratchpad":
+        """Return a container-bound view that shares the same underlying storage."""
+        return Scratchpad(
+            _state=self._state,
+            _bound_container_key=container_key,
+        )
+
+    def _has_bound_entries(self) -> bool:
+        if self._bound_container_key is None:
+            return False
+        return any(
+            entry.container_key == self._bound_container_key
+            for entry in self._state.entries
+        )
+
+    def _visible_entries_unlocked(self) -> list[ScratchpadEntry]:
+        if self._bound_container_key is None:
+            return [
+                entry
+                for entry in self._state.entries
+                if entry.container_key is None
+            ]
+
+        scoped_entries = [
+            entry
+            for entry in self._state.entries
+            if entry.container_key == self._bound_container_key
+        ]
+        if scoped_entries:
+            return scoped_entries
+
+        if self._state.legacy_shared_visible:
+            return [
+                entry
+                for entry in self._state.entries
+                if entry.container_key is None
+            ]
+        return []
+
+    def _materialize_legacy_scope_for_write_unlocked(self) -> None:
+        if self._bound_container_key is None:
+            return
+        if not self._state.legacy_shared_visible:
+            return
+        if self._has_bound_entries():
+            return
+
+        legacy_entries = [
+            entry
+            for entry in self._state.entries
+            if entry.container_key is None
+        ]
+        if not legacy_entries:
+            return
+
+        self._state.entries.extend(
+            ScratchpadEntry(
+                entry_type=entry.entry_type,
+                content=entry.content,
+                source_subgraph=entry.source_subgraph,
+                container_key=self._bound_container_key,
+                readonly=entry.readonly,
+                created_at=entry.created_at,
+            )
+            for entry in legacy_entries
+        )
 
     # ---- write ----
 
@@ -79,25 +168,31 @@ class Scratchpad:
         """Write a new entry.  tool_excerpt entries are always readonly."""
         if entry_type == "tool_excerpt":
             readonly = True
-        self._entries.append(
-            ScratchpadEntry(
-                entry_type=entry_type,
-                content=content,
-                source_subgraph=source_subgraph,
-                readonly=readonly,
+        with self._state.lock:
+            self._materialize_legacy_scope_for_write_unlocked()
+            self._state.entries.append(
+                ScratchpadEntry(
+                    entry_type=entry_type,
+                    content=content,
+                    source_subgraph=source_subgraph,
+                    container_key=self._bound_container_key,
+                    readonly=readonly,
+                )
             )
-        )
 
     def append_stage_output(self, subgraph_key: str, output: Any) -> None:
         """Auto-append structured output when a subgraph completes (called by runtime)."""
-        self._entries.append(
-            ScratchpadEntry(
-                entry_type="stage_output",
-                content=output,
-                source_subgraph=subgraph_key,
-                readonly=True,
+        with self._state.lock:
+            self._materialize_legacy_scope_for_write_unlocked()
+            self._state.entries.append(
+                ScratchpadEntry(
+                    entry_type="stage_output",
+                    content=output,
+                    source_subgraph=subgraph_key,
+                    container_key=self._bound_container_key,
+                    readonly=True,
+                )
             )
-        )
 
     # ---- read ----
 
@@ -114,7 +209,8 @@ class Scratchpad:
             after_subgraph: Only return entries created after the last entry
                             whose source_subgraph matches this key.
         """
-        entries = list(self._entries)
+        with self._state.lock:
+            entries = list(self._visible_entries_unlocked())
 
         if after_subgraph is not None:
             cutoff_index = -1
@@ -132,21 +228,44 @@ class Scratchpad:
     # ---- serialization ----
 
     def snapshot(self) -> list[dict[str, Any]]:
-        """Serialize all entries for persistence (e.g. into graph meta_json)."""
-        return [entry.to_dict() for entry in self._entries]
+        """Serialize entries visible to the current container-bound view."""
+        with self._state.lock:
+            return [entry.to_dict() for entry in self._visible_entries_unlocked()]
+
+    def snapshot_all(self) -> list[dict[str, Any]]:
+        """Serialize every container's entries for graph-level persistence."""
+        with self._state.lock:
+            return [entry.to_dict() for entry in self._state.entries]
 
     @classmethod
     def from_snapshot(cls, data: list[dict[str, Any]]) -> "Scratchpad":
-        """Restore from serialized snapshot."""
+        """Restore a single scratchpad view from serialized entries."""
         entries = [ScratchpadEntry.from_dict(item) for item in (data or [])]
         return cls(initial_entries=entries)
 
+    @classmethod
+    def from_store_snapshot(cls, data: list[dict[str, Any]]) -> "Scratchpad":
+        """Restore a graph-level scratchpad store from serialized entries."""
+        entries = [ScratchpadEntry.from_dict(item) for item in (data or [])]
+        legacy_shared_visible = bool(entries) and not any(
+            entry.container_key is not None
+            for entry in entries
+        )
+        return cls(
+            _state=_ScratchpadState(
+                entries=entries,
+                legacy_shared_visible=legacy_shared_visible,
+            )
+        )
+
     def format_for_prompt(self) -> str:
         """Format current entries as human-readable text for LLM system prompt injection."""
-        if not self._entries:
+        with self._state.lock:
+            entries = list(self._visible_entries_unlocked())
+        if not entries:
             return ""
         lines = ["[Scratchpad — 跨阶段工作记忆]"]
-        for i, entry in enumerate(self._entries, 1):
+        for i, entry in enumerate(entries, 1):
             source = f" (from: {entry.source_subgraph})" if entry.source_subgraph else ""
             tag = entry.entry_type.upper()
             content = entry.content
@@ -157,7 +276,9 @@ class Scratchpad:
         return "\n".join(lines)
 
     def __len__(self) -> int:
-        return len(self._entries)
+        with self._state.lock:
+            return len(self._visible_entries_unlocked())
 
     def __bool__(self) -> bool:
-        return bool(self._entries)
+        with self._state.lock:
+            return bool(self._visible_entries_unlocked())

@@ -89,6 +89,7 @@ class _FakeRequirementAgentService:
 
     def __init__(self, *, inline_result=None):
         self.inline_calls = []
+        self.tools = object()
         self._inline_result = inline_result or {
             "status": "success",
             "tool_loop_reply": "已读取需求详情",
@@ -170,6 +171,7 @@ class _FakeConflictAgentService:
 
     def __init__(self):
         self.inline_calls = []
+        self.tools = object()
 
     def run_inline_tool_loop(
         self, *, recorder, user_id, user_message, project_id,
@@ -232,6 +234,7 @@ class _FakeRequirementClassificationAgentService:
 
     def __init__(self, *, inline_result=None):
         self.inline_calls = []
+        self.tools = object()
         self._inline_result = inline_result or {
             "status": "success",
             "tool_loop_reply": "已完成需求分类",
@@ -406,11 +409,11 @@ def test_invoke_requirement_agent_propagates_approval_pending_context():
 
     assert result["approval_pending"] is True
     assert result["approval_result"]["approval_request_id"] == "apr-1"
-    assert context["approval_pending"] is True
     assert context["last_approval_result"]["push_message_id"] == "msg-1"
+    assert "approval_pending" not in context
 
 
-def test_invoke_requirement_agent_propagates_clarification_context():
+def test_invoke_requirement_agent_returns_clarification_contract():
     recorder = _FakeRecorder()
     tools = SessionControllerTools(
         requirements_service=_FakeRequirementsService(),
@@ -445,9 +448,10 @@ def test_invoke_requirement_agent_propagates_clarification_context():
     )
 
     assert result["clarification_required"] is True
-    assert result["mode"] == "clarification"
-    assert context["clarification_required"] is True
-    assert context["last_clarification_reply"] == "我发现两条标题相同的需求，请确认要修改哪一条。"
+    assert result["mode"] == "clarify"
+    assert result["clarification_question"] == "我发现两条标题相同的需求，请确认要修改哪一条。"
+    assert "clarification_required" not in context
+    assert "last_clarification_reply" not in context
 
 
 def test_invoke_requirement_agent_passes_correct_params_to_inline():
@@ -749,6 +753,28 @@ def test_no_recorder_returns_error():
     assert "recorder" in result["error"].lower()
 
 
+def test_resolve_runtime_tool_executor_uses_container_key_instead_of_scope_context():
+    tools = _make_tools()
+
+    assert tools.resolve_runtime_tool_executor(container_key="conductor") is tools
+    assert tools.resolve_runtime_tool_executor(container_key="session_controller") is tools
+    assert (
+        tools.resolve_runtime_tool_executor(container_key="requirement_agent")
+        is tools._requirement_agent_service.tools
+    )
+    assert (
+        tools.resolve_runtime_tool_executor(container_key="conflict_detection")
+        is tools._conflict_agent_service.tools
+    )
+    assert (
+        tools.resolve_runtime_tool_executor(
+            container_key="requirement_classification_agent"
+        )
+        is tools._requirement_classification_agent_service.tools
+    )
+    assert tools.resolve_runtime_tool_executor(container_key="unknown") is None
+
+
 def test_infer_routing_hint_prefers_requirement_agent_for_priority_updates():
     hint = infer_routing_hint(
         "10. 冲突检测引擎 shall 将检测到的冲突结果输出到指定数据结构，这条需求的优先级改为low"
@@ -765,7 +791,7 @@ def test_infer_routing_hint_prefers_conflict_agent_for_explicit_checks():
     assert hint["preferred_tool"] == "invoke_conflict_detection"
 
 
-def test_tool_loop_runner_forwards_streaming_tool_events():
+def test_tools_do_not_stop_parent_tool_loop():
     class _PromptBuilder:
         def build_system_prompt(self, *, context):
             return "system"
@@ -782,20 +808,24 @@ def test_tool_loop_runner_forwards_streaming_tool_events():
 
         def chat_completion_with_tools(self, **kwargs):
             self.calls += 1
-            if self.calls > 1:
-                raise AssertionError("session controller should stop after delegated agent returns")
+            if self.calls == 1:
+                return {
+                    "content": "",
+                    "finish_reason": "tool_calls",
+                    "tool_calls": [
+                        {
+                            "id": "tool-1",
+                            "function": {
+                                "name": "invoke_requirement_agent",
+                                "arguments": "{\"task_description\":\"读取 REQ-9\"}",
+                            },
+                        }
+                    ],
+                }
             return {
-                "content": "",
-                "finish_reason": "tool_calls",
-                "tool_calls": [
-                    {
-                        "id": "tool-1",
-                        "function": {
-                            "name": "invoke_requirement_agent",
-                            "arguments": "{\"task_description\":\"读取 REQ-9\"}",
-                        },
-                    }
-                ],
+                "content": "已读取需求详情",
+                "finish_reason": "stop",
+                "tool_calls": [],
             }
 
     tools = _make_tools()
@@ -849,4 +879,5 @@ def test_tool_loop_runner_forwards_streaming_tool_events():
         "turn_1__req_agent_1_tool_loop_round_1",
         "turn_1__req_agent_1_end",
     ]
+    assert runner.ai_proxy.calls == 2
     assert result.tool_loop_reply == "已读取需求详情"

@@ -34,12 +34,7 @@ const CONTEXT_MODE_OPTIONS = [
   { value: 'incremental', label: '增量 (Incremental)', description: '仅保留架构/文件上下文' }
 ]
 const DEFAULT_CONTEXT_MODE = 'full'
-
-const EXECUTION_MODE_OPTIONS = [
-  { value: 'classic', label: '经典模式', description: '使用现有 TopologyExecutionService' },
-  { value: 'graph', label: '执行图模式', description: '使用新引擎 GraphExecutor + IntentJudge' }
-]
-const DEFAULT_EXECUTION_MODE = 'classic'
+const GRAPH_EXECUTION_MODE = 'graph'
 
 const projects = ref([])
 const sessions = ref([])
@@ -63,7 +58,6 @@ const promptPayloadFormatDraft = ref('markdown')
 const contextModeDraft = ref(DEFAULT_CONTEXT_MODE)
 const isUpdatingContextMode = ref(false)
 const isAssistantOpen = ref(false)
-const executionModeDraft = ref(localStorage.getItem('conflict_agent_execution_mode') || DEFAULT_EXECUTION_MODE)
 
 const currentSession = computed(() => {
   return sessions.value.find((item) => item.session_id === sessionId.value) || null
@@ -556,11 +550,10 @@ const sendMessage = async () => {
     const stream = await conflictAgentChatApi.streamMessage({
       sessionId: sessionId.value,
       projectId: selectedProjectId.value,
-      message,
-      executionMode: executionModeDraft.value
+      message
     })
     inputMessage.value = ''
-    appendTimeline('submit', { message })
+    appendTimeline('submit', { message, execution_mode: GRAPH_EXECUTION_MODE })
     upsertSessionPatch(sessionId.value, { updated_at: new Date().toISOString() })
     await consumeSSEStream(stream)
     await loadSessions({ preferredSessionId: sessionId.value })
@@ -720,25 +713,23 @@ onMounted(async () => {
                 </select>
                 <span v-if="isUpdatingContextMode" class="text-[11px] text-stone-400 shrink-0">保存中...</span>
               </div>
-              <!-- 执行模式 -->
               <div class="flex items-center gap-2">
-                <span class="w-[80px] shrink-0 text-[11px] text-stone-400">执行模式</span>
-                <select
-                  v-model="executionModeDraft"
-                  class="flex-1 border border-stone-200 bg-white px-2 py-1 text-xs text-stone-700 outline-none transition focus:border-stone-400"
-                  :disabled="isSending"
-                  @change="localStorage.setItem('conflict_agent_execution_mode', executionModeDraft)"
-                  :title="EXECUTION_MODE_OPTIONS.find(o => o.value === executionModeDraft)?.description || ''"
+                <span class="w-[80px] shrink-0 text-[11px] text-stone-400">执行链路</span>
+                <div
+                  class="flex-1 inline-flex items-center gap-2 border border-stone-200 bg-white px-2 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-stone-700"
+                  title="当前仅保留 GraphExecutor 主链路"
                 >
-                  <option v-for="opt in EXECUTION_MODE_OPTIONS" :key="opt.value" :value="opt.value">
-                    {{ opt.label }}
-                  </option>
-                </select>
+                  <Workflow class="h-3.5 w-3.5" />
+                  GraphExecutor
+                </div>
               </div>
             </div>
           </div>
           
           <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-stone-500">
+            <span class="flex items-center gap-1 bg-stone-900 px-1.5 py-0.5 text-white" title="冲突检测固定使用 GraphExecutor 主链路">
+              Pipeline: <span class="font-medium">GraphExecutor</span>
+            </span>
             <span v-if="sessionId" class="flex items-center gap-1 bg-stone-200/50 px-1.5 py-0.5">
               Current: <span class="font-medium text-stone-700">{{ activeGraphId || '无' }}</span>
             </span>

@@ -8,7 +8,7 @@ from typing import Any
 
 class ConflictDetectionPromptBuilder:
     def build_system_prompt(self, *, context: dict[str, Any]) -> str:
-        return (
+        prompt = (
             "你是需求冲突检测 Agent。你运行在当前单个项目内，只能使用提供的工具来读取需求和检测冲突。"
             "你的唯一职责是判断用户指定的需求之间是否存在冲突。"
             "工作流程："
@@ -19,6 +19,10 @@ class ConflictDetectionPromptBuilder:
             "必须依赖工具结果，不得编造需求内容或冲突判断。"
             "当工具足够回答用户时，直接给出简洁中文结论，不要输出 JSON。"
         )
+        extra_system_context = str(context.get("_extra_system_context") or "").strip()
+        if extra_system_context:
+            prompt = f"{prompt}\n\n{extra_system_context}"
+        return prompt
 
     def build_user_message(self, *, user_message: str, context: dict[str, Any]) -> str:
         payload = {

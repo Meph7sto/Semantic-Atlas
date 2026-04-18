@@ -30,7 +30,7 @@ class ConflictAgentMessageRequest(BaseModel):
 
     project_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
-    execution_mode: str = Field(default="classic")
+    execution_mode: str = Field(default="graph")
 
     @field_validator("project_id", "message")
     @classmethod
@@ -44,8 +44,8 @@ class ConflictAgentMessageRequest(BaseModel):
     @classmethod
     def normalize_execution_mode(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in ("classic", "graph"):
-            return "classic"
+        if normalized != "graph":
+            raise ValueError("execution_mode 仅支持 graph")
         return normalized
 
 

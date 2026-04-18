@@ -15,6 +15,29 @@ if load_dotenv:
     load_dotenv(_ROOT_ENV_PATH, override=False)
 
 
+def _resolve_model_provider() -> str:
+    """Resolve the inference provider with sane local defaults.
+
+    Priority:
+    1. Explicit `MODEL_PROVIDER`
+    2. DeepSeek when an API key is configured
+    3. Chutes when a token/key is configured
+    4. Local model fallback
+    """
+    explicit = os.getenv("MODEL_PROVIDER", "").strip().lower()
+    if explicit:
+        return explicit
+
+    if os.getenv("DEEPSEEK_API_KEY", "").strip():
+        return "deepseek"
+
+    chutes_token = (os.getenv("CHUTES_API_TOKEN") or os.getenv("CHUTES_API_KEY") or "").strip()
+    if chutes_token:
+        return "chutes"
+
+    return "local"
+
+
 class Settings:
     # 获取项目根目录 (假设结构为: root/backend_inference/core/config.py)
     # 通过多次调用 os.path.dirname 回溯到根目录
@@ -23,7 +46,8 @@ class Settings:
     )
 
     # 模型提供方，local 使用本地权重；chutes / deepseek 为 API 调用
-    MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "local").lower()
+    # 若未显式设置 MODEL_PROVIDER，则自动根据可用密钥推断 provider。
+    MODEL_PROVIDER = _resolve_model_provider()
     CLASSIFICATION_PROVIDER = os.getenv(
         "CLASSIFICATION_PROVIDER", MODEL_PROVIDER
     ).lower()
@@ -46,12 +70,11 @@ class Settings:
 
     # 远程 API（可选）——用于 provider=chutes/deepseek 时
     CHUTES_API_URL = os.getenv("CHUTES_API_URL", "")
-    CHUTES_API_TOKEN = os.getenv("CHUTES_API_TOKEN", "")
+    CHUTES_API_TOKEN = os.getenv("CHUTES_API_TOKEN") or os.getenv("CHUTES_API_KEY", "")
     DEEPSEEK_API_URL = os.getenv(
         "DEEPSEEK_API_URL",
         "https://api.deepseek.com/v1",
     )
-    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
     DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-reasoner")
 

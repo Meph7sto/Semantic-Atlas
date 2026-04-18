@@ -14,6 +14,7 @@ from backend_business.config import settings
 from backend_business.services.ai_chat_service import AiChatService, ai_chat_service
 from backend_business.services.ai_proxy import ai_proxy
 from backend_business.services.agent.execution_graph_service import ExecutionGraphService
+from backend_business.services.agent.experience import ExperienceOrchestrator
 from backend_business.services.agent.tools import RequirementAgentTools
 from backend_business.services.requirement_change_approval_service import (
     RequirementChangeApprovalService,
@@ -466,6 +467,7 @@ class RequirementAgentChatService:
             actor_manager_getter=self._get_actor_manager,
             prompt_builder=self.prompt_builder,
             max_tool_call_rounds=max_tool_call_rounds or self.MAX_TOOL_CALL_ROUNDS,
+            experience_orchestrator=ExperienceOrchestrator(),
         )
         return runner.run(
             recorder=recorder,
@@ -552,6 +554,7 @@ class RequirementAgentChatService:
             max_tool_call_rounds=max_tool_call_rounds or self.MAX_TOOL_CALL_ROUNDS,
             stage_container_key=container_key,
             node_key_prefix=node_key_prefix,
+            experience_orchestrator=ExperienceOrchestrator(),
         )
         result = yield from runner.run(
             recorder=recorder,

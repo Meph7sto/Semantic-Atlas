@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import re
 import inspect
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 from backend_business.services.agent.execution_graph_service import ExecutionGraphService
+from backend_business.services.agent.runtime.state_contract import (
+    with_runtime_state_contract,
+)
 
 
 def _utc_now_iso() -> str:
@@ -60,16 +64,22 @@ class RuntimeGraphRecorder:
         graph_description: str = "Agent 运行轨迹",
         initial_graph_meta: dict[str, Any] | None = None,
         task_context: dict[str, Any] | None = None,
+        attach_only: bool = False,
     ) -> None:
         if not container_configs:
             raise ValueError("container_configs 不能为空")
+        if attach_only and not graph_id:
+            raise ValueError("attach_only 模式要求提供现有 graph_id")
 
         self._service = execution_graph_service
         self._container_configs = list(container_configs)
         self._container_config_map = {cfg.container_key: cfg for cfg in container_configs}
+        self._attach_only = attach_only
         self._containers: dict[str, str] = {}
         self._nodes: dict[str, StageNode] = {}
         self._node_edge_ids: dict[str, list[str]] = {}
+        self._lock = threading.RLock()
+        self._thread_local = threading.local()
         self._seed_context_entries: list[dict[str, Any]] = []
         self._historical_node_context: list[dict[str, Any]] = []
         self._last_node_id: str | None = None
@@ -101,7 +111,40 @@ class RuntimeGraphRecorder:
             **(task_context or {}),
         }
         self._context_entries: list[dict[str, Any]] = list(self._seed_context_entries)
-        self._ensure_containers(user_id)
+        if self._attach_only:
+            self._refresh_container_cache()
+        else:
+            self._ensure_containers(user_id)
+
+    def _cursor_state(self) -> dict[str, Any]:
+        cursor = getattr(self._thread_local, "cursor", None)
+        if cursor is None:
+            cursor = {
+                "last_node_id": self._last_node_id,
+                "active_subgraph_id": self._active_subgraph_id,
+                "subgraph_stack": list(self._subgraph_stack),
+                "last_node_key": self._last_node_key,
+            }
+            self._thread_local.cursor = cursor
+        return cursor
+
+    def capture_cursor(self) -> dict[str, Any]:
+        cursor = self._cursor_state()
+        return {
+            "last_node_id": cursor.get("last_node_id"),
+            "active_subgraph_id": cursor.get("active_subgraph_id"),
+            "subgraph_stack": list(cursor.get("subgraph_stack") or []),
+            "last_node_key": cursor.get("last_node_key"),
+        }
+
+    def bind_cursor(self, cursor: dict[str, Any] | None) -> None:
+        normalized = cursor or {}
+        self._thread_local.cursor = {
+            "last_node_id": normalized.get("last_node_id"),
+            "active_subgraph_id": normalized.get("active_subgraph_id"),
+            "subgraph_stack": list(normalized.get("subgraph_stack") or []),
+            "last_node_key": normalized.get("last_node_key"),
+        }
 
     def _load_or_create_graph(
         self,
@@ -127,18 +170,20 @@ class RuntimeGraphRecorder:
         if prev_graph_id:
             self._hydrate_previous_graph(prev_graph_id)
 
-        normalized_meta = {
-            "session_id": session_id,
-            "prev_graph_id": prev_graph_id,
-            "user_id": user_id,
-            "project_id": project_id,
-            "current_node_key": None,
-            "final_reply": None,
-            "user_message": user_message,
-            "created_at": _utc_now_iso(),
-            "turn_count": 0,
-        }
-        normalized_meta.update(initial_graph_meta or {})
+        normalized_meta = with_runtime_state_contract(
+            {
+                "session_id": session_id,
+                "prev_graph_id": prev_graph_id,
+                "user_id": user_id,
+                "project_id": project_id,
+                "current_node_key": None,
+                "final_reply": None,
+                "user_message": user_message,
+                "created_at": _utc_now_iso(),
+                "turn_count": 0,
+                **(initial_graph_meta or {}),
+            }
+        )
         normalized_name = graph_name or f"Agent Run {datetime.now(timezone.utc).strftime('%H:%M:%S')}"
 
         return self._service.create_runtime_graph(
@@ -225,7 +270,8 @@ class RuntimeGraphRecorder:
 
     @property
     def last_node_key(self) -> str | None:
-        return self._last_node_key
+        cursor = self._cursor_state()
+        return cursor.get("last_node_key") or self._last_node_key
 
     def restore_stage_cursor(self, *, node_key: str, updated_by: str = "") -> None:
         """Restore the recorder cursor to an existing stage node.
@@ -234,16 +280,20 @@ class RuntimeGraphRecorder:
         during a parent LLM round but the main control flow should continue
         from the parent stage afterwards.
         """
-        stage_node = self._nodes.get(node_key)
-        if stage_node is None:
-            raise KeyError(f"node_key 未记录: {node_key}")
-        self._last_node_id = stage_node.node_id
-        self._last_node_key = stage_node.node_key
-        self._service.patch_graph_meta(
-            self.graph_id,
-            {"current_node_key": stage_node.node_key},
-            updated_by=updated_by,
-        )
+        with self._lock:
+            stage_node = self._nodes.get(node_key)
+            if stage_node is None:
+                raise KeyError(f"node_key 未记录: {node_key}")
+            cursor = self._cursor_state()
+            cursor["last_node_id"] = stage_node.node_id
+            cursor["last_node_key"] = stage_node.node_key
+            self._last_node_id = stage_node.node_id
+            self._last_node_key = stage_node.node_key
+            self._service.patch_graph_meta(
+                self.graph_id,
+                {"current_node_key": stage_node.node_key},
+                updated_by=updated_by,
+            )
 
     def create_return_edge(
         self,
@@ -279,6 +329,20 @@ class RuntimeGraphRecorder:
         self._node_edge_ids.setdefault(child_node_key, []).append(edge["edge_id"])
         self._node_edge_ids.setdefault(parent_node_key, []).append(edge["edge_id"])
 
+    def _refresh_container_cache(self) -> None:
+        """Sync local container cache with containers already persisted on the graph."""
+        try:
+            detail = self._service.get_graph_detail(self.graph_id)
+        except Exception:
+            return
+
+        containers = detail.get("containers") or []
+        for container in containers:
+            container_key = container.get("container_key")
+            container_id = container.get("container_id")
+            if container_key and container_id:
+                self._containers[container_key] = container_id
+
     def _ensure_containers(self, user_id: str) -> None:
         for order_index, container_config in enumerate(self._container_configs):
             container_key = container_config.container_key
@@ -308,15 +372,32 @@ class RuntimeGraphRecorder:
         if container_key in self._containers:
             return self._containers[container_key]
 
-        container = self._service.create_container(
-            graph_id=self.graph_id,
-            container_key=container_key,
-            label=label,
-            role_type=role_type,
-            config_json=config_json or {"runtime": True},
-            order_index=len(self._containers),
-            created_by=created_by,
-        )
+        # The runtime graph may have been expanded by another component
+        # (for example TopologyInstantiator) after this recorder was created.
+        self._refresh_container_cache()
+        if container_key in self._containers:
+            return self._containers[container_key]
+        if self._attach_only:
+            raise KeyError(f"container_key 未在运行时图中预建: {container_key}")
+
+        try:
+            container = self._service.create_container(
+                graph_id=self.graph_id,
+                container_key=container_key,
+                label=label,
+                role_type=role_type,
+                config_json=config_json or {"runtime": True},
+                order_index=len(self._containers),
+                created_by=created_by,
+            )
+        except ValueError as exc:
+            if "容器 key" not in str(exc):
+                raise
+            self._refresh_container_cache()
+            if container_key in self._containers:
+                return self._containers[container_key]
+            raise
+
         self._containers[container_key] = container["container_id"]
         return container["container_id"]
 
@@ -422,12 +503,20 @@ class RuntimeGraphRecorder:
         invoke calls) and points it at the subgraph's start node so
         that subsequent ``start_stage`` calls create edges from start.
         """
-        self._subgraph_stack.append({
-            "last_node_id": self._last_node_id,
-            "active_subgraph_id": self._active_subgraph_id,
-        })
-        self._active_subgraph_id = subgraph_id
-        self._last_node_id = start_node_id
+        with self._lock:
+            cursor = self._cursor_state()
+            stack = list(cursor.get("subgraph_stack") or [])
+            stack.append(
+                {
+                    "last_node_id": cursor.get("last_node_id"),
+                    "active_subgraph_id": cursor.get("active_subgraph_id"),
+                    "last_node_key": cursor.get("last_node_key"),
+                }
+            )
+            cursor["subgraph_stack"] = stack
+            cursor["active_subgraph_id"] = subgraph_id
+            cursor["last_node_id"] = start_node_id
+            cursor["last_node_key"] = None
 
     def leave_subgraph(
         self,
@@ -442,26 +531,32 @@ class RuntimeGraphRecorder:
         sets ``_last_node_id`` to the end node so that inter-subgraph
         edges connect correctly.
         """
-        if self._last_node_id and self._last_node_id != end_node_id:
-            self._service.create_edge(
-                graph_id=self.graph_id,
-                source_node_id=self._last_node_id,
-                target_node_id=end_node_id,
-                edge_type="seq",
-                label="seq",
-                config_json={"runtime": True, "subgraph_close": True},
-                order_index=self._edge_order,
-                created_by=created_by,
-            )
-            self._edge_order += 1
+        with self._lock:
+            cursor = self._cursor_state()
+            last_node_id = cursor.get("last_node_id")
+            if last_node_id and last_node_id != end_node_id:
+                self._service.create_edge(
+                    graph_id=self.graph_id,
+                    source_node_id=last_node_id,
+                    target_node_id=end_node_id,
+                    edge_type="seq",
+                    label="seq",
+                    config_json={"runtime": True, "subgraph_close": True},
+                    order_index=self._edge_order,
+                    created_by=created_by,
+                )
+                self._edge_order += 1
 
-        if self._subgraph_stack:
-            saved = self._subgraph_stack.pop()
-            self._active_subgraph_id = saved["active_subgraph_id"]
-        else:
-            self._active_subgraph_id = None
-
-        self._last_node_id = end_node_id
+            stack = list(cursor.get("subgraph_stack") or [])
+            if stack:
+                saved = stack.pop()
+                cursor["active_subgraph_id"] = saved.get("active_subgraph_id")
+                cursor["last_node_key"] = saved.get("last_node_key")
+            else:
+                cursor["active_subgraph_id"] = None
+                cursor["last_node_key"] = None
+            cursor["subgraph_stack"] = stack
+            cursor["last_node_id"] = end_node_id
 
     def start_stage(
         self,
@@ -476,107 +571,112 @@ class RuntimeGraphRecorder:
         edge_type_from_previous: str | None = "call",
         subgraph_id: str | None = None,
     ) -> StageNode:
-        if container_key not in self._containers:
-            raise KeyError(f"container_key 未配置: {container_key}")
+        with self._lock:
+            if container_key not in self._containers:
+                raise KeyError(f"container_key 未配置: {container_key}")
 
-        effective_subgraph_id = subgraph_id or self._active_subgraph_id
+            cursor = self._cursor_state()
+            effective_subgraph_id = subgraph_id or cursor.get("active_subgraph_id")
 
-        stage_node = self._nodes.get(node_key)
-        if stage_node is None:
-            create_node_kwargs = {
-                "graph_id": self.graph_id,
-                "container_id": self._containers[container_key],
-                "subgraph_id": effective_subgraph_id,
-                "node_key": node_key,
-                "label": label,
-                "node_type": node_type,
-                "role_type": role_type,
-                "config_json": {
-                    "runtime": True,
-                    "run_status": "pending",
-                    "input": self._build_stage_input(node_key=node_key, input_summary=input_summary),
-                    "input_summary": _safe_json(input_summary),
-                    "output": None,
-                    "output_summary": None,
-                    "tool_call_results": [],
-                    "started_at": None,
-                    "finished_at": None,
-                    "error": None,
-                },
-                "order_index": self._node_order,
-                "created_by": created_by,
-            }
-            create_node_signature = inspect.signature(self._service.create_node)
-            if not any(
-                param.kind == inspect.Parameter.VAR_KEYWORD
-                for param in create_node_signature.parameters.values()
-            ):
+            stage_node = self._nodes.get(node_key)
+            if stage_node is None:
                 create_node_kwargs = {
-                    key: value
-                    for key, value in create_node_kwargs.items()
-                    if key in create_node_signature.parameters
+                    "graph_id": self.graph_id,
+                    "container_id": self._containers[container_key],
+                    "subgraph_id": effective_subgraph_id,
+                    "node_key": node_key,
+                    "label": label,
+                    "node_type": node_type,
+                    "role_type": role_type,
+                    "config_json": {
+                        "runtime": True,
+                        "run_status": "pending",
+                        "input": self._build_stage_input(node_key=node_key, input_summary=input_summary),
+                        "input_summary": _safe_json(input_summary),
+                        "output": None,
+                        "output_summary": None,
+                        "tool_call_results": [],
+                        "started_at": None,
+                        "finished_at": None,
+                        "error": None,
+                    },
+                    "order_index": self._node_order,
+                    "created_by": created_by,
                 }
-            node = self._service.create_node(**create_node_kwargs)
-            self._node_order += 1
-            stage_node = StageNode(
-                node_id=node["node_id"],
-                node_key=node_key,
-                label=label,
-                node_type=node_type,
-                role_type=role_type,
-                container_id=self._containers[container_key],
-                subgraph_id=effective_subgraph_id,
-            )
-            self._nodes[node_key] = stage_node
-            self._node_edge_ids.setdefault(node_key, [])
-
-            if self._last_node_id and edge_type_from_previous:
-                # Auto-detect same-container edges: use "seq" for intra-container flow
-                actual_edge_type = edge_type_from_previous
-                if actual_edge_type == "call":
-                    last_stage = next(
-                        (s for s in self._nodes.values() if s.node_id == self._last_node_id),
-                        None,
-                    )
-                    if last_stage and last_stage.container_id == stage_node.container_id:
-                        actual_edge_type = "seq"
-
-                edge = self._service.create_edge(
-                    graph_id=self.graph_id,
-                    source_node_id=self._last_node_id,
-                    target_node_id=stage_node.node_id,
-                    edge_type=actual_edge_type,
-                    label=actual_edge_type,
-                    config_json={"runtime": True},
-                    order_index=self._edge_order,
-                    created_by=created_by,
+                create_node_signature = inspect.signature(self._service.create_node)
+                if not any(
+                    param.kind == inspect.Parameter.VAR_KEYWORD
+                    for param in create_node_signature.parameters.values()
+                ):
+                    create_node_kwargs = {
+                        key: value
+                        for key, value in create_node_kwargs.items()
+                        if key in create_node_signature.parameters
+                    }
+                node = self._service.create_node(**create_node_kwargs)
+                self._node_order += 1
+                stage_node = StageNode(
+                    node_id=node["node_id"],
+                    node_key=node_key,
+                    label=label,
+                    node_type=node_type,
+                    role_type=role_type,
+                    container_id=self._containers[container_key],
+                    subgraph_id=effective_subgraph_id,
                 )
-                self._edge_order += 1
-                self._node_edge_ids.setdefault(node_key, []).append(edge["edge_id"])
+                self._nodes[node_key] = stage_node
+                self._node_edge_ids.setdefault(node_key, [])
 
-        self._update_stage_config(
-            stage_node=stage_node,
-            created_by=created_by,
-            mutate=lambda config: config.update(
-                {
-                    "run_status": "running",
-                    "input": self._build_stage_input(node_key=node_key, input_summary=input_summary),
-                    "input_summary": _safe_json(input_summary),
-                    "tool_call_results": list(config.get("tool_call_results") or []),
-                    "started_at": config.get("started_at") or _utc_now_iso(),
-                    "error": None,
-                }
-            ),
-        )
-        self._service.patch_graph_meta(
-            self.graph_id,
-            {"current_node_key": node_key},
-            status="running",
-            updated_by=created_by,
-        )
-        self._last_node_id = stage_node.node_id
-        self._last_node_key = node_key
-        return stage_node
+                previous_node_id = cursor.get("last_node_id")
+                if previous_node_id and edge_type_from_previous:
+                    # Same-container stages are sequenced even when the caller omitted an explicit seq edge.
+                    actual_edge_type = edge_type_from_previous
+                    if actual_edge_type == "call":
+                        last_stage = next(
+                            (s for s in self._nodes.values() if s.node_id == previous_node_id),
+                            None,
+                        )
+                        if last_stage and last_stage.container_id == stage_node.container_id:
+                            actual_edge_type = "seq"
+
+                    edge = self._service.create_edge(
+                        graph_id=self.graph_id,
+                        source_node_id=previous_node_id,
+                        target_node_id=stage_node.node_id,
+                        edge_type=actual_edge_type,
+                        label=actual_edge_type,
+                        config_json={"runtime": True},
+                        order_index=self._edge_order,
+                        created_by=created_by,
+                    )
+                    self._edge_order += 1
+                    self._node_edge_ids.setdefault(node_key, []).append(edge["edge_id"])
+
+            self._update_stage_config(
+                stage_node=stage_node,
+                created_by=created_by,
+                mutate=lambda config: config.update(
+                    {
+                        "run_status": "running",
+                        "input": self._build_stage_input(node_key=node_key, input_summary=input_summary),
+                        "input_summary": _safe_json(input_summary),
+                        "tool_call_results": list(config.get("tool_call_results") or []),
+                        "started_at": config.get("started_at") or _utc_now_iso(),
+                        "error": None,
+                    }
+                ),
+            )
+            self._service.patch_graph_meta(
+                self.graph_id,
+                {"current_node_key": node_key},
+                status="running",
+                updated_by=created_by,
+            )
+            cursor["last_node_id"] = stage_node.node_id
+            cursor["last_node_key"] = node_key
+            self._last_node_id = stage_node.node_id
+            self._last_node_key = node_key
+            return stage_node
 
     def record_tool_call_result(
         self,
@@ -587,30 +687,31 @@ class RuntimeGraphRecorder:
         request_payload: Any,
         result_payload: Any,
     ) -> None:
-        stage_node = self._nodes[node_key]
-        tool_result_entry = {
-            "tool_name": tool_name,
-            "request": _safe_json(request_payload),
-            "result": _safe_json(result_payload),
-            "recorded_at": _utc_now_iso(),
-        }
-        self._update_stage_config(
-            stage_node=stage_node,
-            created_by=created_by,
-            mutate=lambda config: config.update(
-                {
-                    "tool_call_results": [
-                        *(config.get("tool_call_results") or []),
-                        tool_result_entry,
-                    ]
-                }
-            ),
-        )
-        self._append_context_entry(
-            kind="tool_call_result",
-            node_key=node_key,
-            value=tool_result_entry,
-        )
+        with self._lock:
+            stage_node = self._nodes[node_key]
+            tool_result_entry = {
+                "tool_name": tool_name,
+                "request": _safe_json(request_payload),
+                "result": _safe_json(result_payload),
+                "recorded_at": _utc_now_iso(),
+            }
+            self._update_stage_config(
+                stage_node=stage_node,
+                created_by=created_by,
+                mutate=lambda config: config.update(
+                    {
+                        "tool_call_results": [
+                            *(config.get("tool_call_results") or []),
+                            tool_result_entry,
+                        ]
+                    }
+                ),
+            )
+            self._append_context_entry(
+                kind="tool_call_result",
+                node_key=node_key,
+                value=tool_result_entry,
+            )
 
     def complete_stage(
         self,
@@ -621,30 +722,52 @@ class RuntimeGraphRecorder:
         success: bool = True,
         error: str | None = None,
     ) -> None:
-        stage_node = self._nodes[node_key]
-        normalized_output = _safe_json(output_summary)
-        self._update_stage_config(
-            stage_node=stage_node,
-            created_by=created_by,
-            mutate=lambda config: config.update(
-                {
-                    "run_status": "succeeded" if success else "failed",
+        with self._lock:
+            stage_node = self._nodes[node_key]
+            normalized_output = _safe_json(output_summary)
+            self._update_stage_config(
+                stage_node=stage_node,
+                created_by=created_by,
+                mutate=lambda config: config.update(
+                    {
+                        "run_status": "succeeded" if success else "failed",
+                        "output": normalized_output,
+                        "output_summary": normalized_output,
+                        "finished_at": _utc_now_iso(),
+                        "error": error,
+                    }
+                ),
+            )
+            self._append_context_entry(
+                kind="stage_output",
+                node_key=node_key,
+                value={
+                    "success": success,
                     "output": normalized_output,
-                    "output_summary": normalized_output,
-                    "finished_at": _utc_now_iso(),
                     "error": error,
-                }
-            ),
-        )
-        self._append_context_entry(
-            kind="stage_output",
-            node_key=node_key,
-            value={
-                "success": success,
-                "output": normalized_output,
-                "error": error,
-            },
-        )
+                },
+            )
+
+    def bind_stage_run_ref(
+        self,
+        node_key: str,
+        *,
+        created_by: str,
+        run_ref: dict[str, Any],
+    ) -> None:
+        """Attach the authoritative agent run reference to a trace node."""
+        with self._lock:
+            stage_node = self._nodes[node_key]
+            self._update_stage_config(
+                stage_node=stage_node,
+                created_by=created_by,
+                mutate=lambda config: config.update(
+                    {
+                        "run_ref": _safe_json(run_ref),
+                        "run_state_source_of_truth": "agent_runs",
+                    }
+                ),
+            )
 
     def fail_graph(self, *, created_by: str, error: str, final_reply: str | None = None) -> None:
         self._service.patch_graph_meta(

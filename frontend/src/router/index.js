@@ -349,6 +349,20 @@ const router = createRouter({
     ]
 })
 
+function buildAuthFallbackRoute(to) {
+    if (to.path === '/alpha' || to.path.startsWith('/alpha/')) {
+        return {
+            name: 'guide',
+            query: { redirect: to.fullPath }
+        }
+    }
+
+    return {
+        name: 'beta-login',
+        query: { redirect: to.fullPath }
+    }
+}
+
 // 路由守卫：检查认证状态和权限
 router.beforeEach(async (to, from, next) => {
     const authStore = useAuthStore()
@@ -359,9 +373,12 @@ router.beforeEach(async (to, from, next) => {
     // 检查是否需要认证
     const requiresAuth = to.meta?.requiresAuth !== false // 默认需要认证，除非显式设置为 false
 
-    if (requiresAuth && !authStore.isAuthenticated) {
-        next({ name: 'beta-login', query: { redirect: to.fullPath } })
-        return
+    if (requiresAuth) {
+        const isAuthorized = await authStore.ensureValidSession()
+        if (!isAuthorized) {
+            next(buildAuthFallbackRoute(to))
+            return
+        }
     }
 
     // 检查系统级身份访问控制（如仅超级管理员可访问）

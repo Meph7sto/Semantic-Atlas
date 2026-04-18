@@ -19,6 +19,21 @@ if load_dotenv:
     load_dotenv(_ROOT_ENV_PATH, override=False)
 
 
+def _env_bool(name: str, default: str) -> bool:
+    return os.environ.get(name, default).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _resolve_project_path(raw_value: str, *, root_dir: str) -> str:
+    if os.path.isabs(raw_value):
+        return raw_value
+    return os.path.join(root_dir, raw_value)
+
+
 class Settings:
     """
     业务后端（backend_business）配置：
@@ -119,5 +134,58 @@ class Settings:
         os.environ.get("VISION_CAPTION_TIMEOUT_SECONDS", "120")
     )
 
+    # Agent experience skill system
+    ENABLE_AGENT_EXPERIENCE_SKILL = _env_bool(
+        "ENABLE_AGENT_EXPERIENCE_SKILL",
+        "true",
+    )
+    AGENT_EXPERIENCE_ROOT = _resolve_project_path(
+        os.environ.get("AGENT_EXPERIENCE_ROOT", ".agent_skills"),
+        root_dir=ROOT_DIR,
+    )
+    AGENT_EXPERIENCE_ENABLE_WRITEBACK = _env_bool(
+        "AGENT_EXPERIENCE_ENABLE_WRITEBACK",
+        "true",
+    )
+    AGENT_EXPERIENCE_ENABLE_INJECTION = _env_bool(
+        "AGENT_EXPERIENCE_ENABLE_INJECTION",
+        "true",
+    )
+    AGENT_EXPERIENCE_DRY_RUN = _env_bool(
+        "AGENT_EXPERIENCE_DRY_RUN",
+        "false",
+    )
+    AGENT_EXPERIENCE_MIN_TOOL_CALLS = int(
+        os.environ.get("AGENT_EXPERIENCE_MIN_TOOL_CALLS", "2")
+    )
+    AGENT_EXPERIENCE_RETRIEVAL_THRESHOLD = float(
+        os.environ.get("AGENT_EXPERIENCE_RETRIEVAL_THRESHOLD", "0.7")
+    )
+    AGENT_EXPERIENCE_MISS_THRESHOLD = float(
+        os.environ.get("AGENT_EXPERIENCE_MISS_THRESHOLD", "0.4")
+    )
+    AGENT_EXPERIENCE_MIN_MISS_SAMPLE = int(
+        os.environ.get("AGENT_EXPERIENCE_MIN_MISS_SAMPLE", "5")
+    )
+    AGENT_EXPERIENCE_COMPILER_MODEL = os.environ.get(
+        "AGENT_EXPERIENCE_COMPILER_MODEL",
+        "gpt-4o-mini",
+    )
+    AGENT_EXPERIENCE_REVIEW_MODEL = os.environ.get(
+        "AGENT_EXPERIENCE_REVIEW_MODEL",
+        "gpt-4o-mini",
+    )
+    AGENT_EXPERIENCE_DEDUP_MODEL = os.environ.get(
+        "AGENT_EXPERIENCE_DEDUP_MODEL",
+        "gpt-4o-mini",
+    )
+    AGENT_EXPERIENCE_RETRIEVAL_MODEL = os.environ.get(
+        "AGENT_EXPERIENCE_RETRIEVAL_MODEL",
+        "gpt-4o-mini",
+    )
+    AGENT_EXPERIENCE_ENABLE_SHARED_PATTERNS = _env_bool(
+        "AGENT_EXPERIENCE_ENABLE_SHARED_PATTERNS",
+        "false",
+    )
 
 settings = Settings()

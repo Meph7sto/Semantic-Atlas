@@ -24,6 +24,10 @@ from backend_business.services.agent.execution.topology_instantiator import (
     RuntimeGraphSkeleton,
     TopologyInstantiator,
 )
+from backend_business.services.agent.runtime.state_contract import (
+    RUN_STATE_SOURCE_OF_TRUTH,
+    SCRATCHPAD_STATE_BACKEND,
+)
 
 
 # =========================================================================
@@ -515,6 +519,45 @@ class TestCrossContainerInstantiation:
             )
 
 
+class TestSelectiveContainerInstantiation:
+    """Only the entry container plus explicitly selected containers are instantiated."""
+
+    def test_selected_container_keys_limit_runtime_containers_and_subgraphs(self):
+        svc = FakeGraphService()
+        tpl_id = _make_cross_container_template(svc)
+        instantiator = TopologyInstantiator()
+
+        sk = instantiator.instantiate(
+            template_graph_id=tpl_id,
+            project_id="proj-1",
+            graph_service=svc,
+            selected_container_keys=["analysis_agent"],
+        )
+
+        assert {container.container_key for container in sk.containers} == {
+            "session_controller",
+            "analysis_agent",
+        }
+        assert {subgraph.subgraph_key for subgraph in sk.subgraphs} == {
+            "sg_parse_intent",
+            "sg_call_agent",
+            "sg_analyze",
+        }
+
+    def test_unknown_selected_container_key_raises(self):
+        svc = FakeGraphService()
+        tpl_id = _make_cross_container_template(svc)
+        instantiator = TopologyInstantiator()
+
+        with pytest.raises(InstantiationError, match="container_key 不存在"):
+            instantiator.instantiate(
+                template_graph_id=tpl_id,
+                project_id="proj-1",
+                graph_service=svc,
+                selected_container_keys=["missing_agent"],
+            )
+
+
 class TestConvenienceQueries:
     """Test RuntimeGraphSkeleton helper methods."""
 
@@ -677,6 +720,96 @@ class TestConditionalEdgesMapping:
         assert len(sg.config_json["conditional_edges"]) == 2
         assert sg.config_json["conditional_edges"][0]["condition"] == "approved"
 
+    def test_legacy_condition_expr_edges_are_adapted_to_conditional_edges(self):
+        svc = FakeGraphService()
+        svc.seed_template(
+            graph_id="tpl-legacy-cond",
+            project_id="proj-1",
+            containers=[
+                {
+                    "container_id": "c-1",
+                    "container_key": "main",
+                    "label": "Main",
+                    "role_type": "agent",
+                    "order_index": 0,
+                },
+            ],
+            nodes=[
+                {
+                    "node_id": "n-decision",
+                    "node_key": "decision_node",
+                    "label": "Decision",
+                    "node_type": "llm",
+                    "role_type": "agent",
+                    "container_id": "c-1",
+                    "phase_label": "决策",
+                    "task_prompt": "做出决策",
+                    "conditional_edges": None,
+                    "order_index": 0,
+                },
+                {
+                    "node_id": "n-next",
+                    "node_key": "next_node",
+                    "label": "Next",
+                    "node_type": "llm",
+                    "role_type": "agent",
+                    "container_id": "c-1",
+                    "phase_label": "通过",
+                    "task_prompt": "继续",
+                    "conditional_edges": None,
+                    "order_index": 1,
+                },
+                {
+                    "node_id": "n-alt",
+                    "node_key": "alt_node",
+                    "label": "Alt",
+                    "node_type": "llm",
+                    "role_type": "agent",
+                    "container_id": "c-1",
+                    "phase_label": "拒绝",
+                    "task_prompt": "终止",
+                    "conditional_edges": None,
+                    "order_index": 2,
+                },
+            ],
+            edges=[
+                {
+                    "edge_id": "e-approved",
+                    "source_node_id": "n-decision",
+                    "target_node_id": "n-next",
+                    "edge_type": "seq",
+                    "label": "approve",
+                    "condition_expr": "approved",
+                    "order_index": 0,
+                },
+                {
+                    "edge_id": "e-rejected",
+                    "source_node_id": "n-decision",
+                    "target_node_id": "n-alt",
+                    "edge_type": "seq",
+                    "label": "reject",
+                    "condition_expr": "rejected",
+                    "order_index": 1,
+                },
+            ],
+        )
+
+        instantiator = TopologyInstantiator()
+        sk = instantiator.instantiate(
+            template_graph_id="tpl-legacy-cond",
+            project_id="proj-1",
+            graph_service=svc,
+        )
+
+        decision_subgraph = next(
+            sg for sg in sk.subgraphs if sg.source_node_id == "n-decision"
+        )
+        assert decision_subgraph.config_json is not None
+        assert decision_subgraph.config_json["conditional_edges"] == [
+            {"condition": "approved", "target_node_id": "n-next"},
+            {"condition": "rejected", "target_node_id": "n-alt"},
+        ]
+
 
 class TestMetaJsonPreserved:
     """Runtime graph meta_json should record source template ID."""
@@ -693,6 +826,12 @@ class TestMetaJsonPreserved:
 
         runtime_graph = svc.graphs[sk.graph_id]
         assert runtime_graph["meta_json"]["source_template_id"] == tpl_id
+        assert runtime_graph["meta_json"]["scratchpad_state_backend"] == (
+            SCRATCHPAD_STATE_BACKEND
+        )
+        assert runtime_graph["meta_json"]["run_state_source_of_truth"] == (
+            RUN_STATE_SOURCE_OF_TRUTH
+        )
 
 
 class TestExistingRuntimeGraphReuse:

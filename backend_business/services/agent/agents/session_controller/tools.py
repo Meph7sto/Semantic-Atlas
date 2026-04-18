@@ -15,11 +15,6 @@ _LIST_ITEM_EXCERPT_LENGTH = 180
 _DEFAULT_DELEGATED_MAX_TOOL_CALL_ROUNDS = 15
 
 
-def _mark_tool_loop_should_stop(context: dict[str, Any], reply: str | None) -> None:
-    context["_stop_after_tool_round"] = True
-    context["_forced_tool_loop_reply"] = str(reply or "").strip()
-
-
 def _normalize_window_arg(value: Any, *, default: int, field_name: str) -> int:
     if value is None:
         normalized = default
@@ -64,6 +59,15 @@ def _summarize_list_item(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_loop_mode(raw_mode: Any) -> str | None:
+    text = str(raw_mode or "").strip().lower()
+    if not text:
+        return None
+    if text == "clarification":
+        return "clarify"
+    return text
+
+
 class SessionControllerTools:
     """Session controller tool definitions and execution."""
 
@@ -73,7 +77,7 @@ class SessionControllerTools:
         requirements_service: RequirementsManageService,
         requirement_agent_service: Any,
         conflict_agent_service: Any,
-        requirement_classification_agent_service: Any,
+        requirement_classification_agent_service: Any | None = None,
     ) -> None:
         self.requirements_service = requirements_service
         self._requirement_agent_service = requirement_agent_service
@@ -81,7 +85,26 @@ class SessionControllerTools:
         self._requirement_classification_agent_service = requirement_classification_agent_service
 
     @staticmethod
-    def get_tools_list() -> list[dict[str, Any]]:
+    def _uses_native_invoke(context: dict[str, Any]) -> bool:
+        return bool(context.get("_native_invoke_enabled"))
+
+    def resolve_runtime_tool_executor(self, *, container_key: str) -> Any:
+        """Resolve the tool executor bound to a runtime container."""
+        if container_key in {"conductor", "session_controller", ""}:
+            return self
+        if container_key == "requirement_agent":
+            return getattr(self._requirement_agent_service, "tools", None)
+        if container_key == "conflict_detection":
+            return getattr(self._conflict_agent_service, "tools", None)
+        if container_key == "requirement_classification_agent":
+            service = self._requirement_classification_agent_service
+            return getattr(service, "tools", None) if service is not None else None
+        return None
+
+    def get_tools_list(
+        self,
+        context: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         window_properties = {
             "start_index": {
                 "type": "integer",
@@ -254,6 +277,103 @@ class SessionControllerTools:
             return parsed
         raise ValueError("tool arguments 格式无效")
 
+    @staticmethod
+    def _build_native_invoke_result(
+        *,
+        delegated_agent: str,
+        route_key: str,
+        task_description: str,
+        requirement_id: str | None = None,
+        max_tool_call_rounds: int | None = None,
+        prompt_payload_format: str | None = None,
+        context_mode: str | None = None,
+    ) -> dict[str, Any]:
+        result = {
+            "status": "accepted",
+            "native_invoke": True,
+            "delegated_agent": delegated_agent,
+            "invoke_route_key": route_key,
+            "task_description": task_description,
+        }
+        if requirement_id:
+            result["requirement_id"] = requirement_id
+        if max_tool_call_rounds is not None:
+            result["max_tool_call_rounds"] = max_tool_call_rounds
+        if prompt_payload_format:
+            result["prompt_payload_format"] = prompt_payload_format
+        if context_mode:
+            result["context_mode"] = context_mode
+        return result
+
+    def _queue_native_requirement_invoke(
+        self,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        task_description = str(arguments.get("task_description") or "").strip()
+        if not task_description:
+            raise ValueError("task_description 不能为空")
+        requirement_id = str(arguments.get("requirement_id") or "").strip() or None
+        if not requirement_id:
+            requirement_id = str(context.get("resolved_requirement_id") or "").strip() or None
+        prompt_payload_format = (
+            str(context.get("delegated_prompt_payload_format") or "").strip() or "markdown"
+        )
+        context_mode = str(context.get("delegated_context_mode") or "").strip() or "full"
+        max_tool_call_rounds = _resolve_delegated_max_tool_call_rounds(context)
+        self._mark_dispatched_agent(context, "requirement_agent")
+        if requirement_id:
+            context["resolved_requirement_id"] = requirement_id
+        return self._build_native_invoke_result(
+            delegated_agent="requirement_agent",
+            route_key="invoke_requirement",
+            task_description=task_description,
+            requirement_id=requirement_id,
+            max_tool_call_rounds=max_tool_call_rounds,
+            prompt_payload_format=prompt_payload_format,
+            context_mode=context_mode,
+        )
+
+    def _queue_native_conflict_invoke(
+        self,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        task_description = str(arguments.get("task_description") or "").strip()
+        if not task_description:
+            raise ValueError("task_description 不能为空")
+        max_tool_call_rounds = _resolve_delegated_max_tool_call_rounds(context)
+        self._mark_dispatched_agent(context, "conflict_detection")
+        return self._build_native_invoke_result(
+            delegated_agent="conflict_detection",
+            route_key="invoke_conflict",
+            task_description=task_description,
+            max_tool_call_rounds=max_tool_call_rounds,
+        )
+
+    def _queue_native_classification_invoke(
+        self,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        task_description = str(arguments.get("task_description") or "").strip()
+        if not task_description:
+            raise ValueError("task_description 不能为空")
+        requirement_id = str(arguments.get("requirement_id") or "").strip() or None
+        if not requirement_id:
+            requirement_id = str(context.get("resolved_requirement_id") or "").strip() or None
+        max_tool_call_rounds = _resolve_delegated_max_tool_call_rounds(context)
+        self._mark_dispatched_agent(context, "requirement_classification_agent")
+        if requirement_id:
+            context["resolved_requirement_id"] = requirement_id
+        return self._build_native_invoke_result(
+            delegated_agent="requirement_classification_agent",
+            route_key="invoke_classification",
+            task_description=task_description,
+            requirement_id=requirement_id,
+            max_tool_call_rounds=max_tool_call_rounds,
+        )
+
     def _execute_list_requirements(
         self,
         arguments: dict[str, Any],
@@ -311,6 +431,8 @@ class SessionControllerTools:
         arguments: dict[str, Any],
         context: dict[str, Any],
     ) -> dict[str, Any]:
+        if self._uses_native_invoke(context):
+            return self._queue_native_requirement_invoke(arguments, context)
         task_description = str(arguments.get("task_description") or "").strip()
         if not task_description:
             raise ValueError("task_description 不能为空")
@@ -398,9 +520,7 @@ class SessionControllerTools:
                 child_node_key=end_node_key, parent_node_key=parent_node_key, created_by=user_id,
             )
             recorder.restore_stage_cursor(node_key=parent_node_key, updated_by=user_id)
-            error_result = {"status": "error", "error": f"需求管理 Agent 执行失败: {exc}"}
-            _mark_tool_loop_should_stop(context, error_result["error"])
-            return error_result
+            return {"status": "error", "error": f"需求管理 Agent 执行失败: {exc}"}
 
         # 3. End node + return edge (cross-container boundary)
         end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
@@ -429,27 +549,29 @@ class SessionControllerTools:
         write_result = loop_result.get("write_result")
         if write_result is not None:
             context["last_write_result"] = write_result
-        if loop_result.get("approval_pending"):
-            context["approval_pending"] = True
-            context["last_approval_result"] = loop_result.get("approval_result")
-        if loop_result.get("clarification_required") or loop_result.get("mode") == "clarification":
-            context["clarification_required"] = True
-            context["last_clarification_reply"] = loop_result.get("tool_loop_reply", "")
+        approval_result = loop_result.get("approval_result")
+        if approval_result is not None:
+            context["last_approval_result"] = approval_result
+        mode = _normalize_loop_mode(loop_result.get("mode"))
+        clarification_question = str(
+            loop_result.get("clarification_question") or loop_result.get("tool_loop_reply") or ""
+        ).strip() or None
 
         result = {
             "status": "success",
             "reply": loop_result.get("tool_loop_reply", ""),
+            "tool_loop_reply": loop_result.get("tool_loop_reply", ""),
             "resolved_requirement_id": resolved_requirement_id,
             "write_result": write_result,
-            "mode": loop_result.get("mode"),
+            "mode": mode,
             "clarification_required": bool(
                 loop_result.get("clarification_required")
-                or loop_result.get("mode") == "clarification"
+                or mode == "clarify"
             ),
+            "clarification_question": clarification_question,
             "approval_pending": bool(loop_result.get("approval_pending")),
-            "approval_result": loop_result.get("approval_result"),
+            "approval_result": approval_result,
         }
-        _mark_tool_loop_should_stop(context, result.get("reply"))
         return result
 
     def _stream_invoke_requirement_agent(
@@ -457,6 +579,8 @@ class SessionControllerTools:
         arguments: dict[str, Any],
         context: dict[str, Any],
     ):
+        if self._uses_native_invoke(context):
+            return self._queue_native_requirement_invoke(arguments, context)
         task_description = str(arguments.get("task_description") or "").strip()
         if not task_description:
             raise ValueError("task_description 不能为空")
@@ -561,9 +685,7 @@ class SessionControllerTools:
                     status="failed",
                 ),
             }
-            error_result = {"status": "error", "error": f"需求管理 Agent 执行失败: {exc}"}
-            _mark_tool_loop_should_stop(context, error_result["error"])
-            return error_result
+            return {"status": "error", "error": f"需求管理 Agent 执行失败: {exc}"}
 
         end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
         recorder.start_stage(
@@ -594,12 +716,13 @@ class SessionControllerTools:
         write_result = loop_result.get("write_result")
         if write_result is not None:
             context["last_write_result"] = write_result
-        if loop_result.get("approval_pending"):
-            context["approval_pending"] = True
-            context["last_approval_result"] = loop_result.get("approval_result")
-        if loop_result.get("clarification_required") or loop_result.get("mode") == "clarification":
-            context["clarification_required"] = True
-            context["last_clarification_reply"] = loop_result.get("tool_loop_reply", "")
+        approval_result = loop_result.get("approval_result")
+        if approval_result is not None:
+            context["last_approval_result"] = approval_result
+        mode = _normalize_loop_mode(loop_result.get("mode"))
+        clarification_question = str(
+            loop_result.get("clarification_question") or loop_result.get("tool_loop_reply") or ""
+        ).strip() or None
         yield {
             "event": "stage",
             "data": recorder.build_stage_event_data(
@@ -611,17 +734,18 @@ class SessionControllerTools:
         result = {
             "status": "success",
             "reply": loop_result.get("tool_loop_reply", ""),
+            "tool_loop_reply": loop_result.get("tool_loop_reply", ""),
             "resolved_requirement_id": resolved_requirement_id,
             "write_result": write_result,
-            "mode": loop_result.get("mode"),
+            "mode": mode,
             "clarification_required": bool(
                 loop_result.get("clarification_required")
-                or loop_result.get("mode") == "clarification"
+                or mode == "clarify"
             ),
+            "clarification_question": clarification_question,
             "approval_pending": bool(loop_result.get("approval_pending")),
-            "approval_result": loop_result.get("approval_result"),
+            "approval_result": approval_result,
         }
-        _mark_tool_loop_should_stop(context, result.get("reply"))
         return result
 
     def _execute_invoke_conflict_detection(
@@ -629,6 +753,8 @@ class SessionControllerTools:
         arguments: dict[str, Any],
         context: dict[str, Any],
     ) -> dict[str, Any]:
+        if self._uses_native_invoke(context):
+            return self._queue_native_conflict_invoke(arguments, context)
         task_description = str(arguments.get("task_description") or "").strip()
         if not task_description:
             raise ValueError("task_description 不能为空")
@@ -701,9 +827,7 @@ class SessionControllerTools:
                 child_node_key=end_node_key, parent_node_key=parent_node_key, created_by=user_id,
             )
             recorder.restore_stage_cursor(node_key=parent_node_key, updated_by=user_id)
-            error_result = {"status": "error", "error": f"冲突检测 Agent 执行失败: {exc}"}
-            _mark_tool_loop_should_stop(context, error_result["error"])
-            return error_result
+            return {"status": "error", "error": f"冲突检测 Agent 执行失败: {exc}"}
 
         # 3. End node + return edge (cross-container boundary)
         end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
@@ -729,8 +853,8 @@ class SessionControllerTools:
         result = {
             "status": "success",
             "reply": loop_result.get("tool_loop_reply", ""),
+            "tool_loop_reply": loop_result.get("tool_loop_reply", ""),
         }
-        _mark_tool_loop_should_stop(context, result.get("reply"))
         return result
 
     def _stream_invoke_conflict_detection(
@@ -738,6 +862,8 @@ class SessionControllerTools:
         arguments: dict[str, Any],
         context: dict[str, Any],
     ):
+        if self._uses_native_invoke(context):
+            return self._queue_native_conflict_invoke(arguments, context)
         task_description = str(arguments.get("task_description") or "").strip()
         if not task_description:
             raise ValueError("task_description 不能为空")
@@ -827,9 +953,7 @@ class SessionControllerTools:
                     status="failed",
                 ),
             }
-            error_result = {"status": "error", "error": f"冲突检测 Agent 执行失败: {exc}"}
-            _mark_tool_loop_should_stop(context, error_result["error"])
-            return error_result
+            return {"status": "error", "error": f"冲突检测 Agent 执行失败: {exc}"}
 
         end_node_key = recorder.stage_node_key(f"{node_key_prefix}_end")
         recorder.start_stage(
@@ -864,8 +988,8 @@ class SessionControllerTools:
         result = {
             "status": "success",
             "reply": loop_result.get("tool_loop_reply", ""),
+            "tool_loop_reply": loop_result.get("tool_loop_reply", ""),
         }
-        _mark_tool_loop_should_stop(context, result.get("reply"))
         return result
 
     def _execute_invoke_requirement_classification_agent(
@@ -873,6 +997,8 @@ class SessionControllerTools:
         arguments: dict[str, Any],
         context: dict[str, Any],
     ) -> dict[str, Any]:
+        if self._uses_native_invoke(context):
+            return self._queue_native_classification_invoke(arguments, context)
         task_description = str(arguments.get("task_description") or "").strip()
         if not task_description:
             raise ValueError("task_description 不能为空")
@@ -881,6 +1007,8 @@ class SessionControllerTools:
         user_id = context.get("user_id", "")
         project_id = context.get("project_id", "")
         self._mark_dispatched_agent(context, "requirement_classification_agent")
+        if self._requirement_classification_agent_service is None:
+            return {"status": "error", "error": "Requirement classification agent service is not configured"}
 
         recorder = context.get("_graph_recorder")
         parent_node_key = str(context.get("_active_stage_node_key") or "").strip()
@@ -973,11 +1101,16 @@ class SessionControllerTools:
             created_by=user_id,
         )
         recorder.restore_stage_cursor(node_key=parent_node_key, updated_by=user_id)
+        resolved_requirement_id = loop_result.get("resolved_requirement_id")
+        if resolved_requirement_id:
+            context["resolved_requirement_id"] = resolved_requirement_id
+            context.setdefault("resolved_requirement_ids", set()).add(resolved_requirement_id)
 
         return {
             "status": "success",
             "reply": loop_result.get("tool_loop_reply", ""),
-            "resolved_requirement_id": loop_result.get("resolved_requirement_id"),
+            "tool_loop_reply": loop_result.get("tool_loop_reply", ""),
+            "resolved_requirement_id": resolved_requirement_id,
             "classification_result": loop_result.get("classification_result"),
         }
 
@@ -986,6 +1119,8 @@ class SessionControllerTools:
         arguments: dict[str, Any],
         context: dict[str, Any],
     ):
+        if self._uses_native_invoke(context):
+            return self._queue_native_classification_invoke(arguments, context)
         task_description = str(arguments.get("task_description") or "").strip()
         if not task_description:
             raise ValueError("task_description 不能为空")
@@ -994,6 +1129,11 @@ class SessionControllerTools:
         user_id = context.get("user_id", "")
         project_id = context.get("project_id", "")
         self._mark_dispatched_agent(context, "requirement_classification_agent")
+        if self._requirement_classification_agent_service is None:
+            return {
+                "status": "error",
+                "error": "Requirement classification agent service is not configured",
+            }
 
         recorder = context.get("_graph_recorder")
         parent_node_key = str(context.get("_active_stage_node_key") or "").strip()
@@ -1107,11 +1247,16 @@ class SessionControllerTools:
                 status="succeeded",
             ),
         }
+        resolved_requirement_id = loop_result.get("resolved_requirement_id")
+        if resolved_requirement_id:
+            context["resolved_requirement_id"] = resolved_requirement_id
+            context.setdefault("resolved_requirement_ids", set()).add(resolved_requirement_id)
 
         return {
             "status": "success",
             "reply": loop_result.get("tool_loop_reply", ""),
-            "resolved_requirement_id": loop_result.get("resolved_requirement_id"),
+            "tool_loop_reply": loop_result.get("tool_loop_reply", ""),
+            "resolved_requirement_id": resolved_requirement_id,
             "classification_result": loop_result.get("classification_result"),
         }
 

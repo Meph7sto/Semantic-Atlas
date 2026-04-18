@@ -48,6 +48,20 @@ class TestScratchpadBasicReadWrite:
         pad.write("tool_excerpt", "data", readonly=False)  # explicit False ignored
         assert pad.read()[0].readonly is True
 
+    def test_container_views_are_isolated(self):
+        root = Scratchpad()
+        parent = root.for_container("parent")
+        child = root.for_container("child")
+
+        parent.write("note", "parent only", source_subgraph="sg_parent")
+        child.write("note", "child only", source_subgraph="sg_child")
+
+        assert [entry.content for entry in parent.read()] == ["parent only"]
+        assert [entry.content for entry in child.read()] == ["child only"]
+        snapshot_all = root.snapshot_all()
+        assert len(snapshot_all) == 2
+        assert {entry.get("container_key") for entry in snapshot_all} == {"parent", "child"}
+
 
 class TestScratchpadFiltering:
     def test_filter_by_type(self):
@@ -571,6 +585,7 @@ class TestToolLoopRunnerCompletePhaseIntegration:
         )
         assert "expand_topology" in complete_phase_props
         assert "target_template_graph_id" in complete_phase_props
+        assert "target_container_keys" in complete_phase_props
 
     def test_complete_phase_tool_not_injected_when_disabled(self):
         from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner
@@ -716,7 +731,8 @@ class TestToolLoopRunnerCompletePhaseIntegration:
                         "arguments": (
                             '{"conclusion":"需要进入冲突检测流程",'
                             '"expand_topology":true,'
-                            '"target_template_graph_id":"tpl-conflict"}'
+                            '"target_template_graph_id":"tpl-conflict",'
+                            '"target_container_keys":["conflict_detection"]}'
                         ),
                     },
                 }],
@@ -740,6 +756,7 @@ class TestToolLoopRunnerCompletePhaseIntegration:
         assert result.phase_completed is True
         assert result.expand_topology is True
         assert result.target_template_graph_id == "tpl-conflict"
+        assert result.target_container_keys == ("conflict_detection",)
         assert result.conclusion == "需要进入冲突检测流程"
 
     def test_complete_phase_auto_appends_scratchpad_stage_output(self):

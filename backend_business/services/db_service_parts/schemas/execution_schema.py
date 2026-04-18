@@ -397,3 +397,96 @@ def init_execution_schema(cur):
     cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_execution_nodes_subgraph ON execution_nodes(subgraph_id)"
     )
+
+    # agent_runtime_registry: container/agent -> runtime binding
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_runtime_registry (
+            runtime_id TEXT PRIMARY KEY,
+            container_key TEXT,
+            agent_type TEXT,
+            runtime_profile TEXT NOT NULL DEFAULT 'default',
+            implementation_type TEXT NOT NULL DEFAULT 'local',
+            endpoint TEXT,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            capability_policy_json JSONB,
+            quota_policy_json JSONB,
+            memory_policy_json JSONB,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_runtime_registry_lookup ON agent_runtime_registry(container_key, agent_type, runtime_profile)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_runtime_registry_enabled ON agent_runtime_registry(enabled)"
+    )
+    cur.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_runtime_registry_identity
+        ON agent_runtime_registry(
+            (COALESCE(container_key, '')),
+            (COALESCE(agent_type, '')),
+            runtime_profile
+        )
+        """
+    )
+
+    # agent_runs: every runtime execution request and its lifecycle
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_runs (
+            run_id TEXT PRIMARY KEY,
+            graph_id TEXT NOT NULL REFERENCES execution_graphs(graph_id) ON DELETE CASCADE,
+            subgraph_id TEXT REFERENCES execution_subgraphs(subgraph_id) ON DELETE SET NULL,
+            container_key TEXT NOT NULL,
+            agent_type TEXT NOT NULL,
+            runtime_id TEXT NOT NULL,
+            parent_run_id TEXT REFERENCES agent_runs(run_id) ON DELETE SET NULL,
+            status TEXT NOT NULL
+                CHECK (status IN ('queued', 'running', 'waiting_user', 'succeeded', 'failed', 'timed_out', 'cancelled')),
+            input_ref JSONB,
+            output_ref JSONB,
+            usage_json JSONB,
+            error_code TEXT,
+            error_message TEXT,
+            resume_token TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            started_at TIMESTAMPTZ,
+            completed_at TIMESTAMPTZ
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_runs_graph ON agent_runs(graph_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_runs_runtime ON agent_runs(runtime_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_runs_parent ON agent_runs(parent_run_id)"
+    )
+
+    # container_state_store: physically isolated per-container runtime state
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS container_state_store (
+            graph_id TEXT NOT NULL REFERENCES execution_graphs(graph_id) ON DELETE CASCADE,
+            container_key TEXT NOT NULL,
+            state_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+            updated_by TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (graph_id, container_key)
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_container_state_store_graph ON container_state_store(graph_id)"
+    )

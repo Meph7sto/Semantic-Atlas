@@ -14,12 +14,20 @@ import {
 
 import { manageApi } from '@/api/project'
 import { sessionControllerChatApi } from '@/api/sessionControllerChat'
-import { api } from '@/api/request'
+import ExperienceSkillPanel from '@/components/alpha/ExperienceSkillPanel.vue'
 import ExecutionGraphCanvas from '@/components/alpha/ExecutionGraphCanvas.vue'
 import NodeDetailPanel from '@/components/alpha/NodeDetailPanel.vue'
 import SubgraphTracePanel from '@/components/alpha/SubgraphTracePanel.vue'
 import { createEmptyGraphDetail, buildMergedSessionGraphDetail } from '@/utils/sessionGraphLayout'
 import { buildExecutionGraphExportPayload, downloadExecutionGraphFile } from '@/utils/executionGraphExport'
+
+const GRAPH_EXECUTION_MODE = 'graph'
+const SESSION_GRAPH_LAYOUT_OPTIONS = {
+  filterDelegatedContainers: true,
+  hideSubgraphBoundaryNodes: true,
+  stackGraphsByRow: true,
+  alignLaneStarts: true
+}
 
 const projects = ref([])
 const sessions = ref([])
@@ -56,6 +64,15 @@ let graphChainRefreshInFlight = null
 const currentSession = computed(() => {
   return sessions.value.find((item) => item.session_id === sessionId.value) || null
 })
+
+const activeGraphDetail = computed(() => {
+  if (!sessionGraphChain.value.length) return null
+  return sessionGraphChain.value.find((detail) => detail?.graph?.graph_id === activeGraphId.value)
+    || sessionGraphChain.value[sessionGraphChain.value.length - 1]
+    || null
+})
+
+const activeRuntimeGraph = computed(() => activeGraphDetail.value?.graph || null)
 
 const selectedNode = computed(() => {
   return graphDetail.value.nodes.find((node) => node.node_id === selectedCanvasId.value) || null
@@ -213,7 +230,7 @@ const rebuildMergedGraphDetail = () => {
     session_id: sessionId.value,
     active_graph_id: activeGraphId.value,
     graphs: sessionGraphChain.value
-  })
+  }, SESSION_GRAPH_LAYOUT_OPTIONS)
 }
 
 const upsertById = (items, idKey, nextItem) => {
@@ -285,6 +302,58 @@ const applyGraphIncrementalPayload = (payload, graphStatus = null) => {
   return true
 }
 
+const patchSessionGraphMeta = (graphId, metaPatch) => {
+  if (!graphId || !metaPatch || typeof metaPatch !== 'object') return false
+
+  const index = sessionGraphChain.value.findIndex((detail) => detail?.graph?.graph_id === graphId)
+  if (index < 0) return false
+
+  const currentDetail = sessionGraphChain.value[index] || {}
+  const nextDetail = {
+    ...currentDetail,
+    graph: currentDetail.graph
+      ? {
+          ...currentDetail.graph,
+          meta_json: {
+            ...(currentDetail.graph.meta_json || {}),
+            ...metaPatch
+          }
+        }
+      : currentDetail.graph
+  }
+
+  const nextChain = [...sessionGraphChain.value]
+  nextChain[index] = nextDetail
+  sessionGraphChain.value = nextChain
+  rebuildMergedGraphDetail()
+  return true
+}
+
+const inferDelegatedAgentsFromEvent = (eventName, payload) => {
+  if (eventName === 'intent_judge_completed') {
+    return Array.isArray(payload?.selected_container_keys) ? payload.selected_container_keys : []
+  }
+
+  if (eventName === 'result') {
+    if (Array.isArray(payload?.dispatched_agents) && payload.dispatched_agents.length) {
+      return payload.dispatched_agents
+    }
+    if (payload?.mode === 'delegate_requirement') return ['requirement_agent']
+    if (payload?.mode === 'delegate_conflict') return ['conflict_detection']
+    if (payload?.mode === 'delegate_classification') return ['requirement_classification_agent']
+    return []
+  }
+
+  if (eventName !== 'tool_call' && eventName !== 'tool_result') {
+    return []
+  }
+
+  if (payload?.tool === 'invoke_requirement_agent') return ['requirement_agent']
+  if (payload?.tool === 'invoke_conflict_detection') return ['conflict_detection']
+  if (payload?.tool === 'invoke_requirement_classification_agent') return ['requirement_classification_agent']
+  return []
+}
+
 const refreshSessionGraphChain = async (targetSessionId = sessionId.value) => {
   if (!targetSessionId) {
     sessionGraphChain.value = []
@@ -299,7 +368,7 @@ const refreshSessionGraphChain = async (targetSessionId = sessionId.value) => {
     }
     sessionGraphChain.value = chainPayload?.graphs || []
     activeGraphId.value = chainPayload?.active_graph_id || activeGraphId.value || ''
-    graphDetail.value = buildMergedSessionGraphDetail(chainPayload)
+    graphDetail.value = buildMergedSessionGraphDetail(chainPayload, SESSION_GRAPH_LAYOUT_OPTIONS)
     return chainPayload
   } catch (err) {
     console.error('加载会话执行图链失败', err)
@@ -555,6 +624,15 @@ const consumeSSEStream = async (stream) => {
           lastDispatchedAgents.value = payload.dispatched_agents
         }
         if (payload.graph_id) {
+          const delegatedAgents = inferDelegatedAgentsFromEvent(eventName, payload)
+          if (delegatedAgents.length) {
+            patchSessionGraphMeta(payload.graph_id, {
+              dispatched_agents: delegatedAgents,
+              selected_container_keys: delegatedAgents
+            })
+          }
+        }
+        if (payload.graph_id) {
           activeGraphId.value = payload.graph_id
           upsertSessionPatch(sessionId.value, {
             active_graph_id: payload.graph_id,
@@ -563,7 +641,22 @@ const consumeSSEStream = async (stream) => {
           applyGraphIncrementalPayload(payload, 'succeeded')
           await flushGraphChainRefresh(sessionId.value)
         }
+      } else if (eventName === 'intent_judge_completed') {
+        const delegatedAgents = inferDelegatedAgentsFromEvent(eventName, payload)
+        if (payload.graph_id && delegatedAgents.length) {
+          patchSessionGraphMeta(payload.graph_id, {
+            selected_container_keys: delegatedAgents
+          })
+        }
       } else if (eventName === 'stage' || eventName === 'tool_call' || eventName === 'tool_result') {
+        const delegatedAgents = inferDelegatedAgentsFromEvent(eventName, payload)
+        if (payload.graph_id && delegatedAgents.length) {
+          patchSessionGraphMeta(payload.graph_id, {
+            selected_container_keys: delegatedAgents,
+            dispatched_agents: delegatedAgents
+          })
+          lastDispatchedAgents.value = delegatedAgents
+        }
         if (payload.graph_id) {
           activeGraphId.value = payload.graph_id
           upsertSessionPatch(sessionId.value, {
@@ -620,6 +713,7 @@ const sendMessage = async () => {
     inputMessage.value = ''
     appendTimeline('submit', {
       message,
+      execution_mode: GRAPH_EXECUTION_MODE,
       delegated_max_tool_call_rounds: effectiveDelegatedMaxToolCallRounds
     })
     upsertSessionPatch(sessionId.value, { updated_at: new Date().toISOString() })
@@ -774,7 +868,10 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-stone-500">
+        <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-stone-500">
+            <span class="flex items-center gap-1 bg-stone-900 px-1.5 py-0.5 text-white" title="会话总控固定使用 GraphExecutor 主链路">
+              Pipeline: <span class="font-medium">GraphExecutor</span>
+            </span>
             <span v-if="sessionId" class="flex items-center gap-1 bg-stone-200/50 px-1.5 py-0.5">
               Current: <span class="font-medium text-stone-700">{{ activeGraphId || '无' }}</span>
             </span>
@@ -847,18 +944,27 @@ onBeforeUnmount(() => {
                 </span>
                 <span>{{ useThinkingMode ? 'Reasoner 模式' : 'Chat 模式' }}</span>
               </label>
-              <label class="flex items-center gap-2 text-xs font-medium text-stone-600">
-                <span>子Agent最大调用</span>
-                <input
-                  v-model.number="delegatedMaxToolCallRounds"
-                  type="number"
-                  min="1"
-                  max="50"
-                  class="w-20 border border-stone-300 bg-white px-2 py-1 text-right text-xs text-stone-800 outline-none transition focus:border-stone-500 disabled:cursor-not-allowed disabled:opacity-60"
-                  :disabled="isSending || !sessionId"
-                  @blur="normalizeDelegatedMaxToolCallRounds"
+              <div class="flex items-center gap-3">
+                <div
+                  class="inline-flex items-center gap-2 border border-stone-300 bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-700 shadow-sm"
+                  title="当前仅保留 GraphExecutor 主链路"
                 >
-              </label>
+                  <Workflow class="h-3.5 w-3.5" />
+                  GraphExecutor
+                </div>
+                <label class="flex items-center gap-2 text-xs font-medium text-stone-600">
+                  <span>子Agent最大调用</span>
+                  <input
+                    v-model.number="delegatedMaxToolCallRounds"
+                    type="number"
+                    min="1"
+                    max="50"
+                    class="w-20 border border-stone-300 bg-white px-2 py-1 text-right text-xs text-stone-800 outline-none transition focus:border-stone-500 disabled:cursor-not-allowed disabled:opacity-60"
+                    :disabled="isSending || !sessionId"
+                    @blur="normalizeDelegatedMaxToolCallRounds"
+                  >
+                </label>
+              </div>
             </div>
             <div class="border border-stone-300 bg-white p-2">
               <textarea
@@ -887,6 +993,10 @@ onBeforeUnmount(() => {
       <div class="flex flex-col gap-6">
 
         <section class="flex flex-col gap-6 shrink-0 pb-8">
+          <ExperienceSkillPanel
+            :graph="activeRuntimeGraph"
+          />
+
           <div class="flex flex-col overflow-hidden border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)] h-[1200px]">
             <div class="shrink-0 flex items-center justify-between border-b border-stone-200 px-5 py-4">
               <h2 class="flex items-center gap-2 text-lg font-semibold text-stone-900">

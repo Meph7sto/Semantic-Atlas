@@ -16,6 +16,7 @@ export const useAuthStore = defineStore('auth', () => {
   // ========================
   const user = ref(null)
   const token = ref(localStorage.getItem('token'))
+  const sessionValidated = ref(false)
   const projectContexts = ref(new Map()) // projectId -> context
 
   // ========================
@@ -206,6 +207,7 @@ export const useAuthStore = defineStore('auth', () => {
 
     token.value = result.token
     user.value = result
+    sessionValidated.value = true
 
     // 保存到 localStorage
     localStorage.setItem('token', result.token)
@@ -230,6 +232,7 @@ export const useAuthStore = defineStore('auth', () => {
       // 清除状态
       token.value = null
       user.value = null
+      sessionValidated.value = false
       clearAllProjectContexts()
 
       // 清除 localStorage
@@ -251,6 +254,7 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const result = await authApi.verify()
       user.value = result
+      sessionValidated.value = true
       localStorage.setItem('user', JSON.stringify(result))
       return true
     } catch (error) {
@@ -271,11 +275,30 @@ export const useAuthStore = defineStore('auth', () => {
       try {
         token.value = savedToken
         user.value = JSON.parse(savedUser)
+        sessionValidated.value = false
       } catch (e) {
         console.error('Failed to parse saved user:', e)
         logout()
       }
+      return
     }
+
+    token.value = null
+    user.value = null
+    sessionValidated.value = false
+    clearAllProjectContexts()
+  }
+
+  async function ensureValidSession() {
+    if (!token.value) {
+      return false
+    }
+
+    if (sessionValidated.value) {
+      return true
+    }
+
+    return verify()
   }
 
   /**
@@ -291,6 +314,7 @@ export const useAuthStore = defineStore('auth', () => {
     user,
     token,
     projectContexts,
+    sessionValidated,
 
     // 计算属性
     isAuthenticated,
@@ -318,9 +342,9 @@ export const useAuthStore = defineStore('auth', () => {
     login,
     logout,
     verify,
+    ensureValidSession,
     init,
     updateUser,
   }
 })
-
 

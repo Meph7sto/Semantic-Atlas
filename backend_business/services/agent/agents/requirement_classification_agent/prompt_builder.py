@@ -23,6 +23,9 @@ class RequirementClassificationPromptBuilder:
                 "不要要求用户重复提供详细描述、验收标准或再次确认目标。"
                 "如果用户请求的是分类，请优先直接调用 classify_requirement 工具对该 requirement_id 执行分类。"
             )
+        extra_system_context = str(context.get("_extra_system_context") or "").strip()
+        if extra_system_context:
+            base = f"{base}\n\n{extra_system_context}"
         return base
 
     def build_user_message(self, *, user_message: str, context: dict[str, Any]) -> str:

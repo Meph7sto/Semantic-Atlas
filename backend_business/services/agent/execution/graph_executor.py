@@ -17,7 +17,15 @@ from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Any
 
-from backend_business.services.agent.runtime import ScratchpadService
+from backend_business.services.agent.runtime import (
+    ScratchpadService,
+    with_runtime_state_contract,
+)
+from backend_business.services.agent.experience import (
+    ExperienceOrchestrator,
+    resolve_experience_target,
+    resolve_experience_target_from_subgraph,
+)
 
 from .subgraph_runner import ContainerResult, SubgraphRunner
 from .subgraph_state import (
@@ -54,6 +62,8 @@ class ExecutionResult:
         The subgraph ID that triggered suspension (only when suspended).
     error : str | None
         Human-readable error message (only when failed).
+    metadata : dict[str, Any] | None
+        Optional execution-path-specific metadata for the caller.
     """
 
     status: str
@@ -61,6 +71,7 @@ class ExecutionResult:
     final_output: str | None = None
     suspended_subgraph_id: str | None = None
     error: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +80,7 @@ class JudgeDecision:
 
     expand_topology: bool
     selected_template_id: str | None = None
+    selected_container_keys: tuple[str, ...] = ()
 
 
 class IntentJudgeError(RuntimeError):
@@ -93,11 +105,13 @@ _JUDGE_SYSTEM_PROMPT = """\
 1. **需要展开拓扑图**：
    - expand_topology: 填写 true
    - target_template_graph_id: 填写选中的拓扑图 ID（从下方候选列表中选择）
+   - target_container_keys: 如果你已经明确只需要模板中的部分业务容器，填写这些 container_key 列表；不要填写入口容器本身
    - conclusion: 填写你的判断理由
 
 2. **不需要展开拓扑图**（任务足够简单、闲聊、问候等）：
    - expand_topology: 填写 false
    - target_template_graph_id: 不要填写
+   - target_container_keys: 不要填写
    - conclusion: 填写你的判断理由
 
 候选拓扑图列表：
@@ -127,6 +141,25 @@ def _format_candidates_block(
         line = f"{idx}. [{graph_id}] {name}"
         if desc:
             line += f" — {desc}"
+        selectable_containers = tpl.get("selectable_containers") or []
+        if selectable_containers:
+            container_parts: list[str] = []
+            for item in selectable_containers:
+                if not isinstance(item, dict):
+                    continue
+                container_key = str(item.get("container_key") or "").strip()
+                if not container_key:
+                    continue
+                label = str(item.get("label") or "").strip()
+                description = str(item.get("description") or "").strip()
+                part = container_key
+                if label:
+                    part += f" ({label})"
+                if description:
+                    part += f": {description}"
+                container_parts.append(part)
+            if container_parts:
+                line += f"\n   可按需展开容器: {'; '.join(container_parts)}"
         lines.append(line)
     return "\n".join(lines)
 
@@ -218,9 +251,13 @@ class GraphExecutor:
         instantiator: TopologyInstantiator | None = None,
         runner: SubgraphRunner | None = None,
         scratchpad_service: ScratchpadService | None = None,
+        experience_orchestrator: ExperienceOrchestrator | None = None,
     ) -> None:
         self._instantiator = instantiator or TopologyInstantiator()
-        self._runner = runner or SubgraphRunner()
+        self._experience_orchestrator = experience_orchestrator
+        self._runner = runner or SubgraphRunner(
+            experience_orchestrator=experience_orchestrator,
+        )
         self._scratchpad_service = scratchpad_service
 
     # -- public API -----------------------------------------------------------
@@ -259,6 +296,7 @@ class GraphExecutor:
         ``StopIteration.value``.
         """
         effective_template_id = template_graph_id
+        selected_container_keys: tuple[str, ...] = ()
 
         # 0. Intent gate -------------------------------------------------------
         if candidate_templates is not None:
@@ -306,6 +344,7 @@ class GraphExecutor:
             # Use judge-selected template
             if effective_template_id is None:
                 effective_template_id = judge_decision.selected_template_id
+            selected_container_keys = judge_decision.selected_container_keys
 
             # Reuse the runtime graph created during gating
             runtime_graph_id = gate_graph_id
@@ -326,6 +365,7 @@ class GraphExecutor:
                 graph_service=graph_service,
                 created_by=actor,
                 runtime_graph_id=runtime_graph_id,
+                selected_container_keys=selected_container_keys or None,
             )
         except Exception as exc:
             logger.error("%s: %s", expand_error_label, exc, exc_info=True)
@@ -351,6 +391,13 @@ class GraphExecutor:
                     "subgraph_count": len(skeleton.subgraphs),
                 },
             }
+
+        if candidate_templates is not None:
+            _ensure_judge_to_entry_edge(
+                graph_service=graph_service,
+                skeleton=skeleton,
+                actor=actor,
+            )
 
         # 2. Run SubgraphRunner -------------------------------------------------
         return (yield from self._drive_runner(
@@ -389,6 +436,7 @@ class GraphExecutor:
                 user_input=user_input,
                 tool_executor=tool_executor,
                 ai_proxy_client=ai_proxy_client,
+                graph_service=graph_service,
                 recorder=recorder,
                 actor=actor,
                 scratchpad=scratchpad,
@@ -400,12 +448,32 @@ class GraphExecutor:
                 scratchpad,
                 updated_by=actor,
             )
+            latest_output = _latest_scratchpad_output(scratchpad)
+            try:
+                graph_service.patch_graph_meta(
+                    skeleton.graph_id,
+                    {"suspended_subgraph_id": sig.subgraph_id},
+                    updated_by=actor,
+                )
+            except Exception:
+                logger.warning("无法持久化 suspended_subgraph_id=%s", sig.subgraph_id, exc_info=True)
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "suspended", actor,
+            )
+            self._maybe_writeback_root_container_experience(
+                skeleton=skeleton,
+                graph_service=graph_service,
+                recorder=recorder,
+                scratchpad_snapshot=_safe_snapshot_all(scratchpad),
+                user_message=user_input,
+                final_conclusion=latest_output or None,
+                runtime_status="suspended",
+                final_error=None,
             )
             return ExecutionResult(
                 status="suspended",
                 graph_id=skeleton.graph_id,
+                final_output=latest_output or None,
                 suspended_subgraph_id=sig.subgraph_id,
             )
         except ContainerExecutionError as exc:
@@ -416,6 +484,16 @@ class GraphExecutor:
             )
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "failed", actor,
+            )
+            self._maybe_writeback_root_container_experience(
+                skeleton=skeleton,
+                graph_service=graph_service,
+                recorder=recorder,
+                scratchpad_snapshot=_safe_snapshot_all(scratchpad),
+                user_message=user_input,
+                final_conclusion=None,
+                runtime_status="failed",
+                final_error=str(exc),
             )
             return ExecutionResult(
                 status="failed",
@@ -431,6 +509,16 @@ class GraphExecutor:
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "failed", actor,
             )
+            self._maybe_writeback_root_container_experience(
+                skeleton=skeleton,
+                graph_service=graph_service,
+                recorder=recorder,
+                scratchpad_snapshot=_safe_snapshot_all(scratchpad),
+                user_message=user_input,
+                final_conclusion=None,
+                runtime_status="failed",
+                final_error=f"resume 执行异常: {exc}",
+            )
             return ExecutionResult(
                 status="failed",
                 graph_id=skeleton.graph_id,
@@ -440,11 +528,21 @@ class GraphExecutor:
         # Succeeded
         scratchpad_service.save_snapshot(
             skeleton.graph_id,
-            container_result.scratchpad_snapshot,
+            container_result.scratchpad_store_snapshot,
             updated_by=actor,
         )
         _persist_graph_status(
             graph_service, skeleton.graph_id, "succeeded", actor,
+        )
+        self._maybe_writeback_root_container_experience(
+            skeleton=skeleton,
+            graph_service=graph_service,
+            recorder=recorder,
+            scratchpad_snapshot=container_result.scratchpad_store_snapshot,
+            user_message=user_input,
+            final_conclusion=container_result.conclusion,
+            runtime_status="succeeded",
+            final_error=None,
         )
         return ExecutionResult(
             status="succeeded",
@@ -571,6 +669,7 @@ class GraphExecutor:
             "data": {
                 "graph_id": graph_id,
                 "selected_template_id": judge_decision.selected_template_id,
+                "selected_container_keys": list(judge_decision.selected_container_keys),
                 "expand_topology": judge_decision.expand_topology,
                 "reason": result.conclusion or "",
             },
@@ -621,6 +720,15 @@ class GraphExecutor:
             )
             result = yield from gen
         except Exception as exc:
+            self._maybe_writeback_normal_conversation_experience(
+                graph_id=graph_id,
+                graph_service=graph_service,
+                recorder=recorder,
+                stage_container_key=stage_container_key,
+                user_message=user_message,
+                tool_loop_result=None,
+                error=str(exc),
+            )
             _persist_graph_status(
                 graph_service, graph_id, "failed", actor,
             )
@@ -630,6 +738,15 @@ class GraphExecutor:
                 error=f"对话执行异常: {exc}",
             )
 
+        self._maybe_writeback_normal_conversation_experience(
+            graph_id=graph_id,
+            graph_service=graph_service,
+            recorder=recorder,
+            stage_container_key=stage_container_key,
+            user_message=user_message,
+            tool_loop_result=result,
+            error=None,
+        )
         _persist_graph_status(
             graph_service, graph_id, "succeeded", actor,
         )
@@ -637,6 +754,14 @@ class GraphExecutor:
             status="succeeded",
             graph_id=graph_id,
             final_output=result.tool_loop_reply,
+            metadata={
+                "execution_path": "normal_conversation",
+                "tool_loop_result": {
+                    "tool_loop_reply": result.tool_loop_reply,
+                    "rounds": result.rounds,
+                    "context": _compact_tool_loop_context(result.context),
+                },
+            },
         )
 
     def _drive_runner(
@@ -658,6 +783,7 @@ class GraphExecutor:
                 skeleton=skeleton,
                 tool_executor=tool_executor,
                 ai_proxy_client=ai_proxy_client,
+                graph_service=graph_service,
                 recorder=recorder,
                 actor=actor,
                 user_message=user_message,
@@ -670,12 +796,32 @@ class GraphExecutor:
                 scratchpad,
                 updated_by=actor,
             )
+            latest_output = _latest_scratchpad_output(scratchpad)
+            try:
+                graph_service.patch_graph_meta(
+                    skeleton.graph_id,
+                    {"suspended_subgraph_id": sig.subgraph_id},
+                    updated_by=actor,
+                )
+            except Exception:
+                logger.warning("无法持久化 suspended_subgraph_id=%s", sig.subgraph_id, exc_info=True)
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "suspended", actor,
+            )
+            self._maybe_writeback_root_container_experience(
+                skeleton=skeleton,
+                graph_service=graph_service,
+                recorder=recorder,
+                scratchpad_snapshot=_safe_snapshot_all(scratchpad),
+                user_message=user_message,
+                final_conclusion=latest_output or None,
+                runtime_status="suspended",
+                final_error=None,
             )
             return ExecutionResult(
                 status="suspended",
                 graph_id=skeleton.graph_id,
+                final_output=latest_output or None,
                 suspended_subgraph_id=sig.subgraph_id,
             )
         except ContainerExecutionError as exc:
@@ -686,6 +832,16 @@ class GraphExecutor:
             )
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "failed", actor,
+            )
+            self._maybe_writeback_root_container_experience(
+                skeleton=skeleton,
+                graph_service=graph_service,
+                recorder=recorder,
+                scratchpad_snapshot=_safe_snapshot_all(scratchpad),
+                user_message=user_message,
+                final_conclusion=None,
+                runtime_status="failed",
+                final_error=str(exc),
             )
             return ExecutionResult(
                 status="failed",
@@ -701,6 +857,16 @@ class GraphExecutor:
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "failed", actor,
             )
+            self._maybe_writeback_root_container_experience(
+                skeleton=skeleton,
+                graph_service=graph_service,
+                recorder=recorder,
+                scratchpad_snapshot=_safe_snapshot_all(scratchpad),
+                user_message=user_message,
+                final_conclusion=None,
+                runtime_status="failed",
+                final_error=f"执行异常: {exc}",
+            )
             return ExecutionResult(
                 status="failed",
                 graph_id=skeleton.graph_id,
@@ -710,11 +876,21 @@ class GraphExecutor:
         # Succeeded
         scratchpad_service.save_snapshot(
             skeleton.graph_id,
-            container_result.scratchpad_snapshot,
+            container_result.scratchpad_store_snapshot,
             updated_by=actor,
         )
         _persist_graph_status(
             graph_service, skeleton.graph_id, "succeeded", actor,
+        )
+        self._maybe_writeback_root_container_experience(
+            skeleton=skeleton,
+            graph_service=graph_service,
+            recorder=recorder,
+            scratchpad_snapshot=container_result.scratchpad_store_snapshot,
+            user_message=user_message,
+            final_conclusion=container_result.conclusion,
+            runtime_status="succeeded",
+            final_error=None,
         )
         return ExecutionResult(
             status="succeeded",
@@ -726,6 +902,91 @@ class GraphExecutor:
         if self._scratchpad_service is not None:
             return self._scratchpad_service
         return ScratchpadService(execution_graph_service=graph_service)
+
+    def _maybe_writeback_normal_conversation_experience(
+        self,
+        *,
+        graph_id: str,
+        graph_service: Any,
+        recorder: Any,
+        stage_container_key: str,
+        user_message: str,
+        tool_loop_result: ToolLoopResult | None,
+        error: str | None,
+    ) -> None:
+        if self._experience_orchestrator is None:
+            return
+        target = resolve_experience_target(
+            container_key=stage_container_key,
+            node_type="llm",
+            context={"prompt_builder_kind": "normal_conversation"},
+        )
+        self._experience_orchestrator.safe_process_outcome(
+            target=target,
+            graph_id=graph_id,
+            graph_service=graph_service,
+            recorder=recorder,
+            scratchpad_snapshot=[],
+            container_key=stage_container_key,
+            user_message=user_message,
+            task_description="无需拓扑展开的直接对话处理。",
+            final_conclusion=(
+                tool_loop_result.tool_loop_reply if tool_loop_result is not None else None
+            ),
+            runtime_status="failed" if error else "succeeded",
+            final_error=error,
+        )
+
+    def _maybe_writeback_root_container_experience(
+        self,
+        *,
+        skeleton: RuntimeGraphSkeleton,
+        graph_service: Any,
+        recorder: Any,
+        scratchpad_snapshot: list[dict[str, Any]],
+        user_message: str,
+        final_conclusion: Any,
+        runtime_status: str,
+        final_error: str | None,
+    ) -> None:
+        if self._experience_orchestrator is None:
+            return
+        entry_container = skeleton.get_entry_container()
+        entry_subgraphs = skeleton.get_subgraphs_for_container(entry_container.container_id)
+        first_subgraph = entry_subgraphs[0] if entry_subgraphs else None
+        target = (
+            resolve_experience_target_from_subgraph(
+                container=entry_container,
+                subgraph=first_subgraph,
+            )
+            if first_subgraph is not None
+            else resolve_experience_target(
+                container_key=entry_container.container_key,
+                node_type="llm",
+            )
+        )
+        if target is None:
+            return
+        task_description = (
+            str(first_subgraph.task_description or "").strip()
+            if first_subgraph is not None
+            else f"{entry_container.container_key} 入口容器执行闭环。"
+        )
+        subgraph_key = first_subgraph.subgraph_key if first_subgraph is not None else None
+        self._experience_orchestrator.safe_process_outcome(
+            target=target,
+            graph_id=skeleton.graph_id,
+            graph_service=graph_service,
+            recorder=recorder,
+            scratchpad_snapshot=scratchpad_snapshot,
+            container_key=entry_container.container_key,
+            subgraph_key=subgraph_key,
+            user_message=user_message,
+            task_description=task_description or f"{entry_container.container_key} 入口容器执行闭环。",
+            final_conclusion=final_conclusion,
+            runtime_status=runtime_status,
+            final_error=final_error,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -770,7 +1031,7 @@ def _create_gate_runtime_graph(
         description="Runtime execution graph",
         created_by=actor,
         status="running",
-        meta_json={"phase": "intent_gate"},
+        meta_json=with_runtime_state_contract({"phase": "intent_gate"}),
     )
 
 
@@ -898,6 +1159,74 @@ def _ensure_start_to_judge_edge(
     )
 
 
+def _ensure_judge_to_entry_edge(
+    *,
+    graph_service: Any,
+    skeleton: RuntimeGraphSkeleton,
+    actor: str,
+) -> None:
+    entry_container = skeleton.get_entry_container()
+    entry_subgraphs = skeleton.get_subgraphs_for_container(entry_container.container_id)
+    if not entry_subgraphs:
+        return
+
+    first_subgraph = min(entry_subgraphs, key=lambda item: item.order_index)
+    entry_start_node_id = None
+    for node in skeleton.nodes:
+        if node.subgraph_id == first_subgraph.subgraph_id and node.node_type == "start":
+            entry_start_node_id = node.node_id
+            break
+    if not entry_start_node_id:
+        return
+
+    detail = graph_service.get_graph_detail(skeleton.graph_id)
+    nodes = detail.get("nodes") or []
+    judge_nodes = sorted(
+        (
+            node
+            for node in nodes
+            if str(node.get("node_key") or "").startswith("turn_")
+            and "intent_judge_r" in str(node.get("node_key") or "")
+        ),
+        key=lambda node: (
+            int(node.get("order_index") or 0),
+            str(node.get("created_at") or ""),
+            str(node.get("node_id") or ""),
+        ),
+    )
+    if not judge_nodes:
+        return
+
+    last_judge_node = judge_nodes[-1]
+    edges = detail.get("edges") or []
+    for edge in edges:
+        if (
+            edge.get("source_node_id") == last_judge_node.get("node_id")
+            and edge.get("target_node_id") == entry_start_node_id
+            and edge.get("edge_type") == "seq"
+        ):
+            return
+
+    next_order_index = max(
+        (int(edge.get("order_index") or 0) for edge in edges),
+        default=-1,
+    ) + 1
+    graph_service.create_edge(
+        graph_id=skeleton.graph_id,
+        source_node_id=last_judge_node["node_id"],
+        target_node_id=entry_start_node_id,
+        edge_type="seq",
+        label="seq",
+        config_json={
+            "runtime": True,
+            "intent_gate_bridge": True,
+            "target_subgraph": first_subgraph.subgraph_key,
+        },
+        order_index=next_order_index,
+        created_by=actor,
+    )
+
+
 def _persist_graph_status(
     graph_service: Any,
     graph_id: str,
@@ -921,6 +1250,54 @@ def _persist_graph_status(
         )
 
 
+def _compact_tool_loop_context(context: dict[str, Any] | None) -> dict[str, Any]:
+    """Persist only the session-safe subset of ToolLoopRunner context."""
+    if not isinstance(context, dict):
+        return {}
+
+    compact: dict[str, Any] = {}
+
+    resolved_requirement_id = str(context.get("resolved_requirement_id") or "").strip()
+    if resolved_requirement_id:
+        compact["resolved_requirement_id"] = resolved_requirement_id
+
+    dispatched_agents = [
+        str(item).strip()
+        for item in (context.get("dispatched_agents") or [])
+        if str(item).strip()
+    ]
+    if dispatched_agents:
+        compact["dispatched_agents"] = dispatched_agents
+
+    last_approval_result = context.get("last_approval_result")
+    if isinstance(last_approval_result, dict):
+        compact["last_approval_result"] = dict(last_approval_result)
+
+    tool_results: list[dict[str, Any]] = []
+    for entry in context.get("tool_results") or []:
+        if not isinstance(entry, dict):
+            continue
+        tool_results.append(
+            {
+                "tool_name": str(entry.get("tool_name") or "").strip(),
+                "arguments": (
+                    dict(entry.get("arguments"))
+                    if isinstance(entry.get("arguments"), dict)
+                    else {}
+                ),
+                "result": (
+                    dict(entry.get("result"))
+                    if isinstance(entry.get("result"), dict)
+                    else entry.get("result")
+                ),
+            }
+        )
+    if tool_results:
+        compact["tool_results"] = tool_results
+
+    return compact
+
+
 def _parse_judge_decision(
     *,
     result: ToolLoopResult,
@@ -935,21 +1312,89 @@ def _parse_judge_decision(
         raise ValueError("judge complete_phase 缺少 expand_topology 布尔字段")
 
     target_template_graph_id = result.target_template_graph_id
+    target_container_keys = tuple(
+        key for key in result.target_container_keys if str(key).strip()
+    )
     if not expand_topology:
         if target_template_graph_id:
             raise ValueError(
                 "judge 指定 expand_topology=false 时，不应再携带 target_template_graph_id",
             )
+        if target_container_keys:
+            raise ValueError(
+                "judge 指定 expand_topology=false 时，不应再携带 target_container_keys",
+            )
         return JudgeDecision(expand_topology=False)
 
-    valid_ids = {c.get("graph_id") for c in candidates}
+    candidates_by_id = {
+        c.get("graph_id"): c
+        for c in candidates
+        if c.get("graph_id")
+    }
+    valid_ids = set(candidates_by_id)
     if not target_template_graph_id:
         raise ValueError("judge 指定 expand_topology=true 时，必须提供 target_template_graph_id")
     if target_template_graph_id not in valid_ids:
         raise ValueError(
             f"judge 选择的 target_template_graph_id '{target_template_graph_id}' 不在候选列表中",
         )
+    candidate = candidates_by_id.get(target_template_graph_id) or {}
+    selectable_keys = {
+        str(item.get("container_key") or "").strip()
+        for item in (candidate.get("selectable_containers") or [])
+        if isinstance(item, dict) and str(item.get("container_key") or "").strip()
+    }
+    if selectable_keys and target_container_keys:
+        invalid_keys = [
+            key for key in target_container_keys
+            if key not in selectable_keys
+        ]
+        if invalid_keys:
+            raise ValueError(
+                "judge 选择的 target_container_keys 包含无效值: "
+                + ", ".join(invalid_keys),
+            )
     return JudgeDecision(
         expand_topology=True,
         selected_template_id=target_template_graph_id,
+        selected_container_keys=target_container_keys,
     )
+
+
+def _latest_scratchpad_output(scratchpad: Any) -> str:
+    snapshot_all = getattr(scratchpad, "snapshot_all", None)
+    if callable(snapshot_all):
+        try:
+            entries = snapshot_all()
+        except Exception:
+            entries = []
+        stage_outputs = [
+            entry
+            for entry in entries
+            if entry.get("entry_type") == "stage_output"
+        ]
+        if stage_outputs:
+            return str(stage_outputs[-1].get("content") or "")
+
+    read = getattr(scratchpad, "read", None)
+    if not callable(read):
+        return ""
+    try:
+        entries = read(filter_type="stage_output")
+    except Exception:
+        return ""
+    if not entries:
+        return ""
+    return str(entries[-1].content or "").strip()
+
+
+def _safe_snapshot_all(scratchpad: Any) -> list[dict[str, Any]]:
+    snapshot_all = getattr(scratchpad, "snapshot_all", None)
+    if callable(snapshot_all):
+        try:
+            payload = snapshot_all()
+        except Exception:
+            payload = []
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+    return []

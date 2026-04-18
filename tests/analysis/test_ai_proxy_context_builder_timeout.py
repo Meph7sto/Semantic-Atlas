@@ -8,11 +8,14 @@ from backend_business.services.ai_proxy import AIProxy
 class _FakeSyncResponse:
     status_code = 200
 
+    def __init__(self, payload=None):
+        self._payload = payload or {"content": '{"links":[],"noise":[]}'}
+
     def raise_for_status(self):
         return None
 
     def json(self):
-        return {"content": '{"links":[],"noise":[]}'}
+        return dict(self._payload)
 
 
 class _FakeAsyncResponse:
@@ -116,6 +119,36 @@ def test_context_builder_requests_timeout_defaults_to_connect_only(monkeypatch):
 
     assert result == '{"links":[],"noise":[]}'
     assert calls[0]["timeout"] == (30.0, None)
+
+
+def test_chat_completion_with_tools_logs_empty_response_summary(monkeypatch, caplog):
+    proxy = AIProxy("http://localhost:8000")
+
+    def _fake_post(url, json=None, timeout=None):
+        return _FakeSyncResponse(
+            {
+                "content": "",
+                "tool_calls": [],
+                "reasoning_content": "模型只返回了推理内容。",
+                "finish_reason": "stop",
+            }
+        )
+
+    monkeypatch.setattr("backend_business.services.ai_proxy.requests.post", _fake_post)
+
+    with caplog.at_level("WARNING", logger="backend_business.services.ai_proxy"):
+        result = proxy.chat_completion_with_tools(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[{"type": "function", "function": {"name": "dummy", "parameters": {"type": "object"}}}],
+        )
+
+    assert result["finish_reason"] == "stop"
+    warning_messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "Tool completion response contained neither content nor tool calls" in message
+        for message in warning_messages
+    )
+    assert any("reasoning_content_present" in message for message in warning_messages)
 
 
 async def test_context_builder_async_timeout_has_no_total_and_no_read(monkeypatch):
