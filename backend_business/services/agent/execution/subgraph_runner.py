@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 import queue
 import threading
@@ -25,6 +26,15 @@ from backend_business.services.agent.runtime.agent_runtime import (
 )
 from backend_business.services.agent.runtime.tool_capability import (
     ToolCapabilityExecutor,
+)
+from backend_business.services.agent.experience import (
+    ExperienceOrchestrator,
+    ExperiencePolicyResolver,
+    ExperienceTarget,
+    SkillLoader,
+    SkillRegistry,
+    SkillRetriever,
+    resolve_experience_target_from_subgraph,
 )
 
 from .subgraph_state import (
@@ -208,8 +218,18 @@ class SubgraphRunner:
         self,
         *,
         agent_runtime_registry: AgentRuntimeRegistry | None = None,
+        experience_orchestrator: ExperienceOrchestrator | None = None,
+        experience_retriever: SkillRetriever | None = None,
+        skill_loader: SkillLoader | None = None,
+        skill_registry: SkillRegistry | None = None,
+        policies: ExperiencePolicyResolver | None = None,
     ) -> None:
         self._agent_runtime_registry = agent_runtime_registry
+        self._experience_orchestrator = experience_orchestrator
+        self._experience_retriever = experience_retriever or SkillRetriever()
+        self._skill_loader = skill_loader or SkillLoader()
+        self._skill_registry = skill_registry or SkillRegistry(self._experience_retriever.root_path)
+        self._policies = policies or ExperiencePolicyResolver()
 
     # -- public API -----------------------------------------------------------
 
@@ -1070,6 +1090,8 @@ class SubgraphRunner:
             memory_scope_ref=f"{skeleton.graph_id}:{target_container.container_key}",
             tool_policy_id=str((runtime_binding.capability_policy or {}).get("policy_id") or target_container.container_key),
             quota_policy_id=str((runtime_binding.quota_policy or {}).get("policy_id") or "default"),
+            quota_policy=dict(runtime_binding.quota_policy or {}),
+            memory_policy=dict(runtime_binding.memory_policy or {}),
         )
 
     def _build_llm_run_request(
@@ -1124,6 +1146,8 @@ class SubgraphRunner:
             memory_scope_ref=f"{skeleton.graph_id}:{container.container_key}",
             tool_policy_id=str((runtime_binding.capability_policy or {}).get("policy_id") or container.container_key),
             quota_policy_id=str((runtime_binding.quota_policy or {}).get("policy_id") or "default"),
+            quota_policy=dict(runtime_binding.quota_policy or {}),
+            memory_policy=dict(runtime_binding.memory_policy or {}),
         )
 
     def _run_llm_subgraph_locally(
@@ -1147,12 +1171,23 @@ class SubgraphRunner:
             container=container,
             recorder=recorder,
             pad=pad,
+            user_message=user_message,
             runtime_context=runtime_context,
+        )
+        self._inject_experience_skill_context(
+            sg=sg,
+            container=container,
+            context=context,
+            user_message=user_message,
         )
         prompt_builder = _resolve_prompt_builder(
             sg=sg,
             pad=pad,
             context=context,
+        )
+        resolved_graph_service = _resolve_graph_service(
+            graph_service=graph_service,
+            recorder=recorder,
         )
 
         runner = ToolLoopRunner(
@@ -1167,6 +1202,19 @@ class SubgraphRunner:
                 recorder=recorder,
                 actor=actor,
             ),
+            graph_meta_patcher=(
+                (
+                    lambda graph_id, meta_patch, updated_by: resolved_graph_service.patch_graph_meta(
+                        graph_id,
+                        meta_patch,
+                        updated_by=updated_by,
+                    )
+                )
+                if resolved_graph_service is not None
+                and callable(getattr(resolved_graph_service, "patch_graph_meta", None))
+                else None
+            ),
+            graph_meta_patch_builder=lambda runtime_ctx: _build_experience_meta_patch(runtime_ctx),
             stage_node_key_builder=lambda r: f"sg_{sg.subgraph_key}_r{r}",
             stage_label_builder=lambda r: f"{sg.label} Round {r}",
         )
@@ -1186,6 +1234,7 @@ class SubgraphRunner:
 
         context["_execution_context"] = execution_context
         result: ToolLoopResult | None = None
+        run_error: Exception | None = None
         gen = runner.run(
             recorder=recorder,
             user_id=actor,
@@ -1199,18 +1248,144 @@ class SubgraphRunner:
                 event = gen.send(None)
         except StopIteration as stop:
             result = stop.value
-
-        leave_subgraph = getattr(recorder, "leave_subgraph", None)
-        if callable(leave_subgraph) and end_node_id:
-            leave_subgraph(
-                end_node_id=end_node_id,
-                created_by=actor,
+        except Exception as exc:
+            run_error = exc
+            raise
+        finally:
+            leave_subgraph = getattr(recorder, "leave_subgraph", None)
+            if callable(leave_subgraph) and end_node_id:
+                leave_subgraph(
+                    end_node_id=end_node_id,
+                    created_by=actor,
+                )
+            self._maybe_writeback_subgraph_experience(
+                sg=sg,
+                container=container,
+                skeleton=skeleton,
+                graph_service=graph_service,
+                recorder=recorder,
+                pad=pad,
+                user_message=user_message,
+                result=result,
+                error=run_error,
+            )
+            self._record_injection_feedback(
+                target=context.get("_experience_target"),
+                context=context,
+                missed=run_error is not None,
             )
 
         return {
             "route_key": result.route_key if result else None,
             "output": _build_subgraph_output(sg=sg, result=result),
         }
+
+    def _record_injection_feedback(
+        self,
+        *,
+        target: ExperienceTarget | None,
+        context: dict[str, Any],
+        missed: bool,
+    ) -> None:
+        injected_skill_id = str(context.get("_injected_skill_id") or "").strip()
+        if target is None or not injected_skill_id:
+            return
+        used_at = datetime.now(timezone.utc)
+        if self._experience_orchestrator is not None:
+            self._experience_orchestrator.record_injection_feedback(
+                target=target,
+                missed=missed,
+                used_at=used_at,
+            )
+            return
+        policy = self._policies.resolve(target)
+        self._skill_registry.record_injection_result(
+            target.target_id,
+            missed=missed,
+            used_at=used_at,
+            miss_threshold=policy.miss_threshold,
+            min_miss_sample=policy.min_miss_sample,
+        )
+
+    def _inject_experience_skill_context(
+        self,
+        *,
+        sg: RuntimeSubgraph,
+        container: RuntimeContainer,
+        context: dict[str, Any],
+        user_message: str,
+    ) -> None:
+        target = context.get("_experience_target")
+        if not isinstance(target, ExperienceTarget):
+            target = resolve_experience_target_from_subgraph(
+                container=container,
+                subgraph=sg,
+            )
+        if target is None:
+            return
+
+        retrieved_skills = self._experience_retriever.retrieve_for_injection(
+            target=target,
+            user_message=str(user_message or "").strip(),
+            task_description=str(sg.task_description or "").strip(),
+        )
+        if not retrieved_skills:
+            return
+
+        loaded_prompt = self._skill_loader.render_prompt_bundle(
+            retrieved_skills=retrieved_skills,
+        )
+        existing_context = str(context.get("_extra_system_context") or "").strip()
+        prompt_text = loaded_prompt.prompt_text
+        context["_extra_system_context"] = (
+            f"{existing_context}\n\n{prompt_text}"
+            if existing_context
+            else prompt_text
+        )
+        context["_injected_skill_id"] = loaded_prompt.skill_id
+        context["_injected_skill_ids"] = list(loaded_prompt.skill_ids)
+        context["_injected_skill_target_id"] = loaded_prompt.target_id
+        if loaded_prompt.shared_skill_ids:
+            context["_injected_shared_skill_ids"] = list(loaded_prompt.shared_skill_ids)
+        context["_injected_skill_relevance"] = loaded_prompt.score
+
+    def _maybe_writeback_subgraph_experience(
+        self,
+        *,
+        sg: RuntimeSubgraph,
+        container: RuntimeContainer,
+        skeleton: RuntimeGraphSkeleton,
+        graph_service: Any | None,
+        recorder: Any,
+        pad: Scratchpad,
+        user_message: str,
+        result: ToolLoopResult | None,
+        error: Exception | None,
+    ) -> None:
+        orchestrator = self._experience_orchestrator
+        if orchestrator is None:
+            return
+        target = resolve_experience_target_from_subgraph(
+            container=container,
+            subgraph=sg,
+        )
+        if target is None:
+            return
+        final_conclusion = _build_subgraph_output(sg=sg, result=result) if result else None
+        orchestrator.safe_process_outcome(
+            target=target,
+            graph_id=skeleton.graph_id,
+            graph_service=graph_service,
+            recorder=recorder,
+            scratchpad_snapshot=pad.snapshot_all(),
+            container_key=container.container_key,
+            subgraph_key=sg.subgraph_key,
+            user_message=user_message,
+            task_description=sg.task_description,
+            final_conclusion=final_conclusion,
+            runtime_status="failed" if error is not None else "succeeded",
+            final_error=str(error) if error is not None else None,
+        )
 
     def _resolve_runtime_tool_executor(
         self,
@@ -1515,6 +1690,7 @@ def _build_subgraph_context(
     container: RuntimeContainer,
     recorder: Any,
     pad: Scratchpad,
+    user_message: str = "",
     runtime_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Seed ToolLoopRunner context with recorder task metadata when available."""
@@ -1535,9 +1711,9 @@ def _build_subgraph_context(
         ):
             if key in task_context:
                 context[key] = task_context[key]
-        user_message = str(task_context.get("user_message") or "").strip()
+        task_context_user_message = str(task_context.get("user_message") or "").strip()
     else:
-        user_message = ""
+        task_context_user_message = ""
     graph_id = getattr(recorder, "graph_id", "")
     if graph_id:
         context["graph_id"] = graph_id
@@ -1564,16 +1740,56 @@ def _build_subgraph_context(
         context["resolved_requirement_id"] = resolved_requirement_id
     if runtime_context:
         context.update(runtime_context)
+    resolved_user_message = str(task_context_user_message or user_message or "").strip()
+    if resolved_user_message:
+        context["_experience_user_message"] = resolved_user_message
+    target = resolve_experience_target_from_subgraph(
+        container=container,
+        subgraph=sg,
+    )
+    if target is not None:
+        context["_experience_target"] = target
+        context["_experience_task_description"] = str(sg.task_description or "").strip()
     prompt_builder_kind = str(config.get("prompt_builder") or "").strip()
-    if prompt_builder_kind.startswith("session_controller_") and user_message:
+    if prompt_builder_kind.startswith("session_controller_") and resolved_user_message:
         from backend_business.services.agent.agents.session_controller.prompt_builder import (
             infer_routing_hint,
         )
 
-        context["routing_hint"] = infer_routing_hint(user_message)
+        context["routing_hint"] = infer_routing_hint(resolved_user_message)
     if prompt_builder_kind == "session_controller_decision":
         context["_native_invoke_enabled"] = True
     return context
+
+
+def _build_experience_meta_patch(context: dict[str, Any]) -> dict[str, Any]:
+    patch: dict[str, Any] = {}
+    injected_skill_id = str(context.get("_injected_skill_id") or "").strip()
+    if injected_skill_id:
+        patch["injected_skill_id"] = injected_skill_id
+    injected_skill_ids = [
+        str(item).strip()
+        for item in (context.get("_injected_skill_ids") or [])
+        if str(item).strip()
+    ]
+    if injected_skill_ids:
+        patch["injected_skill_ids"] = injected_skill_ids
+    injected_skill_target_id = str(
+        context.get("_injected_skill_target_id") or ""
+    ).strip()
+    if injected_skill_target_id:
+        patch["injected_skill_target_id"] = injected_skill_target_id
+    injected_shared_skill_ids = [
+        str(item).strip()
+        for item in (context.get("_injected_shared_skill_ids") or [])
+        if str(item).strip()
+    ]
+    if injected_shared_skill_ids:
+        patch["injected_shared_skill_ids"] = injected_shared_skill_ids
+    injected_skill_relevance = context.get("_injected_skill_relevance")
+    if isinstance(injected_skill_relevance, (int, float)):
+        patch["injected_skill_relevance"] = float(injected_skill_relevance)
+    return patch
 
 
 def _resolve_prompt_builder(

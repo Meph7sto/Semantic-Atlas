@@ -1,32 +1,28 @@
 本轮已收口项
 
-1. invoke / tool-call 并发语义已经从“设计层并发”收口为“运行时真实并发”。
-   - invoke fan-out 现在按分支并发提交，首错触发其余分支 cooperative cancellation。
-   - tool-call 同轮并发明确为 snapshot isolation + deterministic merge。
-   - 图级聚合态已统一为 DELEGATING，并明确它不是 subgraph lifecycle。
+1. multi-agent runtime 的治理边界已经显式化。
+   - `RunRequest` 现在携带 `quota_policy` 与 `memory_policy` 快照，运行时不再只知道 policy id。
+   - `LocalAgentRuntime` 已改为受治理执行边界：显式校验 strict memory contract、并发额度与 timeout。
+   - `agent_run` 取消 / 超时 / 配额失败都会落到统一的 run lifecycle，而不是散落在调用链的隐式异常里。
 
-2. 多 agent 的核心分流不再依赖 tool_scope / _tool_scope。
-   - session controller 模板已去掉 `tool_scope`。
-   - 运行时按 `container_key -> runtime tool executor` 做显式绑定。
-   - `ToolCapabilityExecutor` 仍是 allowlist 包装器，但文档已明确它不是独立 sandbox。
+2. Scratchpad legacy 兼容层已经从运行时主路径移除。
+   - 新主路径只从 `container_state_store` 读取 scratchpad。
+   - 旧图若仍只在 graph meta 中持有 `scratchpad_snapshot`，首次读取时会一次性迁移到 state store，再按新路径读取。
+   - graph meta 中保留 `scratchpad_snapshot` 仅作为派生视图，不再作为运行时 source of truth。
 
-3. runtime graph 的结构 ownership 已收口到 Instantiator。
-   - REST 执行入口先显式创建 runtime graph，再以 attach-only recorder 挂接。
-   - Recorder 不再预创建 topology containers，也不再承担结构补偿创建职责。
+3. run-level state 与 trace-level state 的 source of truth 已明确。
+   - `agent_runs` 继续承担 run lifecycle 的权威状态。
+   - recorder 现在只保存 trace，并在 stage node 上写入 `run_ref` 指向对应 `agent_run_id`。
+   - 因此 execution graph 负责“看见发生了什么”，`agent_runs` 负责“认定 run 处于什么状态”。
 
-当前仍保留的 follow-up
+4. quota / memory policy 已从框架接线升级为执行期约束。
+   - runtime binding 会把 `timeout_seconds`、`max_concurrent_runs`、`max_parallel_runs_per_scope`、`strict_memory_contract` 写入 registry。
+   - `SubgraphRunner` 会把这些 policy 快照下发到 `RunRequest`。
+   - 运行时会在真正执行前做配额校验，在执行后校验 memory contract。
 
-1. 多 agent 仍不是强隔离 runtime。
-   - 当前边界仍主要是 in-process runtime binding、capability policy、memory scope 与 shared-host quota。
-   - 权限、超时、崩溃传播、资源配额的治理边界仍弱于真正独立 sandbox。
+当前边界说明
 
-2. Scratchpad 的 legacy 兼容层仍在。
-   - 旧图的共享视图兼容逻辑尚未硬切，需要后续迁移或版本标记后再删除。
-
-3. run-level state 与 trace-level state 仍是双轨。
-   - `agent_runs` 负责 run lifecycle，recorder 负责 graph trace。
-   - 后续若接远端 runtime、断点恢复、多租户限额，仍需进一步明确 source of truth。
-
-4. quota / memory policy 仍偏框架化。
-   - policy id、memory scope ref 与 capability allowlist 已接通。
-   - 但跨分支 / 跨 agent 的资源仲裁、严格 memory contract 还没有完全落地。
+1. 当前默认 runtime 仍是 governed local runtime，而不是独立宿主级 sandbox。
+   - 这不再是“未治理”的 follow-up，而是当前架构的明确取舍。
+   - 在现有项目范围内，权限、超时、取消、并发额度、memory contract 与 run/trace 对齐都已在 runtime 内收口。
+   - 若后续需要远端 runtime / OS 级隔离 / 多租户硬限额，可在现有 `implementation_type` 扩展点上继续接入，而不是再回到双轨或兼容层。

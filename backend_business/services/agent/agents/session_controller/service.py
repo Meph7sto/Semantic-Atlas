@@ -11,6 +11,7 @@ from backend_business.config import settings
 from backend_business.services.ai_chat_service import AiChatService, ai_chat_service
 from backend_business.services.ai_proxy import ai_proxy
 from backend_business.services.agent.execution.graph_executor import GraphExecutor
+from backend_business.services.agent.experience import ExperienceOrchestrator
 from backend_business.services.agent.execution_graph_service import ExecutionGraphService
 from backend_business.services.agent.runtime.scratchpad import Scratchpad
 from backend_business.services.agent.runtime.scratchpad_service import ScratchpadService
@@ -129,6 +130,7 @@ class SessionControllerService:
                 "container_key": "conductor",
                 "agent_type": "session_controller",
                 "runtime_profile": "default",
+                "implementation_type": "local",
                 "capability_policy_json": {
                     "policy_id": "session_controller::conductor",
                     "scope": "conductor",
@@ -137,13 +139,20 @@ class SessionControllerService:
                 "quota_policy_json": {
                     "policy_id": "session_controller::conductor::quota",
                     "max_rounds": self.MAX_TOOL_CALL_ROUNDS,
+                    "timeout_seconds": 180,
+                    "max_concurrent_runs": 1,
+                    "max_parallel_runs_per_scope": 1,
                 },
-                "memory_policy_json": {"scope": "container"},
+                "memory_policy_json": {
+                    "scope": "container",
+                    "strict_memory_contract": True,
+                },
             },
             {
                 "container_key": "requirement_agent",
                 "agent_type": "requirement_agent",
                 "runtime_profile": "default",
+                "implementation_type": "local",
                 "capability_policy_json": {
                     "policy_id": "session_controller::requirement_agent",
                     "scope": "delegated_requirement",
@@ -151,13 +160,20 @@ class SessionControllerService:
                 },
                 "quota_policy_json": {
                     "policy_id": "session_controller::requirement_agent::quota",
+                    "timeout_seconds": 180,
+                    "max_concurrent_runs": 4,
+                    "max_parallel_runs_per_scope": 1,
                 },
-                "memory_policy_json": {"scope": "container"},
+                "memory_policy_json": {
+                    "scope": "container",
+                    "strict_memory_contract": True,
+                },
             },
             {
                 "container_key": "conflict_detection",
                 "agent_type": "conflict_detection",
                 "runtime_profile": "default",
+                "implementation_type": "local",
                 "capability_policy_json": {
                     "policy_id": "session_controller::conflict_detection",
                     "scope": "delegated_conflict",
@@ -165,13 +181,20 @@ class SessionControllerService:
                 },
                 "quota_policy_json": {
                     "policy_id": "session_controller::conflict_detection::quota",
+                    "timeout_seconds": 180,
+                    "max_concurrent_runs": 4,
+                    "max_parallel_runs_per_scope": 1,
                 },
-                "memory_policy_json": {"scope": "container"},
+                "memory_policy_json": {
+                    "scope": "container",
+                    "strict_memory_contract": True,
+                },
             },
             {
                 "container_key": "requirement_classification_agent",
                 "agent_type": "requirement_classification_agent",
                 "runtime_profile": "default",
+                "implementation_type": "local",
                 "capability_policy_json": {
                     "policy_id": "session_controller::requirement_classification_agent",
                     "scope": "delegated_classification",
@@ -179,8 +202,14 @@ class SessionControllerService:
                 },
                 "quota_policy_json": {
                     "policy_id": "session_controller::requirement_classification_agent::quota",
+                    "timeout_seconds": 180,
+                    "max_concurrent_runs": 4,
+                    "max_parallel_runs_per_scope": 1,
                 },
-                "memory_policy_json": {"scope": "container"},
+                "memory_policy_json": {
+                    "scope": "container",
+                    "strict_memory_contract": True,
+                },
             },
         ]
         ensure_runtime_bindings(self.execution_graph_service, binding_specs)
@@ -215,7 +244,6 @@ class SessionControllerService:
                 inherited_snapshot,
                 updated_by=updated_by,
             )
-            meta_patch["scratchpad_snapshot"] = inherited_snapshot
         if inherited_requirement_id:
             meta_patch["resolved_requirement_id"] = inherited_requirement_id
         if meta_patch:
@@ -954,7 +982,9 @@ class SessionControllerService:
         self._ensure_graph_runtime_bindings()
         yield {"event": "graph", "data": {"graph_id": recorder.graph_id}}
 
-        executor = GraphExecutor()
+        executor = GraphExecutor(
+            experience_orchestrator=ExperienceOrchestrator(),
+        )
         assistant_content = ""
         loop_result = SessionControllerLoopResult(mode=SessionControllerDecisionMode.ERROR)
         context: dict[str, Any] = {}

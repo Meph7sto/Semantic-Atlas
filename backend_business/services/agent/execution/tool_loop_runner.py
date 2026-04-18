@@ -609,6 +609,14 @@ class ToolLoopRunner:
                 ),
                 edge_type_from_previous="seq",
             )
+            run_ref = normalized_context.get("_agent_run_ref")
+            bind_stage_run_ref = getattr(recorder, "bind_stage_run_ref", None)
+            if isinstance(run_ref, dict) and callable(bind_stage_run_ref):
+                bind_stage_run_ref(
+                    node_key,
+                    created_by=user_id,
+                    run_ref=run_ref,
+                )
             yield {
                 "event": "stage",
                 "data": self._build_stage_event_payload(

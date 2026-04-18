@@ -1,0 +1,58 @@
+version: 1
+targets:
+  conflict_detection_classic:
+    created_at: '2026-04-18T00:00:00Z'
+    current_skill_path: conflict_detection_classic/current.md
+    injection_miss_count: 0
+    invocation_count: 0
+    iteration: 1
+    last_updated_at: '2026-04-18T00:00:00Z'
+    skill_id: exp_conflict_detection_classic_seed_20260418_001
+  requirement_agent_classic:
+    created_at: '2026-04-18T00:00:00Z'
+    current_skill_path: requirement_agent_classic/current.md
+    injection_miss_count: 0
+    invocation_count: 0
+    iteration: 1
+    last_updated_at: '2026-04-18T00:00:00Z'
+    skill_id: exp_requirement_agent_classic_seed_20260418_001
+  requirement_classification_classic:
+    created_at: '2026-04-18T00:00:00Z'
+    current_skill_path: requirement_classification_classic/current.md
+    injection_miss_count: 0
+    invocation_count: 0
+    iteration: 1
+    last_updated_at: '2026-04-18T00:00:00Z'
+    skill_id: exp_requirement_classification_classic_seed_20260418_001
+  session_controller_classification_delegate:
+    created_at: '2026-04-18T00:00:00Z'
+    current_skill_path: session_controller_classification_delegate/current.md
+    injection_miss_count: 0
+    invocation_count: 0
+    iteration: 1
+    last_updated_at: '2026-04-18T00:00:00Z'
+    skill_id: exp_session_controller_classification_delegate_seed_20260418_001
+  session_controller_conflict_delegate:
+    created_at: '2026-04-18T00:00:00Z'
+    current_skill_path: session_controller_conflict_delegate/current.md
+    injection_miss_count: 0
+    invocation_count: 0
+    iteration: 1
+    last_updated_at: '2026-04-18T00:00:00Z'
+    skill_id: exp_session_controller_conflict_delegate_seed_20260418_001
+  session_controller_decision:
+    created_at: '2026-04-18T00:00:00Z'
+    current_skill_path: session_controller_decision/current.md
+    injection_miss_count: 0
+    invocation_count: 0
+    iteration: 1
+    last_updated_at: '2026-04-18T00:00:00Z'
+    skill_id: exp_session_controller_decision_seed_20260418_001
+  session_controller_requirement_delegate:
+    created_at: '2026-04-18T00:00:00Z'
+    current_skill_path: session_controller_requirement_delegate/current.md
+    injection_miss_count: 0
+    invocation_count: 0
+    iteration: 1
+    last_updated_at: '2026-04-18T00:00:00Z'
+    skill_id: exp_session_controller_requirement_delegate_seed_20260418_001

@@ -368,6 +368,64 @@ def test_runtime_graph_recorder_supports_configurable_containers_and_task_contex
     )
 
 
+def test_tool_loop_stage_binds_agent_run_ref_into_trace():
+    graph_service = _FakeExecutionGraphService()
+    recorder = RuntimeGraphRecorder(
+        execution_graph_service=graph_service,
+        container_configs=[
+            ContainerConfig(
+                container_key="agent",
+                label="Agent",
+                role_type="agent",
+            )
+        ],
+        project_id="proj-1",
+        user_id="u-1",
+        session_id="s-1",
+        user_message="hello",
+    )
+    runner = ToolLoopRunner(
+        ai_proxy_client=_FakeAiProxy(
+            responses=[
+                {
+                    "content": "done",
+                    "finish_reason": "stop",
+                }
+            ]
+        ),
+        tool_executor=_FakeToolExecutor([]),
+        prompt_builder=_FakePromptBuilder(),
+    )
+
+    events = list(
+        runner.run(
+            user_message="hello",
+            recorder=recorder,
+            user_id="u-1",
+            context={
+                "graph_id": recorder.graph_id,
+                "user_id": "u-1",
+                "_graph_recorder": recorder,
+                "_agent_run_ref": {
+                    "run_id": "run-123",
+                    "runtime_id": "rt-local",
+                    "source_of_truth": RUN_STATE_SOURCE_OF_TRUTH,
+                },
+            },
+        )
+    )
+
+    stage_events = [item for item in events if item.get("event") == "stage"]
+    assert stage_events
+    node_key = stage_events[0]["data"]["node_key"]
+    node = next(item for item in graph_service.nodes.values() if item["node_key"] == node_key)
+    assert node["config_json"]["run_ref"] == {
+        "run_id": "run-123",
+        "runtime_id": "rt-local",
+        "source_of_truth": RUN_STATE_SOURCE_OF_TRUTH,
+    }
+
+
 def test_runtime_graph_recorder_rehydrates_history_and_increments_turn():
     graph_service = _FakeExecutionGraphService()
     recorder = RuntimeGraphRecorder(

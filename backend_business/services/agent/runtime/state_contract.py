@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 
-SCRATCHPAD_STATE_VERSION = 2
+SCRATCHPAD_STATE_VERSION = 3
 SCRATCHPAD_STATE_BACKEND = "container_state_store"
-RUN_STATE_VERSION = 1
+RUN_STATE_VERSION = 2
 RUN_STATE_SOURCE_OF_TRUTH = "agent_runs"
 
 
@@ -21,4 +21,3 @@ def with_runtime_state_contract(
     merged.setdefault("run_state_version", RUN_STATE_VERSION)
     merged.setdefault("run_state_source_of_truth", RUN_STATE_SOURCE_OF_TRUTH)
     return merged
-

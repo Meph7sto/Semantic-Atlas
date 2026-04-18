@@ -15,6 +15,9 @@ from backend_business.services.agent.runtime.agent_runtime import (
     LocalAgentRuntime,
     RunRequest,
 )
+from backend_business.services.agent.runtime.state_contract import (
+    RUN_STATE_SOURCE_OF_TRUTH,
+)
 from backend_business.services.agent.runtime.scratchpad import Scratchpad
 from backend_business.services.agent.runtime.scratchpad_service import ScratchpadService
 from backend_business.services.agent.runtime.state_contract import (
@@ -49,7 +52,18 @@ class _FakeExecutionGraphService:
         return self.graphs.get(graph_id)
 
     def get_graph_detail(self, graph_id):
-        return {"graph": self.graphs.get(graph_id)}
+        graph = self.graphs.get(graph_id)
+        return {
+            "graph": graph,
+            "containers": [
+                {
+                    "graph_id": state_graph_id,
+                    "container_key": container_key,
+                }
+                for (state_graph_id, container_key), _row in self.container_states.items()
+                if state_graph_id == graph_id
+            ],
+        }
 
     def list_agent_runtime_bindings(
         self,
@@ -124,6 +138,11 @@ def test_local_agent_runtime_persists_run_lifecycle():
         memory_scope_ref="g-1:requirement_agent",
         tool_policy_id="policy-tools",
         quota_policy_id="quota-default",
+        quota_policy={"policy_id": "quota-default", "timeout_seconds": 5},
+        memory_policy={
+            "scope": "container",
+            "strict_memory_contract": True,
+        },
     )
 
     run_id = runtime.submit(request)
@@ -136,6 +155,121 @@ def test_local_agent_runtime_persists_run_lifecycle():
     assert persisted["status"] == "succeeded"
     assert persisted["output_ref"] == {"reply": "done"}
     assert persisted["usage_json"] == {"total_tokens": 99}
+
+
+def test_local_agent_runtime_enforces_strict_memory_contract():
+    service = _FakeExecutionGraphService()
+    runtime = LocalAgentRuntime(runtime_id="rt-local", execution_graph_service=service)
+
+    request = RunRequest(
+        graph_id="g-1",
+        subgraph_id="sg-1",
+        container_key="requirement_agent",
+        agent_type="requirement_agent",
+        input_payload={"runner": lambda: AgentRunResult(status="succeeded")},
+        memory_scope_ref="g-1:conductor",
+        tool_policy_id="policy-tools",
+        quota_policy_id="quota-default",
+        quota_policy={"policy_id": "quota-default", "timeout_seconds": 5},
+        memory_policy={
+            "scope": "container",
+            "strict_memory_contract": True,
+        },
+    )
+
+    run_id = runtime.submit(request)
+    result = runtime.await_result(run_id)
+
+    assert result.status == "failed"
+    assert result.error_code == "memory_scope_violation"
+    persisted = service.get_agent_run(run_id)
+    assert persisted["status"] == "failed"
+    assert persisted["error_code"] == "memory_scope_violation"
+
+
+def test_local_agent_runtime_enforces_quota_timeout():
+    service = _FakeExecutionGraphService()
+    runtime = LocalAgentRuntime(runtime_id="rt-local", execution_graph_service=service)
+
+    def _slow_runner():
+        import time
+
+        time.sleep(0.2)
+        return AgentRunResult(status="succeeded")
+
+    request = RunRequest(
+        graph_id="g-1",
+        subgraph_id="sg-1",
+        container_key="requirement_agent",
+        agent_type="requirement_agent",
+        input_payload={"runner": _slow_runner},
+        memory_scope_ref="g-1:requirement_agent",
+        tool_policy_id="policy-tools",
+        quota_policy_id="quota-default",
+        quota_policy={"policy_id": "quota-default", "timeout_seconds": 0.05},
+        memory_policy={"scope": "container", "strict_memory_contract": True},
+    )
+
+    run_id = runtime.submit(request)
+    result = runtime.await_result(run_id)
+
+    assert result.status == "timed_out"
+    assert result.error_code == "timed_out"
+    persisted = service.get_agent_run(run_id)
+    assert persisted["status"] == "timed_out"
+    assert persisted["error_code"] == "timed_out"
+
+
+def test_local_agent_runtime_enforces_max_concurrent_runs_per_policy():
+    service = _FakeExecutionGraphService()
+    runtime = LocalAgentRuntime(runtime_id="rt-local", execution_graph_service=service)
+    started = []
+    release = __import__("threading").Event()
+
+    def _blocking_runner():
+        started.append("started")
+        release.wait(timeout=1.0)
+        return AgentRunResult(status="succeeded")
+
+    request_one = RunRequest(
+        graph_id="g-1",
+        subgraph_id="sg-1",
+        container_key="requirement_agent",
+        agent_type="requirement_agent",
+        input_payload={"runner": _blocking_runner},
+        memory_scope_ref="g-1:requirement_agent",
+        tool_policy_id="policy-tools",
+        quota_policy_id="quota-default",
+        quota_policy={"policy_id": "quota-default", "timeout_seconds": 1, "max_concurrent_runs": 1},
+        memory_policy={"scope": "container", "strict_memory_contract": True},
+    )
+    request_two = RunRequest(
+        graph_id="g-1",
+        subgraph_id="sg-2",
+        container_key="requirement_agent",
+        agent_type="requirement_agent",
+        input_payload={"runner": lambda: AgentRunResult(status="succeeded")},
+        memory_scope_ref="g-1:requirement_agent",
+        tool_policy_id="policy-tools",
+        quota_policy_id="quota-default",
+        quota_policy={"policy_id": "quota-default", "timeout_seconds": 1, "max_concurrent_runs": 1},
+        memory_policy={"scope": "container", "strict_memory_contract": True},
+    )
+
+    run_id_one = runtime.submit(request_one)
+    thread = __import__("threading").Thread(target=lambda: list(runtime.stream(run_id_one)))
+    thread.start()
+    while not started:
+        pass
+
+    run_id_two = runtime.submit(request_two)
+    result_two = runtime.await_result(run_id_two)
+    release.set()
+    thread.join(timeout=1.0)
+
+    assert result_two.status == "failed"
+    assert result_two.error_code == "quota_exceeded"
+    assert service.get_agent_run(run_id_two)["error_code"] == "quota_exceeded"
 
 
 def test_agent_runtime_registry_falls_back_to_local_runtime():
@@ -180,24 +314,33 @@ def test_scratchpad_service_uses_container_state_store_with_graph_meta_fallback(
     assert service.graphs["g-1"]["meta_json"]["scratchpad_snapshot"]
 
 
-def test_scratchpad_service_does_not_fallback_to_graph_meta_for_versioned_graphs():
+def test_scratchpad_service_migrates_legacy_graph_meta_snapshot_once():
     service = _FakeExecutionGraphService()
-    service.graphs["g-1"]["meta_json"] = with_runtime_state_contract(
-        {
-            "scratchpad_snapshot": [
-                {
-                    "entry_type": "note",
-                    "content": "legacy only",
-                    "container_key": "conductor",
-                }
-            ]
-        }
-    )
+    service.graphs["g-1"]["meta_json"] = {
+        "scratchpad_snapshot": [
+            {
+                "entry_type": "note",
+                "content": "legacy only",
+                "container_key": "conductor",
+            }
+        ]
+    }
     scratchpad_service = ScratchpadService(execution_graph_service=service)
 
     restored = scratchpad_service.load("g-1")
 
-    assert restored.snapshot_all() == []
+    assert any(
+        entry.get("entry_type") == "note"
+        and entry.get("content") == "legacy only"
+        and entry.get("container_key") == "conductor"
+        for entry in restored.snapshot_all()
+    )
+    assert any(
+        entry.get("entry_type") == "note"
+        and entry.get("content") == "legacy only"
+        and entry.get("container_key") == "conductor"
+        for entry in service.container_states[("g-1", "conductor")]["state_json"]["scratchpad_snapshot"]
+    )
     assert service.graphs["g-1"]["meta_json"]["scratchpad_state_version"] == (
         SCRATCHPAD_STATE_VERSION
     )

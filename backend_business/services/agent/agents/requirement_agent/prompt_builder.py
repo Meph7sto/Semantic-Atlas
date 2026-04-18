@@ -9,8 +9,12 @@ from .payload_codec import serialize_prompt_payload
 
 
 class RequirementAgentPromptBuilder:
-    def build_tool_loop_system_prompt(self) -> str:
-        return (
+    def build_tool_loop_system_prompt(
+        self,
+        *,
+        context: dict[str, Any] | None = None,
+    ) -> str:
+        prompt = (
             "你是需求管理 Agent。你运行在当前单个项目内，只能使用提供的工具查询或修改需求。"
             "必须优先依赖工具结果，不得编造需求内容或状态。"
             "如果用户要求修改需求，只有在 requirement_id 明确时才允许调用 update_requirement_content。"
@@ -19,6 +23,10 @@ class RequirementAgentPromptBuilder:
             "工具返回是摘要结构；需要翻页时再继续调用列表或搜索工具。"
             "当工具足够回答用户时，直接给出简洁中文结论，不要输出 JSON。"
         )
+        extra_system_context = str((context or {}).get("_extra_system_context") or "").strip()
+        if extra_system_context:
+            prompt = f"{prompt}\n\n{extra_system_context}"
+        return prompt
 
     def build_tool_loop_user_message(
         self,

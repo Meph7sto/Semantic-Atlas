@@ -21,6 +21,11 @@ from backend_business.services.agent.runtime import (
     ScratchpadService,
     with_runtime_state_contract,
 )
+from backend_business.services.agent.experience import (
+    ExperienceOrchestrator,
+    resolve_experience_target,
+    resolve_experience_target_from_subgraph,
+)
 
 from .subgraph_runner import ContainerResult, SubgraphRunner
 from .subgraph_state import (
@@ -246,9 +251,13 @@ class GraphExecutor:
         instantiator: TopologyInstantiator | None = None,
         runner: SubgraphRunner | None = None,
         scratchpad_service: ScratchpadService | None = None,
+        experience_orchestrator: ExperienceOrchestrator | None = None,
     ) -> None:
         self._instantiator = instantiator or TopologyInstantiator()
-        self._runner = runner or SubgraphRunner()
+        self._experience_orchestrator = experience_orchestrator
+        self._runner = runner or SubgraphRunner(
+            experience_orchestrator=experience_orchestrator,
+        )
         self._scratchpad_service = scratchpad_service
 
     # -- public API -----------------------------------------------------------
@@ -451,6 +460,16 @@ class GraphExecutor:
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "suspended", actor,
             )
+            self._maybe_writeback_root_container_experience(
+                skeleton=skeleton,
+                graph_service=graph_service,
+                recorder=recorder,
+                scratchpad_snapshot=_safe_snapshot_all(scratchpad),
+                user_message=user_input,
+                final_conclusion=latest_output or None,
+                runtime_status="suspended",
+                final_error=None,
+            )
             return ExecutionResult(
                 status="suspended",
                 graph_id=skeleton.graph_id,
@@ -466,6 +485,16 @@ class GraphExecutor:
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "failed", actor,
             )
+            self._maybe_writeback_root_container_experience(
+                skeleton=skeleton,
+                graph_service=graph_service,
+                recorder=recorder,
+                scratchpad_snapshot=_safe_snapshot_all(scratchpad),
+                user_message=user_input,
+                final_conclusion=None,
+                runtime_status="failed",
+                final_error=str(exc),
+            )
             return ExecutionResult(
                 status="failed",
                 graph_id=skeleton.graph_id,
@@ -479,6 +508,16 @@ class GraphExecutor:
             )
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "failed", actor,
+            )
+            self._maybe_writeback_root_container_experience(
+                skeleton=skeleton,
+                graph_service=graph_service,
+                recorder=recorder,
+                scratchpad_snapshot=_safe_snapshot_all(scratchpad),
+                user_message=user_input,
+                final_conclusion=None,
+                runtime_status="failed",
+                final_error=f"resume 执行异常: {exc}",
             )
             return ExecutionResult(
                 status="failed",
@@ -494,6 +533,16 @@ class GraphExecutor:
         )
         _persist_graph_status(
             graph_service, skeleton.graph_id, "succeeded", actor,
+        )
+        self._maybe_writeback_root_container_experience(
+            skeleton=skeleton,
+            graph_service=graph_service,
+            recorder=recorder,
+            scratchpad_snapshot=container_result.scratchpad_store_snapshot,
+            user_message=user_input,
+            final_conclusion=container_result.conclusion,
+            runtime_status="succeeded",
+            final_error=None,
         )
         return ExecutionResult(
             status="succeeded",
@@ -671,6 +720,15 @@ class GraphExecutor:
             )
             result = yield from gen
         except Exception as exc:
+            self._maybe_writeback_normal_conversation_experience(
+                graph_id=graph_id,
+                graph_service=graph_service,
+                recorder=recorder,
+                stage_container_key=stage_container_key,
+                user_message=user_message,
+                tool_loop_result=None,
+                error=str(exc),
+            )
             _persist_graph_status(
                 graph_service, graph_id, "failed", actor,
             )
@@ -680,6 +738,15 @@ class GraphExecutor:
                 error=f"对话执行异常: {exc}",
             )
 
+        self._maybe_writeback_normal_conversation_experience(
+            graph_id=graph_id,
+            graph_service=graph_service,
+            recorder=recorder,
+            stage_container_key=stage_container_key,
+            user_message=user_message,
+            tool_loop_result=result,
+            error=None,
+        )
         _persist_graph_status(
             graph_service, graph_id, "succeeded", actor,
         )
@@ -741,6 +808,16 @@ class GraphExecutor:
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "suspended", actor,
             )
+            self._maybe_writeback_root_container_experience(
+                skeleton=skeleton,
+                graph_service=graph_service,
+                recorder=recorder,
+                scratchpad_snapshot=_safe_snapshot_all(scratchpad),
+                user_message=user_message,
+                final_conclusion=latest_output or None,
+                runtime_status="suspended",
+                final_error=None,
+            )
             return ExecutionResult(
                 status="suspended",
                 graph_id=skeleton.graph_id,
@@ -756,6 +833,16 @@ class GraphExecutor:
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "failed", actor,
             )
+            self._maybe_writeback_root_container_experience(
+                skeleton=skeleton,
+                graph_service=graph_service,
+                recorder=recorder,
+                scratchpad_snapshot=_safe_snapshot_all(scratchpad),
+                user_message=user_message,
+                final_conclusion=None,
+                runtime_status="failed",
+                final_error=str(exc),
+            )
             return ExecutionResult(
                 status="failed",
                 graph_id=skeleton.graph_id,
@@ -769,6 +856,16 @@ class GraphExecutor:
             )
             _persist_graph_status(
                 graph_service, skeleton.graph_id, "failed", actor,
+            )
+            self._maybe_writeback_root_container_experience(
+                skeleton=skeleton,
+                graph_service=graph_service,
+                recorder=recorder,
+                scratchpad_snapshot=_safe_snapshot_all(scratchpad),
+                user_message=user_message,
+                final_conclusion=None,
+                runtime_status="failed",
+                final_error=f"执行异常: {exc}",
             )
             return ExecutionResult(
                 status="failed",
@@ -785,6 +882,16 @@ class GraphExecutor:
         _persist_graph_status(
             graph_service, skeleton.graph_id, "succeeded", actor,
         )
+        self._maybe_writeback_root_container_experience(
+            skeleton=skeleton,
+            graph_service=graph_service,
+            recorder=recorder,
+            scratchpad_snapshot=container_result.scratchpad_store_snapshot,
+            user_message=user_message,
+            final_conclusion=container_result.conclusion,
+            runtime_status="succeeded",
+            final_error=None,
+        )
         return ExecutionResult(
             status="succeeded",
             graph_id=skeleton.graph_id,
@@ -795,6 +902,91 @@ class GraphExecutor:
         if self._scratchpad_service is not None:
             return self._scratchpad_service
         return ScratchpadService(execution_graph_service=graph_service)
+
+    def _maybe_writeback_normal_conversation_experience(
+        self,
+        *,
+        graph_id: str,
+        graph_service: Any,
+        recorder: Any,
+        stage_container_key: str,
+        user_message: str,
+        tool_loop_result: ToolLoopResult | None,
+        error: str | None,
+    ) -> None:
+        if self._experience_orchestrator is None:
+            return
+        target = resolve_experience_target(
+            container_key=stage_container_key,
+            node_type="llm",
+            context={"prompt_builder_kind": "normal_conversation"},
+        )
+        self._experience_orchestrator.safe_process_outcome(
+            target=target,
+            graph_id=graph_id,
+            graph_service=graph_service,
+            recorder=recorder,
+            scratchpad_snapshot=[],
+            container_key=stage_container_key,
+            user_message=user_message,
+            task_description="无需拓扑展开的直接对话处理。",
+            final_conclusion=(
+                tool_loop_result.tool_loop_reply if tool_loop_result is not None else None
+            ),
+            runtime_status="failed" if error else "succeeded",
+            final_error=error,
+        )
+
+    def _maybe_writeback_root_container_experience(
+        self,
+        *,
+        skeleton: RuntimeGraphSkeleton,
+        graph_service: Any,
+        recorder: Any,
+        scratchpad_snapshot: list[dict[str, Any]],
+        user_message: str,
+        final_conclusion: Any,
+        runtime_status: str,
+        final_error: str | None,
+    ) -> None:
+        if self._experience_orchestrator is None:
+            return
+        entry_container = skeleton.get_entry_container()
+        entry_subgraphs = skeleton.get_subgraphs_for_container(entry_container.container_id)
+        first_subgraph = entry_subgraphs[0] if entry_subgraphs else None
+        target = (
+            resolve_experience_target_from_subgraph(
+                container=entry_container,
+                subgraph=first_subgraph,
+            )
+            if first_subgraph is not None
+            else resolve_experience_target(
+                container_key=entry_container.container_key,
+                node_type="llm",
+            )
+        )
+        if target is None:
+            return
+        task_description = (
+            str(first_subgraph.task_description or "").strip()
+            if first_subgraph is not None
+            else f"{entry_container.container_key} 入口容器执行闭环。"
+        )
+        subgraph_key = first_subgraph.subgraph_key if first_subgraph is not None else None
+        self._experience_orchestrator.safe_process_outcome(
+            target=target,
+            graph_id=skeleton.graph_id,
+            graph_service=graph_service,
+            recorder=recorder,
+            scratchpad_snapshot=scratchpad_snapshot,
+            container_key=entry_container.container_key,
+            subgraph_key=subgraph_key,
+            user_message=user_message,
+            task_description=task_description or f"{entry_container.container_key} 入口容器执行闭环。",
+            final_conclusion=final_conclusion,
+            runtime_status=runtime_status,
+            final_error=final_error,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1194,3 +1386,15 @@ def _latest_scratchpad_output(scratchpad: Any) -> str:
     if not entries:
         return ""
     return str(entries[-1].content or "").strip()
+
+
+def _safe_snapshot_all(scratchpad: Any) -> list[dict[str, Any]]:
+    snapshot_all = getattr(scratchpad, "snapshot_all", None)
+    if callable(snapshot_all):
+        try:
+            payload = snapshot_all()
+        except Exception:
+            payload = []
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+    return []

@@ -21,6 +21,13 @@ from backend_business.services.agent.agents.requirement_classification_agent.pro
 from .prompt_builder import SessionControllerPromptBuilder
 
 
+def _append_extra_system_context(base_prompt: str, context: dict[str, Any]) -> str:
+    extra_system_context = str(context.get("_extra_system_context") or "").strip()
+    if not extra_system_context:
+        return base_prompt
+    return f"{base_prompt}\n\n{extra_system_context}"
+
+
 class SessionControllerDecisionGraphPromptBuilder:
     """Decision-stage prompt builder for the GraphExecutor migration path."""
 
@@ -29,7 +36,8 @@ class SessionControllerDecisionGraphPromptBuilder:
 
     def build_system_prompt(self, *, context: dict[str, Any]) -> str:
         base_prompt = self._base.build_system_prompt(context=context)
-        return (
+        return _append_extra_system_context(
+            (
             f"{base_prompt}\n\n"
             "你当前处于执行图中的“总控决策阶段”。\n"
             "本阶段结束时不要直接输出 JSON 文本作为 assistant 回复。\n"
@@ -45,6 +53,8 @@ class SessionControllerDecisionGraphPromptBuilder:
             "6. 如果该 JSON 的 `should_suspend` 为 false 且不需要 invoke，则把 `route_key` 设为 `reply`。\n"
             "7. 不要输出 Markdown、代码块或额外解释；结束阶段只能通过 complete_phase。\n"
             "8. `context` 字段可选；如本轮已有可复用的中间上下文（例如 write_result、approval_result），可放入其中。"
+            ),
+            context,
         )
 
     def build_user_message(self, *, user_message: str, context: dict[str, Any]) -> str:
@@ -91,8 +101,8 @@ class SessionControllerReplyGraphPromptBuilder:
                 "完成后必须调用 complete_phase，并把最终回复文本写入 `conclusion`。"
             )
         if scratchpad_text:
-            return f"{instructions}\n\n{scratchpad_text}"
-        return instructions
+            instructions = f"{instructions}\n\n{scratchpad_text}"
+        return _append_extra_system_context(instructions, context)
 
     def build_user_message(self, *, user_message: str, context: dict[str, Any]) -> str:
         return json.dumps(
@@ -124,11 +134,13 @@ class SessionControllerRequirementDelegatePromptBuilder:
         self._base = RequirementAgentPromptBuilder()
 
     def build_system_prompt(self, *, context: dict[str, Any]) -> str:
-        base = self._base.build_tool_loop_system_prompt()
+        base_context = dict(context)
+        base_context.pop("_extra_system_context", None)
+        base = self._base.build_tool_loop_system_prompt(context=base_context)
         scratchpad_text = context.get("_scratchpad_prompt_text") or ""
         if scratchpad_text:
             base += f"\n\n{scratchpad_text}"
-        return base
+        return _append_extra_system_context(base, context)
 
     def build_user_message(self, *, user_message: str, context: dict[str, Any]) -> str:
         return self._base.build_tool_loop_user_message(
@@ -163,11 +175,13 @@ class SessionControllerConflictDelegatePromptBuilder:
         self._base = ConflictDetectionPromptBuilder()
 
     def build_system_prompt(self, *, context: dict[str, Any]) -> str:
-        base = self._base.build_system_prompt(context=context)
+        base_context = dict(context)
+        base_context.pop("_extra_system_context", None)
+        base = self._base.build_system_prompt(context=base_context)
         scratchpad_text = context.get("_scratchpad_prompt_text") or ""
         if scratchpad_text:
-            return f"{base}\n\n{scratchpad_text}"
-        return base
+            base = f"{base}\n\n{scratchpad_text}"
+        return _append_extra_system_context(base, context)
 
     def build_user_message(self, *, user_message: str, context: dict[str, Any]) -> str:
         return self._base.build_user_message(user_message=user_message, context=context)
@@ -193,11 +207,13 @@ class SessionControllerClassificationDelegatePromptBuilder:
         self._base = RequirementClassificationPromptBuilder()
 
     def build_system_prompt(self, *, context: dict[str, Any]) -> str:
-        base = self._base.build_system_prompt(context=context)
+        base_context = dict(context)
+        base_context.pop("_extra_system_context", None)
+        base = self._base.build_system_prompt(context=base_context)
         scratchpad_text = context.get("_scratchpad_prompt_text") or ""
         if scratchpad_text:
-            return f"{base}\n\n{scratchpad_text}"
-        return base
+            base = f"{base}\n\n{scratchpad_text}"
+        return _append_extra_system_context(base, context)
 
     def build_user_message(self, *, user_message: str, context: dict[str, Any]) -> str:
         return self._base.build_user_message(user_message=user_message, context=context)

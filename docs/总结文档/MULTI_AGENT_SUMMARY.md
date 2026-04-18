@@ -110,7 +110,7 @@ Scratchpad 是当前容器级共享工作记忆：
 
 - 同一容器内的多个 subgraph 可读写。
 - 常见条目类型包括 `note`、`tool_excerpt`、`stage_output`。
-- Session controller 会通过 `ScratchpadService` 持久化 scratchpad；运行时主存储已切到 `container_state_store`，graph meta 中保留 `scratchpad_snapshot` 作为兼容快照。
+- Session controller 会通过 `ScratchpadService` 持久化 scratchpad；运行时主存储已切到 `container_state_store`，旧 graph meta 的 `scratchpad_snapshot` 仅在首次读取时迁移到 state store，之后只保留为派生视图。
 - 新一轮 graph 可通过 `prev_graph_id` 继承上一轮 scratchpad。
 
 ### 3.4 执行状态
@@ -125,7 +125,7 @@ Scratchpad 是当前容器级共享工作记忆：
 | `succeeded` | 正常完成 |
 | `failed` | 执行失败 |
 
-当前多 Agent 的运行边界是 in-process runtime binding + policy enforcement，不是独立 sandbox runtime。
+当前多 Agent 的运行边界是 governed local runtime：`RunRequest` 会下发 quota / memory policy 快照，运行时显式执行 timeout、并发额度与 strict memory contract，`agent_runs` 负责权威 run lifecycle，execution graph 通过 `run_ref` 追踪对应 run。
 
 **Subgraph 级状态：**
 

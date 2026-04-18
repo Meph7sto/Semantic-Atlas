@@ -748,6 +748,27 @@ class RuntimeGraphRecorder:
                 },
             )
 
+    def bind_stage_run_ref(
+        self,
+        node_key: str,
+        *,
+        created_by: str,
+        run_ref: dict[str, Any],
+    ) -> None:
+        """Attach the authoritative agent run reference to a trace node."""
+        with self._lock:
+            stage_node = self._nodes[node_key]
+            self._update_stage_config(
+                stage_node=stage_node,
+                created_by=created_by,
+                mutate=lambda config: config.update(
+                    {
+                        "run_ref": _safe_json(run_ref),
+                        "run_state_source_of_truth": "agent_runs",
+                    }
+                ),
+            )
+
     def fail_graph(self, *, created_by: str, error: str, final_reply: str | None = None) -> None:
         self._service.patch_graph_meta(
             self.graph_id,

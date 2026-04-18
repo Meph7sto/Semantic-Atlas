@@ -17,6 +17,7 @@ from backend_business.services.agent.execution.graph_executor import (
     ExecutionResult,
     GraphExecutor,
 )
+from backend_business.services.agent.experience import ExperienceOrchestrator
 from backend_business.services.agent.runtime.binding_bootstrap import (
     ensure_runtime_bindings,
     extract_tool_names,
@@ -66,6 +67,7 @@ class ConflictDetectionAgentService:
                 "container_key": "conflict_detection_agent",
                 "agent_type": "conflict_detection_agent",
                 "runtime_profile": "default",
+                "implementation_type": "local",
                 "capability_policy_json": {
                     "policy_id": "conflict_detection::runtime",
                     "scope": "conflict_detection_agent",
@@ -74,8 +76,14 @@ class ConflictDetectionAgentService:
                 "quota_policy_json": {
                     "policy_id": "conflict_detection::runtime::quota",
                     "max_rounds": self.MAX_TOOL_CALL_ROUNDS,
+                    "timeout_seconds": 180,
+                    "max_concurrent_runs": 2,
+                    "max_parallel_runs_per_scope": 1,
                 },
-                "memory_policy_json": {"scope": "container"},
+                "memory_policy_json": {
+                    "scope": "container",
+                    "strict_memory_contract": True,
+                },
             }
         ]
         ensure_runtime_bindings(self.execution_graph_service, binding_specs)
@@ -451,6 +459,7 @@ class ConflictDetectionAgentService:
             max_tool_call_rounds=max_tool_call_rounds or self.MAX_TOOL_CALL_ROUNDS,
             stage_container_key=container_key,
             node_key_prefix=node_key_prefix,
+            experience_orchestrator=ExperienceOrchestrator(),
         )
         result = yield from runner.run(
             recorder=recorder,
@@ -530,7 +539,9 @@ class ConflictDetectionAgentService:
         self._ensure_graph_runtime_bindings()
         yield {"event": "graph", "data": {"graph_id": recorder.graph_id}}
 
-        executor = GraphExecutor()
+        executor = GraphExecutor(
+            experience_orchestrator=ExperienceOrchestrator(),
+        )
         assistant_content = ""
 
         try:

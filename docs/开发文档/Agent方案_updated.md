@@ -212,7 +212,7 @@ call，将results追加到当前subgraph的上下文，随即进入下一轮循�
 
 对于invoke类型的subgraph，推进过程不涉及LLM推理。subgraph激活后，运行时直接从start节点读取payload，沿call边将其并发投递给目标container的入口subgraph。invoke subgraph自身在整个委托期间保持Running；对应graph会派生为`DELEGATING`，用于表达“当前存在委托执行中”的图级聚合态，而不是独立的subgraph lifecycle。若并行分支中出现首个错误，运行时会对其余未完成分支发出协作式cancel，并在等待线程收尾后只上抛首个主错误；已写入的trace/run记录保留，不做回滚。invoke类型的subgraph内部通常只有start、invoke、end三个执行节点，执行轨迹整体仍是可推理且可复现的。
 
-需要额外说明的是，当前多Agent运行边界采用的是in-process runtime binding + policy enforcement。容器通过runtime binding、container级memory scope与tool capability allowlist进行约束，但这不是独立sandbox runtime；权限、超时、崩溃传播与资源配额仍主要受共享宿主进程治理。
+需要额外说明的是，当前多Agent运行边界已经收口为受治理的 local runtime。容器通过runtime binding、container级memory scope、tool capability allowlist、执行期 quota policy 与 timeout contract 进行约束；run lifecycle 以 `agent_runs` 为权威 source of truth，execution graph 仅保存带 `run_ref` 的 trace。当前默认实现仍不是独立宿主级 sandbox，但运行时治理边界已不再依赖隐式共享宿主语义。
 
 对于handoff类型的subgraph，运行时在激活后将当前上下文整理呈现给用户，将执行图状态切换为Suspended。用户输入到达后，新输入作为增量消息注入subgraph的上下文，subgraph标记为Completed，执行图恢复为Running并继续推进。
 

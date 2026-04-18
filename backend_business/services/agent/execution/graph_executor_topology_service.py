@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from backend_business.services.ai_proxy import ai_proxy
+from backend_business.services.agent.experience import ExperienceOrchestrator
 from backend_business.services.agent.runtime import (
     ContainerConfig,
     RuntimeGraphRecorder,
@@ -47,7 +48,9 @@ class GraphExecutorTopologyRuntimeService:
         tool_executor: Any | None = None,
     ) -> None:
         self._service = execution_graph_service
-        self._executor = graph_executor or GraphExecutor()
+        self._executor = graph_executor or GraphExecutor(
+            experience_orchestrator=ExperienceOrchestrator(),
+        )
         self._ai_proxy = ai_proxy_client or ai_proxy
         self._tool_executor = tool_executor or _NoopToolExecutor()
 

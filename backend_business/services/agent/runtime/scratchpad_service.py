@@ -12,7 +12,7 @@ from .state_contract import (
 
 
 class ScratchpadService:
-    """Loads and saves Scratchpad snapshots from execution-graph metadata."""
+    """Loads and saves Scratchpad snapshots from container state store."""
 
     META_KEY = "scratchpad_snapshot"
     ENTRY_COUNT_KEY = "scratchpad_entry_count"
@@ -28,17 +28,17 @@ class ScratchpadService:
         supports_state_store = callable(
             getattr(self._service, "list_container_states", None)
         )
-        state_snapshot = (
-            self._load_state_snapshot(graph_id)
-            if supports_state_store
-            else []
-        )
+        state_snapshot = self._load_state_snapshot(graph_id) if supports_state_store else []
+        if supports_state_store and not state_snapshot:
+            migrated_snapshot = self._migrate_legacy_snapshot_to_state_store(
+                graph_id,
+                graph=graph,
+            )
+            if migrated_snapshot:
+                state_snapshot = self._load_state_snapshot(graph_id)
         if state_snapshot:
             pad = Scratchpad.from_store_snapshot(state_snapshot)
-        elif self._should_fallback_to_graph_meta(
-            graph,
-            supports_state_store=supports_state_store,
-        ):
+        elif not supports_state_store:
             meta = dict((graph or {}).get("meta_json") or {})
             pad = Scratchpad.from_store_snapshot(meta.get(self.META_KEY) or [])
         else:
@@ -83,21 +83,29 @@ class ScratchpadService:
             updated_by=updated_by,
         )
 
-    @staticmethod
-    def _should_fallback_to_graph_meta(
-        graph: dict[str, Any] | None,
+    def _migrate_legacy_snapshot_to_state_store(
+        self,
+        graph_id: str,
         *,
-        supports_state_store: bool,
-    ) -> bool:
-        if not supports_state_store:
-            return True
+        graph: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
         meta = dict((graph or {}).get("meta_json") or {})
-        raw_version = meta.get("scratchpad_state_version")
-        try:
-            version = int(raw_version)
-        except (TypeError, ValueError):
-            return True
-        return version < SCRATCHPAD_STATE_VERSION
+        legacy_snapshot = list(meta.get(self.META_KEY) or [])
+        if not legacy_snapshot:
+            self._stamp_runtime_state_contract(graph_id)
+            return []
+
+        normalized_snapshot = Scratchpad.from_store_snapshot(legacy_snapshot).snapshot_all()
+        self._save_container_state_snapshot(
+            graph_id=graph_id,
+            snapshot=normalized_snapshot,
+            updated_by="scratchpad-migration",
+        )
+        self._stamp_runtime_state_contract(
+            graph_id,
+            snapshot=normalized_snapshot,
+        )
+        return normalized_snapshot
 
     def _get_graph(self, graph_id: str) -> dict[str, Any] | None:
         get_execution_graph = getattr(self._service, "get_execution_graph", None)
@@ -113,6 +121,26 @@ class ScratchpadService:
                 return detail.get("graph")
 
         return None
+
+    def _stamp_runtime_state_contract(
+        self,
+        graph_id: str,
+        *,
+        snapshot: list[dict[str, Any]] | None = None,
+    ) -> None:
+        patch_graph_meta = getattr(self._service, "patch_graph_meta", None)
+        if not callable(patch_graph_meta):
+            return
+        patch_graph_meta(
+            graph_id,
+            with_runtime_state_contract(
+                {
+                    self.META_KEY: list(snapshot or []),
+                    self.ENTRY_COUNT_KEY: len(snapshot or []),
+                }
+            ),
+            updated_by="scratchpad-migration",
+        )
 
     def _load_state_snapshot(self, graph_id: str) -> list[dict[str, Any]]:
         list_container_states = getattr(self._service, "list_container_states", None)
