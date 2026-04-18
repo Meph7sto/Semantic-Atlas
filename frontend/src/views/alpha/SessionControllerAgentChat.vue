@@ -14,6 +14,7 @@ import {
 
 import { manageApi } from '@/api/project'
 import { sessionControllerChatApi } from '@/api/sessionControllerChat'
+import ExperienceSkillPanel from '@/components/alpha/ExperienceSkillPanel.vue'
 import ExecutionGraphCanvas from '@/components/alpha/ExecutionGraphCanvas.vue'
 import NodeDetailPanel from '@/components/alpha/NodeDetailPanel.vue'
 import SubgraphTracePanel from '@/components/alpha/SubgraphTracePanel.vue'
@@ -63,6 +64,15 @@ let graphChainRefreshInFlight = null
 const currentSession = computed(() => {
   return sessions.value.find((item) => item.session_id === sessionId.value) || null
 })
+
+const activeGraphDetail = computed(() => {
+  if (!sessionGraphChain.value.length) return null
+  return sessionGraphChain.value.find((detail) => detail?.graph?.graph_id === activeGraphId.value)
+    || sessionGraphChain.value[sessionGraphChain.value.length - 1]
+    || null
+})
+
+const activeRuntimeGraph = computed(() => activeGraphDetail.value?.graph || null)
 
 const selectedNode = computed(() => {
   return graphDetail.value.nodes.find((node) => node.node_id === selectedCanvasId.value) || null
@@ -983,6 +993,10 @@ onBeforeUnmount(() => {
       <div class="flex flex-col gap-6">
 
         <section class="flex flex-col gap-6 shrink-0 pb-8">
+          <ExperienceSkillPanel
+            :graph="activeRuntimeGraph"
+          />
+
           <div class="flex flex-col overflow-hidden border border-stone-200 bg-white/90 shadow-[0_24px_80px_rgba(15,23,42,0.08)] h-[1200px]">
             <div class="shrink-0 flex items-center justify-between border-b border-stone-200 px-5 py-4">
               <h2 class="flex items-center gap-2 text-lg font-semibold text-stone-900">
