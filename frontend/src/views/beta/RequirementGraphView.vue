@@ -31,6 +31,14 @@
             <button type="button" class="action-btn" :disabled="isLoadingGraph" @click="loadGraph">
               {{ isLoadingGraph ? '生成中' : '刷新图谱' }}
             </button>
+            <button
+              type="button"
+              class="action-btn infer-btn"
+              :disabled="isLoadingGraph || isInferringGraph"
+              @click="inferGraph"
+            >
+              {{ isInferringGraph ? '推理中' : '推理关系' }}
+            </button>
           </div>
         </section>
 
@@ -48,6 +56,14 @@
               <div class="metric-item">
                 <span>关系边</span>
                 <strong>{{ stats.edge_count || 0 }}</strong>
+              </div>
+              <div class="metric-item">
+                <span>已有分析关系</span>
+                <strong>{{ stats.strong_edge_count || 0 }}</strong>
+              </div>
+              <div class="metric-item">
+                <span>推理关系</span>
+                <strong>{{ stats.inferred_edge_count || 0 }}</strong>
               </div>
             </div>
 
@@ -84,28 +100,97 @@
             </div>
 
             <div class="legend-block compact-block">
-              <h3>关系类型</h3>
-              <div v-for="edge in edgeLegend" :key="edge.type" class="legend-row">
+              <div class="block-title-row">
+                <h3>关系类型</h3>
+                <button
+                  type="button"
+                  class="clear-filter"
+                  :class="{ active: selectedEdgeType === '__all__' }"
+                  @click="selectEdgeType('__all__')"
+                >
+                  全部
+                </button>
+              </div>
+              <button
+                v-for="edge in edgeLegend"
+                :key="edge.type"
+                type="button"
+                class="legend-row legend-button"
+                :class="{ active: selectedEdgeType === edge.type }"
+                @click="selectEdgeType(edge.type)"
+              >
                 <span class="legend-line" :style="{ background: edge.color }"></span>
                 <span>{{ edge.label }}</span>
                 <b>{{ stats.edge_counts?.[edge.type] || 0 }}</b>
+              </button>
+            </div>
+
+            <div class="legend-block compact-block">
+              <div class="block-title-row">
+                <h3>关系筛选</h3>
+                <button type="button" class="clear-filter" @click="resetEdgeFilters">
+                  重置
+                </button>
               </div>
+              <div class="filter-row">
+                <button
+                  type="button"
+                  class="filter-chip"
+                  :class="{ active: selectedSourceScope === '__all__' }"
+                  @click="selectSourceScope('__all__')"
+                >
+                  全部来源
+                </button>
+                <button
+                  type="button"
+                  class="filter-chip"
+                  :class="{ active: selectedSourceScope === 'analysis' }"
+                  @click="selectSourceScope('analysis')"
+                >
+                  仅已有分析
+                </button>
+                <button
+                  type="button"
+                  class="filter-chip"
+                  :class="{ active: selectedSourceScope === 'inferred' }"
+                  @click="selectSourceScope('inferred')"
+                >
+                  仅推理关系
+                </button>
+              </div>
+              <label class="confidence-toggle">
+                <input v-model="highConfidenceOnly" type="checkbox" />
+                <span>仅看高置信度关系（>= 0.75）</span>
+              </label>
+              <p class="legend-hint">支持按来源、关系类型和置信度快速聚焦图谱。</p>
             </div>
 
             <div class="detail-block">
-              <h3>{{ selectedNode ? '节点详情' : '图谱读取' }}</h3>
-              <template v-if="selectedNode">
+              <h3>{{ selectedEdge ? '关系详情' : selectedNode ? '节点详情' : '图谱读取' }}</h3>
+              <template v-if="selectedEdge">
+                <div class="detail-title">{{ edgeLabel(selectedEdge.type) }}</div>
+                <p class="detail-kind">
+                  {{ resolveNodeLabel(selectedEdge.source) }} → {{ resolveNodeLabel(selectedEdge.target) }}
+                </p>
+                <dl>
+                  <div v-for="item in selectedEdgeDetails" :key="item.key" class="detail-pair">
+                    <dt>{{ item.label }}</dt>
+                    <dd>{{ item.value }}</dd>
+                  </div>
+                </dl>
+              </template>
+              <template v-else-if="selectedNode">
                 <div class="detail-title">{{ selectedNode.label }}</div>
                 <p class="detail-kind">{{ selectedNode.kind === 'stakeholder' ? '利益相关方' : '需求' }}</p>
                 <dl>
-                  <template v-for="item in selectedDetails" :key="item.key">
+                  <div v-for="item in selectedNodeDetails" :key="item.key" class="detail-pair">
                     <dt>{{ item.label }}</dt>
                     <dd>{{ item.value }}</dd>
-                  </template>
+                  </div>
                 </dl>
               </template>
               <p v-else class="detail-empty">
-                点击图中的节点查看需求内容、分类、验证约束或利益相关方角色。
+                点击图中的节点或关系，查看需求内容、验证约束、角色信息和推理依据。
               </p>
             </div>
           </aside>
@@ -116,7 +201,10 @@
               选择项目后生成需求图谱。
             </div>
             <div v-else-if="isLoadingGraph" class="state-panel">
-              正在融合追溯、冲突、分类和利益相关方关系。
+              正在生成需求图谱关系（含大模型推理）。
+            </div>
+            <div v-else-if="isInferringGraph" class="state-panel">
+              正在使用大模型推理需求图谱关系。
             </div>
             <div ref="chartContainer" class="graph-chart"></div>
           </div>
@@ -141,10 +229,15 @@ const selectedProjectId = ref(localStorage.getItem('lastProjectId') || '')
 const sessionId = ref(localStorage.getItem('lastSessionId') || '')
 const isLoadingProjects = ref(false)
 const isLoadingGraph = ref(false)
+const isInferringGraph = ref(false)
 const graphError = ref('')
 const graphData = ref({ nodes: [], edges: [], stats: {} })
 const selectedNode = ref(null)
+const selectedEdge = ref(null)
 const selectedCategory = ref('__all__')
+const selectedEdgeType = ref('__all__')
+const selectedSourceScope = ref('__all__')
+const highConfidenceOnly = ref(false)
 const chartContainer = ref(null)
 let chart = null
 let resizeObserver = null
@@ -169,10 +262,18 @@ const edgeLegend = [
   { type: 'DEPENDS_ON', label: '依赖', color: '#f59e0b' },
   { type: 'CONFLICTS_WITH', label: '冲突', color: '#ef4444' },
   { type: 'SIMILAR_TO', label: '同类相似', color: '#22c55e' },
+  { type: 'INCLUDES', label: '包含', color: '#0f766e' },
+  { type: 'EXTENDS', label: '扩展', color: '#3b82f6' },
+  { type: 'IMPACTS', label: '影响', color: '#14b8a6' },
+  { type: 'VALIDATES_WITH', label: '验证关联', color: '#65a30d' },
   { type: 'RAISES', label: '提出', color: '#14b8a6' },
   { type: 'OWNS', label: '负责', color: '#6366f1' },
-  { type: 'AFFECTED_BY', label: '参与变更', color: '#64748b' },
+  { type: 'AFFECTED_BY', label: '受影响', color: '#64748b' },
+  { type: 'APPROVES', label: '审批', color: '#2f6fed' },
+  { type: 'BENEFITS_FROM', label: '受益', color: '#22c55e' },
+  { type: 'OPPOSES', label: '反对', color: '#f97316' },
   { type: 'INTEREST_CONFLICTS_WITH', label: '利益冲突', color: '#e11d48' },
+  { type: 'COLLABORATES_WITH', label: '协作', color: '#0ea5e9' },
 ]
 
 const stats = computed(() => graphData.value?.stats || {})
@@ -188,7 +289,7 @@ const classificationLegend = computed(() =>
     .sort((a, b) => b.count - a.count),
 )
 
-const selectedDetails = computed(() => {
+const selectedNodeDetails = computed(() => {
   const props = selectedNode.value?.properties || {}
   const rows = [
     ['level', '层级'],
@@ -196,13 +297,37 @@ const selectedDetails = computed(() => {
     ['category', '分类'],
     ['status', '状态'],
     ['priority', '优先级'],
+    ['source', '来源'],
     ['component', '目标模块'],
+    ['target_modules', '目标模块'],
+    ['validation_rules', '验证约束'],
     ['role', '角色'],
-    ['authority', '权限画像'],
+    ['roles', '角色集合'],
+    ['department', '部门'],
+    ['title', '岗位'],
+    ['inference_reason', '推理依据'],
+    ['inference_model', '推理模型'],
     ['content', '内容'],
   ]
   return rows
     .map(([key, label]) => ({ key, label, value: formatValue(props[key]) }))
+    .filter(item => item.value)
+})
+
+const selectedEdgeDetails = computed(() => {
+  const props = selectedEdge.value?.properties || {}
+  const rows = [
+    ['type', '关系类型', edgeLabel(selectedEdge.value?.type)],
+    ['source_node', '起点', resolveNodeLabel(selectedEdge.value?.source)],
+    ['target_node', '终点', resolveNodeLabel(selectedEdge.value?.target)],
+    ['source_kind', '关系来源', edgeSourceLabel(selectedEdge.value)],
+    ['confidence', '置信度', formatConfidence(selectedEdge.value?.weight)],
+    ['reason', '推理依据', formatValue(props.reason)],
+    ['source', '来源明细', formatValue(props.source)],
+    ['model', '推理模型', formatValue(props.model)],
+  ]
+  return rows
+    .map(([key, label, preset]) => ({ key, label, value: preset || '' }))
     .filter(item => item.value)
 })
 
@@ -236,6 +361,7 @@ async function syncProjectSession() {
 async function loadGraph() {
   graphError.value = ''
   selectedNode.value = null
+  selectedEdge.value = null
   selectedCategory.value = '__all__'
   if (!selectedProjectId.value && !sessionId.value) {
     graphError.value = '请选择项目或填写 Session ID'
@@ -247,6 +373,9 @@ async function loadGraph() {
       projectId: selectedProjectId.value,
       sessionId: sessionId.value,
       limit: 900,
+      infer: true,
+      inferenceLimit: 48,
+      model: 'deepseek-reasoner',
     })
     graphData.value = resp?.data || { nodes: [], edges: [], stats: {} }
     await nextTick()
@@ -260,6 +389,33 @@ async function loadGraph() {
   }
 }
 
+async function inferGraph() {
+  graphError.value = ''
+  selectedNode.value = null
+  selectedEdge.value = null
+  if (!selectedProjectId.value && !sessionId.value) {
+    graphError.value = '请选择项目或填写 Session ID'
+    return
+  }
+  isInferringGraph.value = true
+  try {
+    const resp = await requirementGraphApi.inferGraph({
+      projectId: selectedProjectId.value,
+      sessionId: sessionId.value,
+      limit: 80,
+      inferenceLimit: 48,
+      model: 'deepseek-reasoner',
+    })
+    graphData.value = resp?.data || { nodes: [], edges: [], stats: {} }
+    await nextTick()
+    renderGraph()
+  } catch (err) {
+    graphError.value = err.message || '需求图谱推理失败'
+  } finally {
+    isInferringGraph.value = false
+  }
+}
+
 function initChart() {
   if (!chartContainer.value) return
   if (chart) chart.dispose()
@@ -267,6 +423,12 @@ function initChart() {
   chart.on('click', params => {
     if (params.dataType === 'node') {
       selectedNode.value = params.data.raw
+      selectedEdge.value = null
+      return
+    }
+    if (params.dataType === 'edge') {
+      selectedEdge.value = params.data.raw
+      selectedNode.value = null
     }
   })
   resizeObserver = new ResizeObserver(() => chart?.resize())
@@ -303,7 +465,7 @@ function renderGraph() {
         const raw = params.data?.raw
         if (!raw) return params.name
         if (params.dataType === 'edge') {
-          return `${raw.label}<br/>${raw.type}`
+          return `${edgeLabel(raw.type)}<br/>${edgeSourceLabel(raw)}<br/>置信度 ${formatConfidence(raw.weight)}`
         }
         const kind = raw.kind === 'stakeholder' ? '利益相关方' : '需求'
         const level = raw.properties?.level || raw.group || ''
@@ -352,12 +514,7 @@ function renderGraph() {
           target: edge.target,
           label: { show: false },
           raw: edge,
-          lineStyle: {
-            color: edgeColor(edge.type),
-            width: Math.max(1.2, (edge.weight || 0.5) * 3),
-            opacity: edge.type === 'CONFLICTS_WITH' ? 0.9 : 0.66,
-            curveness: edge.type === 'CONFLICTS_WITH' ? 0.22 : 0.1,
-          },
+          lineStyle: edgeLineStyle(edge),
         })),
         edgeSymbol: ['none', 'arrow'],
         edgeSymbolSize: [0, 9],
@@ -425,7 +582,21 @@ function levelBorderColor(node) {
 }
 
 function filterGraph(nodes, edges) {
-  if (selectedCategory.value === '__all__') return { nodes, edges }
+  const filteredEdges = edges.filter(edge => edgeMatchesFilters(edge))
+  if (selectedCategory.value === '__all__') {
+    if (
+      selectedEdgeType.value === '__all__'
+      && selectedSourceScope.value === '__all__'
+      && !highConfidenceOnly.value
+    ) {
+      return { nodes, edges: filteredEdges }
+    }
+    const visibleIds = new Set(filteredEdges.flatMap(edge => [edge.source, edge.target]))
+    return {
+      nodes: nodes.filter(node => visibleIds.has(node.id)),
+      edges: filteredEdges,
+    }
+  }
   const selectedRequirementIds = new Set(
     nodes
       .filter(node => node.kind === 'requirement' && node.properties?.category === selectedCategory.value)
@@ -434,19 +605,42 @@ function filterGraph(nodes, edges) {
   if (!selectedRequirementIds.size) return { nodes: [], edges: [] }
 
   const includedIds = new Set(selectedRequirementIds)
-  edges.forEach(edge => {
+  filteredEdges.forEach(edge => {
     if (selectedRequirementIds.has(edge.source)) includedIds.add(edge.target)
     if (selectedRequirementIds.has(edge.target)) includedIds.add(edge.source)
   })
   const filteredNodes = nodes.filter(node => includedIds.has(node.id))
   const visibleIds = new Set(filteredNodes.map(node => node.id))
-  const filteredEdges = edges.filter(edge => visibleIds.has(edge.source) && visibleIds.has(edge.target))
-  return { nodes: filteredNodes, edges: filteredEdges }
+  return {
+    nodes: filteredNodes,
+    edges: filteredEdges.filter(edge => visibleIds.has(edge.source) && visibleIds.has(edge.target)),
+  }
 }
 
 function selectCategory(label) {
   selectedCategory.value = label
   selectedNode.value = null
+  selectedEdge.value = null
+  renderGraph()
+}
+
+function selectEdgeType(type) {
+  selectedEdgeType.value = type
+  selectedEdge.value = null
+  renderGraph()
+}
+
+function selectSourceScope(scope) {
+  selectedSourceScope.value = scope
+  selectedEdge.value = null
+  renderGraph()
+}
+
+function resetEdgeFilters() {
+  selectedEdgeType.value = '__all__'
+  selectedSourceScope.value = '__all__'
+  highConfidenceOnly.value = false
+  selectedEdge.value = null
   renderGraph()
 }
 
@@ -461,11 +655,69 @@ function edgeColor(type) {
   return edgeLegend.find(item => item.type === type)?.color || '#64748b'
 }
 
+function edgeLabel(type) {
+  return edgeLegend.find(item => item.type === type)?.label || type || ''
+}
+
+function resolveNodeLabel(nodeId) {
+  if (!nodeId) return ''
+  return graphData.value?.nodes?.find(node => node.id === nodeId)?.label || nodeId
+}
+
+function edgeSourceType(edge) {
+  return edge?.properties?.source === 'llm_inference' ? 'inferred' : 'analysis'
+}
+
+function edgeSourceLabel(edge) {
+  return edgeSourceType(edge) === 'inferred' ? '推理关系' : '已有分析关系'
+}
+
+function edgeMatchesFilters(edge) {
+  if (selectedEdgeType.value !== '__all__' && edge.type !== selectedEdgeType.value) return false
+  if (selectedSourceScope.value !== '__all__' && edgeSourceType(edge) !== selectedSourceScope.value) {
+    return false
+  }
+  if (highConfidenceOnly.value && Number(edge.weight || 0) < 0.75) return false
+  return true
+}
+
+function edgeLineStyle(edge) {
+  const inferred = edgeSourceType(edge) === 'inferred'
+  return {
+    color: edgeColor(edge.type),
+    width: Math.max(1.4, (edge.weight || 0.5) * (inferred ? 3.4 : 2.8)),
+    opacity: inferred ? 0.84 : edge.type === 'CONFLICTS_WITH' ? 0.9 : 0.66,
+    type: inferred ? 'dashed' : 'solid',
+    curveness: edge.type === 'CONFLICTS_WITH' ? 0.22 : 0.1,
+  }
+}
+
+function formatConfidence(value) {
+  if (value === null || value === undefined || value === '') return ''
+  const numeric = Number(value)
+  if (Number.isNaN(numeric)) return String(value)
+  return numeric.toFixed(2)
+}
+
 function formatValue(value) {
   if (value === null || value === undefined || value === '') return ''
   if (Array.isArray(value)) return value.filter(Boolean).join('、')
-  if (typeof value === 'object') return JSON.stringify(value)
-  return String(value)
+  if (typeof value === 'object') return JSON.stringify(value, null, 2)
+  return sourceText(String(value))
+}
+
+function sourceText(value) {
+  return {
+    llm_inference: '大模型补充',
+    'project_members/auth_users': '项目成员候选',
+    requirement_people_evidence: '需求人员证据',
+    manage_requirements: '需求管理',
+    requirements_l123: 'L1-L3 需求',
+    low_level_requirements: 'L4 需求',
+    trace_analysis: '追溯分析',
+    conflict_analysis: '冲突分析',
+    classification_analysis: '分类分析',
+  }[value] || value
 }
 
 watch(selectedProjectId, async (value) => {
@@ -486,6 +738,11 @@ watch(classificationCounts, () => {
     selectedCategory.value = '__all__'
   }
 }, { deep: true })
+
+watch(highConfidenceOnly, () => {
+  selectedEdge.value = null
+  renderGraph()
+})
 
 onMounted(async () => {
   initChart()
@@ -581,8 +838,12 @@ onBeforeUnmount(() => {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+
+.infer-btn {
+  background: #1d4ed8;
 }
 
 .metric-item {
@@ -648,6 +909,38 @@ dt {
   background: rgba(20, 184, 166, 0.08);
 }
 
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.filter-chip {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #475569;
+  min-height: 30px;
+  padding: 0 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.filter-chip.active {
+  color: #0f766e;
+  border-color: rgba(15, 118, 110, 0.35);
+  background: rgba(20, 184, 166, 0.08);
+}
+
+.confidence-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  color: #334155;
+  font-size: 12px;
+}
+
 .category-list {
   display: flex;
   flex-direction: column;
@@ -706,6 +999,21 @@ dt {
   min-height: 28px;
 }
 
+.legend-button {
+  width: 100%;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 6px 8px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.legend-button.active {
+  border-color: rgba(15, 118, 110, 0.35);
+  background: rgba(20, 184, 166, 0.08);
+}
+
 .legend-line {
   height: 3px;
   border-radius: 3px;
@@ -726,6 +1034,10 @@ dt {
   margin: 12px 0 0;
 }
 
+.detail-pair {
+  display: contents;
+}
+
 .detail-block dt {
   margin-top: 10px;
 }
@@ -735,6 +1047,7 @@ dt {
   color: #0f172a;
   font-size: 13px;
   line-height: 1.55;
+  white-space: pre-wrap;
   word-break: break-word;
 }
 

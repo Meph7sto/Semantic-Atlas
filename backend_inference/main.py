@@ -24,49 +24,64 @@ from routers import kb, l4_generation, l4_validation
 from services.kb_service import get_kb_service
 
 
+def _should_skip_local_provider_load(provider: str) -> bool:
+    return settings.SKIP_MODEL_LOAD and (provider or "").lower() == "local"
+
+
+def _initialize_generation_model() -> None:
+    provider = settings.MODEL_PROVIDER
+    if _should_skip_local_provider_load(provider):
+        print("[lifespan] SKIP_MODEL_LOAD is true, skipping local model loading.")
+        return
+
+    print(f"Initializing Model from: {settings.MODEL_PATH} (provider={provider})")
+    try:
+        if provider == "local":
+            if os.path.exists(settings.MODEL_PATH):
+                model_engine.load_model()
+            else:
+                print(
+                    f"CRITICAL WARNING: Model directory not found at {settings.MODEL_PATH}"
+                )
+        else:
+            # API 模式需要初始化远程客户端，即使跳过本地权重加载也不能跳过这一步
+            model_engine.load_model()
+    except Exception as e:
+        print(f"CRITICAL ERROR: Failed to initialize model provider: {e}")
+        # We continue startup so health checks pass, but inference will fail
+
+
+def _initialize_classification_model() -> None:
+    provider = settings.CLASSIFICATION_PROVIDER
+    if _should_skip_local_provider_load(provider):
+        print("[lifespan] SKIP_MODEL_LOAD is true, skipping local classification model loading.")
+        return
+
+    print(
+        f"Initializing Classification Model from: {settings.CLASSIFICATION_MODEL_PATH} (provider={provider})"
+    )
+    try:
+        if provider == "local":
+            if os.path.exists(settings.CLASSIFICATION_MODEL_PATH):
+                classification_engine.load()
+            else:
+                print(
+                    f"CRITICAL WARNING: Classification model directory not found at {settings.CLASSIFICATION_MODEL_PATH}"
+                )
+        else:
+            classification_engine.load()
+    except Exception as e:
+        print(f"CRITICAL ERROR: Failed to load classification model files: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     FastAPI 生命周期管理器
     """
-    # 启动时：加载模型
-    if settings.SKIP_MODEL_LOAD:
-        print("[lifespan] SKIP_MODEL_LOAD is true, skipping local model loading.")
-    else:
-        print(
-            f"Initializing Model from: {settings.MODEL_PATH} (provider={settings.MODEL_PROVIDER})"
-        )
-        try:
-            if settings.MODEL_PROVIDER == "local":
-                if os.path.exists(settings.MODEL_PATH):
-                    model_engine.load_model()
-                else:
-                    print(
-                        f"CRITICAL WARNING: Model directory not found at {settings.MODEL_PATH}"
-                    )
-            else:
-                # API 模式直接初始化远程客户端
-                model_engine.load_model()
-        except Exception as e:
-            print(f"CRITICAL ERROR: Failed to initialize model provider: {e}")
-            # We continue startup so health checks pass, but inference will fail
-
-        # 分类模型加载（用于需求分类）
-        print(
-            f"Initializing Classification Model from: {settings.CLASSIFICATION_MODEL_PATH} (provider={settings.CLASSIFICATION_PROVIDER})"
-        )
-        try:
-            if settings.CLASSIFICATION_PROVIDER == "local":
-                if os.path.exists(settings.CLASSIFICATION_MODEL_PATH):
-                    classification_engine.load()
-                else:
-                    print(
-                        f"CRITICAL WARNING: Classification model directory not found at {settings.CLASSIFICATION_MODEL_PATH}"
-                    )
-            else:
-                classification_engine.load()
-        except Exception as e:
-            print(f"CRITICAL ERROR: Failed to load classification model files: {e}")
+    # 启动时：加载/初始化模型
+    _initialize_generation_model()
+    _initialize_classification_model()
 
     # 加载 KB 索引
     if settings.SKIP_KB_LOAD:
