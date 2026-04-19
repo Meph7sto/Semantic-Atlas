@@ -18,6 +18,54 @@ function normalizeLevel(raw) {
   return 'L1'
 }
 
+function normalizeL4Requirement(raw, idx = 0) {
+  return {
+    ...raw,
+    id: raw.req_id || raw.id || `l4_${idx}`,
+    level: 'L4',
+    statement: raw.text || raw.shall_statement || '',
+    text: raw.text || raw.shall_statement || '',
+  }
+}
+
+function unwrapTraceCache(payload) {
+  if (!payload) return null
+  if (payload.data && typeof payload.data === 'object') return payload.data
+  return payload
+}
+
+function hasTraceRelations(tracePayload) {
+  const data = unwrapTraceCache(tracePayload)
+  return Array.isArray(data?.relations) && data.relations.length > 0
+}
+
+function normalizeClassificationResult(raw, requirements = []) {
+  if (!raw) return null
+  const predictions = Array.isArray(raw.predictions) ? raw.predictions : []
+  return {
+    predictions: predictions.map((pred, idx) => {
+      const originalReq = requirements[idx] || null
+      if (typeof pred === 'string') {
+        return {
+          predicted_label: pred,
+          requirement: originalReq?.statement || originalReq?.text || '',
+          originalReq,
+          index: idx,
+        }
+      }
+      return {
+        ...pred,
+        predicted_label: pred.predicted_label || pred.label || pred.category || pred.class || '未分类',
+        requirement: pred.requirement || pred.text || pred.input || originalReq?.statement || originalReq?.text || '',
+        originalReq,
+        index: pred.index ?? idx,
+      }
+    }),
+    label_distribution: raw.label_distribution || {},
+    total: raw.total ?? predictions.length,
+  }
+}
+
 /**
  * @param {import('vue').Ref<string>} sessionId
  * @param {import('vue').Ref<Array>} highLevelRequirements - 由 useAnalysisSession 提供，此处可写入
@@ -140,62 +188,94 @@ export function useRequirementsAnalysis(sessionId, highLevelRequirements, lowLev
       analysisNotice.value = '正在基于顶层需求生成底层需求...'
       l4GenerationProgress.value = { current: 0, total: highLevelRequirements.value.length }
 
-      const reqsForL4 = highLevelRequirements.value.map(req => ({
-        id: req.req_id || req.id,
-        text: req.text || req.statement || '',
-      }))
-
-      try {
-        const l4Response = await l4RequirementsApi.generate(
-          currentSessionId,
-          reqsForL4,
-          {
-            config: {
-              top_k_pattern: 5, top_k_spec: 3, top_k_nfr: 3,
-              max_l4_per_top_req: 5, min_l4_per_top_req: 1, confidence_threshold: 0.6,
-            },
-            model: 'deepseek-reasoner',
-            forceRegenerate: false,
-          }
-        )
-        const l4Reqs = l4Response.requirements || []
-        lowLevelRequirements.value = l4Reqs.map((r, idx) => ({
-          ...r,
-          id: r.req_id || r.id || `l4_${idx}`,
-          level: 'L4',
-          statement: r.text || r.shall_statement || '',
-          text: r.text || r.shall_statement || '',
-        }))
-        l4GenerationProgress.value = { current: l4Reqs.length, total: l4Reqs.length }
-        analysisNotice.value = `已生成 ${l4Reqs.length} 条底层需求`
-      } catch (l4Err) {
-        console.warn('L4 生成失败，尝试加载已有数据:', l4Err)
+      const existingLowLevel = (lowLevelRequirements.value || []).filter(
+        req => (req.statement || req.text || '').trim(),
+      )
+      if (existingLowLevel.length > 0) {
+        lowLevelRequirements.value = existingLowLevel.map((req, idx) => normalizeL4Requirement(req, idx))
+        l4GenerationProgress.value = { current: existingLowLevel.length, total: existingLowLevel.length }
+        analysisNotice.value = `检测到已有 ${existingLowLevel.length} 条底层需求，跳过 L4 生成`
+      } else {
         try {
-          const existingL4 = await l4RequirementsApi.getBySession(currentSessionId, { perPage: 500 })
-          lowLevelRequirements.value = (existingL4.requirements || []).map(r => ({
-            ...r,
-            level: 'L4',
-            statement: r.text || r.shall_statement || '',
-          }))
-          if (lowLevelRequirements.value.length > 0) {
-            analysisNotice.value = `使用已有的 ${lowLevelRequirements.value.length} 条底层需求`
+          const hasCachedL4 = await l4RequirementsApi.checkExists(currentSessionId)
+          if (hasCachedL4) {
+            const existingL4 = await l4RequirementsApi.getBySession(currentSessionId, { perPage: 500 })
+            lowLevelRequirements.value = (existingL4.requirements || []).map((r, idx) => normalizeL4Requirement(r, idx))
+            l4GenerationProgress.value = {
+              current: lowLevelRequirements.value.length,
+              total: lowLevelRequirements.value.length,
+            }
+            analysisNotice.value = `使用缓存中的 ${lowLevelRequirements.value.length} 条底层需求`
+          } else {
+            const reqsForL4 = highLevelRequirements.value.map(req => ({
+              id: req.req_id || req.id,
+              text: req.text || req.statement || '',
+            }))
+
+            const l4Response = await l4RequirementsApi.generate(
+              currentSessionId,
+              reqsForL4,
+              {
+                config: {
+                  top_k_pattern: 5, top_k_spec: 3, top_k_nfr: 3,
+                  max_l4_per_top_req: 5, min_l4_per_top_req: 1, confidence_threshold: 0.6,
+                },
+                model: 'deepseek-reasoner',
+                forceRegenerate: false,
+              }
+            )
+            const l4Reqs = l4Response.requirements || []
+            lowLevelRequirements.value = l4Reqs.map((r, idx) => normalizeL4Requirement(r, idx))
+            l4GenerationProgress.value = { current: l4Reqs.length, total: l4Reqs.length }
+            analysisNotice.value = `已生成 ${l4Reqs.length} 条底层需求`
           }
-        } catch {
-          lowLevelRequirements.value = []
+        } catch (l4Err) {
+          console.warn('L4 生成失败，尝试加载已有数据:', l4Err)
+          try {
+            const existingL4 = await l4RequirementsApi.getBySession(currentSessionId, { perPage: 500 })
+            lowLevelRequirements.value = (existingL4.requirements || []).map((r, idx) => normalizeL4Requirement(r, idx))
+            if (lowLevelRequirements.value.length > 0) {
+              l4GenerationProgress.value = {
+                current: lowLevelRequirements.value.length,
+                total: lowLevelRequirements.value.length,
+              }
+              analysisNotice.value = `使用已有的 ${lowLevelRequirements.value.length} 条底层需求`
+            }
+          } catch {
+            lowLevelRequirements.value = []
+          }
         }
       }
 
       // Step 2: 追溯分析
       analysisStep.value = 2
-      traceResult.value = null
       analysisNotice.value = ''
 
       const highReqs = allHighLevelRequirements.value.map(r => r.statement || r.text || '').filter(s => s && s.trim())
       const lowReqs = lowLevelRequirements.value.map(r => r.statement || r.text || '').filter(s => s && s.trim())
 
-      if (highReqs.length > 0 && lowReqs.length > 0) {
-        const mappingResult = await traceabilityApi.traceByMapping(currentSessionId, true, 800)
-        traceResult.value = mappingResult.data
+      if (hasTraceRelations(traceResult.value)) {
+        analysisNotice.value = `检测到已有 ${traceResult.value.relations.length} 条追溯关系，跳过追溯分析`
+      } else if (highReqs.length > 0 && lowReqs.length > 0) {
+        try {
+          const cachedTrace = await analysisApi.getLatestTrace(currentSessionId)
+          const normalizedTrace = unwrapTraceCache(cachedTrace)
+          if (hasTraceRelations(normalizedTrace)) {
+            traceResult.value = normalizedTrace
+            analysisNotice.value = `使用缓存中的 ${normalizedTrace.relations.length} 条追溯关系`
+          } else {
+            traceResult.value = null
+            const mappingResult = await traceabilityApi.traceByMapping(currentSessionId, true, 800)
+            traceResult.value = mappingResult.data
+          }
+        } catch (traceErr) {
+          console.warn('读取追溯缓存失败，执行追溯分析:', traceErr)
+          traceResult.value = null
+          const mappingResult = await traceabilityApi.traceByMapping(currentSessionId, true, 800)
+          traceResult.value = mappingResult.data
+        }
+      } else {
+        traceResult.value = null
       }
 
       // Step 3: 冲突检测
@@ -229,17 +309,31 @@ export function useRequirementsAnalysis(sessionId, highLevelRequirements, lowLev
 
       // Step 4: 需求分类
       analysisStep.value = 4
-      classificationResult.value = null
 
       const classifyReqs = [...allHighLevelRequirements.value, ...lowLevelRequirements.value]
       if (classifyReqs.length > 0) {
-        const requirements = classifyReqs.map(r => r.statement || r.text || '')
-        const response = await classifyTexts({ requirements }, true, currentSessionId)
-        const data = response.data
-        classificationResult.value = {
-          predictions: data.predictions.map((pred, idx) => ({ ...pred, originalReq: classifyReqs[idx] })),
-          label_distribution: data.label_distribution,
-          total: data.total,
+        if (classificationResult.value?.predictions?.length) {
+          classificationResult.value = normalizeClassificationResult(classificationResult.value, classifyReqs)
+          analysisNotice.value = `检测到已有 ${classificationResult.value.total || classificationResult.value.predictions.length} 条分类结果，跳过需求分类`
+        } else {
+          try {
+            const cachedClassification = await getLatestClassification(currentSessionId)
+            if (cachedClassification?.predictions?.length) {
+              classificationResult.value = normalizeClassificationResult(cachedClassification, classifyReqs)
+              analysisNotice.value = `使用缓存中的 ${classificationResult.value.total || classificationResult.value.predictions.length} 条分类结果`
+            } else {
+              const requirements = classifyReqs.map(r => r.statement || r.text || '')
+              const response = await classifyTexts({ requirements }, true, currentSessionId)
+              const data = response.data
+              classificationResult.value = normalizeClassificationResult(data, classifyReqs)
+            }
+          } catch (classErr) {
+            console.warn('读取分类缓存失败，执行需求分类:', classErr)
+            const requirements = classifyReqs.map(r => r.statement || r.text || '')
+            const response = await classifyTexts({ requirements }, true, currentSessionId)
+            const data = response.data
+            classificationResult.value = normalizeClassificationResult(data, classifyReqs)
+          }
         }
       }
 
@@ -269,7 +363,8 @@ export function useRequirementsAnalysis(sessionId, highLevelRequirements, lowLev
 
     try {
       const traceData = await analysisApi.getLatestTrace(sid)
-      if (traceData && traceData.relations) traceResult.value = traceData
+      const normalizedTrace = unwrapTraceCache(traceData)
+      if (normalizedTrace?.relations) traceResult.value = normalizedTrace
     } catch { /* 无缓存数据，忽略 */ }
 
     try {
@@ -287,11 +382,8 @@ export function useRequirementsAnalysis(sessionId, highLevelRequirements, lowLev
     try {
       const classData = await getLatestClassification(sid)
       if (classData?.predictions) {
-        classificationResult.value = {
-          predictions: classData.predictions,
-          label_distribution: classData.label_distribution,
-          total: classData.total,
-        }
+        const knownReqs = [...allHighLevelRequirements.value, ...lowLevelRequirements.value]
+        classificationResult.value = normalizeClassificationResult(classData, knownReqs)
       }
     } catch { /* 无缓存数据，忽略 */ }
   }
