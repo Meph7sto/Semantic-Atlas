@@ -8,7 +8,7 @@
  *   const { projects, sessions, messages, sendMessage, ... } = useSessionAssistant()
  */
 
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { manageApi } from '@/api/project'
 import { sessionControllerChatApi } from '@/api/sessionControllerChat'
 import { createEmptyGraphDetail, buildMergedSessionGraphDetail } from '@/utils/sessionGraphLayout'
@@ -46,7 +46,7 @@ export function useSessionAssistant() {
   // ---- 状态 ----
   const projects = ref([])
   const sessions = ref([])
-  const selectedProjectId = ref('')
+  const selectedProjectId = ref(localStorage.getItem('lastProjectId') || '')
   const sessionId = ref('')
   const messages = ref([])
   const inputMessage = ref('')
@@ -64,6 +64,7 @@ export function useSessionAssistant() {
   const draftAssistantId = ref(null)
   const lastDispatchedAgents = ref([])
   const autoCreatingProjectIds = new Set()
+  const isSyncingProjectFromEvent = ref(false)
 
   // ---- 派生状态 ----
 
@@ -219,7 +220,15 @@ export function useSessionAssistant() {
     try {
       const data = await manageApi.listProjects()
       projects.value = data.projects || []
-      if (!selectedProjectId.value && projects.value.length > 0) {
+      if (!projects.value.length) {
+        selectedProjectId.value = ''
+        return
+      }
+
+      const hasSelectedProject = projects.value.some(
+        (project) => project.project_id === selectedProjectId.value,
+      )
+      if (!hasSelectedProject) {
         selectedProjectId.value = projects.value[0].project_id
       }
     } catch (err) {
@@ -495,7 +504,38 @@ export function useSessionAssistant() {
 
   // ---- 生命周期 ----
 
+  const syncProjectFromStorage = () => {
+    const nextProjectId = localStorage.getItem('lastProjectId') || ''
+    if (nextProjectId === selectedProjectId.value) return
+    isSyncingProjectFromEvent.value = true
+    selectedProjectId.value = nextProjectId
+  }
+
+  const handleProjectChanged = (event) => {
+    const nextProjectId = String(
+      event?.detail?.projectId ?? localStorage.getItem('lastProjectId') ?? '',
+    ).trim()
+    if (nextProjectId === selectedProjectId.value) return
+    isSyncingProjectFromEvent.value = true
+    selectedProjectId.value = nextProjectId
+  }
+
   watch(selectedProjectId, async (projectId) => {
+    const shouldBroadcast = !isSyncingProjectFromEvent.value
+    isSyncingProjectFromEvent.value = false
+
+    if (projectId) {
+      localStorage.setItem('lastProjectId', projectId)
+    } else {
+      localStorage.removeItem('lastProjectId')
+    }
+
+    if (shouldBroadcast) {
+      window.dispatchEvent(
+        new CustomEvent('project-changed', { detail: { projectId } }),
+      )
+    }
+
     sessionId.value = ''
     sessions.value = []
     resetSessionView()
@@ -504,7 +544,16 @@ export function useSessionAssistant() {
   })
 
   onMounted(async () => {
+    syncProjectFromStorage()
+    window.addEventListener('project-changed', handleProjectChanged)
     await loadProjects()
+    if (selectedProjectId.value && !sessionId.value && !isLoadingSessions.value) {
+      await loadSessions()
+    }
+  })
+
+  onBeforeUnmount(() => {
+    window.removeEventListener('project-changed', handleProjectChanged)
   })
 
   // ---- 返回 ----

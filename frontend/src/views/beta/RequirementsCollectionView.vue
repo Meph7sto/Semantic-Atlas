@@ -20,6 +20,13 @@
             <span style="font-weight: 600; color: var(--teal); font-size: 15px;">当前项目：{{ currentProjectName }}</span>
           </div>
           <div class="page-actions">
+            <button
+              type="button"
+              class="action-btn secondary"
+              @click="router.push({ name: 'beta-requirements-session' })"
+            >
+              查看会话需求
+            </button>
             <span class="nav-text">自动化流程</span>
           </div>
         </section>

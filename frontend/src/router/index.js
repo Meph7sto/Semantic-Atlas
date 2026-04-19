@@ -97,13 +97,13 @@ const router = createRouter({
                     meta: { requiresAuth: true }
                 },
                 {
-                    path: 'requirements',
+                    path: 'requirements-overview',
                     name: 'beta-requirements',
                     component: RequirementsManageWorkbenchView,
                     meta: { requiresAuth: true }
                 },
                 {
-                    path: 'requirements-overview',
+                    path: 'requirements',
                     name: 'beta-requirements-overview',
                     component: RequirementsView,
                     meta: { requiresAuth: true }
