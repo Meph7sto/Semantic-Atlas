@@ -235,6 +235,7 @@ const navItemsConfig = computed(() => {
         { key: "requirements", label: "需求工程管理", icon: FileText },
         { key: "requirements-session", label: "会话需求", icon: Layers },
         { key: "requirements-analysis", label: "需求分析", icon: BarChart3 },
+        { key: "requirement-graph", label: "需求图谱", icon: GitBranch },
       ]
     },
     { key: "defects", label: "缺陷与问题", icon: Bug },
@@ -257,6 +258,7 @@ const navItemsConfig = computed(() => {
         { key: "requirements", label: "需求工程管理", icon: FileText },
         { key: "requirements-session", label: "会话需求", icon: Layers },
         { key: "requirements-analysis", label: "需求分析", icon: BarChart3 },
+        { key: "requirement-graph", label: "需求图谱", icon: GitBranch },
       ]
     },
     { key: "defects", label: "缺陷与问题", icon: Bug },
@@ -340,7 +342,7 @@ const expandedMenus = ref(getInitialExpandedMenus());
 // 当 activePage 是子菜单项时，自动展开父菜单（但不会自动收缩已展开的菜单）
 watch(() => props.activePage, (newPage) => {
   // 检查是否是 project-management 的子项，如果是则自动展开（不在子项时不自动收缩）
-  const projectChildren = ['requirements-collection', 'multimodal-ingestion', 'requirements', 'requirements-session', 'requirements-analysis'];
+  const projectChildren = ['requirements-collection', 'multimodal-ingestion', 'requirements', 'requirements-session', 'requirements-analysis', 'requirement-graph'];
   if (projectChildren.includes(newPage) && !isCollapsed.value) {
     expandedMenus.value['project-management'] = true;
   }
@@ -401,6 +403,7 @@ const getIconColor = (key) => {
     requirements: "#c4692f",
     "requirements-session": "#5d6b76",
     "requirements-analysis": "#c4692f",
+    "requirement-graph": "#0f766e",
     "requirement-replay": "#5d6b76",
   };
   return colors[key] || "#9eabb4";

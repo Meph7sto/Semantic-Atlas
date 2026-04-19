@@ -745,7 +745,7 @@ if ($doNginx -and $doFrontend) {
   # 3) 启动 / 重载 Nginx（若存在）
   $NginxVersion = "nginx-1.26.1"
   $LocalNginxPath = Join-Path $BASE_DIR "deploy/$NginxVersion/nginx.exe"
-  
+
   # 如果本地没有，自动下载
   if (-not (Test-Path $LocalNginxPath)) {
     Write-Host "[start] Local Nginx not found. Downloading $NginxVersion..." -ForegroundColor Yellow
@@ -872,11 +872,11 @@ if ($FrpMode) {
   $FrpDir = Join-Path $BASE_DIR "deploy/frp"
   $FrpConfigPath = Join-Path $FrpDir "frpc.toml"
   $FrpPidPath = Join-Path $LogsDir "frpc.pid"
-  
+
   Write-Host "[start] Setting up FRP client..." -ForegroundColor Cyan
-  
+
   New-Item -ItemType Directory -Force -Path $FrpDir | Out-Null
-  
+
   # 获取最新版本号
   $FrpVersion = "0.61.1"
   try {
@@ -889,13 +889,13 @@ if ($FrpMode) {
   catch {
     Write-Host "[start] Could not fetch latest version, using default: $FrpVersion" -ForegroundColor Yellow
   }
-  
+
   $FrpVersionNum = $FrpVersion -replace '^v', ''
   $FrpZipName = "frp_${FrpVersionNum}_windows_amd64.zip"
   $FrpDirName = "frp_${FrpVersionNum}_windows_amd64"
   $FrpDownloadUrl = "https://github.com/fatedier/frp/releases/download/${FrpVersion}/${FrpZipName}"
   $FrpExe = Join-Path $FrpDir "$FrpDirName/frpc.exe"
-  
+
   # 检查是否需要下载
   if (-not (Test-Path $FrpExe)) {
     Write-Host "[start] Downloading FRP client from $FrpDownloadUrl..." -ForegroundColor Yellow
@@ -914,7 +914,7 @@ if ($FrpMode) {
   else {
     Write-Host "[start] FRP client already exists at $FrpExe"
   }
-  
+
   # 生成 frpc.toml 配置文件
   $FrpConfigContent = @"
 serverAddr = "$FrpServerAddr"
@@ -930,10 +930,10 @@ localIP = "127.0.0.1"
 localPort = 8008
 remotePort = 16667
 "@
-  
+
   Set-Content -Path $FrpConfigPath -Value $FrpConfigContent -Encoding UTF8
   Write-Host "[start] FRP config generated at $FrpConfigPath"
-  
+
   # 启动 frpc
   Write-Host "[start] Starting FRP client..." -ForegroundColor Cyan
   $FrpProcess = Start-Process -FilePath $FrpExe -ArgumentList "-c", $FrpConfigPath -PassThru

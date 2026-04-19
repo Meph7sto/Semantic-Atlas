@@ -34,6 +34,7 @@ import RequirementsManageWorkbenchView from '../views/beta/RequirementsManageWor
 import RequirementsSessionView from '../views/beta/RequirementsSessionView.vue'
 import RequirementsAnalysisView from '../views/beta/RequirementsAnalysisView.vue'
 import RequirementsCollectionView from '../views/beta/RequirementsCollectionView.vue'
+import RequirementGraphView from '../views/beta/RequirementGraphView.vue'
 import CollectionAdvancedView from '../views/beta/CollectionAdvancedView.vue'
 import ProductManageView from '../views/beta/ProductManageView.vue'
 import AccountView from '../views/beta/AccountView.vue'
@@ -118,6 +119,12 @@ const router = createRouter({
                     path: 'requirements-analysis',
                     name: 'beta-requirements-analysis',
                     component: RequirementsAnalysisView,
+                    meta: { requiresAuth: true }
+                },
+                {
+                    path: 'requirement-graph',
+                    name: 'beta-requirement-graph',
+                    component: RequirementGraphView,
                     meta: { requiresAuth: true }
                 },
                 {
