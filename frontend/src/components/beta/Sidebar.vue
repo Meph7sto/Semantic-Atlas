@@ -150,7 +150,6 @@ import {
   LayoutDashboard,
   FolderKanban,
   FileText,
-  Layers,
   BarChart3,
   Bug,
   GitBranch,
@@ -232,8 +231,8 @@ const navItemsConfig = computed(() => {
       children: [
         { key: "requirements-collection", label: "需求采集", icon: Sparkles },
         { key: "multimodal-ingestion", label: "多模态采集", icon: Sparkles },
-        { key: "requirements", label: "需求工程管理", icon: FileText },
-        { key: "requirements-session", label: "会话需求", icon: Layers },
+        { key: "requirements-overview", label: "需求列表", icon: FileText },
+        { key: "requirements", label: "需求工作台", icon: FileText },
         { key: "requirements-analysis", label: "需求分析", icon: BarChart3 },
         { key: "requirement-graph", label: "需求图谱", icon: GitBranch },
       ]
@@ -255,8 +254,8 @@ const navItemsConfig = computed(() => {
       children: [
         { key: "requirements-collection", label: "需求采集", icon: Sparkles },
         { key: "multimodal-ingestion", label: "多模态采集", icon: Sparkles },
-        { key: "requirements", label: "需求工程管理", icon: FileText },
-        { key: "requirements-session", label: "会话需求", icon: Layers },
+        { key: "requirements-overview", label: "需求列表", icon: FileText },
+        { key: "requirements", label: "需求工作台", icon: FileText },
         { key: "requirements-analysis", label: "需求分析", icon: BarChart3 },
         { key: "requirement-graph", label: "需求图谱", icon: GitBranch },
       ]
@@ -275,7 +274,7 @@ const navItemsConfig = computed(() => {
       label: "已发布需求",
       icon: FileCheck,
       children: [
-        { key: "requirements", label: "需求列表", icon: FileText },
+        { key: "requirements-overview", label: "需求列表", icon: FileText },
       ]
     },
     { key: "reviews", label: "验收确认", icon: CheckSquare },
@@ -289,7 +288,7 @@ const navItemsConfig = computed(() => {
       label: "分配给我的",
       icon: ClipboardList,
       children: [
-        { key: "requirements", label: "需求列表", icon: FileText },
+        { key: "requirements-overview", label: "需求列表", icon: FileText },
       ]
     },
     { key: "tracking", label: "提交记录", icon: GitBranch },
@@ -342,7 +341,7 @@ const expandedMenus = ref(getInitialExpandedMenus());
 // 当 activePage 是子菜单项时，自动展开父菜单（但不会自动收缩已展开的菜单）
 watch(() => props.activePage, (newPage) => {
   // 检查是否是 project-management 的子项，如果是则自动展开（不在子项时不自动收缩）
-  const projectChildren = ['requirements-collection', 'multimodal-ingestion', 'requirements', 'requirements-session', 'requirements-analysis', 'requirement-graph'];
+  const projectChildren = ['requirements-collection', 'multimodal-ingestion', 'requirements-overview', 'requirements', 'requirements-analysis','requirement-graph'];
   if (projectChildren.includes(newPage) && !isCollapsed.value) {
     expandedMenus.value['project-management'] = true;
   }
@@ -400,6 +399,7 @@ const getIconColor = (key) => {
     reports: "#1b2730",
     "requirements-collection": "#8b5cf6",
     "multimodal-ingestion": "#0f766e",
+    "requirements-overview": "#2f8f89",
     requirements: "#c4692f",
     "requirements-session": "#5d6b76",
     "requirements-analysis": "#c4692f",

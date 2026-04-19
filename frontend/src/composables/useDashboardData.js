@@ -5,7 +5,7 @@
  * 不修改任何后端接口，所有聚合在前端完成。
  */
 
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { manageApi } from '@/api/project'
 import { useAuthStore } from '@/stores/auth'
 
@@ -68,6 +68,7 @@ export function useDashboardData() {
   const isLoadingData = ref(false)
   const loadError = ref(null)
   const lastRefreshedAt = ref(null)
+  const isSyncingProjectFromEvent = ref(false)
 
   // ========================
   // 计算属性：需求统计
@@ -203,6 +204,17 @@ export function useDashboardData() {
     try {
       const resp = await manageApi.listProjects()
       projects.value = resp.projects || []
+      if (!projects.value.length) {
+        selectedProjectId.value = ''
+        return
+      }
+
+      const hasSelectedProject = projects.value.some(
+        (project) => project.project_id === selectedProjectId.value,
+      )
+      if (!hasSelectedProject) {
+        selectedProjectId.value = projects.value[0].project_id
+      }
     } catch (err) {
       console.error('Failed to load projects:', err)
       projects.value = []
@@ -267,12 +279,49 @@ export function useDashboardData() {
     await loadDashboardData()
   }
 
+  function syncProjectFromStorage() {
+    const nextProjectId = localStorage.getItem('lastProjectId') || ''
+    if (nextProjectId === selectedProjectId.value) return
+    isSyncingProjectFromEvent.value = true
+    selectedProjectId.value = nextProjectId
+  }
+
+  function handleProjectChanged(event) {
+    const nextProjectId = String(
+      event?.detail?.projectId ?? localStorage.getItem('lastProjectId') ?? '',
+    ).trim()
+    if (nextProjectId === selectedProjectId.value) return
+    isSyncingProjectFromEvent.value = true
+    selectedProjectId.value = nextProjectId
+  }
+
   // 切换项目时自动加载
   watch(selectedProjectId, (val) => {
+    const shouldBroadcast = !isSyncingProjectFromEvent.value
+    isSyncingProjectFromEvent.value = false
+
     if (val) {
       localStorage.setItem('lastProjectId', val)
+    } else {
+      localStorage.removeItem('lastProjectId')
     }
+
+    if (shouldBroadcast) {
+      window.dispatchEvent(
+        new CustomEvent('project-changed', { detail: { projectId: val } }),
+      )
+    }
+
     loadDashboardData()
+  })
+
+  onMounted(() => {
+    window.addEventListener('project-changed', handleProjectChanged)
+    syncProjectFromStorage()
+  })
+
+  onBeforeUnmount(() => {
+    window.removeEventListener('project-changed', handleProjectChanged)
   })
 
   return {

@@ -14,10 +14,10 @@
       <main class="canvas workbench-canvas">
         <section class="workbench-header" data-animate style="--delay: 0.05s">
           <div>
-            <h1>需求工程管理工作台</h1>
+            <h1>需求工作台</h1>
           </div>
           <button type="button" class="overview-link" @click="router.push({ name: 'beta-requirements-overview' })">
-            打开需求总览
+            打开需求列表
           </button>
         </section>
 

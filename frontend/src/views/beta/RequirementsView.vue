@@ -14,7 +14,7 @@
         <!-- 页面头部 -->
         <section class="page-header nav-style" data-animate style="--delay: 0.05s">
           <div class="nav-left">
-            <span class="nav-title">项目管理 · 需求管理</span>
+            <span class="nav-title">项目管理 · 需求列表</span>
           </div>
           <div class="nav-center" style="gap: 8px; background: rgba(47, 143, 137, 0.06); padding: 6px 16px; border-radius: 4px; border: 1px solid rgba(47, 143, 137, 0.15);">
             <div class="session-indicator">
@@ -34,10 +34,10 @@
             <button
               type="button"
               class="session-clear"
-              title="返回需求工程管理"
+              title="返回需求工作台"
               @click="gotoRequirementsWorkbench"
             >
-              返回需求工程管理
+              返回需求工作台
             </button>
             <button
               type="button"
@@ -767,7 +767,7 @@ const route = useRoute();
 const authStore = useAuthStore();
 
 // 侧边栏状态
-const { activePage, handleNavigate, handleExit } = useBetaNavigation("requirements");
+const { activePage, handleNavigate, handleExit } = useBetaNavigation("requirements-overview");
 const { roleType, roleLabel, timestamp, notificationCount } = useBetaSidebarProps();
 
 function hasPermission(permission) {
