@@ -1,14 +1,16 @@
-from typing import Any, AsyncGenerator, Dict, Generator, List, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, Generator, List, Optional
 
 import asyncio
 import torch
 import weakref
 
 from ..config import settings
-from .local import LocalHFEngine
 from .remote import ChutesClient, DeepSeekClient, ToolCallResult
 from .remote.async_deepseek import AsyncDeepSeekClient
 from .remote.async_chutes import AsyncChutesClient
+
+if TYPE_CHECKING:
+    from .local import LocalHFEngine
 
 
 class DeepSeekEngine:
@@ -44,8 +46,10 @@ class DeepSeekEngine:
         self._remote_client = None
         self._async_remote_clients = weakref.WeakKeyDictionary()
 
-    def _get_local_engine(self) -> LocalHFEngine:
+    def _get_local_engine(self) -> "LocalHFEngine":
         if self._local_engine is None:
+            from .local import LocalHFEngine
+
             self._local_engine = LocalHFEngine(self.model_path)
         return self._local_engine
 

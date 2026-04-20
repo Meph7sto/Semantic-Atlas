@@ -1,5 +1,4 @@
 from .engine import DeepSeekEngine
-from .classification_engine import RequirementClassificationEngine
 from .config import settings
 
 
@@ -17,17 +16,32 @@ model_engine = DeepSeekEngine(
 # 此模块充当模型引擎的单例持有者。
 # 它在 main.py 的启动事件期间被初始化。
 
-classification_engine = RequirementClassificationEngine(
-    model_path=settings.CLASSIFICATION_MODEL_PATH,
-    label_encoder_path=settings.CLASSIFICATION_LABEL_ENCODER_PATH,
-    batch_size=settings.CLASSIFICATION_BATCH_SIZE,
-    max_seq_len=settings.CLASSIFICATION_MAX_SEQ_LEN,
-    provider=settings.CLASSIFICATION_PROVIDER,
-    chutes_api_url=settings.CHUTES_API_URL,
-    chutes_api_token=settings.CHUTES_API_TOKEN,
-    deepseek_api_url=settings.DEEPSEEK_API_URL,
-    deepseek_api_key=settings.DEEPSEEK_API_KEY,
-    deepseek_model=getattr(settings, "DEEPSEEK_MODEL", "deepseek-reasoner"),
-    labels=settings.CLASSIFICATION_LABELS,
-    other_label=settings.CLASSIFICATION_OTHER_LABEL,
-)
+class _LazyClassificationEngine:
+    def __init__(self) -> None:
+        self._engine = None
+
+    def _get_engine(self):
+        if self._engine is None:
+            from .classification_engine import RequirementClassificationEngine
+
+            self._engine = RequirementClassificationEngine(
+                model_path=settings.CLASSIFICATION_MODEL_PATH,
+                label_encoder_path=settings.CLASSIFICATION_LABEL_ENCODER_PATH,
+                batch_size=settings.CLASSIFICATION_BATCH_SIZE,
+                max_seq_len=settings.CLASSIFICATION_MAX_SEQ_LEN,
+                provider=settings.CLASSIFICATION_PROVIDER,
+                chutes_api_url=settings.CHUTES_API_URL,
+                chutes_api_token=settings.CHUTES_API_TOKEN,
+                deepseek_api_url=settings.DEEPSEEK_API_URL,
+                deepseek_api_key=settings.DEEPSEEK_API_KEY,
+                deepseek_model=getattr(settings, "DEEPSEEK_MODEL", "deepseek-reasoner"),
+                labels=settings.CLASSIFICATION_LABELS,
+                other_label=settings.CLASSIFICATION_OTHER_LABEL,
+            )
+        return self._engine
+
+    def __getattr__(self, name):
+        return getattr(self._get_engine(), name)
+
+
+classification_engine = _LazyClassificationEngine()

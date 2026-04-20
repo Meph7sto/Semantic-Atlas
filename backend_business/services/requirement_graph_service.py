@@ -1,20 +1,33 @@
+import asyncio
 import hashlib
 import json
+import logging
+import os
 import re
+import threading
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+import aiohttp
 from psycopg2.extras import RealDictCursor
 
 from backend_business.services.ai_proxy import ai_proxy
 
 
 _REQ_REQ_INFERRED_TYPES = {
+    "DEPENDS_ON",
+    "CONFLICTS_WITH",
     "INCLUDES",
     "EXTENDS",
     "IMPACTS",
     "VALIDATES_WITH",
+}
+_RULE_RELATION_TYPES = {
+    "DEPENDS_ON",
+    "CONFLICTS_WITH",
+    "VALIDATES_WITH",
+    "SIMILAR_TO",
 }
 _STAKEHOLDER_REQ_INFERRED_TYPES = {
     "RAISES",
@@ -28,7 +41,269 @@ _STAKEHOLDER_STAKEHOLDER_INFERRED_TYPES = {
     "INTEREST_CONFLICTS_WITH",
     "COLLABORATES_WITH",
 }
-_UNDIRECTED_EDGE_TYPES = {"COLLABORATES_WITH", "INTEREST_CONFLICTS_WITH"}
+_SYMMETRIC_EDGE_TYPES = {
+    "COLLABORATES_WITH",
+    "INTEREST_CONFLICTS_WITH",
+    "CONFLICTS_WITH",
+    "SIMILAR_TO",
+    "VALIDATES_WITH",
+}
+_UNDIRECTED_EDGE_TYPES = _SYMMETRIC_EDGE_TYPES
+_RELATION_PRIORITY = {
+    "REFINES": 6,
+    "DEPENDS_ON": 5,
+    "CONFLICTS_WITH": 5,
+    "INCLUDES": 4,
+    "EXTENDS": 4,
+    "IMPACTS": 4,
+    "VALIDATES_WITH": 3,
+    "SIMILAR_TO": 1,
+}
+_SOURCE_KIND_PRIORITY = {"structural": 3, "rule": 2, "llm": 1}
+_LEVEL_ORDER = ["L1", "L2", "L3", "L4", "UNKNOWN_LEVEL"]
+_DEPENDENCY_MARKERS = (
+    "依赖",
+    "前置",
+    "调用",
+    "使用",
+    "基于",
+    "接入",
+    "读取",
+    "写入",
+    "消费",
+    "订阅",
+    "发布",
+    "输入",
+    "输出",
+    "接口",
+    "api",
+    "module",
+)
+_VALIDATION_MARKERS = (
+    "验收",
+    "验证",
+    "测试",
+    "校验",
+    "检查",
+    "断言",
+    "用例",
+    "回归",
+    "审计",
+    "成功标准",
+)
+_CONFLICT_MARKERS = ("冲突", "互斥", "相反", "矛盾", "不能同时", "资源竞争")
+_RESOURCE_TERMS = (
+    "数据库",
+    "缓存",
+    "队列",
+    "消息",
+    "线程",
+    "带宽",
+    "显存",
+    "gpu",
+    "cpu",
+    "内存",
+    "锁",
+    "连接池",
+)
+_GENERIC_TERMS = {
+    "系统",
+    "需求",
+    "功能",
+    "模块",
+    "接口",
+    "服务",
+    "页面",
+    "用户",
+    "数据",
+    "支持",
+    "实现",
+    "提供",
+    "相关",
+    "处理",
+    "校验",
+    "测试",
+    "验证",
+    "requirement",
+    "service",
+    "module",
+    "system",
+}
+_NON_INFORMATIVE_TERMS = _GENERIC_TERMS | {
+    "shall",
+    "should",
+    "must",
+    "will",
+    "would",
+    "could",
+    "may",
+    "might",
+    "need",
+    "needs",
+    "require",
+    "required",
+    "requires",
+    "allow",
+    "allows",
+    "ensure",
+    "ensures",
+    "support",
+    "supports",
+    "provide",
+    "provides",
+    "能够",
+    "可以",
+    "需要",
+    "应当",
+    "应该",
+    "必须",
+    "用于",
+}
+_TRANSIENT_TOOL_ERROR_STATUSES = {408, 409, 425, 429, 500, 502, 503, 504}
+
+
+def _env_int(name: str, default: int, *, minimum: int = 1, maximum: int = 64) -> int:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, parsed))
+
+
+_DEPENDENCY_AUDIT_BATCH_SIZE = _env_int("REQUIREMENT_GRAPH_DEPENDENCY_AUDIT_BATCH_SIZE", 4, maximum=16)
+_DEPENDENCY_AUDIT_MAX_CONCURRENCY = _env_int(
+    "REQUIREMENT_GRAPH_DEPENDENCY_AUDIT_MAX_CONCURRENCY",
+    2,
+    maximum=8,
+)
+_DEPENDENCY_AUDIT_CONFIDENCE_THRESHOLD = 0.72
+_DEPENDENCY_PER_SOURCE_LIMIT = 4
+_SEMANTIC_EMBEDDING_MODEL = (
+    os.environ.get("REQUIREMENT_GRAPH_EMBEDDING_MODEL")
+    or "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+)
+_SEMANTIC_PAIR_MAX_REQUIREMENTS = 256
+_SEMANTIC_PAIR_THRESHOLD = 0.62
+_SEMANTIC_SIMILARITY_THRESHOLD = 0.74
+
+
+_semantic_embedder = None
+_semantic_embedding_error: Optional[str] = None
+_semantic_embedder_lock = threading.Lock()
+
+
+logger = logging.getLogger(__name__)
+
+
+def _is_retryable_dependency_audit_error(exc: Exception) -> bool:
+    if isinstance(exc, asyncio.TimeoutError):
+        return True
+    if isinstance(
+        exc,
+        (
+            aiohttp.ClientConnectionError,
+            aiohttp.ServerDisconnectedError,
+            aiohttp.ClientOSError,
+            aiohttp.ClientPayloadError,
+        ),
+    ):
+        return True
+    if isinstance(exc, aiohttp.ClientResponseError):
+        return exc.status in _TRANSIENT_TOOL_ERROR_STATUSES
+    return False
+
+
+class _DependencyAuditToolDef:
+    @classmethod
+    def get_tool_schema(cls) -> Dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": "submit_dependency_decisions",
+                "description": (
+                    "基于候选依赖对，返回每个候选是否成立、是否应反转方向，"
+                    "并给出简明证据。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "decisions": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "candidate_id": {
+                                        "type": "string",
+                                        "description": "候选依赖的唯一 ID，必须来自输入。",
+                                    },
+                                    "action": {
+                                        "type": "string",
+                                        "enum": ["confirm", "reverse", "reject", "unclear"],
+                                        "description": (
+                                            "confirm=保持原方向；reverse=方向应反转；"
+                                            "reject=不是依赖；unclear=证据不足。"
+                                        ),
+                                    },
+                                    "confidence": {
+                                        "type": "number",
+                                        "minimum": 0,
+                                        "maximum": 1,
+                                        "description": "对本次裁决的置信度。",
+                                    },
+                                    "dependency_kind": {
+                                        "type": "string",
+                                        "enum": ["data", "control", "temporal", "resource", "validation", "other"],
+                                        "description": "依赖类型。",
+                                    },
+                                    "reason": {
+                                        "type": "string",
+                                        "description": "为什么确认、反转或拒绝该依赖。",
+                                    },
+                                    "evidence": {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                        "description": "直接证据短语，优先返回输入文本中的关键词或片段。",
+                                    },
+                                },
+                                "required": ["candidate_id", "action", "confidence", "reason"],
+                                "additionalProperties": False,
+                            },
+                        }
+                    },
+                    "required": ["decisions"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+
+    @classmethod
+    def get_system_prompt(cls) -> str:
+        return """你是需求依赖关系的严格裁决器。
+
+你的任务不是“多找关系”，而是“删掉伪依赖”。
+
+只在以下情况确认 DEPENDS_ON：
+1. source 明确调用、读取、消费、依赖 target 的接口/数据/组件；
+2. target 是 source 的前置条件、执行前提或必经校验；
+3. 没有 target，source 无法正确实现、运行、验证或交付。
+
+必须拒绝这些常见伪依赖：
+- 只是同一模块、同一主题、同一父需求下的兄弟项；
+- 只是都提到了相似关键词；
+- 只是“相关”“配合”“一起工作”，但没有明确前置/输入输出/调用链；
+- 只是同类能力或相邻功能。
+
+方向判断规则：
+- 如果实际是 target 依赖 source，返回 reverse；
+- 如果证据不足，返回 reject 或 unclear，不要勉强确认。
+
+输出要求：
+- 必须调用 submit_dependency_decisions 工具；
+- candidate_id 必须来自输入；
+- 不要输出工具之外的普通文本。"""
 
 
 class RequirementGraphService:
@@ -43,105 +318,62 @@ class RequirementGraphService:
         project_id: Optional[str] = None,
         session_id: Optional[str] = None,
         limit: int = 600,
-        infer_relations: bool = True,
+        infer_relations: bool = False,
         inference_model: str = "deepseek-reasoner",
         inference_limit: int = 48,
     ) -> Dict[str, Any]:
-        project_id = self._clean(project_id)
+        project_id = self._clean(project_id) or self._resolve_project_id_by_session(
+            self._clean(session_id)
+        )
         session_id = self._clean(session_id) or self._resolve_project_session(project_id)
         limit = max(50, min(2000, int(limit or 600)))
 
         builder = _GraphBuilder(limit=limit)
         project_requirements = self._load_project_requirements(project_id, limit)
-        l123_requirements = self._load_l123_requirements(session_id, limit)
-        l4_requirements = self._load_l4_requirements(session_id, limit)
-
-        text_index: Dict[str, List[str]] = defaultdict(list)
+        requirement_features: Dict[str, Dict[str, Any]] = {}
 
         for req in project_requirements:
             node_id = _req_node_id(req.get("req_id"))
+            normalized_level = _normalize_source_level(
+                req.get("source_level"),
+                req.get("requirement_type"),
+            )
             builder.add_node(
                 node_id,
                 kind="requirement",
                 label=req.get("title") or _short_text(req.get("description"), 36),
-                group=req.get("source_level") or req.get("requirement_type") or "managed",
+                group=normalized_level,
                 properties={
                     "req_id": req.get("req_id"),
+                    "project_id": req.get("project_id"),
                     "title": req.get("title"),
+                    "description": req.get("description"),
                     "content": req.get("description"),
-                    "level": req.get("source_level") or "managed",
                     "type": req.get("requirement_type"),
                     "status": req.get("status"),
                     "priority": req.get("priority"),
                     "tags": _as_list(req.get("tags")),
-                    "source": "manage_requirements",
-                    "project_id": req.get("project_id"),
-                    "created_by": req.get("created_by"),
-                    "updated_by": req.get("updated_by"),
                     "assignee": req.get("assignee"),
+                    "parent_id": req.get("parent_id"),
+                    "source_req_id": req.get("source_req_id"),
+                    "source_level": normalized_level,
+                    "level": normalized_level,
                     "custom_fields": _as_dict(req.get("custom_fields")),
+                    "source": "manage_requirements",
                 },
             )
-            _index_text(text_index, node_id, req.get("title"), req.get("description"))
+            requirement_features[node_id] = self._build_requirement_feature(req, normalized_level)
 
-        for req in l123_requirements:
-            node_id = _req_node_id(req.get("req_id"))
-            builder.add_node(
-                node_id,
-                kind="requirement",
-                label=_short_text(req.get("text"), 36),
-                group=req.get("level") or "L1-L3",
-                properties={
-                    "req_id": req.get("req_id"),
-                    "content": req.get("text"),
-                    "level": req.get("level"),
-                    "source": "requirements_l123",
-                    "session_id": req.get("session_id"),
-                    "fingerprint": req.get("fingerprint"),
-                    "anchor_span_id": req.get("anchor_span_id"),
-                    "evidence": req.get("r"),
-                },
-            )
-            _index_text(text_index, node_id, req.get("text"))
-
-        for req in l4_requirements:
-            node_id = _req_node_id(req.get("req_id"))
-            validation_rules = {
-                "acceptance_criteria": _as_list(req.get("acceptance_criteria")),
-                "test_method": req.get("test_method"),
-                "nfr": _as_list(req.get("nfr")),
-                "open_questions": _as_list(req.get("open_questions")),
-            }
-            builder.add_node(
-                node_id,
-                kind="requirement",
-                label=_short_text(req.get("text"), 36),
-                group="L4",
-                properties={
-                    "req_id": req.get("req_id"),
-                    "content": req.get("text"),
-                    "level": "L4",
-                    "component": req.get("component"),
-                    "target_modules": _compact_list([req.get("component")]),
-                    "validation_rules": validation_rules,
-                    "interfaces": _as_list(req.get("interfaces")),
-                    "data_contracts": _as_list(req.get("data_contracts")),
-                    "error_handling": _as_list(req.get("error_handling")),
-                    "confidence": req.get("confidence"),
-                    "source": "low_level_requirements",
-                    "session_id": req.get("session_id"),
-                    "source_top_id": req.get("source_top_id"),
-                },
-            )
-            _index_text(text_index, node_id, req.get("text"))
-
+        self._attach_semantic_embeddings(requirement_features)
         self._apply_project_edges(builder, project_requirements)
-        self._apply_l4_edges(builder, session_id)
-        self._apply_trace_edges(builder, session_id, text_index)
-        self._apply_conflict_edges(builder, session_id, text_index)
-        classification_stats = self._apply_classification(builder, session_id, text_index)
-        self._apply_stakeholders(builder, project_id, project_requirements)
-        strong_edge_count = len(builder.edges)
+        candidate_pairs, candidate_stats = self._collect_candidate_pairs(requirement_features)
+        rule_stats = self._apply_rule_edges(
+            builder,
+            requirement_features,
+            candidate_pairs,
+            dependency_model=inference_model,
+            dependency_review_limit=inference_limit,
+        )
         inference_stats = self._apply_llm_inference(
             builder,
             project_id=project_id,
@@ -149,29 +381,32 @@ class RequirementGraphService:
             enabled=infer_relations,
             model=inference_model,
             inference_limit=inference_limit,
+            requirement_features=requirement_features,
+            candidate_pairs=candidate_pairs,
         )
+        self._prune_weaker_similar_edges(builder)
 
         graph = builder.to_graph()
-        graph["stats"]["classification_counts"] = classification_stats["label_distribution"]
-        graph["stats"]["classified_requirement_count"] = classification_stats["matched_count"]
-        graph["stats"]["classification_total"] = classification_stats["total"]
-        graph["stats"]["strong_edge_count"] = strong_edge_count
+        graph["stats"]["strong_edge_count"] = graph["stats"]["structural_edge_count"] + graph["stats"]["rule_edge_count"]
         graph["stats"]["inferred_edge_count"] = inference_stats["inferred_edge_count"]
-        graph["stats"]["inferred_stakeholder_count"] = inference_stats["inferred_stakeholder_count"]
-        graph["legend"]["classification_labels"] = list(
-            classification_stats["label_distribution"].keys()
-        )
+        graph["stats"]["candidate_pair_count"] = candidate_stats["pair_count"]
+        graph["stats"]["candidate_pairs_per_requirement_limit"] = candidate_stats["per_requirement_limit"]
+        graph["stats"]["candidate_requirement_count"] = candidate_stats["requirement_count"]
+        graph["stats"]["source_requirement_count"] = len(project_requirements)
+        graph["stats"]["rule_edge_counts"] = rule_stats["edge_counts"]
+        graph["stats"]["dependency_audit"] = rule_stats["dependency_audit"]
         graph["meta"] = {
             "project_id": project_id,
             "session_id": session_id,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "sources": {
-                "project_requirements": len(project_requirements),
-                "requirements_l123": len(l123_requirements),
-                "low_level_requirements": len(l4_requirements),
+                "manage_requirements": len(project_requirements),
             },
+            "candidate_recall": candidate_stats,
+            "dependency_audit": rule_stats["dependency_audit"],
             "inference": inference_stats,
         }
+        graph["legend"]["levels"] = _LEVEL_ORDER
         return graph
 
     def _resolve_project_session(self, project_id: Optional[str]) -> Optional[str]:
@@ -186,6 +421,24 @@ class RequirementGraphService:
                     WHERE project_id = %s
                     """,
                     (project_id,),
+                )
+                row = cur.fetchone()
+        return row[0] if row and row[0] else None
+
+    def _resolve_project_id_by_session(self, session_id: Optional[str]) -> Optional[str]:
+        if not session_id:
+            return None
+        with self.db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT project_id
+                    FROM manage_projects
+                    WHERE current_session_id = %s
+                    ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+                    LIMIT 1
+                    """,
+                    (session_id,),
                 )
                 row = cur.fetchone()
         return row[0] if row and row[0] else None
@@ -277,8 +530,15 @@ class RequirementGraphService:
                     target,
                     "REFINES",
                     label="父子细化",
-                    weight=0.86,
-                    properties={"source": "manage_requirements.parent_id"},
+                    weight=0.99,
+                    properties={
+                        "source_kind": "structural",
+                        "source_detail": "manage_requirements.parent_id",
+                        "source": "manage_requirements.parent_id",
+                        "confidence": 0.99,
+                        "reason": "来自需求父子字段",
+                        "evidence": [f"parent_id={parent_id}"],
+                    },
                 )
             if source_req_id:
                 builder.add_edge(
@@ -286,9 +546,823 @@ class RequirementGraphService:
                     target,
                     "REFINES",
                     label="来源细化",
-                    weight=0.78,
-                    properties={"source": "manage_requirements.source_req_id"},
+                    weight=0.97,
+                    properties={
+                        "source_kind": "structural",
+                        "source_detail": "manage_requirements.source_req_id",
+                        "source": "manage_requirements.source_req_id",
+                        "confidence": 0.97,
+                        "reason": "来自需求来源字段",
+                        "evidence": [f"source_req_id={source_req_id}"],
+                    },
                 )
+
+    def _build_requirement_feature(
+        self,
+        req: Dict[str, Any],
+        normalized_level: str,
+    ) -> Dict[str, Any]:
+        title = self._clean(req.get("title")) or ""
+        description = self._clean(req.get("description")) or ""
+        custom_fields = _as_dict(req.get("custom_fields"))
+        text = " ".join(
+            part
+            for part in [
+                title,
+                description,
+                " ".join(_compact_list(_as_list(req.get("tags")))),
+                " ".join(_compact_list(_flatten_values(custom_fields))),
+            ]
+            if part
+        )
+        text_lower = text.lower()
+        validation_text = " ".join(
+            _compact_list(
+                _flatten_values(
+                    {
+                        "description": description,
+                        "acceptance": custom_fields.get("acceptance_criteria"),
+                        "validation": custom_fields.get("validation_rules"),
+                        "test_method": custom_fields.get("test_method"),
+                        "test_cases": custom_fields.get("test_cases"),
+                    }
+                )
+            )
+        )
+        modules = _extract_modules(req)
+        tags = {tag.lower() for tag in _compact_list(_as_list(req.get("tags")))}
+        terms = _extract_terms(text)
+        interface_terms = _extract_interface_terms(text, custom_fields)
+        validation_terms = _extract_validation_terms(validation_text or text)
+        return {
+            "id": _req_node_id(req.get("req_id")),
+            "req_id": self._clean(req.get("req_id")),
+            "title": title,
+            "description": description,
+            "text": text,
+            "text_lower": text_lower,
+            "semantic_text": _build_semantic_text(req, title, description, custom_fields),
+            "embedding": None,
+            "source_level": normalized_level,
+            "requirement_type": self._clean(req.get("requirement_type")),
+            "status": self._clean(req.get("status")),
+            "priority": _float_or_default(req.get("priority"), 0),
+            "tags": tags,
+            "modules": modules,
+            "terms": terms,
+            "interface_terms": interface_terms,
+            "validation_terms": validation_terms,
+            "custom_fields": custom_fields,
+        }
+
+    def _attach_semantic_embeddings(
+        self,
+        requirement_features: Dict[str, Dict[str, Any]],
+    ) -> None:
+        if not requirement_features or not _semantic_embedding_enabled():
+            return
+        embedder = _get_semantic_embedder()
+        if embedder is None:
+            return
+
+        feature_items = list(requirement_features.items())
+        texts = [item[1].get("semantic_text") or item[1].get("text") or "" for item in feature_items]
+        try:
+            vectors = embedder.encode(texts, normalize_embeddings=True)
+        except Exception as exc:
+            logger.warning("Requirement graph semantic embedding failed: %s", exc)
+            return
+
+        for (_, feature), vector in zip(feature_items, vectors):
+            feature["embedding"] = _to_float_vector(vector)
+
+    def _collect_candidate_pairs(
+        self,
+        requirement_features: Dict[str, Dict[str, Any]],
+        per_requirement_limit: int = 10,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        per_requirement_limit = max(4, min(16, int(per_requirement_limit or 10)))
+        term_document_frequency = Counter()
+        for feature in requirement_features.values():
+            for term in feature["terms"]:
+                term_document_frequency[term] += 1
+        max_term_document_frequency = _max_term_document_frequency(len(requirement_features))
+        signal_indexes: Dict[str, Dict[str, set[str]]] = {
+            "modules": defaultdict(set),
+            "tags": defaultdict(set),
+            "terms": defaultdict(set),
+            "interfaces": defaultdict(set),
+            "validation": defaultdict(set),
+        }
+        for node_id, feature in requirement_features.items():
+            for module in feature["modules"]:
+                signal_indexes["modules"][module].add(node_id)
+            for tag in feature["tags"]:
+                signal_indexes["tags"][tag].add(node_id)
+            filtered_terms = [
+                term
+                for term in sorted(feature["terms"])
+                if term_document_frequency.get(term, 0) <= max_term_document_frequency
+            ]
+            for term in filtered_terms[:18]:
+                signal_indexes["terms"][term].add(node_id)
+            for term in feature["interface_terms"]:
+                signal_indexes["interfaces"][term].add(node_id)
+            for term in feature["validation_terms"]:
+                signal_indexes["validation"][term].add(node_id)
+
+        pair_map: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        per_requirement_counts: Dict[str, int] = {}
+        semantic_neighbors = self._collect_semantic_candidate_neighbors(
+            requirement_features,
+            per_requirement_limit=per_requirement_limit,
+        )
+
+        for node_id, feature in requirement_features.items():
+            candidate_scores: Dict[str, Dict[str, Any]] = defaultdict(
+                lambda: {"score": 0, "evidence": []}
+            )
+            self._accumulate_candidates(
+                node_id,
+                feature["modules"],
+                signal_indexes["modules"],
+                candidate_scores,
+                score=5,
+                evidence_label="shared_module",
+            )
+            self._accumulate_candidates(
+                node_id,
+                feature["tags"],
+                signal_indexes["tags"],
+                candidate_scores,
+                score=4,
+                evidence_label="shared_tag",
+            )
+            self._accumulate_candidates(
+                node_id,
+                [
+                    term
+                    for term in sorted(feature["terms"])
+                    if term_document_frequency.get(term, 0) <= max_term_document_frequency
+                ][:12],
+                signal_indexes["terms"],
+                candidate_scores,
+                score=2,
+                evidence_label="shared_term",
+            )
+            self._accumulate_candidates(
+                node_id,
+                feature["interface_terms"],
+                signal_indexes["interfaces"],
+                candidate_scores,
+                score=4,
+                evidence_label="shared_interface",
+            )
+            self._accumulate_candidates(
+                node_id,
+                feature["validation_terms"],
+                signal_indexes["validation"],
+                candidate_scores,
+                score=3,
+                evidence_label="shared_validation",
+            )
+            for other_id, semantic_score in semantic_neighbors.get(node_id, []):
+                candidate_scores[other_id]["score"] += max(3, int(round(semantic_score * 6)))
+                candidate_scores[other_id]["evidence"] = _merge_evidence(
+                    candidate_scores[other_id]["evidence"],
+                    [f"semantic_match:{semantic_score:.3f}"],
+                    limit=8,
+                )
+
+            ordered_candidates = sorted(
+                candidate_scores.items(),
+                key=lambda item: (-item[1]["score"], item[0]),
+            )[:per_requirement_limit]
+            per_requirement_counts[node_id] = len(ordered_candidates)
+            for other_id, payload in ordered_candidates:
+                pair_key = tuple(sorted((node_id, other_id)))
+                pair_info = pair_map.setdefault(
+                    pair_key,
+                    {
+                        "pair": pair_key,
+                        "score": 0,
+                        "signals": [],
+                        "requesters": set(),
+                    },
+                )
+                pair_info["score"] = max(pair_info["score"], payload["score"])
+                pair_info["signals"] = _merge_evidence(
+                    pair_info["signals"],
+                    payload["evidence"],
+                    limit=12,
+                )
+                pair_info["requesters"].add(node_id)
+
+        pairs = [
+            {
+                "source": source,
+                "target": target,
+                "score": payload["score"],
+                "signals": payload["signals"],
+                "requester_count": len(payload["requesters"]),
+            }
+            for (source, target), payload in sorted(
+                pair_map.items(),
+                key=lambda item: (-item[1]["score"], item[0][0], item[0][1]),
+            )
+        ]
+        return pairs, {
+            "pair_count": len(pairs),
+            "per_requirement_limit": per_requirement_limit,
+            "per_requirement_counts": per_requirement_counts,
+            "requirement_count": len(requirement_features),
+            "max_term_document_frequency": max_term_document_frequency,
+        }
+
+    def _collect_semantic_candidate_neighbors(
+        self,
+        requirement_features: Dict[str, Dict[str, Any]],
+        *,
+        per_requirement_limit: int,
+    ) -> Dict[str, List[Tuple[str, float]]]:
+        if len(requirement_features) < 2 or len(requirement_features) > _SEMANTIC_PAIR_MAX_REQUIREMENTS:
+            return {}
+
+        feature_items = [
+            (node_id, feature)
+            for node_id, feature in requirement_features.items()
+            if feature.get("embedding")
+        ]
+        if len(feature_items) < 2:
+            return {}
+
+        neighbor_limit = max(2, min(6, per_requirement_limit // 2 or 2))
+        neighbors: Dict[str, List[Tuple[str, float]]] = {}
+        for index, (node_id, feature) in enumerate(feature_items):
+            ranked: List[Tuple[str, float]] = []
+            for other_index, (other_id, other_feature) in enumerate(feature_items):
+                if other_index == index:
+                    continue
+                similarity = _cosine_similarity(
+                    feature.get("embedding"),
+                    other_feature.get("embedding"),
+                )
+                if similarity < _SEMANTIC_PAIR_THRESHOLD:
+                    continue
+                ranked.append((other_id, similarity))
+            ranked.sort(key=lambda item: (-item[1], item[0]))
+            if ranked:
+                neighbors[node_id] = ranked[:neighbor_limit]
+        return neighbors
+
+    def _accumulate_candidates(
+        self,
+        source_id: str,
+        values: Iterable[str],
+        index_map: Dict[str, set[str]],
+        candidate_scores: Dict[str, Dict[str, Any]],
+        *,
+        score: int,
+        evidence_label: str,
+    ) -> None:
+        for value in values:
+            for target_id in index_map.get(value, set()):
+                if target_id == source_id:
+                    continue
+                candidate_scores[target_id]["score"] += score
+                candidate_scores[target_id]["evidence"] = _merge_evidence(
+                    candidate_scores[target_id]["evidence"],
+                    [f"{evidence_label}:{value}"],
+                    limit=8,
+                )
+
+    def _apply_rule_edges(
+        self,
+        builder: "_GraphBuilder",
+        requirement_features: Dict[str, Dict[str, Any]],
+        candidate_pairs: List[Dict[str, Any]],
+        *,
+        dependency_model: str = "deepseek-reasoner",
+        dependency_review_limit: int = 48,
+    ) -> Dict[str, Any]:
+        edge_counter: Counter[str] = Counter()
+        dependency_candidates: List[Dict[str, Any]] = []
+        for pair in candidate_pairs:
+            left = requirement_features.get(pair["source"])
+            right = requirement_features.get(pair["target"])
+            if not left or not right:
+                continue
+
+            dependency_lr = _match_dependency_rule(left, right)
+            dependency_rl = _match_dependency_rule(right, left)
+            conflict = _match_conflict_rule(left, right)
+            validation = _match_validation_rule(left, right)
+            similar = _match_similarity_rule(left, right)
+
+            for source_feature, target_feature, relation in (
+                (left, right, dependency_lr),
+                (right, left, dependency_rl),
+            ):
+                if not relation:
+                    continue
+                candidate = self._build_dependency_candidate(
+                    source_feature=source_feature,
+                    target_feature=target_feature,
+                    relation=relation,
+                    pair=pair,
+                )
+                if candidate:
+                    dependency_candidates.append(candidate)
+
+            if conflict:
+                builder.add_edge(
+                    left["id"],
+                    right["id"],
+                    "CONFLICTS_WITH",
+                    label=_edge_label("CONFLICTS_WITH"),
+                    weight=conflict["confidence"],
+                    properties={
+                        "source_kind": "rule",
+                        "source_detail": conflict["detail"],
+                        "source": conflict["detail"],
+                        "confidence": conflict["confidence"],
+                        "reason": conflict["reason"],
+                        "evidence": conflict["evidence"],
+                    },
+                )
+                edge_counter["CONFLICTS_WITH"] += 1
+
+            if validation:
+                builder.add_edge(
+                    left["id"],
+                    right["id"],
+                    "VALIDATES_WITH",
+                    label=_edge_label("VALIDATES_WITH"),
+                    weight=validation["confidence"],
+                    properties={
+                        "source_kind": "rule",
+                        "source_detail": validation["detail"],
+                        "source": validation["detail"],
+                        "confidence": validation["confidence"],
+                        "reason": validation["reason"],
+                        "evidence": validation["evidence"],
+                    },
+                )
+                edge_counter["VALIDATES_WITH"] += 1
+
+            if similar and not _has_stronger_relation(builder, left["id"], right["id"]):
+                builder.add_edge(
+                    left["id"],
+                    right["id"],
+                    "SIMILAR_TO",
+                    label=_edge_label("SIMILAR_TO"),
+                    weight=similar["confidence"],
+                    properties={
+                        "source_kind": "rule",
+                        "source_detail": similar["detail"],
+                        "source": similar["detail"],
+                        "confidence": similar["confidence"],
+                        "reason": similar["reason"],
+                        "evidence": similar["evidence"],
+                    },
+                )
+                edge_counter["SIMILAR_TO"] += 1
+
+        dependency_audit = self._apply_dependency_candidates(
+            builder,
+            dependency_candidates,
+            model=dependency_model,
+            review_limit=dependency_review_limit,
+        )
+        if dependency_audit["confirmed_count"]:
+            edge_counter["DEPENDS_ON"] += dependency_audit["confirmed_count"]
+
+        return {
+            "edge_counts": dict(edge_counter),
+            "dependency_audit": dependency_audit,
+        }
+
+    def _build_dependency_candidate(
+        self,
+        *,
+        source_feature: Dict[str, Any],
+        target_feature: Dict[str, Any],
+        relation: Dict[str, Any],
+        pair: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        evidence = _compact_list(_as_list(relation.get("evidence")))
+        if not self._is_dependency_candidate_strong(evidence):
+            return None
+        source_req_id = self._clean(source_feature.get("req_id")) or source_feature["id"]
+        target_req_id = self._clean(target_feature.get("req_id")) or target_feature["id"]
+        return {
+            "candidate_id": f"dep:{source_req_id}->{target_req_id}",
+            "source": source_feature["id"],
+            "target": target_feature["id"],
+            "score": float(pair.get("score") or 0),
+            "rule_confidence": float(relation.get("confidence") or 0),
+            "detail": relation.get("detail"),
+            "reason": relation.get("reason"),
+            "evidence": evidence[:8],
+            "signals": _compact_list(_as_list(pair.get("signals")))[:8],
+            "source_requirement": self._serialize_requirement_feature(source_feature),
+            "target_requirement": self._serialize_requirement_feature(target_feature),
+        }
+
+    def _is_dependency_candidate_strong(self, evidence: List[str]) -> bool:
+        strong_markers = (
+            "mentioned_module:",
+            "shared_interface:",
+            "shared_validation:",
+        )
+        if any(item.startswith(strong_markers) for item in evidence):
+            return True
+        shared_module_count = sum(1 for item in evidence if item.startswith("shared_module:"))
+        return shared_module_count >= 1 and len(evidence) >= 3
+
+    def _apply_dependency_candidates(
+        self,
+        builder: "_GraphBuilder",
+        dependency_candidates: List[Dict[str, Any]],
+        *,
+        model: str,
+        review_limit: int,
+    ) -> Dict[str, Any]:
+        selected_candidates = self._select_dependency_candidates(
+            dependency_candidates,
+            review_limit=review_limit,
+        )
+        if not selected_candidates:
+            return {
+                "model": model,
+                "candidate_count": 0,
+                "reviewed_count": 0,
+                "confirmed_count": 0,
+                "rejected_count": 0,
+                "fallback_used": False,
+                "pruned_transitive_count": 0,
+            }
+
+        fallback_used = False
+        try:
+            reviewed = self._review_dependency_candidates_with_llm(
+                selected_candidates,
+                model=model,
+            )
+            fallback_used = any(bool(item.get("used_fallback")) for item in reviewed)
+        except Exception as exc:
+            self._log_dependency_audit_failure(
+                exc,
+                candidate_count=len(selected_candidates),
+                model=model,
+                fallback_scope="full",
+            )
+            reviewed = self._fallback_dependency_decisions(selected_candidates)
+            fallback_used = True
+
+        confirmed_count = 0
+        rejected_count = 0
+        for decision in reviewed:
+            action = str(decision.get("action") or "").strip().lower()
+            candidate = decision.get("candidate")
+            if not candidate or action in {"reject", "unclear"}:
+                rejected_count += 1
+                continue
+            confidence = max(
+                _float_or_default(candidate.get("rule_confidence"), 0),
+                _float_or_default(decision.get("confidence"), 0),
+            )
+            if confidence < _DEPENDENCY_AUDIT_CONFIDENCE_THRESHOLD:
+                rejected_count += 1
+                continue
+
+            source = candidate["source"]
+            target = candidate["target"]
+            if action == "reverse":
+                source, target = target, source
+
+            builder.add_edge(
+                source,
+                target,
+                "DEPENDS_ON",
+                label=_edge_label("DEPENDS_ON"),
+                weight=confidence,
+                properties={
+                    "source_kind": "rule",
+                    "source_detail": candidate.get("detail"),
+                    "source": candidate.get("detail"),
+                    "confidence": confidence,
+                    "reason": decision.get("reason") or candidate.get("reason"),
+                    "evidence": _merge_evidence(
+                        candidate.get("evidence"),
+                        decision.get("evidence"),
+                        limit=10,
+                    ),
+                    "audit_model": model,
+                    "audit_confidence": _float_or_default(decision.get("confidence"), confidence),
+                    "audit_action": action,
+                    "dependency_kind": decision.get("dependency_kind"),
+                },
+            )
+            confirmed_count += 1
+
+        pruned_transitive_count = self._prune_transitive_dependency_edges(builder)
+        confirmed_count = max(0, confirmed_count - pruned_transitive_count)
+        return {
+            "model": model,
+            "candidate_count": len(dependency_candidates),
+            "reviewed_count": len(selected_candidates),
+            "confirmed_count": confirmed_count,
+            "rejected_count": rejected_count,
+            "fallback_used": fallback_used,
+            "pruned_transitive_count": pruned_transitive_count,
+        }
+
+    def _log_dependency_audit_failure(
+        self,
+        exc: Exception,
+        *,
+        candidate_count: int,
+        model: str,
+        fallback_scope: str,
+    ) -> None:
+        message = (
+            "Dependency audit tool-call failed; falling back to strict rule filter "
+            "(scope=%s, candidates=%s, model=%s)"
+        )
+        if _is_retryable_dependency_audit_error(exc):
+            logger.warning(message + " reason=%s", fallback_scope, candidate_count, model, repr(exc))
+            return
+        logger.exception(message, fallback_scope, candidate_count, model)
+
+    def _select_dependency_candidates(
+        self,
+        dependency_candidates: List[Dict[str, Any]],
+        *,
+        review_limit: int,
+    ) -> List[Dict[str, Any]]:
+        limit = max(8, min(96, int(review_limit or 48)))
+        per_source_counts: Dict[str, int] = defaultdict(int)
+        selected: List[Dict[str, Any]] = []
+        ordered = sorted(
+            dependency_candidates,
+            key=lambda item: (
+                -_float_or_default(item.get("score"), 0),
+                -_float_or_default(item.get("rule_confidence"), 0),
+                -(len(item.get("evidence") or [])),
+                str(item.get("candidate_id") or ""),
+            ),
+        )
+        for candidate in ordered:
+            source = candidate["source"]
+            if per_source_counts[source] >= _DEPENDENCY_PER_SOURCE_LIMIT:
+                continue
+            selected.append(candidate)
+            per_source_counts[source] += 1
+            if len(selected) >= limit:
+                break
+        return selected
+
+    def _review_dependency_candidates_with_llm(
+        self,
+        dependency_candidates: List[Dict[str, Any]],
+        *,
+        model: str,
+    ) -> List[Dict[str, Any]]:
+        if self.ai is None or not hasattr(self.ai, "chat_completion_with_tools_async"):
+            return self._fallback_dependency_decisions(dependency_candidates)
+
+        coroutine = self._review_dependency_candidates_with_llm_async(
+            dependency_candidates,
+            model=model,
+        )
+        try:
+            return asyncio.run(coroutine)
+        except RuntimeError as exc:
+            if "asyncio.run() cannot be called from a running event loop" not in str(exc):
+                raise
+
+        result_holder: Dict[str, Any] = {}
+        error_holder: Dict[str, Exception] = {}
+
+        def _runner() -> None:
+            try:
+                result_holder["value"] = asyncio.run(
+                    self._review_dependency_candidates_with_llm_async(
+                        dependency_candidates,
+                        model=model,
+                    )
+                )
+            except Exception as thread_exc:  # pragma: no cover - defensive path
+                error_holder["error"] = thread_exc
+
+        thread = threading.Thread(target=_runner, daemon=True)
+        thread.start()
+        thread.join()
+        if error_holder.get("error"):
+            raise error_holder["error"]
+        return list(result_holder.get("value") or [])
+
+    async def _review_dependency_candidates_with_llm_async(
+        self,
+        dependency_candidates: List[Dict[str, Any]],
+        *,
+        model: str,
+    ) -> List[Dict[str, Any]]:
+        semaphore = asyncio.Semaphore(_DEPENDENCY_AUDIT_MAX_CONCURRENCY)
+        batches = [
+            dependency_candidates[index : index + _DEPENDENCY_AUDIT_BATCH_SIZE]
+            for index in range(0, len(dependency_candidates), _DEPENDENCY_AUDIT_BATCH_SIZE)
+        ]
+        connector = aiohttp.TCPConnector(limit=max(8, _DEPENDENCY_AUDIT_MAX_CONCURRENCY * 2))
+        async with aiohttp.ClientSession(connector=connector) as session:
+            tasks = [
+                self._review_dependency_batch(
+                    batch,
+                    model=model,
+                    session=session,
+                    semaphore=semaphore,
+                )
+                for batch in batches
+            ]
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        reviewed: List[Dict[str, Any]] = []
+        for batch, result in zip(batches, batch_results):
+            if isinstance(result, Exception):
+                self._log_dependency_audit_failure(
+                    result,
+                    candidate_count=len(batch),
+                    model=model,
+                    fallback_scope="batch",
+                )
+                reviewed.extend(self._fallback_dependency_decisions(batch))
+                continue
+            reviewed.extend(result)
+        return reviewed
+
+    async def _review_dependency_batch(
+        self,
+        dependency_candidates: List[Dict[str, Any]],
+        *,
+        model: str,
+        session: aiohttp.ClientSession,
+        semaphore: asyncio.Semaphore,
+    ) -> List[Dict[str, Any]]:
+        async with semaphore:
+            system_prompt = _DependencyAuditToolDef.get_system_prompt()
+            payload = {
+                "candidates": [
+                    {
+                        "candidate_id": item["candidate_id"],
+                        "source": item["source"],
+                        "target": item["target"],
+                        "pair_score": item.get("score"),
+                        "rule_confidence": item.get("rule_confidence"),
+                        "rule_reason": item.get("reason"),
+                        "rule_evidence": item.get("evidence"),
+                        "signals": item.get("signals"),
+                        "source_requirement": item.get("source_requirement"),
+                        "target_requirement": item.get("target_requirement"),
+                    }
+                    for item in dependency_candidates
+                ]
+            }
+            user_prompt = (
+                "请严格审查这些依赖候选，删除只是“同主题/同模块/同父节点”导致的伪依赖。"
+                "只有在 source 明确以前置、输入输出、调用、读取、消费、校验依赖 target 时才确认。"
+                "输入如下：\n"
+                + json.dumps(payload, ensure_ascii=False)
+            )
+            response = await self.ai.chat_completion_with_tools_async(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                tools=[_DependencyAuditToolDef.get_tool_schema()],
+                model=model,
+                temperature=0.1,
+                max_tokens=3200,
+                tool_choice="required",
+                session=session,
+            )
+        return self._parse_dependency_audit_response(response, dependency_candidates)
+
+    def _parse_dependency_audit_response(
+        self,
+        response: Dict[str, Any],
+        dependency_candidates: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        candidate_lookup = {
+            str(item.get("candidate_id") or ""): item for item in dependency_candidates
+        }
+        tool_calls = response.get("tool_calls") if isinstance(response, dict) else []
+        if not isinstance(tool_calls, list):
+            return self._fallback_dependency_decisions(dependency_candidates)
+
+        decisions: List[Dict[str, Any]] = []
+        for call in tool_calls:
+            if not isinstance(call, dict) or call.get("type") != "function":
+                continue
+            function_payload = call.get("function") or {}
+            if function_payload.get("name") != "submit_dependency_decisions":
+                continue
+            arguments = function_payload.get("arguments") or {}
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError:
+                    continue
+            raw_decisions = arguments.get("decisions") if isinstance(arguments, dict) else []
+            for item in raw_decisions if isinstance(raw_decisions, list) else []:
+                if not isinstance(item, dict):
+                    continue
+                candidate_id = str(item.get("candidate_id") or "").strip()
+                candidate = candidate_lookup.get(candidate_id)
+                if not candidate:
+                    continue
+                decisions.append(
+                    {
+                        "candidate": candidate,
+                        "action": str(item.get("action") or "unclear").strip().lower(),
+                        "confidence": _float_or_default(item.get("confidence"), 0),
+                        "reason": self._clean(item.get("reason")) or "",
+                        "evidence": _compact_list(_as_list(item.get("evidence")))[:8],
+                        "dependency_kind": self._clean(item.get("dependency_kind")) or "other",
+                    }
+                )
+        return decisions or self._fallback_dependency_decisions(dependency_candidates)
+
+    def _fallback_dependency_decisions(
+        self,
+        dependency_candidates: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        decisions: List[Dict[str, Any]] = []
+        for candidate in dependency_candidates:
+            evidence = candidate.get("evidence") or []
+            has_direct_reference = any(
+                item.startswith(("mentioned_module:", "shared_interface:", "shared_validation:"))
+                for item in evidence
+            )
+            action = "confirm" if has_direct_reference else "reject"
+            decisions.append(
+                {
+                    "candidate": candidate,
+                    "action": action,
+                    "confidence": candidate.get("rule_confidence", 0.0),
+                    "reason": candidate.get("reason") or "规则回退判定",
+                    "evidence": evidence[:6],
+                    "dependency_kind": "other",
+                    "used_fallback": True,
+                }
+            )
+        return decisions
+
+    def _prune_transitive_dependency_edges(self, builder: "_GraphBuilder") -> int:
+        dependency_edges = [
+            edge for edge in builder.edges.values() if edge.get("type") == "DEPENDS_ON"
+        ]
+        adjacency: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for edge in dependency_edges:
+            adjacency[edge["source"]].append(edge)
+
+        removable_keys: List[Tuple[str, str, str]] = []
+        for edge in dependency_edges:
+            source = edge["source"]
+            target = edge["target"]
+            direct_weight = _float_or_default(edge.get("weight"), 0)
+            if direct_weight >= 0.9:
+                continue
+            for step in adjacency.get(source, []):
+                via = step["target"]
+                if via in {source, target}:
+                    continue
+                for step_two in adjacency.get(via, []):
+                    if step_two["target"] != target:
+                        continue
+                    indirect_weight = min(
+                        _float_or_default(step.get("weight"), 0),
+                        _float_or_default(step_two.get("weight"), 0),
+                    )
+                    if indirect_weight >= direct_weight + 0.05:
+                        removable_keys.append((edge["source"], edge["target"], edge["type"]))
+                        break
+                if (edge["source"], edge["target"], edge["type"]) in removable_keys:
+                    break
+
+        for key in removable_keys:
+            builder.edges.pop(key, None)
+        return len(removable_keys)
+
+    def _prune_weaker_similar_edges(self, builder: "_GraphBuilder") -> None:
+        removable_keys = []
+        for key, edge in builder.edges.items():
+            if edge["type"] != "SIMILAR_TO":
+                continue
+            if _has_stronger_relation(builder, edge["source"], edge["target"]):
+                removable_keys.append(key)
+        for key in removable_keys:
+            builder.edges.pop(key, None)
 
     def _apply_l4_edges(
         self,
@@ -539,49 +1613,66 @@ class RequirementGraphService:
         enabled: bool,
         model: str,
         inference_limit: int,
+        requirement_features: Dict[str, Dict[str, Any]],
+        candidate_pairs: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
         empty_stats = {
             "enabled": enabled,
             "model": model,
-            "scope_requirement_count": 0,
-            "scope_stakeholder_count": 0,
+            "candidate_pair_count": 0,
             "inferred_edge_count": 0,
-            "inferred_stakeholder_count": 0,
         }
         if not enabled or self.ai is None:
             return empty_stats
 
-        scope = self._build_inference_scope(builder, inference_limit)
-        if not scope["requirements"] or len(scope["all_node_ids"]) < 2:
+        pair_budget = max(6, min(80, int(inference_limit or 48)))
+        selected_pairs = candidate_pairs[:pair_budget]
+        if not selected_pairs:
             return empty_stats
 
         prompt_payload = {
             "project_id": project_id,
             "session_id": session_id,
-            "requirements": scope["requirements"],
-            "stakeholders": scope["stakeholders"],
-            "existing_edges": scope["existing_edges"],
+            "candidate_pairs": [
+                {
+                    "source": pair["source"],
+                    "target": pair["target"],
+                    "score": pair["score"],
+                    "signals": pair["signals"],
+                    "source_requirement": self._serialize_requirement_feature(
+                        requirement_features[pair["source"]]
+                    ),
+                    "target_requirement": self._serialize_requirement_feature(
+                        requirement_features[pair["target"]]
+                    ),
+                    "existing_relations": _existing_pair_relations(
+                        builder,
+                        pair["source"],
+                        pair["target"],
+                    ),
+                }
+                for pair in selected_pairs
+                if pair["source"] in requirement_features and pair["target"] in requirement_features
+            ],
         }
+        if not prompt_payload["candidate_pairs"]:
+            return empty_stats
+
         system_prompt = (
-            "你是需求图谱关系推理器。"
-            "请基于节点内容、角色职责、分类标签、层级信息和已有关系，"
-            "补充缺失的高置信关系，并在必要时补充新的利益相关方节点。"
-            "字段信息只是推理证据，不直接映射为关系。"
-            "不要重复已有边。不要创造新的需求节点，但可以补充新的利益相关方节点。"
-            "如果缺乏明确依据，请不要输出该关系。"
-            "只返回严格 JSON："
-            '{"stakeholders":[{"id":"stakeholder:llm:...","label":"...","role":"...","type":"...","department":"...","title":"...","reason":"..."}],'
-            '"edges":[{"source":"...","target":"...","type":"...","confidence":0.0,"reason":"..."}]}'
+            "你是需求-需求关系裁决器。"
+            "输入中每一项都是候选需求对，只能基于这些候选对做有限补充，不能自由生成全图关系。"
+            "不要创造新节点，不要输出输入中不存在的 source/target。"
+            "只允许输出这些关系类型："
+            f"{sorted(_REQ_REQ_INFERRED_TYPES)}。"
+            "每条边必须包含 confidence、reason、evidence。"
+            "若依据不足，请不要输出该关系。"
+            '只返回严格 JSON：{"edges":[{"source":"req:...","target":"req:...","type":"DEPENDS_ON","confidence":0.78,"reason":"...","evidence":["..."]}]}'
         )
         user_prompt = (
-            "请推理以下需求图谱中的新增关系，并在候选节点不足时补充新的利益相关方节点。"
-            "新增利益相关方节点必须使用 stakeholder:llm: 前缀的 id。"
-            "只允许输出这些关系类型："
-            f"需求-需求 {sorted(_REQ_REQ_INFERRED_TYPES)}；"
-            f"利益相关方-需求 {sorted(_STAKEHOLDER_REQ_INFERRED_TYPES)}；"
-            f"利益相关方-利益相关方 {sorted(_STAKEHOLDER_STAKEHOLDER_INFERRED_TYPES)}。"
-            "优先复用已有 stakeholder id；只有上下文中不存在合适候选人时才新增节点。"
-            "reason 请简短说明依据。输入数据如下：\n"
+            "请仅对这些候选需求对做关系裁决。"
+            "优先补充 DEPENDS_ON、CONFLICTS_WITH、VALIDATES_WITH；INCLUDES、EXTENDS、IMPACTS 只在有直接证据时输出。"
+            "如果某对已经有结构或规则关系，只在你确认同类型关系也成立时输出，让系统做合并。"
+            "输入数据如下：\n"
             + json.dumps(prompt_payload, ensure_ascii=False)
         )
         response = self.ai.chat_completion(
@@ -594,31 +1685,24 @@ class RequirementGraphService:
             max_tokens=3200,
         )
         parsed = _extract_json_payload(response.get("content") or "")
-        raw_stakeholders = []
-        if isinstance(parsed, dict):
-            raw_stakeholders = parsed.get("stakeholders") or parsed.get("nodes") or []
-        merge_stats = self._merge_inferred_stakeholders(
-            builder,
-            raw_stakeholders if isinstance(raw_stakeholders, list) else [],
-            model=model,
-            valid_node_ids=scope["all_node_ids"],
-        )
-        valid_node_ids = set(scope["all_node_ids"]) | set(merge_stats["node_ids"])
-        alias_lookup = self._build_node_alias_lookup(builder, valid_node_ids)
-        alias_lookup.update(merge_stats["alias_lookup"])
         edges = parsed.get("edges") if isinstance(parsed, dict) else []
+        valid_pairs = {
+            tuple(sorted((pair["source"], pair["target"])))
+            for pair in selected_pairs
+        }
+        alias_lookup = self._build_node_alias_lookup(builder, set(requirement_features.keys()))
         inferred_count = 0
         for raw_edge in edges if isinstance(edges, list) else []:
-            edge = self._normalize_inferred_edge(
+            edge = self._normalize_inferred_requirement_edge(
                 raw_edge,
-                valid_node_ids,
+                valid_node_ids=set(requirement_features.keys()),
+                valid_pairs=valid_pairs,
                 alias_lookup=alias_lookup,
             )
             if not edge:
                 continue
             edge_key = (edge["source"], edge["target"], edge["type"])
-            if edge_key in builder.edges:
-                continue
+            existed_before = edge_key in builder.edges
             builder.add_edge(
                 edge["source"],
                 edge["target"],
@@ -626,20 +1710,71 @@ class RequirementGraphService:
                 label=_edge_label(edge["type"]),
                 weight=edge["confidence"],
                 properties={
+                    "source_kind": "llm",
+                    "source_detail": "llm_inference",
                     "source": "llm_inference",
+                    "confidence": edge["confidence"],
                     "reason": edge["reason"],
+                    "evidence": edge["evidence"],
                     "model": model,
                 },
             )
-            inferred_count += 1
+            if not existed_before and builder.edges.get(edge_key):
+                inferred_count += 1
 
         return {
             "enabled": enabled,
             "model": model,
-            "scope_requirement_count": len(scope["requirements"]),
-            "scope_stakeholder_count": len(scope["stakeholders"]),
+            "candidate_pair_count": len(prompt_payload["candidate_pairs"]),
             "inferred_edge_count": inferred_count,
-            "inferred_stakeholder_count": merge_stats["inferred_count"],
+        }
+
+    def _serialize_requirement_feature(self, feature: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "id": feature["id"],
+            "req_id": feature.get("req_id"),
+            "title": feature.get("title"),
+            "description": _short_text(feature.get("description"), 200),
+            "source_level": feature.get("source_level"),
+            "requirement_type": feature.get("requirement_type"),
+            "status": feature.get("status"),
+            "priority": feature.get("priority"),
+            "tags": sorted(feature.get("tags") or []),
+            "modules": sorted(feature.get("modules") or []),
+            "interface_terms": sorted(feature.get("interface_terms") or []),
+            "validation_terms": sorted(feature.get("validation_terms") or []),
+        }
+
+    def _normalize_inferred_requirement_edge(
+        self,
+        raw_edge: Any,
+        *,
+        valid_node_ids: set[str],
+        valid_pairs: set[Tuple[str, str]],
+        alias_lookup: Optional[Dict[str, str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not isinstance(raw_edge, dict):
+            return None
+        source = _resolve_node_reference(raw_edge.get("source"), valid_node_ids, alias_lookup)
+        target = _resolve_node_reference(raw_edge.get("target"), valid_node_ids, alias_lookup)
+        edge_type = self._clean(raw_edge.get("type"))
+        if not source or not target or not edge_type or source == target:
+            return None
+        if edge_type not in _REQ_REQ_INFERRED_TYPES:
+            return None
+        pair_key = tuple(sorted((source, target)))
+        if pair_key not in valid_pairs:
+            return None
+        if edge_type in _SYMMETRIC_EDGE_TYPES and source > target:
+            source, target = target, source
+        evidence = _compact_list(_as_list(raw_edge.get("evidence")))
+        return {
+            "source": source,
+            "target": target,
+            "type": edge_type,
+            "confidence": max(0.0, min(1.0, _float_or_default(raw_edge.get("confidence"), 0.65))),
+            "reason": self._clean(raw_edge.get("reason")) or "",
+            "evidence": evidence[:8],
         }
 
     def _build_inference_scope(
@@ -1134,9 +2269,17 @@ class _GraphBuilder:
     ) -> None:
         if not source or not target or source == target:
             return
+        if edge_type in _SYMMETRIC_EDGE_TYPES and source > target:
+            source, target = target, source
         key = (source, target, edge_type)
+        normalized_properties = _normalize_edge_properties(properties or {}, weight)
         if key in self.edges:
-            self.edges[key]["weight"] = max(self.edges[key]["weight"], weight)
+            self.edges[key]["weight"] = round(max(self.edges[key]["weight"], float(weight)), 3)
+            self.edges[key]["properties"] = _merge_edge_properties(
+                self.edges[key]["properties"],
+                normalized_properties,
+                edge_type=edge_type,
+            )
             return
         self.edges[key] = {
             "id": f"{edge_type}:{source}->{target}",
@@ -1145,7 +2288,7 @@ class _GraphBuilder:
             "type": edge_type,
             "label": label,
             "weight": round(float(weight), 3),
-            "properties": _drop_none(properties or {}),
+            "properties": normalized_properties,
         }
 
     def to_graph(self) -> Dict[str, Any]:
@@ -1156,6 +2299,15 @@ class _GraphBuilder:
         ]
         edge_counts = Counter(edge["type"] for edge in valid_edges)
         node_counts = Counter(node["kind"] for node in self.nodes.values())
+        level_counts = Counter(
+            str(node.get("properties", {}).get("source_level") or node.get("group") or "UNKNOWN_LEVEL")
+            for node in self.nodes.values()
+            if node.get("kind") == "requirement"
+        )
+        edge_source_counts = Counter(
+            (edge.get("properties") or {}).get("source_kind") or "rule"
+            for edge in valid_edges
+        )
         return {
             "nodes": list(self.nodes.values()),
             "edges": valid_edges,
@@ -1164,9 +2316,13 @@ class _GraphBuilder:
                 "edge_count": len(valid_edges),
                 "node_counts": dict(node_counts),
                 "edge_counts": dict(edge_counts),
+                "level_counts": {level: level_counts.get(level, 0) for level in _LEVEL_ORDER},
+                "edge_source_counts": dict(edge_source_counts),
+                "structural_edge_count": edge_source_counts.get("structural", 0),
+                "rule_edge_count": edge_source_counts.get("rule", 0),
             },
             "legend": {
-                "node_kinds": ["requirement", "stakeholder"],
+                "node_kinds": ["requirement"],
                 "edge_types": sorted(edge_counts.keys()),
             },
         }
@@ -1299,6 +2455,514 @@ def _compact_list(values: Iterable[Any]) -> List[str]:
 
 def _drop_none(value: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in value.items() if v is not None}
+
+
+def _normalize_source_level(source_level: Any, requirement_type: Any) -> str:
+    normalized = str(source_level or "").strip().upper()
+    if normalized in {"L1", "L2", "L3", "L4"}:
+        return normalized
+    if str(requirement_type or "").strip().lower() == "low_level":
+        return "L4"
+    return "UNKNOWN_LEVEL"
+
+
+def _flatten_values(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        flattened: List[str] = []
+        for nested in value.values():
+            flattened.extend(_flatten_values(nested))
+        return flattened
+    if isinstance(value, (list, tuple, set)):
+        flattened = []
+        for nested in value:
+            flattened.extend(_flatten_values(nested))
+        return flattened
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def _extract_modules(req: Dict[str, Any]) -> set[str]:
+    custom_fields = _as_dict(req.get("custom_fields"))
+    candidates = _compact_list(
+        _flatten_values(
+            [
+                custom_fields.get("module"),
+                custom_fields.get("modules"),
+                custom_fields.get("target_module"),
+                custom_fields.get("target_modules"),
+                custom_fields.get("component"),
+                custom_fields.get("components"),
+            ]
+        )
+    )
+    modules = {
+        _normalize_signal(value)
+        for value in candidates
+        if _normalize_signal(value)
+    }
+    for tag in _compact_list(_as_list(req.get("tags"))):
+        normalized_tag = _normalize_signal(tag)
+        if normalized_tag and normalized_tag not in _GENERIC_TERMS:
+            if ":" in normalized_tag:
+                modules.add(normalized_tag.split(":", 1)[1])
+            elif normalized_tag.endswith("模块") or normalized_tag.endswith("service"):
+                modules.add(normalized_tag)
+    return modules
+
+
+def _extract_terms(text: Any) -> set[str]:
+    value = str(text or "")
+    terms = {
+        token
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9_/-]{2,}", value.lower())
+        if _is_informative_term(token)
+    }
+    for token in re.findall(r"[\u4e00-\u9fff]{2,8}", value):
+        normalized = token.strip().lower()
+        if normalized and _is_informative_term(normalized):
+            terms.add(normalized)
+    return terms
+
+
+def _build_semantic_text(
+    req: Dict[str, Any],
+    title: str,
+    description: str,
+    custom_fields: Optional[Dict[str, Any]] = None,
+) -> str:
+    custom_fields = custom_fields or {}
+    return " ".join(
+        part
+        for part in [
+            title,
+            description,
+            " ".join(_compact_list(_as_list(req.get("tags")))),
+            " ".join(_compact_list(_flatten_values(custom_fields))),
+        ]
+        if part
+    )
+
+
+def _is_informative_term(term: str) -> bool:
+    normalized = str(term or "").strip().lower()
+    if not normalized or normalized in _NON_INFORMATIVE_TERMS:
+        return False
+    if re.fullmatch(r"[a-z][a-z0-9_/-]*", normalized) and len(normalized) < 4:
+        return False
+    return True
+
+
+def _max_term_document_frequency(requirement_count: int) -> int:
+    if requirement_count <= 0:
+        return 0
+    return max(2, min(12, int(requirement_count * 0.3) or 2))
+
+
+def _semantic_embedding_enabled() -> bool:
+    enabled = os.environ.get("REQUIREMENT_GRAPH_ENABLE_EMBEDDING", "1").strip().lower()
+    if enabled in {"0", "false", "off", "no"}:
+        return False
+    return "PYTEST_CURRENT_TEST" not in os.environ
+
+
+def _get_semantic_embedder():
+    global _semantic_embedder, _semantic_embedding_error
+    if _semantic_embedding_error:
+        return None
+    if _semantic_embedder is not None:
+        return _semantic_embedder
+
+    with _semantic_embedder_lock:
+        if _semantic_embedding_error:
+            return None
+        if _semantic_embedder is not None:
+            return _semantic_embedder
+        try:
+            from sentence_transformers import SentenceTransformer
+
+            _semantic_embedder = SentenceTransformer(_SEMANTIC_EMBEDDING_MODEL)
+        except Exception as exc:
+            _semantic_embedding_error = str(exc)
+            logger.warning("Requirement graph semantic embedder unavailable: %s", exc)
+            return None
+    return _semantic_embedder
+
+
+def _to_float_vector(vector: Any) -> List[float]:
+    if hasattr(vector, "tolist"):
+        vector = vector.tolist()
+    return [float(item) for item in vector]
+
+
+def _extract_interface_terms(text: Any, custom_fields: Optional[Dict[str, Any]] = None) -> set[str]:
+    value = " ".join(
+        _compact_list(
+            [
+                str(text or ""),
+                " ".join(_compact_list(_flatten_values(custom_fields or {}))),
+            ]
+        )
+    )
+    interface_terms = {
+        _normalize_signal(token)
+        for token in re.findall(r"(?:GET|POST|PUT|PATCH|DELETE)\s+[^\s,;]+|/[A-Za-z0-9_/-]+", value, re.I)
+    }
+    resource_terms = {
+        _normalize_signal(term)
+        for term in _RESOURCE_TERMS
+        if term.lower() in value.lower()
+    }
+    return {term for term in interface_terms | resource_terms if term}
+
+
+def _extract_validation_terms(text: Any) -> set[str]:
+    value = str(text or "")
+    markers = {
+        _normalize_signal(term)
+        for term in _VALIDATION_MARKERS
+        if term.lower() in value.lower()
+    }
+    for token in re.findall(r"[\u4e00-\u9fff]{2,8}", value):
+        if any(marker in token for marker in _VALIDATION_MARKERS):
+            normalized = _normalize_signal(token)
+            if normalized:
+                markers.add(normalized)
+    return markers
+
+
+def _normalize_signal(value: Any) -> str:
+    return re.sub(r"\s+", "", str(value or "").strip().lower())
+
+
+def _shared_values(left: Iterable[str], right: Iterable[str]) -> List[str]:
+    return sorted(set(left) & set(right))
+
+
+def _cosine_similarity(left: Any, right: Any) -> float:
+    if not left or not right:
+        return 0.0
+    left_values = left if isinstance(left, list) else _to_float_vector(left)
+    right_values = right if isinstance(right, list) else _to_float_vector(right)
+    if len(left_values) != len(right_values) or not left_values:
+        return 0.0
+    return sum(lv * rv for lv, rv in zip(left_values, right_values))
+
+
+def _match_dependency_rule(
+    source_feature: Dict[str, Any],
+    target_feature: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    evidence: List[str] = []
+    text = source_feature["text_lower"]
+    if not any(marker in text for marker in _DEPENDENCY_MARKERS):
+        return None
+    shared_modules = _shared_values(source_feature["modules"], target_feature["modules"])
+    if shared_modules:
+        evidence.extend(f"shared_module:{item}" for item in shared_modules[:3])
+    mentioned_modules = [
+        module
+        for module in target_feature["modules"]
+        if module and module in text
+    ]
+    if mentioned_modules:
+        evidence.extend(f"mentioned_module:{item}" for item in mentioned_modules[:3])
+    shared_interfaces = _shared_values(
+        source_feature["interface_terms"],
+        target_feature["interface_terms"],
+    )
+    if shared_interfaces:
+        evidence.extend(f"shared_interface:{item}" for item in shared_interfaces[:3])
+    shared_terms = [
+        term
+        for term in _shared_values(source_feature["terms"], target_feature["terms"])
+        if term not in _NON_INFORMATIVE_TERMS
+    ]
+    if not (shared_modules or mentioned_modules or shared_interfaces):
+        return None
+    if shared_terms:
+        evidence.extend(f"shared_term:{item}" for item in shared_terms[:2])
+    return {
+        "detail": "rule_dependency_signal_match",
+        "confidence": 0.82 if mentioned_modules or shared_interfaces else 0.74,
+        "reason": "依赖/调用表达与模块或接口信号重合",
+        "evidence": evidence[:6],
+    }
+
+
+def _match_conflict_rule(
+    left_feature: Dict[str, Any],
+    right_feature: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    left_text = left_feature["text_lower"]
+    right_text = right_feature["text_lower"]
+    evidence: List[str] = []
+    if any(marker in left_text or marker in right_text for marker in _CONFLICT_MARKERS):
+        evidence.append("explicit_conflict_marker")
+
+    opposite_groups = [
+        ({"加密", "脱敏", "鉴权", "权限"}, {"明文", "匿名", "开放访问"}),
+        ({"低延迟", "实时", "高性能"}, {"强一致", "审计", "复杂校验"}),
+        ({"独占", "专用", "单租户"}, {"共享", "多租户"}),
+        ({"异步", "缓存"}, {"同步", "强一致"}),
+    ]
+    for left_terms, right_terms in opposite_groups:
+        left_hit = any(term.lower() in left_text for term in left_terms)
+        right_hit = any(term.lower() in right_text for term in right_terms)
+        reverse_left_hit = any(term.lower() in left_text for term in right_terms)
+        reverse_right_hit = any(term.lower() in right_text for term in left_terms)
+        if (left_hit and right_hit) or (reverse_left_hit and reverse_right_hit):
+            evidence.append("opposite_constraints")
+            break
+
+    shared_resources = _shared_values(left_feature["interface_terms"], right_feature["interface_terms"])
+    if shared_resources:
+        evidence.extend(f"shared_resource:{item}" for item in shared_resources[:3])
+    if not evidence:
+        return None
+    return {
+        "detail": "rule_conflict_signal_match",
+        "confidence": 0.85 if "opposite_constraints" in evidence else 0.76,
+        "reason": "约束方向相反或争抢同一资源",
+        "evidence": evidence[:6],
+    }
+
+
+def _match_validation_rule(
+    left_feature: Dict[str, Any],
+    right_feature: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    shared_validation = _shared_values(
+        left_feature["validation_terms"],
+        right_feature["validation_terms"],
+    )
+    shared_modules = _shared_values(left_feature["modules"], right_feature["modules"])
+    if not shared_validation:
+        return None
+    evidence = [f"shared_validation:{item}" for item in shared_validation[:4]]
+    evidence.extend(f"shared_module:{item}" for item in shared_modules[:2])
+    return {
+        "detail": "rule_validation_overlap",
+        "confidence": 0.78 if shared_modules else 0.72,
+        "reason": "验收或验证方式高度重合",
+        "evidence": evidence[:6],
+    }
+
+
+def _match_similarity_rule(
+    left_feature: Dict[str, Any],
+    right_feature: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    shared_tags = _shared_values(left_feature["tags"], right_feature["tags"])
+    shared_modules = _shared_values(left_feature["modules"], right_feature["modules"])
+    shared_interfaces = _shared_values(
+        left_feature["interface_terms"],
+        right_feature["interface_terms"],
+    )
+    shared_terms = [
+        term
+        for term in _shared_values(left_feature["terms"], right_feature["terms"])
+        if term not in _NON_INFORMATIVE_TERMS
+    ]
+    semantic_similarity = _cosine_similarity(
+        left_feature.get("embedding"),
+        right_feature.get("embedding"),
+    )
+    lexical_anchor = bool(shared_modules or shared_interfaces)
+    corroborated_overlap = (bool(shared_tags) and len(shared_terms) >= 3) or len(shared_terms) >= 4
+
+    if semantic_similarity > 0:
+        if semantic_similarity < _SEMANTIC_SIMILARITY_THRESHOLD:
+            return None
+        if not (lexical_anchor or corroborated_overlap):
+            return None
+    elif not (
+        (shared_modules and (shared_tags or shared_interfaces or shared_terms))
+        or (shared_interfaces and len(shared_terms) >= 2)
+        or corroborated_overlap
+    ):
+        return None
+
+    evidence = [f"shared_tag:{item}" for item in shared_tags[:3]]
+    evidence.extend(f"shared_module:{item}" for item in shared_modules[:3])
+    evidence.extend(f"shared_interface:{item}" for item in shared_interfaces[:2])
+    evidence.extend(f"shared_term:{item}" for item in shared_terms[:3])
+    if semantic_similarity > 0:
+        evidence.append(f"semantic_similarity:{semantic_similarity:.3f}")
+    return {
+        "detail": "semantic_similarity_match" if semantic_similarity > 0 else "rule_similarity_recall",
+        "confidence": round(min(0.92, semantic_similarity), 3) if semantic_similarity > 0 else 0.66,
+        "reason": "句向量与模块/接口/关键词信号同时接近" if semantic_similarity > 0 else "模块、接口或关键词高度重合",
+        "evidence": evidence[:6],
+    }
+
+
+def _has_stronger_relation(builder: "_GraphBuilder", left_id: str, right_id: str) -> bool:
+    pair = {left_id, right_id}
+    for edge in builder.edges.values():
+        if {edge["source"], edge["target"]} != pair:
+            continue
+        if edge["type"] != "SIMILAR_TO":
+            return True
+    return False
+
+
+def _existing_pair_relations(
+    builder: "_GraphBuilder",
+    left_id: str,
+    right_id: str,
+) -> List[Dict[str, Any]]:
+    relations = []
+    for edge in builder.edges.values():
+        if {edge["source"], edge["target"]} != {left_id, right_id}:
+            continue
+        props = edge.get("properties") or {}
+        relations.append(
+            {
+                "source": edge["source"],
+                "target": edge["target"],
+                "type": edge["type"],
+                "source_kind": props.get("source_kind"),
+                "source_detail": props.get("source_detail"),
+            }
+        )
+    return relations
+
+
+def _normalize_edge_properties(properties: Dict[str, Any], weight: float) -> Dict[str, Any]:
+    props = dict(properties or {})
+    source_detail = (
+        props.get("source_detail")
+        or props.get("source")
+        or "unknown"
+    )
+    source_kind = props.get("source_kind") or _infer_source_kind(source_detail)
+    evidence = _merge_evidence([], _as_list(props.get("evidence")), limit=12)
+    reason = str(props.get("reason") or "").strip()
+    confidence = _float_or_default(props.get("confidence"), weight)
+    merged_sources = props.get("sources")
+    if not isinstance(merged_sources, list) or not merged_sources:
+        merged_sources = [{"kind": source_kind, "detail": source_detail}]
+    source_kinds = []
+    source_details = []
+    for item in merged_sources:
+        kind = str((item or {}).get("kind") or source_kind)
+        detail = str((item or {}).get("detail") or source_detail)
+        if kind not in source_kinds:
+            source_kinds.append(kind)
+        if detail not in source_details:
+            source_details.append(detail)
+    return _drop_none(
+        {
+            **{k: v for k, v in props.items() if k not in {"evidence", "sources"}},
+            "source": source_detail,
+            "source_kind": source_kind,
+            "source_detail": source_detail,
+            "source_kinds": source_kinds,
+            "source_details": source_details,
+            "sources": merged_sources,
+            "confidence": round(confidence, 3),
+            "reason": reason or None,
+            "evidence": evidence,
+        }
+    )
+
+
+def _merge_edge_properties(
+    current: Dict[str, Any],
+    incoming: Dict[str, Any],
+    *,
+    edge_type: str,
+) -> Dict[str, Any]:
+    current_quality = _edge_quality(current, edge_type)
+    incoming_quality = _edge_quality(incoming, edge_type)
+    primary = incoming if incoming_quality > current_quality else current
+    secondary = current if primary is incoming else incoming
+    merged_sources = _merge_source_entries(current.get("sources"), incoming.get("sources"))
+    merged_evidence = _merge_evidence(current.get("evidence"), incoming.get("evidence"), limit=12)
+    return _drop_none(
+        {
+            **secondary,
+            **primary,
+            "source_kinds": _ordered_unique(
+                list(current.get("source_kinds") or []) + list(incoming.get("source_kinds") or []),
+                key=lambda item: (-_SOURCE_KIND_PRIORITY.get(item, 0), item),
+            ),
+            "source_details": _ordered_unique(
+                list(current.get("source_details") or []) + list(incoming.get("source_details") or []),
+            ),
+            "sources": merged_sources,
+            "evidence": merged_evidence,
+            "confidence": round(
+                max(
+                    _float_or_default(current.get("confidence"), 0),
+                    _float_or_default(incoming.get("confidence"), 0),
+                ),
+                3,
+            ),
+            "reason": primary.get("reason") or secondary.get("reason"),
+        }
+    )
+
+
+def _edge_quality(properties: Dict[str, Any], edge_type: str) -> Tuple[int, int, float]:
+    return (
+        _SOURCE_KIND_PRIORITY.get(properties.get("source_kind"), 0),
+        _RELATION_PRIORITY.get(edge_type, 0),
+        _float_or_default(properties.get("confidence"), 0),
+    )
+
+
+def _infer_source_kind(source_detail: Any) -> str:
+    detail = str(source_detail or "").lower()
+    if detail.startswith("manage_requirements."):
+        return "structural"
+    if "llm" in detail:
+        return "llm"
+    return "rule"
+
+
+def _merge_source_entries(current: Any, incoming: Any) -> List[Dict[str, str]]:
+    merged = []
+    seen = set()
+    for item in list(current or []) + list(incoming or []):
+        kind = str((item or {}).get("kind") or "").strip() or "rule"
+        detail = str((item or {}).get("detail") or "").strip() or "unknown"
+        key = (kind, detail)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append({"kind": kind, "detail": detail})
+    return sorted(
+        merged,
+        key=lambda item: (-_SOURCE_KIND_PRIORITY.get(item["kind"], 0), item["detail"]),
+    )
+
+
+def _merge_evidence(current: Any, incoming: Any, *, limit: int = 8) -> List[str]:
+    merged = []
+    seen = set()
+    for value in list(_as_list(current)) + list(_as_list(incoming)):
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        merged.append(text)
+        if len(merged) >= limit:
+            break
+    return merged
+
+
+def _ordered_unique(values: List[str], key=None) -> List[str]:
+    unique = []
+    seen = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        unique.append(value)
+    return sorted(unique, key=key) if key else unique
 
 
 def _infer_target_modules(props: Dict[str, Any]) -> List[str]:

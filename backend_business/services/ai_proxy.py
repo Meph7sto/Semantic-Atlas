@@ -13,6 +13,21 @@ from backend_business.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _is_reasoning_model(model: Optional[str]) -> bool:
+    return "reasoner" in str(model or "").strip().lower()
+
+
+def _normalize_tool_choice_for_model(
+    model: Optional[str], tool_choice: Optional[str]
+) -> Optional[str]:
+    if not tool_choice:
+        return None
+    # DeepSeek thinking mode rejects tool_choice even when tool use is enabled.
+    if _is_reasoning_model(model):
+        return None
+    return tool_choice
+
+
 def _truncate_log_text(value: Any, limit: int = 160) -> str:
     text = str(value or "").strip()
     if len(text) <= limit:
@@ -558,8 +573,9 @@ class AIProxy:
             "temperature": temperature,
             "max_tokens": max_tokens or 4096,
         }
-        if tool_choice:
-            payload["tool_choice"] = tool_choice
+        normalized_tool_choice = _normalize_tool_choice_for_model(model, tool_choice)
+        if normalized_tool_choice:
+            payload["tool_choice"] = normalized_tool_choice
 
         resolved_max_retries = self._resolve_tools_max_retries(max_retries)
         timeout = self._resolve_tools_timeouts(
@@ -659,8 +675,9 @@ class AIProxy:
             "temperature": temperature,
             "max_tokens": max_tokens or 4096,
         }
-        if tool_choice:
-            payload["tool_choice"] = tool_choice
+        normalized_tool_choice = _normalize_tool_choice_for_model(model, tool_choice)
+        if normalized_tool_choice:
+            payload["tool_choice"] = normalized_tool_choice
 
         url = f"{self.base_url}/chat/completions/tools"
 

@@ -650,12 +650,15 @@ class ToolLoopRunner:
             )
             tool_calls = response.get("tool_calls") or []
             assistant_content = str(response.get("content") or "").strip()
+            reasoning_content = str(response.get("reasoning_content") or "").strip()
             finish_reason = response.get("finish_reason")
 
             assistant_message: dict[str, Any] = {
                 "role": "assistant",
                 "content": assistant_content,
             }
+            if reasoning_content:
+                assistant_message["reasoning_content"] = reasoning_content
             if tool_calls:
                 assistant_message["tool_calls"] = tool_calls
             messages.append(assistant_message)

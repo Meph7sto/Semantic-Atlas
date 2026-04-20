@@ -132,6 +132,7 @@ from backend_business.api.routers import (
     permission,
     product,
     push,
+    requirement_change,
     requirement_classification_agent_chat,
     requirement_actor,
     requirement_graph,
@@ -153,6 +154,7 @@ app.include_router(analysis.router)
 app.include_router(conflict.router)
 app.include_router(classification.router)
 app.include_router(requirements.router)
+app.include_router(requirement_change.router)
 app.include_router(requirement_graph.router)
 app.include_router(requirement_actor.router)
 app.include_router(requirement_actor.internals_router)

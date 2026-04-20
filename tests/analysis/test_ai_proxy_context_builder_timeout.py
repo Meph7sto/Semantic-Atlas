@@ -151,6 +151,26 @@ def test_chat_completion_with_tools_logs_empty_response_summary(monkeypatch, cap
     assert any("reasoning_content_present" in message for message in warning_messages)
 
 
+def test_chat_completion_with_tools_omits_tool_choice_for_reasoner_models(monkeypatch):
+    proxy = AIProxy("http://localhost:8000")
+    calls = []
+
+    def _fake_post(url, json=None, timeout=None):
+        calls.append({"url": url, "json": json, "timeout": timeout})
+        return _FakeSyncResponse({"content": "", "tool_calls": [], "finish_reason": "stop"})
+
+    monkeypatch.setattr("backend_business.services.ai_proxy.requests.post", _fake_post)
+
+    proxy.chat_completion_with_tools(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "dummy", "parameters": {"type": "object"}}}],
+        model="deepseek-reasoner",
+        tool_choice="required",
+    )
+
+    assert "tool_choice" not in calls[0]["json"]
+
+
 async def test_context_builder_async_timeout_has_no_total_and_no_read(monkeypatch):
     proxy = AIProxy("http://localhost:8000")
     session = _FakeSession()
@@ -202,6 +222,22 @@ async def test_tools_async_timeout_retries_then_succeeds(monkeypatch):
     assert isinstance(timeout, aiohttp.ClientTimeout)
     assert timeout.total is None
     assert timeout.sock_read == 600.0
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_with_tools_async_omits_tool_choice_for_reasoner_models():
+    proxy = AIProxy("http://localhost:8000")
+    session = _FakeSession()
+
+    await proxy.chat_completion_with_tools_async(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "dummy", "parameters": {"type": "object"}}}],
+        model="deepseek-reasoner",
+        tool_choice="required",
+        session=session,
+    )
+
+    assert "tool_choice" not in session.calls[0]["json"]
 
 
 @pytest.mark.asyncio

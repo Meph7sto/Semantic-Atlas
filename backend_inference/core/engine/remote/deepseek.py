@@ -19,6 +19,50 @@ class ToolCallResult:
     finish_reason: Optional[str] = None
 
 
+def _is_reasoning_model(model: Optional[str]) -> bool:
+    return "reasoner" in (model or "").lower()
+
+
+def build_deepseek_tool_body(
+    *,
+    messages: List[Dict[str, Any]],
+    tools: List[Dict[str, Any]],
+    max_new_tokens: int,
+    tool_choice: Optional[str],
+    target_model: str,
+    temperature: Optional[float],
+    stream: bool,
+) -> Dict[str, Any]:
+    resolved_model = target_model
+    body: Dict[str, Any] = {
+        "model": resolved_model,
+        "messages": [dict(message) for message in messages],
+        "max_tokens": max_new_tokens,
+        "stream": stream,
+    }
+
+    if tools:
+        body["tools"] = tools
+        if _is_reasoning_model(target_model):
+            # DeepSeek tool calls in thinking mode are exposed via deepseek-chat
+            # plus an explicit thinking switch, not via deepseek-reasoner.
+            # As of 2026-04-20, DeepSeek still rejects tool_choice in thinking mode,
+            # so we intentionally omit it here and rely on prompt steering.
+            resolved_model = "deepseek-chat"
+            body["model"] = resolved_model
+            body["thinking"] = {"type": "enabled"}
+        elif tool_choice:
+            body["tool_choice"] = tool_choice
+
+    if not _is_reasoning_model(target_model) and "thinking" not in body:
+        if temperature is not None:
+            body["temperature"] = temperature
+        else:
+            body["temperature"] = 0.3
+
+    return body
+
+
 class DeepSeekClient:
     """Minimal DeepSeek API client using the official Chat Completions endpoint."""
 
@@ -255,25 +299,15 @@ class DeepSeekClient:
 
         target_model = model_override or self.model
 
-        body: Dict[str, Any] = {
-            "model": target_model,
-            "messages": messages,
-            "max_tokens": max_new_tokens,
-            "stream": False,
-        }
-
-        # Add tools if provided
-        if tools:
-            body["tools"] = tools
-            if tool_choice:
-                body["tool_choice"] = tool_choice
-
-        # Temperature not supported for reasoner models
-        if "reasoner" not in target_model:
-            if temperature is not None:
-                body["temperature"] = temperature
-            else:
-                body["temperature"] = 0.3
+        body = build_deepseek_tool_body(
+            messages=messages,
+            tools=tools,
+            max_new_tokens=max_new_tokens,
+            tool_choice=tool_choice,
+            target_model=target_model,
+            temperature=temperature,
+            stream=False,
+        )
 
         try:
             response = requests.post(
@@ -351,25 +385,15 @@ class DeepSeekClient:
 
         target_model = model_override or self.model
 
-        body: Dict[str, Any] = {
-            "model": target_model,
-            "messages": messages,
-            "max_tokens": max_new_tokens,
-            "stream": True,
-        }
-
-        # Add tools if provided
-        if tools:
-            body["tools"] = tools
-            if tool_choice:
-                body["tool_choice"] = tool_choice
-
-        # Temperature not supported for reasoner models
-        if "reasoner" not in target_model:
-            if temperature is not None:
-                body["temperature"] = temperature
-            else:
-                body["temperature"] = 0.3
+        body = build_deepseek_tool_body(
+            messages=messages,
+            tools=tools,
+            max_new_tokens=max_new_tokens,
+            tool_choice=tool_choice,
+            target_model=target_model,
+            temperature=temperature,
+            stream=True,
+        )
 
         try:
             response = requests.post(

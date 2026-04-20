@@ -5,7 +5,7 @@ export const requirementGraphApi = {
         projectId,
         sessionId,
         limit = 600,
-        infer = true,
+        infer = false,
         inferenceLimit = 48,
         model = 'deepseek-reasoner',
     } = {}) {

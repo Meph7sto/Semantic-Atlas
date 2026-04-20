@@ -78,7 +78,7 @@
   height: 100vh;
   min-height: 100vh;
   position: relative;
-  transition: grid-template-columns 0.3s ease;
+  transition: grid-template-columns var(--sidebar-transition-duration, 0.3s) ease;
   overflow: hidden;
 }
 

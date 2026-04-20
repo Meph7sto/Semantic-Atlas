@@ -197,6 +197,46 @@ def test_session_controller_tool_loop_runner_requires_structured_finish_after_de
     assert "_forced_tool_loop_reply" not in result.context
 
 
+def test_session_controller_tool_loop_runner_preserves_reasoning_content_within_same_tool_turn():
+    class _ReasoningAIProxy(_FakeAIProxy):
+        def __init__(self) -> None:
+            super().__init__()
+            self._responses[0]["reasoning_content"] = "先读取需求，再决定如何回答。"
+
+    ai_proxy = _ReasoningAIProxy()
+    runner = SessionControllerToolLoopRunner(
+        ai_proxy_client=ai_proxy,
+        tools=_FakeTools(),
+        execution_graph_service=_FakeExecutionGraphService(),
+        prompt_builder=SessionControllerPromptBuilder(),
+        max_tool_call_rounds=4,
+    )
+
+    gen = runner.run(
+        recorder=_FakeRecorder(),
+        user_id="u-1",
+        user_message="给我 REQ-9 的完整信息",
+        project_id="p-1",
+        session_id="sess-1",
+    )
+
+    try:
+        while True:
+            next(gen)
+    except StopIteration:
+        pass
+
+    assert len(ai_proxy.calls) == 2
+    second_call_messages = ai_proxy.calls[1]["messages"]
+    assistant_messages = [
+        message
+        for message in second_call_messages
+        if message.get("role") == "assistant" and message.get("tool_calls")
+    ]
+    assert assistant_messages, "expected assistant tool-call message in follow-up round"
+    assert assistant_messages[-1]["reasoning_content"] == "先读取需求，再决定如何回答。"
+
+
 def test_session_controller_tool_loop_runner_surfaces_empty_model_reply_diagnostics():
     class _EmptyAIProxy:
         def __init__(self) -> None:

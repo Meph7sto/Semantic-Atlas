@@ -3,11 +3,16 @@
 from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-import aiohttp
 import asyncio
 import json
+import aiohttp
 
-from .deepseek import ToolCallResult, DEFAULT_DEEPSEEK_ENDPOINT, DEFAULT_DEEPSEEK_MODEL
+from .deepseek import (
+    DEFAULT_DEEPSEEK_ENDPOINT,
+    DEFAULT_DEEPSEEK_MODEL,
+    ToolCallResult,
+    build_deepseek_tool_body,
+)
 
 
 class AsyncDeepSeekClient:
@@ -315,25 +320,15 @@ class AsyncDeepSeekClient:
 
         target_model = model_override or self.model
 
-        body: Dict[str, Any] = {
-            "model": target_model,
-            "messages": messages,
-            "max_tokens": max_new_tokens,
-            "stream": False,
-        }
-
-        # Add tools if provided
-        if tools:
-            body["tools"] = tools
-            if tool_choice:
-                body["tool_choice"] = tool_choice
-
-        # Temperature not supported for reasoner models
-        if "reasoner" not in target_model:
-            if temperature is not None:
-                body["temperature"] = temperature
-            else:
-                body["temperature"] = 0.3
+        body = build_deepseek_tool_body(
+            messages=messages,
+            tools=tools,
+            max_new_tokens=max_new_tokens,
+            tool_choice=tool_choice,
+            target_model=target_model,
+            temperature=temperature,
+            stream=False,
+        )
 
         try:
             async with self._session.post(
@@ -409,25 +404,15 @@ class AsyncDeepSeekClient:
 
         target_model = model_override or self.model
 
-        body: Dict[str, Any] = {
-            "model": target_model,
-            "messages": messages,
-            "max_tokens": max_new_tokens,
-            "stream": True,
-        }
-
-        # Add tools if provided
-        if tools:
-            body["tools"] = tools
-            if tool_choice:
-                body["tool_choice"] = tool_choice
-
-        # Temperature not supported for reasoner models
-        if "reasoner" not in target_model:
-            if temperature is not None:
-                body["temperature"] = temperature
-            else:
-                body["temperature"] = 0.3
+        body = build_deepseek_tool_body(
+            messages=messages,
+            tools=tools,
+            max_new_tokens=max_new_tokens,
+            tool_choice=tool_choice,
+            target_model=target_model,
+            temperature=temperature,
+            stream=True,
+        )
 
         try:
             async with self._session.post(

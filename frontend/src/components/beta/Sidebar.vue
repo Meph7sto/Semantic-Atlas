@@ -1,5 +1,5 @@
 <template>
-  <aside class="rail" :class="{ collapsed: isCollapsed }">
+  <aside ref="railRef" class="rail" :class="{ collapsed: isCollapsed }">
     <button
       type="button"
       class="sidebar-toggle"
@@ -139,6 +139,17 @@
         <span v-if="!isCollapsed">退出登录</span>
       </button>
     </div>
+
+    <div
+      v-if="!isCollapsed"
+      class="sidebar-resize-handle"
+      :class="{ 'is-resizing': isResizing }"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize Sidebar"
+      title="拖拽调整侧边栏宽度"
+      @pointerdown="startResize"
+    ></div>
   </aside>
 </template>
 
@@ -200,6 +211,14 @@ const emit = defineEmits(["exit", "navigate"]);
 
 const isCollapsed = ref(false);
 const isSidebarTransitioning = ref(false);
+const railRef = ref(null);
+const isResizing = ref(false);
+
+const DEFAULT_SIDEBAR_WIDTH = 260;
+const COLLAPSED_SIDEBAR_WIDTH = 80;
+const MIN_SIDEBAR_WIDTH = 220;
+const MAX_SIDEBAR_WIDTH = 420;
+const SIDEBAR_WIDTH_STORAGE_KEY = "semantic-atlas.sidebar.width";
 
 // 从 localStorage 获取当前用户信息
 const currentUser = ref(null);
@@ -213,6 +232,8 @@ onMounted(() => {
   } catch (e) {
     console.error('Failed to parse user data:', e);
   }
+
+  applySidebarWidth();
 });
 
 // 导航菜单配置（根据身份动态显示）
@@ -307,6 +328,7 @@ const navItemsConfig = computed(() => {
   }
 });
 let sidebarTransitionTimer = null;
+let resizeCleanup = null;
 
 // 展开的菜单状态
 const EXPANDED_MENUS_STORAGE_KEY = "semantic-atlas.sidebar.expandedMenus";
@@ -337,6 +359,36 @@ const getInitialExpandedMenus = () => {
 };
 
 const expandedMenus = ref(getInitialExpandedMenus());
+const clampSidebarWidth = (value) => {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return DEFAULT_SIDEBAR_WIDTH;
+  }
+
+  return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, numericValue));
+};
+
+const getInitialSidebarWidth = () => {
+  if (typeof window === "undefined") return DEFAULT_SIDEBAR_WIDTH;
+
+  try {
+    const raw = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    if (!raw) return DEFAULT_SIDEBAR_WIDTH;
+    return clampSidebarWidth(raw);
+  } catch {
+    return DEFAULT_SIDEBAR_WIDTH;
+  }
+};
+
+const sidebarWidth = ref(getInitialSidebarWidth());
+
+const applySidebarWidth = () => {
+  if (typeof document === "undefined") return;
+
+  const targetWidth = isCollapsed.value ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth.value;
+  document.documentElement.style.setProperty("--sidebar-width", `${targetWidth}px`);
+  document.documentElement.style.setProperty("--sidebar-transition-duration", isResizing.value ? "0s" : "0.3s");
+};
 
 // 当 activePage 是子菜单项时，自动展开父菜单（但不会自动收缩已展开的菜单）
 watch(() => props.activePage, (newPage) => {
@@ -347,9 +399,26 @@ watch(() => props.activePage, (newPage) => {
   }
 }, { immediate: true });
 
-// Update global CSS variable for sidebar width
-watch(isCollapsed, (v) => {
-  document.documentElement.style.setProperty('--sidebar-width', v ? '80px' : '260px');
+watch(isCollapsed, () => {
+  applySidebarWidth();
+});
+
+watch(sidebarWidth, (value) => {
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(value));
+    } catch {
+      // ignore storage failures
+    }
+  }
+
+  if (!isCollapsed.value) {
+    applySidebarWidth();
+  }
+});
+
+watch(isResizing, () => {
+  applySidebarWidth();
 });
 
 watch(
@@ -379,10 +448,58 @@ const toggleSidebar = () => {
   }, 320);
 };
 
+const stopResize = () => {
+  if (resizeCleanup) {
+    resizeCleanup();
+    resizeCleanup = null;
+  }
+
+  if (typeof document !== "undefined") {
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  }
+
+  isResizing.value = false;
+};
+
+const startResize = (event) => {
+  if (typeof window === "undefined" || isCollapsed.value || window.innerWidth <= 1100) {
+    return;
+  }
+
+  event.preventDefault();
+  event.currentTarget?.setPointerCapture?.(event.pointerId);
+
+  const handlePointerMove = (moveEvent) => {
+    const railLeft = railRef.value?.getBoundingClientRect().left ?? 0;
+    sidebarWidth.value = clampSidebarWidth(moveEvent.clientX - railLeft);
+  };
+
+  const handlePointerUp = () => {
+    stopResize();
+  };
+
+  resizeCleanup = () => {
+    window.removeEventListener("pointermove", handlePointerMove);
+    window.removeEventListener("pointerup", handlePointerUp);
+    window.removeEventListener("pointercancel", handlePointerUp);
+  };
+
+  isResizing.value = true;
+  document.body.style.cursor = "col-resize";
+  document.body.style.userSelect = "none";
+
+  window.addEventListener("pointermove", handlePointerMove);
+  window.addEventListener("pointerup", handlePointerUp);
+  window.addEventListener("pointercancel", handlePointerUp);
+};
+
 onBeforeUnmount(() => {
   if (sidebarTransitionTimer) {
     clearTimeout(sidebarTransitionTimer);
   }
+
+  stopResize();
 });
 
 const navItems = computed(() => navItemsConfig.value);
@@ -621,5 +738,30 @@ const handleLogout = () => {
   flex-shrink: 0;
   opacity: 0.5;
   color: var(--sidebar-muted, var(--ink-500, #5d6b76));
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 12px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 12;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  background: linear-gradient(
+    90deg,
+    transparent 0,
+    transparent calc(100% - 2px),
+    rgba(28, 40, 52, 0.16) calc(100% - 2px),
+    rgba(28, 40, 52, 0.16) 100%
+  );
+}
+
+.rail:hover .sidebar-resize-handle,
+.sidebar-resize-handle.is-resizing {
+  opacity: 1;
 }
 </style>

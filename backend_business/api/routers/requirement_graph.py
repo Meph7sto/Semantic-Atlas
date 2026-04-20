@@ -24,7 +24,7 @@ def get_requirement_graph(
     project_id: Optional[str] = Query(default=None),
     session_id: Optional[str] = Query(default=None),
     limit: int = Query(default=600, ge=50, le=2000),
-    infer: bool = Query(default=True),
+    infer: bool = Query(default=False),
     inference_limit: int = Query(default=48, ge=12, le=120),
     model: str = Query(default="deepseek-reasoner"),
 ):
