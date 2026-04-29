@@ -184,6 +184,8 @@ def init_requirement_schema(cur):
         CREATE TABLE IF NOT EXISTS requirement_graph_relations (
             id BIGSERIAL PRIMARY KEY,
             snapshot_id TEXT NOT NULL,
+            run_id TEXT,
+            snapshot_status TEXT NOT NULL DEFAULT 'final',
             project_id TEXT,
             session_id TEXT,
             relation_mode TEXT NOT NULL,
@@ -205,15 +207,28 @@ def init_requirement_schema(cur):
             is_active BOOLEAN NOT NULL DEFAULT TRUE,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             invalidated_at TIMESTAMPTZ,
+            progress_json JSONB,
             UNIQUE (snapshot_id, source_node_id, target_node_id, relation_type)
         )
         """
+    )
+    cur.execute(
+        "ALTER TABLE requirement_graph_relations ADD COLUMN IF NOT EXISTS run_id TEXT"
+    )
+    cur.execute(
+        "ALTER TABLE requirement_graph_relations ADD COLUMN IF NOT EXISTS snapshot_status TEXT NOT NULL DEFAULT 'final'"
+    )
+    cur.execute(
+        "ALTER TABLE requirement_graph_relations ADD COLUMN IF NOT EXISTS progress_json JSONB"
     )
     cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_requirement_graph_relations_snapshot ON requirement_graph_relations(snapshot_id)"
     )
     cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_requirement_graph_relations_lookup ON requirement_graph_relations(project_id, session_id, relation_mode, is_active)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_requirement_graph_relations_status ON requirement_graph_relations(project_id, session_id, relation_mode, snapshot_status, is_active)"
     )
     cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_requirement_graph_relations_source_req ON requirement_graph_relations(source_req_id)"

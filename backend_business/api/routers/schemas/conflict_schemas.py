@@ -15,6 +15,7 @@ class ConflictCheckRequest(BaseModel):
 
     requirement_a: NonEmptyStr
     requirement_b: NonEmptyStr
+    model: str = "deepseek-v4-pro"
     use_thinking_mode: bool = True
     save_to_db: bool = False
     session_id: str | None = None
@@ -31,5 +32,7 @@ class ConflictCheckBatchRequest(BaseModel):
     """批量冲突检测请求"""
 
     pairs: list[ConflictPair] = Field(min_length=1)
+    model: str = "deepseek-v4-pro"
+    use_thinking_mode: bool = True
     save_to_db: bool = False
     session_id: str | None = None

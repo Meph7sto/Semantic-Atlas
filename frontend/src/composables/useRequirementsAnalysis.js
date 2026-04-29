@@ -220,7 +220,7 @@ export function useRequirementsAnalysis(sessionId, highLevelRequirements, lowLev
                   top_k_pattern: 5, top_k_spec: 3, top_k_nfr: 3,
                   max_l4_per_top_req: 5, min_l4_per_top_req: 1, confidence_threshold: 0.6,
                 },
-                model: 'deepseek-reasoner',
+                model: 'deepseek-v4-pro',
                 forceRegenerate: false,
               }
             )

@@ -1,7 +1,9 @@
+import asyncio
 from collections import Counter, defaultdict
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
+import uuid
 
 from backend_business.services.ai_proxy import ai_proxy
 
@@ -25,6 +27,7 @@ from .graph_core import (
 )
 from .helpers import _as_list, _compact_list, _float_or_default, _normalize_source_level
 from .inference_engine import RequirementGraphInferenceEngine
+from .relation_discovery import _RequirementGraphRelationDiscoveryCoordinator
 from .relation_review import _RequirementGraphRelationReviewCoordinator
 
 logger = logging.getLogger(__name__)
@@ -49,7 +52,7 @@ class RequirementGraphService:
         limit: int = 600,
         infer_relations: bool = False,
         relation_mode: Optional[str] = None,
-        inference_model: str = "deepseek-reasoner",
+        inference_model: str = "deepseek-v4-pro",
         inference_limit: int = 48,
         review_edges: Optional[List[Dict[str, Any]]] = None,
         review_concurrency: int = 3,
@@ -338,6 +341,568 @@ class RequirementGraphService:
         graph["legend"]["levels"] = _LEVEL_ORDER
         return graph
 
+    async def stream_graph_events(
+        self,
+        *,
+        project_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        limit: int = 900,
+        inference_limit: int = 48,
+        package_size: int = 6,
+        review_concurrency: int = 3,
+        model: str = "deepseek-v4-pro",
+    ):
+        run_id = uuid.uuid4().hex
+        project_id = self._clean(project_id) or self._resolve_project_id_by_session(
+            self._clean(session_id)
+        )
+        session_id = self._clean(session_id) or self._resolve_project_session(project_id)
+        limit = max(50, min(2000, int(limit or 900)))
+        inference_limit = max(6, min(80, int(inference_limit or 48)))
+        package_size = max(1, min(24, int(package_size or 6)))
+        review_concurrency = max(1, min(8, int(review_concurrency or 3)))
+        model = self._clean(model) or "deepseek-v4-pro"
+
+        builder = _GraphBuilder(limit=limit)
+        relation_review_stats = {
+            "package_count": 0,
+            "reviewed_pair_count": 0,
+            "completed_package_count": 0,
+            "added_count": 0,
+            "updated_count": 0,
+            "deleted_count": 0,
+            "rejected_count": 0,
+            "fallback_used": False,
+            "model": model,
+            "requested_concurrency": review_concurrency,
+            "applied_concurrency": 0,
+            "package_size": package_size,
+        }
+        progress = {
+            "completed_pairs": 0,
+            "total_pairs": 0,
+            "completed_packages": 0,
+            "total_packages": 0,
+        }
+        candidate_edges_by_pair: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+
+        try:
+            (
+                project_requirements,
+                requirement_features,
+                candidate_pairs,
+                candidate_stats,
+                local_embedding_status,
+                trace_stats,
+                conflict_stats,
+                classification_stats,
+            ) = self._prepare_stream_base(
+                builder,
+                project_id=project_id,
+                session_id=session_id,
+                limit=limit,
+            )
+
+            base_graph = self._build_stream_graph_payload(
+                builder,
+                project_id=project_id,
+                session_id=session_id,
+                project_requirements=project_requirements,
+                trace_stats=trace_stats,
+                conflict_stats=conflict_stats,
+                classification_stats=classification_stats,
+                candidate_stats=candidate_stats,
+                local_vector_stats={
+                    "enabled": False,
+                    "model": local_embedding_status.get("model"),
+                    "available": local_embedding_status.get("available", False),
+                    "error": local_embedding_status.get("error"),
+                    "candidate_pair_count": 0,
+                    "reviewed_pair_count": 0,
+                    "added_count": 0,
+                    "edge_counts": {},
+                },
+                relation_review_stats=relation_review_stats,
+                run_id=run_id,
+            )
+            yield "base_graph", {"run_id": run_id, "graph": base_graph}
+
+            before_local_keys = set(builder.edges.keys())
+            local_vector_stats = self._apply_local_vector_edges(
+                builder,
+                requirement_features,
+                candidate_pairs,
+                relation_limit=inference_limit,
+                embedding_status=local_embedding_status,
+            )
+            candidate_edges = [
+                dict(edge)
+                for key, edge in builder.edges.items()
+                if key not in before_local_keys
+                and (edge.get("properties") or {}).get("source_kind") == "local_vector"
+            ]
+            for edge in candidate_edges:
+                candidate_edges_by_pair[self._edge_pair_key(edge["source"], edge["target"])].append(edge)
+            yield "candidate_edges", {
+                "run_id": run_id,
+                "edges": candidate_edges,
+                "stats": local_vector_stats,
+            }
+
+            running_graph = self._build_stream_graph_payload(
+                builder,
+                project_id=project_id,
+                session_id=session_id,
+                project_requirements=project_requirements,
+                trace_stats=trace_stats,
+                conflict_stats=conflict_stats,
+                classification_stats=classification_stats,
+                candidate_stats=candidate_stats,
+                local_vector_stats=local_vector_stats,
+                relation_review_stats=relation_review_stats,
+                run_id=run_id,
+            )
+            self._persist_relation_snapshot(
+                project_id=project_id,
+                session_id=session_id,
+                relation_mode="llm",
+                graph=running_graph,
+                run_id=run_id,
+                snapshot_status="running",
+                progress_json=progress,
+            )
+
+            relation_review = self._make_relation_review_coordinator()
+            packages = relation_review.build_review_packages(
+                builder,
+                requirement_features=requirement_features,
+                candidate_pairs=candidate_pairs,
+                inference_limit=inference_limit,
+                package_size=package_size,
+            )
+            progress["total_packages"] = len(packages)
+            progress["total_pairs"] = sum(len(package["candidate_pairs"]) for package in packages)
+            relation_review_stats["package_count"] = len(packages)
+            relation_review_stats["reviewed_pair_count"] = progress["total_pairs"]
+            relation_review_stats["applied_concurrency"] = min(review_concurrency, len(packages)) if packages else 0
+            yield "review_progress", dict(progress)
+
+            async for package, result in relation_review.review_packages_as_completed(
+                packages,
+                model=model,
+                review_concurrency=review_concurrency,
+            ):
+                if isinstance(result, Exception):
+                    relation_review_stats["fallback_used"] = True
+                    result = {"mutations": []}
+
+                decided_pair_keys = set()
+                for mutation in result.get("mutations") or []:
+                    pair_key = self._edge_pair_key(
+                        mutation["candidate"]["source"],
+                        mutation["candidate"]["target"],
+                    )
+                    decided_pair_keys.add(pair_key)
+                    self._remove_local_candidate_edges(builder, pair_key)
+                    applied_action = relation_review._apply_mutation_to_builder(
+                        builder,
+                        mutation=mutation,
+                        package_id=package["package_id"],
+                        model=model,
+                    )
+                    if applied_action not in {"add", "update", "delete", "reject"}:
+                        applied_action = "reject"
+                    if applied_action == "add":
+                        relation_review_stats["added_count"] += 1
+                    elif applied_action == "update":
+                        relation_review_stats["updated_count"] += 1
+                    elif applied_action == "delete":
+                        relation_review_stats["deleted_count"] += 1
+                    elif applied_action == "reject":
+                        relation_review_stats["rejected_count"] += 1
+                    yield "relation_decision", self._build_relation_decision_event(
+                        mutation=mutation,
+                        action=applied_action,
+                        package_id=package["package_id"],
+                        model=model,
+                        builder=builder,
+                        run_id=run_id,
+                    )
+
+                for pair in package.get("candidate_pairs") or []:
+                    pair_key = self._edge_pair_key(pair.get("source"), pair.get("target"))
+                    if pair_key in decided_pair_keys:
+                        continue
+                    rejected_edges = self._remove_local_candidate_edges(builder, pair_key)
+                    if not rejected_edges:
+                        rejected_edges = [{
+                            "source": pair.get("source"),
+                            "target": pair.get("target"),
+                            "type": "SIMILAR_TO",
+                            "weight": 0,
+                            "properties": {},
+                        }]
+                    for edge in rejected_edges:
+                        relation_review_stats["rejected_count"] += 1
+                        yield "relation_decision", {
+                            "run_id": run_id,
+                            "action": "reject",
+                            "edge": edge,
+                            "reason": "DeepSeek 未确认该候选关系",
+                            "confidence": None,
+                            "package_id": package["package_id"],
+                        }
+
+                progress["completed_pairs"] = min(
+                    progress["total_pairs"],
+                    progress["completed_pairs"] + len(package.get("candidate_pairs") or []),
+                )
+                progress["completed_packages"] += 1
+                relation_review_stats["completed_package_count"] = progress["completed_packages"]
+                yield "review_progress", dict(progress)
+
+                running_graph = self._build_stream_graph_payload(
+                    builder,
+                    project_id=project_id,
+                    session_id=session_id,
+                    project_requirements=project_requirements,
+                    trace_stats=trace_stats,
+                    conflict_stats=conflict_stats,
+                    classification_stats=classification_stats,
+                    candidate_stats=candidate_stats,
+                    local_vector_stats=local_vector_stats,
+                    relation_review_stats=relation_review_stats,
+                    run_id=run_id,
+                )
+                running_snapshot = self._persist_relation_snapshot(
+                    project_id=project_id,
+                    session_id=session_id,
+                    relation_mode="llm",
+                    graph=running_graph,
+                    run_id=run_id,
+                    snapshot_status="running",
+                    progress_json=progress,
+                )
+                if running_snapshot:
+                    yield "snapshot_saved", {
+                        "run_id": run_id,
+                        "snapshot_status": "running",
+                        "snapshot": running_snapshot,
+                    }
+                await asyncio.sleep(0)
+
+            self._prune_weaker_similar_edges(builder)
+            final_graph = self._build_stream_graph_payload(
+                builder,
+                project_id=project_id,
+                session_id=session_id,
+                project_requirements=project_requirements,
+                trace_stats=trace_stats,
+                conflict_stats=conflict_stats,
+                classification_stats=classification_stats,
+                candidate_stats=candidate_stats,
+                local_vector_stats=local_vector_stats,
+                relation_review_stats=relation_review_stats,
+                run_id=run_id,
+            )
+            final_graph["edges"] = [
+                edge for edge in final_graph.get("edges") or []
+                if (edge.get("properties") or {}).get("review_action") != "reject"
+            ]
+            final_snapshot = self._persist_relation_snapshot(
+                project_id=project_id,
+                session_id=session_id,
+                relation_mode="llm",
+                graph=final_graph,
+                run_id=run_id,
+                snapshot_status="final",
+                progress_json=progress,
+            )
+            if final_snapshot:
+                final_graph.setdefault("meta", {})["relation_snapshot"] = final_snapshot
+                yield "snapshot_saved", {
+                    "run_id": run_id,
+                    "snapshot_status": "final",
+                    "snapshot": final_snapshot,
+                }
+            yield "done", {
+                "run_id": run_id,
+                "stats": final_graph.get("stats") or {},
+                "snapshot": final_snapshot,
+            }
+        except asyncio.CancelledError:
+            interrupted_graph = self._safe_stream_graph_from_builder(builder)
+            self._persist_relation_snapshot(
+                project_id=project_id,
+                session_id=session_id,
+                relation_mode="llm",
+                graph=interrupted_graph,
+                run_id=run_id,
+                snapshot_status="interrupted",
+                progress_json=progress,
+            )
+            raise
+        except Exception as exc:
+            failed_graph = self._safe_stream_graph_from_builder(builder)
+            failed_snapshot = self._persist_relation_snapshot(
+                project_id=project_id,
+                session_id=session_id,
+                relation_mode="llm",
+                graph=failed_graph,
+                run_id=run_id,
+                snapshot_status="failed",
+                progress_json={**progress, "error": str(exc)},
+            )
+            yield "error", {
+                "run_id": run_id,
+                "message": str(exc),
+                "snapshot": failed_snapshot,
+            }
+
+    async def stream_discover_relation_events(
+        self,
+        *,
+        project_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        limit: int = 900,
+        review_concurrency: int = 3,
+        model: str = "deepseek-v4-pro",
+    ):
+        run_id = uuid.uuid4().hex
+        project_id = self._clean(project_id) or self._resolve_project_id_by_session(
+            self._clean(session_id)
+        )
+        session_id = self._clean(session_id) or self._resolve_project_session(project_id)
+        limit = max(50, min(2000, int(limit or 900)))
+        review_concurrency = max(1, min(8, int(review_concurrency or 3)))
+        model = self._clean(model) or "deepseek-v4-pro"
+
+        builder = _GraphBuilder(limit=limit)
+        progress = {
+            "completed_packages": 0,
+            "total_packages": 0,
+            "added_edges": 0,
+            "skipped_packages": 0,
+            "review_concurrency": review_concurrency,
+        }
+        relation_review_stats = {
+            "package_count": 0,
+            "completed_package_count": 0,
+            "added_count": 0,
+            "updated_count": 0,
+            "deleted_count": 0,
+            "rejected_count": 0,
+            "skipped_package_count": 0,
+            "fallback_used": False,
+            "model": model,
+            "requested_concurrency": review_concurrency,
+            "applied_concurrency": 0,
+            "discovery_mode": "top_l4_tool",
+        }
+
+        try:
+            top_requirements = self._load_l123_requirements(session_id, limit)
+            l4_requirements = self._load_l4_requirements(session_id, limit)
+            l4_links = self._load_l4_requirement_links(session_id)
+            trace_stats, conflict_stats, classification_stats = self._build_discover_base_graph(
+                builder,
+                session_id=session_id,
+                top_requirements=top_requirements,
+                l4_requirements=l4_requirements,
+                l4_links=l4_links,
+            )
+            base_graph = self._build_discover_graph_payload(
+                builder,
+                project_id=project_id,
+                session_id=session_id,
+                source_requirement_count=len(top_requirements) + len(l4_requirements),
+                trace_stats=trace_stats,
+                conflict_stats=conflict_stats,
+                classification_stats=classification_stats,
+                relation_review_stats=relation_review_stats,
+                run_id=run_id,
+            )
+            yield "base_graph", {"run_id": run_id, "graph": base_graph}
+
+            coordinator = self._make_relation_discovery_coordinator()
+            links_by_top: Dict[str, List[str]] = defaultdict(list)
+            for link in l4_links:
+                top_req_id = self._clean(link.get("top_req_id"))
+                low_req_id = self._clean(link.get("req_id"))
+                if top_req_id and low_req_id:
+                    links_by_top[top_req_id].append(low_req_id)
+            l4_by_req_id = {
+                self._clean(item.get("req_id")): item
+                for item in l4_requirements
+                if self._clean(item.get("req_id"))
+            }
+
+            packages = []
+            progress["total_packages"] = len(top_requirements)
+            yield "discover_progress", dict(progress)
+
+            for index, top in enumerate(top_requirements, start=1):
+                top_req_id = self._clean(top.get("req_id"))
+                linked_low_ids = list(dict.fromkeys(links_by_top.get(top_req_id, [])))
+                lows = [l4_by_req_id[req_id] for req_id in linked_low_ids if req_id in l4_by_req_id]
+                package_id = f"top-{index}:{top_req_id}"
+                if not lows:
+                    progress["completed_packages"] += 1
+                    progress["skipped_packages"] += 1
+                    relation_review_stats["skipped_package_count"] = progress["skipped_packages"]
+                    yield "package_skipped", {
+                        "run_id": run_id,
+                        "package_id": package_id,
+                        "top_req_id": top_req_id,
+                        "reason": "no_l4",
+                        "l4_count": 0,
+                    }
+                    yield "discover_progress", dict(progress)
+                    continue
+                known_refines = [
+                    {
+                        "source": _req_node_id(top_req_id),
+                        "target": _req_node_id(low.get("req_id")),
+                        "type": "REFINES",
+                    }
+                    for low in lows
+                ]
+                package = coordinator.build_package(
+                    package_id=package_id,
+                    top_requirement={
+                        **top,
+                        "node_id": _req_node_id(top_req_id),
+                    },
+                    l4_requirements=[
+                        {
+                            **low,
+                            "node_id": _req_node_id(low.get("req_id")),
+                        }
+                        for low in lows
+                    ],
+                    known_refines=known_refines,
+                )
+                if len(lows) > 80:
+                    reason = "too_many_l4"
+                elif coordinator.estimate_prompt_chars(package) > 50000:
+                    reason = "prompt_too_long"
+                else:
+                    reason = None
+                if reason:
+                    progress["completed_packages"] += 1
+                    progress["skipped_packages"] += 1
+                    relation_review_stats["skipped_package_count"] = progress["skipped_packages"]
+                    yield "package_skipped", {
+                        "run_id": run_id,
+                        "package_id": package_id,
+                        "top_req_id": top_req_id,
+                        "reason": reason,
+                        "l4_count": len(lows),
+                        "prompt_chars": coordinator.estimate_prompt_chars(package),
+                    }
+                    yield "discover_progress", dict(progress)
+                    continue
+                packages.append(package)
+
+            relation_review_stats["package_count"] = len(packages)
+            relation_review_stats["applied_concurrency"] = min(review_concurrency, len(packages)) if packages else 0
+
+            async for package, result in coordinator.review_packages_as_completed(
+                packages,
+                model=model,
+                review_concurrency=review_concurrency,
+            ):
+                if isinstance(result, Exception):
+                    relation_review_stats["fallback_used"] = True
+                    result = {"relations": []}
+
+                for relation in result.get("relations") or []:
+                    edge = self._apply_discovered_relation(
+                        builder,
+                        relation=relation,
+                        package_id=package["package_id"],
+                        model=model,
+                    )
+                    if not edge:
+                        continue
+                    progress["added_edges"] += 1
+                    relation_review_stats["added_count"] += 1
+                    yield "relation_decision", {
+                        "run_id": run_id,
+                        "action": "add",
+                        "edge": edge,
+                        "reason": relation.get("reason"),
+                        "confidence": relation.get("confidence"),
+                        "package_id": package["package_id"],
+                    }
+
+                progress["completed_packages"] += 1
+                relation_review_stats["completed_package_count"] = progress["completed_packages"]
+                yield "discover_progress", dict(progress)
+                await asyncio.sleep(0)
+
+            self._prune_weaker_similar_edges(builder)
+            final_graph = self._build_discover_graph_payload(
+                builder,
+                project_id=project_id,
+                session_id=session_id,
+                source_requirement_count=len(top_requirements) + len(l4_requirements),
+                trace_stats=trace_stats,
+                conflict_stats=conflict_stats,
+                classification_stats=classification_stats,
+                relation_review_stats=relation_review_stats,
+                run_id=run_id,
+            )
+            final_snapshot = self._persist_relation_snapshot(
+                project_id=project_id,
+                session_id=session_id,
+                relation_mode="llm",
+                graph=final_graph,
+                run_id=run_id,
+                snapshot_status="final",
+                progress_json=progress,
+            )
+            if final_snapshot:
+                final_graph.setdefault("meta", {})["relation_snapshot"] = final_snapshot
+                yield "snapshot_saved", {
+                    "run_id": run_id,
+                    "snapshot_status": "final",
+                    "snapshot": final_snapshot,
+                }
+            yield "done", {
+                "run_id": run_id,
+                "stats": final_graph.get("stats") or {},
+                "snapshot": final_snapshot,
+            }
+        except asyncio.CancelledError:
+            interrupted_graph = self._safe_stream_graph_from_builder(builder)
+            self._persist_relation_snapshot(
+                project_id=project_id,
+                session_id=session_id,
+                relation_mode="llm",
+                graph=interrupted_graph,
+                run_id=run_id,
+                snapshot_status="interrupted",
+                progress_json=progress,
+            )
+            raise
+        except Exception as exc:
+            failed_graph = self._safe_stream_graph_from_builder(builder)
+            failed_snapshot = self._persist_relation_snapshot(
+                project_id=project_id,
+                session_id=session_id,
+                relation_mode="llm",
+                graph=failed_graph,
+                run_id=run_id,
+                snapshot_status="failed",
+                progress_json={**progress, "error": str(exc)},
+            )
+            yield "error", {
+                "run_id": run_id,
+                "message": str(exc),
+                "snapshot": failed_snapshot,
+            }
+
     def get_latest_snapshot_graph(
         self,
         *,
@@ -384,6 +949,22 @@ class RequirementGraphService:
         if not snapshot:
             raise ValueError("未找到指定的需求图谱快照")
         return self._build_graph_from_snapshot(snapshot, limit=limit)
+
+    def delete_relation_snapshots(
+        self,
+        *,
+        project_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        relation_mode: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        delete_relations = getattr(self.db, "delete_requirement_graph_relations", None)
+        if not callable(delete_relations):
+            raise ValueError("当前数据库服务不支持需求图谱关系删除")
+        return delete_relations(
+            project_id=self._clean(project_id),
+            session_id=self._clean(session_id),
+            relation_mode=self._clean(relation_mode),
+        )
 
     def _resolve_project_session(self, project_id: Optional[str]) -> Optional[str]:
         return self._data_access.resolve_project_session(project_id)
@@ -492,11 +1073,14 @@ class RequirementGraphService:
             "relation_mode": snapshot.get("relation_mode"),
             "relation_snapshot": {
                 "snapshot_id": snapshot.get("snapshot_id"),
+                "run_id": snapshot.get("run_id"),
+                "snapshot_status": snapshot.get("snapshot_status") or "final",
                 "relation_mode": snapshot.get("relation_mode"),
                 "edge_count": snapshot.get("edge_count", len(graph["edges"])),
                 "created_at": snapshot.get("created_at"),
                 "invalidated_at": snapshot.get("invalidated_at"),
                 "is_active": snapshot.get("is_active"),
+                "progress_json": snapshot.get("progress_json"),
             },
         }
         graph["legend"]["levels"] = _LEVEL_ORDER
@@ -507,6 +1091,241 @@ class RequirementGraphService:
 
     def _load_l4_requirements(self, session_id: Optional[str], limit: int) -> List[Dict[str, Any]]:
         return self._data_access.load_l4_requirements(session_id, limit)
+
+    def _load_l4_requirement_links(self, session_id: Optional[str]) -> List[Dict[str, Any]]:
+        return self._data_access.load_l4_requirement_links(session_id)
+
+    def _build_discover_base_graph(
+        self,
+        builder: _GraphBuilder,
+        *,
+        session_id: Optional[str],
+        top_requirements: List[Dict[str, Any]],
+        l4_requirements: List[Dict[str, Any]],
+        l4_links: List[Dict[str, Any]],
+    ) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+        text_index: Dict[str, List[str]] = defaultdict(list)
+        for req in top_requirements:
+            req_id = self._clean(req.get("req_id"))
+            level = self._clean(req.get("level")) or "UNKNOWN_LEVEL"
+            node_id = _req_node_id(req_id)
+            builder.add_node(
+                node_id,
+                kind="requirement",
+                label=req.get("text") or req_id,
+                group=level,
+                properties={
+                    "req_id": req_id,
+                    "session_id": req.get("session_id"),
+                    "title": req.get("text"),
+                    "description": req.get("text"),
+                    "content": req.get("text"),
+                    "source_level": level,
+                    "level": level,
+                    "fingerprint": req.get("fingerprint"),
+                    "anchor_span_id": req.get("anchor_span_id"),
+                    "r": req.get("r"),
+                    "source": "requirements_l123",
+                },
+            )
+            _index_text(text_index, node_id, req_id, req.get("text"))
+
+        source_top_ids_by_l4: Dict[str, List[str]] = defaultdict(list)
+        for link in l4_links:
+            req_id = self._clean(link.get("req_id"))
+            top_req_id = self._clean(link.get("top_req_id"))
+            if req_id and top_req_id:
+                source_top_ids_by_l4[req_id].append(top_req_id)
+
+        for req in l4_requirements:
+            req_id = self._clean(req.get("req_id"))
+            node_id = _req_node_id(req_id)
+            source_top_ids = list(dict.fromkeys(source_top_ids_by_l4.get(req_id, [])))
+            if not source_top_ids and self._clean(req.get("source_top_id")):
+                source_top_ids = [self._clean(req.get("source_top_id"))]
+            builder.add_node(
+                node_id,
+                kind="requirement",
+                label=req.get("text") or req_id,
+                group="L4",
+                properties={
+                    "req_id": req_id,
+                    "session_id": req.get("session_id"),
+                    "title": req.get("text"),
+                    "description": req.get("text"),
+                    "content": req.get("text"),
+                    "component": req.get("component"),
+                    "acceptance_criteria": _as_list(req.get("acceptance_criteria")),
+                    "test_method": req.get("test_method"),
+                    "interfaces": _as_list(req.get("interfaces")),
+                    "data_contracts": _as_list(req.get("data_contracts")),
+                    "error_handling": _as_list(req.get("error_handling")),
+                    "nfr": _as_list(req.get("nfr")),
+                    "open_questions": _as_list(req.get("open_questions")),
+                    "evidence_ids": _as_list(req.get("evidence_ids")),
+                    "confidence": req.get("confidence"),
+                    "source_top_id": req.get("source_top_id"),
+                    "source_top_ids": source_top_ids,
+                    "source_level": "L4",
+                    "level": "L4",
+                    "source": "low_level_requirements",
+                    "meta": req.get("meta") if isinstance(req.get("meta"), dict) else None,
+                },
+            )
+            _index_text(text_index, node_id, req_id, req.get("text"), req.get("source_top_text"))
+
+        for link in l4_links:
+            top_req_id = self._clean(link.get("top_req_id"))
+            low_req_id = self._clean(link.get("req_id"))
+            source = _req_node_id(top_req_id)
+            target = _req_node_id(low_req_id)
+            if source not in builder.nodes or target not in builder.nodes:
+                continue
+            builder.add_edge(
+                source,
+                target,
+                "REFINES",
+                label=_edge_label("REFINES"),
+                weight=0.88,
+                properties={
+                    "source_kind": "structural",
+                    "source_detail": "low_level_requirement_links",
+                    "source": "low_level_requirement_links",
+                    "confidence": 0.88,
+                },
+            )
+        trace_stats = self._apply_trace_edges(builder, session_id, text_index)
+        conflict_stats = self._apply_conflict_edges(builder, session_id, text_index)
+        classification_stats = self._apply_classification(builder, session_id, text_index)
+        return trace_stats, conflict_stats, classification_stats
+
+    def _build_discover_graph_payload(
+        self,
+        builder: _GraphBuilder,
+        *,
+        project_id: Optional[str],
+        session_id: Optional[str],
+        source_requirement_count: int,
+        trace_stats: Dict[str, Any],
+        conflict_stats: Dict[str, Any],
+        classification_stats: Dict[str, Any],
+        relation_review_stats: Dict[str, Any],
+        run_id: str,
+    ) -> Dict[str, Any]:
+        graph = builder.to_graph()
+        analysis_edge_counts = self._count_edges_by_source_kinds(
+            graph["edges"],
+            {"trace_analysis", "conflict_analysis", "classification_analysis"},
+        )
+        supplemental_edge_counts = self._count_edges_by_source_kinds(
+            graph["edges"],
+            {"llm", "rule_extra", "local_vector"},
+        )
+        graph["stats"]["strong_edge_count"] = graph["stats"]["structural_edge_count"] + analysis_edge_counts["total"]
+        graph["stats"]["analysis_edge_count"] = analysis_edge_counts["total"]
+        graph["stats"]["supplemental_edge_count"] = supplemental_edge_counts["total"]
+        graph["stats"]["inferred_edge_count"] = relation_review_stats.get("added_count", 0)
+        graph["stats"]["edge_source_counts"] = {
+            **graph["stats"].get("edge_source_counts", {}),
+            **analysis_edge_counts["by_kind"],
+            **supplemental_edge_counts["by_kind"],
+        }
+        graph["stats"]["source_requirement_count"] = source_requirement_count
+        graph["stats"]["local_vector"] = {
+            "enabled": False,
+            "candidate_pair_count": 0,
+            "reviewed_pair_count": 0,
+            "added_count": 0,
+        }
+        graph["stats"]["relation_review"] = relation_review_stats
+        graph["stats"]["review_concurrency"] = relation_review_stats.get("requested_concurrency", 0)
+        graph["stats"]["classification_label_distribution"] = classification_stats.get("label_distribution", {})
+        graph["stats"]["classification_matched_count"] = classification_stats.get("matched_count", 0)
+        graph["stats"]["trace_edge_count"] = trace_stats.get("edge_count", 0)
+        graph["stats"]["conflict_edge_count"] = conflict_stats.get("edge_count", 0)
+        graph["stats"]["classification_edge_count"] = classification_stats.get("edge_count", 0)
+        graph["meta"] = {
+            "project_id": project_id,
+            "session_id": session_id,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "run_id": run_id,
+            "relation_mode": "llm",
+            "discovery_mode": "top_l4_tool",
+            "review_concurrency": relation_review_stats.get("requested_concurrency", 0),
+            "local_vector": graph["stats"]["local_vector"],
+            "relation_review": relation_review_stats,
+            "analysis_records": {
+                "trace_record_id": trace_stats.get("record_id"),
+                "conflict_batch_id": conflict_stats.get("batch_id"),
+                "classification_record_id": classification_stats.get("record_id"),
+            },
+        }
+        graph["legend"]["levels"] = _LEVEL_ORDER
+        return graph
+
+    def _make_relation_discovery_coordinator(self) -> _RequirementGraphRelationDiscoveryCoordinator:
+        return _RequirementGraphRelationDiscoveryCoordinator(
+            ai=self.ai,
+            logger=logger,
+            clean=self._clean,
+            edge_label=_edge_label,
+            normalize_edge_key=_normalize_edge_key,
+            resolve_node_reference=self._resolve_node_reference,
+            as_list=_as_list,
+            compact_list=_compact_list,
+            float_or_default=_float_or_default,
+            allowed_relation_types=set(_REQ_REQ_INFERRED_TYPES) | {"SIMILAR_TO"},
+            symmetric_edge_types=_SYMMETRIC_EDGE_TYPES,
+        )
+
+    def _apply_discovered_relation(
+        self,
+        builder: _GraphBuilder,
+        *,
+        relation: Dict[str, Any],
+        package_id: str,
+        model: str,
+    ) -> Optional[Dict[str, Any]]:
+        source = relation.get("source")
+        target = relation.get("target")
+        edge_type = relation.get("type")
+        if not source or not target or source == target or edge_type == "REFINES":
+            return None
+        edge_key = _normalize_edge_key(source, target, edge_type)
+        existing = builder.edges.get(edge_key)
+        incoming_confidence = _float_or_default(relation.get("confidence"), 0.65)
+        incoming_evidence = _compact_list(_as_list(relation.get("evidence")))[:8]
+        if existing:
+            props = existing.get("properties") or {}
+            if props.get("source_kind") == "structural" or existing.get("type") == "REFINES":
+                return None
+            current_quality = (
+                _float_or_default(props.get("confidence"), existing.get("weight") or 0),
+                len(props.get("evidence") or []),
+            )
+            incoming_quality = (incoming_confidence, len(incoming_evidence))
+            if incoming_quality <= current_quality:
+                return None
+            builder.remove_edge(source, target, edge_type)
+        builder.add_edge(
+            source,
+            target,
+            edge_type,
+            label=_edge_label(edge_type),
+            weight=incoming_confidence,
+            properties={
+                "source_kind": "llm",
+                "source_detail": "llm_discovery_tool",
+                "source": "llm_discovery_tool",
+                "confidence": incoming_confidence,
+                "reason": self._clean(relation.get("reason")),
+                "evidence": incoming_evidence,
+                "model": model,
+                "review_action": "add",
+                "review_package_id": package_id,
+            },
+        )
+        return builder.edges.get(edge_key)
 
     def _apply_project_edges(self, builder: _GraphBuilder, project_requirements: Iterable[Dict[str, Any]]) -> None:
         self._feature_engine.apply_project_edges(builder, project_requirements)
@@ -669,7 +1488,27 @@ class RequirementGraphService:
         candidate_pairs: List[Dict[str, Any]],
         inferred_relation_types: Optional[set[str]] = None,
     ) -> Dict[str, Any]:
-        relation_review = _RequirementGraphRelationReviewCoordinator(
+        relation_review = self._make_relation_review_coordinator(
+            inferred_relation_types=inferred_relation_types,
+        )
+        return relation_review.apply(
+            builder,
+            project_id=project_id,
+            session_id=session_id,
+            enabled=enabled,
+            model=model,
+            inference_limit=inference_limit,
+            review_concurrency=review_concurrency,
+            requirement_features=requirement_features,
+            candidate_pairs=candidate_pairs,
+        )
+
+    def _make_relation_review_coordinator(
+        self,
+        *,
+        inferred_relation_types: Optional[set[str]] = None,
+    ) -> _RequirementGraphRelationReviewCoordinator:
+        return _RequirementGraphRelationReviewCoordinator(
             ai=self.ai,
             logger=logger,
             clean=self._clean,
@@ -685,17 +1524,6 @@ class RequirementGraphService:
             float_or_default=_float_or_default,
             inferred_relation_types=inferred_relation_types or _REQ_REQ_INFERRED_TYPES,
             symmetric_edge_types=_SYMMETRIC_EDGE_TYPES,
-        )
-        return relation_review.apply(
-            builder,
-            project_id=project_id,
-            session_id=session_id,
-            enabled=enabled,
-            model=model,
-            inference_limit=inference_limit,
-            review_concurrency=review_concurrency,
-            requirement_features=requirement_features,
-            candidate_pairs=candidate_pairs,
         )
 
     @staticmethod
@@ -741,6 +1569,213 @@ class RequirementGraphService:
     def _apply_llm_inference(self, builder: _GraphBuilder, **kwargs):
         return self._inference_engine.apply_llm_inference(builder, **kwargs)
 
+    def _prepare_stream_base(
+        self,
+        builder: _GraphBuilder,
+        *,
+        project_id: Optional[str],
+        session_id: Optional[str],
+        limit: int,
+    ):
+        project_requirements = self._load_project_requirements(project_id, limit)
+        requirement_features: Dict[str, Dict[str, Any]] = {}
+        text_index: Dict[str, List[str]] = defaultdict(list)
+
+        for req in project_requirements:
+            node_id = _req_node_id(req.get("req_id"))
+            normalized_level = _normalize_source_level(
+                req.get("source_level"),
+                req.get("requirement_type"),
+            )
+            builder.add_node(
+                node_id,
+                kind="requirement",
+                label=req.get("title"),
+                group=normalized_level,
+                properties={
+                    "req_id": req.get("req_id"),
+                    "project_id": req.get("project_id"),
+                    "title": req.get("title"),
+                    "description": req.get("description"),
+                    "content": req.get("description"),
+                    "type": req.get("requirement_type"),
+                    "status": req.get("status"),
+                    "priority": req.get("priority"),
+                    "tags": _as_list(req.get("tags")),
+                    "assignee": req.get("assignee"),
+                    "parent_id": req.get("parent_id"),
+                    "source_req_id": req.get("source_req_id"),
+                    "source_level": normalized_level,
+                    "level": normalized_level,
+                    "custom_fields": req.get("custom_fields") if isinstance(req.get("custom_fields"), dict) else None,
+                    "source": "manage_requirements",
+                    "created_by": req.get("created_by"),
+                    "updated_by": req.get("updated_by"),
+                },
+            )
+            requirement_features[node_id] = self._build_requirement_feature(req, normalized_level)
+            _index_text(
+                text_index,
+                node_id,
+                req.get("req_id"),
+                req.get("source_req_id"),
+                req.get("title"),
+                req.get("description"),
+                " ".join(
+                    part
+                    for part in [
+                        str(req.get("title") or "").strip(),
+                        str(req.get("description") or "").strip(),
+                    ]
+                    if part
+                ),
+            )
+
+        self._attach_semantic_embeddings(requirement_features)
+        local_embedding_status = self._feature_engine.get_local_embedding_status(
+            requirement_features
+        )
+        self._apply_project_edges(builder, project_requirements)
+        trace_stats = self._apply_trace_edges(builder, session_id, text_index)
+        conflict_stats = self._apply_conflict_edges(builder, session_id, text_index)
+        classification_stats = self._apply_classification(builder, session_id, text_index)
+        candidate_pairs, candidate_stats = self._collect_candidate_pairs(requirement_features)
+        return (
+            project_requirements,
+            requirement_features,
+            candidate_pairs,
+            candidate_stats,
+            local_embedding_status,
+            trace_stats,
+            conflict_stats,
+            classification_stats,
+        )
+
+    def _build_stream_graph_payload(
+        self,
+        builder: _GraphBuilder,
+        *,
+        project_id: Optional[str],
+        session_id: Optional[str],
+        project_requirements: List[Dict[str, Any]],
+        trace_stats: Dict[str, Any],
+        conflict_stats: Dict[str, Any],
+        classification_stats: Dict[str, Any],
+        candidate_stats: Dict[str, Any],
+        local_vector_stats: Dict[str, Any],
+        relation_review_stats: Dict[str, Any],
+        run_id: str,
+    ) -> Dict[str, Any]:
+        graph = builder.to_graph()
+        analysis_edge_counts = self._count_edges_by_source_kinds(
+            graph["edges"],
+            {"trace_analysis", "conflict_analysis", "classification_analysis"},
+        )
+        supplemental_edge_counts = self._count_edges_by_source_kinds(
+            graph["edges"],
+            {"local_vector", "rule_extra", "llm"},
+        )
+        graph["stats"]["strong_edge_count"] = graph["stats"]["structural_edge_count"] + analysis_edge_counts["total"]
+        graph["stats"]["inferred_edge_count"] = (
+            relation_review_stats.get("added_count", 0) + relation_review_stats.get("updated_count", 0)
+        )
+        graph["stats"]["analysis_edge_count"] = analysis_edge_counts["total"]
+        graph["stats"]["supplemental_edge_count"] = supplemental_edge_counts["total"]
+        graph["stats"]["edge_source_counts"] = {
+            **graph["stats"].get("edge_source_counts", {}),
+            **analysis_edge_counts["by_kind"],
+            **supplemental_edge_counts["by_kind"],
+        }
+        graph["stats"]["candidate_pair_count"] = candidate_stats.get("pair_count", 0)
+        graph["stats"]["candidate_pairs_per_requirement_limit"] = candidate_stats.get("per_requirement_limit", 0)
+        graph["stats"]["candidate_requirement_count"] = candidate_stats.get("requirement_count", 0)
+        graph["stats"]["source_requirement_count"] = len(project_requirements)
+        graph["stats"]["local_vector"] = local_vector_stats
+        graph["stats"]["relation_review"] = relation_review_stats
+        graph["stats"]["review_concurrency"] = relation_review_stats.get("requested_concurrency", 0)
+        graph["stats"]["classification_label_distribution"] = classification_stats.get("label_distribution", {})
+        graph["stats"]["classification_matched_count"] = classification_stats.get("matched_count", 0)
+        graph["stats"]["trace_edge_count"] = trace_stats.get("edge_count", 0)
+        graph["stats"]["conflict_edge_count"] = conflict_stats.get("edge_count", 0)
+        graph["stats"]["classification_edge_count"] = classification_stats.get("edge_count", 0)
+        graph["meta"] = {
+            "project_id": project_id,
+            "session_id": session_id,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "run_id": run_id,
+            "relation_mode": "llm",
+            "review_concurrency": relation_review_stats.get("requested_concurrency", 0),
+            "candidate_recall": candidate_stats,
+            "local_vector": local_vector_stats,
+            "relation_review": relation_review_stats,
+        }
+        graph["legend"]["levels"] = _LEVEL_ORDER
+        return graph
+
+    def _safe_stream_graph_from_builder(self, builder: _GraphBuilder) -> Dict[str, Any]:
+        try:
+            return builder.to_graph()
+        except Exception:
+            return {"nodes": [], "edges": [], "stats": {}, "legend": {}}
+
+    @staticmethod
+    def _edge_pair_key(source: Any, target: Any) -> str:
+        left, right = sorted((str(source or "").strip(), str(target or "").strip()))
+        return f"{left}|{right}"
+
+    def _remove_local_candidate_edges(self, builder: _GraphBuilder, pair_key: str) -> List[Dict[str, Any]]:
+        removed = []
+        for key, edge in list(builder.edges.items()):
+            if self._edge_pair_key(edge.get("source"), edge.get("target")) != pair_key:
+                continue
+            if (edge.get("properties") or {}).get("source_kind") != "local_vector":
+                continue
+            removed.append(dict(edge))
+            builder.edges.pop(key, None)
+        return removed
+
+    def _build_relation_decision_event(
+        self,
+        *,
+        mutation: Dict[str, Any],
+        action: str,
+        package_id: str,
+        model: str,
+        builder: _GraphBuilder,
+        run_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        edge_ref = mutation.get("replacement_edge") if action in {"add", "update"} else mutation.get("target_edge")
+        edge = None
+        if edge_ref:
+            edge = builder.edges.get(
+                _normalize_edge_key(edge_ref.get("source"), edge_ref.get("target"), edge_ref.get("type"))
+            )
+        if not edge:
+            edge = {
+                "source": edge_ref.get("source") if edge_ref else None,
+                "target": edge_ref.get("target") if edge_ref else None,
+                "type": edge_ref.get("type") if edge_ref else None,
+                "weight": mutation.get("confidence"),
+                "properties": {
+                    "source_kind": "llm",
+                    "source_detail": "llm_tool_review",
+                    "confidence": mutation.get("confidence"),
+                    "reason": mutation.get("reason"),
+                    "evidence": mutation.get("evidence"),
+                    "model": model,
+                    "review_action": action,
+                    "review_package_id": package_id,
+                },
+            }
+        return {
+            "run_id": run_id,
+            "action": action,
+            "edge": edge,
+            "reason": mutation.get("reason"),
+            "confidence": mutation.get("confidence"),
+            "package_id": package_id,
+        }
+
     def _persist_relation_snapshot(
         self,
         *,
@@ -748,6 +1783,9 @@ class RequirementGraphService:
         session_id: Optional[str],
         relation_mode: Optional[str],
         graph: Dict[str, Any],
+        run_id: Optional[str] = None,
+        snapshot_status: str = "final",
+        progress_json: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         normalized_mode = self._clean(relation_mode)
         if normalized_mode not in {"local", "llm"}:
@@ -761,6 +1799,9 @@ class RequirementGraphService:
                 session_id=session_id,
                 relation_mode=normalized_mode,
                 edges=graph.get("edges") or [],
+                run_id=run_id,
+                snapshot_status=snapshot_status,
+                progress_json=progress_json,
             )
         except Exception as exc:
             logger.warning(

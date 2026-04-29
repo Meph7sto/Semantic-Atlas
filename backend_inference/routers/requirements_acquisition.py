@@ -4,6 +4,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from core.engine.remote.deepseek import DEFAULT_DEEPSEEK_MODEL
 from services.requirements_acquisition_service import acquisition_service, RequirementGroup
 
 router = APIRouter(
@@ -18,8 +19,9 @@ class ExtractionRequest(BaseModel):
     text: str
     chunk_size: Optional[int] = 3600
     overlap: Optional[int] = 500
-    clean_model: Optional[str] = "deepseek-reasoner"
-    extract_model: Optional[str] = "deepseek-reasoner"
+    clean_model: Optional[str] = DEFAULT_DEEPSEEK_MODEL
+    extract_model: Optional[str] = DEFAULT_DEEPSEEK_MODEL
+    use_thinking_mode: bool = True
 
 class RequirementItemModel(BaseModel):
     statement: str
@@ -44,7 +46,8 @@ async def extract_requirements(request: ExtractionRequest):
         result: RequirementGroup = acquisition_service.process(
             request.text, 
             clean_model=request.clean_model,
-            extract_model=request.extract_model
+            extract_model=request.extract_model,
+            use_thinking_mode=request.use_thinking_mode,
         )
         
         return ExtractionResponse(

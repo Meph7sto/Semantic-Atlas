@@ -90,8 +90,8 @@
               <div class="param-item">
                 <label class="param-label">模型</label>
                 <select v-model="options.model" class="param-select">
-                  <option value="deepseek-reasoner">DeepSeek R1 (Reasoning)</option>
-                  <option value="deepseek-chat">DeepSeek Chat</option>
+                  <option value="deepseek-v4-pro">DeepSeek V4 Pro</option>
+                  <option value="deepseek-v4-flash">DeepSeek V4 Flash</option>
                 </select>
               </div>
               <ParamNumber label="Max Spans / Bundle" v-model="options.max_spans_per_bundle" :min="1" :max="64" />
@@ -104,6 +104,7 @@
             </div>
             <div class="param-toggles">
               <ParamToggle label="r=2 自适应重试" desc="先尝试 r=1，不足再 r=2" v-model="options.adaptive_retry_r2" />
+              <ParamToggle label="思考模式" desc="独立控制 DeepSeek thinking" v-model="options.use_thinking_mode" />
               <ParamToggle label="使用 Tool-Call" desc="使用 tool-call 模式（需要 deepseek provider）" v-model="options.use_toolcall" />
               <ParamToggle label="重跑前清理历史" desc="每次抽取前删除该 session 的历史 L1/L2/L3" v-model="options.reset_before_extract" />
               <ParamToggle label="并行处理锚点" desc="并行抽取多个锚点" v-model="options.enable_parallel_windows" />
@@ -185,7 +186,14 @@
               <ParamNumber label="并发数" v-model="options.l4_max_concurrent" :min="1" :max="8" />
             </div>
             <div class="param-toggles">
-              <ParamToggle label="DeepSeek R1 推理模式" desc="使用推理模型而非 Chat 模型" v-model="options.l4_use_reasoning_model" />
+              <div class="param-item">
+                <label class="param-label">L4 模型</label>
+                <select v-model="options.l4_model" class="param-select">
+                  <option value="deepseek-v4-pro">DeepSeek V4 Pro</option>
+                  <option value="deepseek-v4-flash">DeepSeek V4 Flash</option>
+                </select>
+              </div>
+              <ParamToggle label="L4 思考模式" desc="独立控制 DeepSeek thinking" v-model="options.l4_use_thinking_mode" />
               <ParamToggle label="生成前清空历史 L4" desc="开始前删除该 session 的所有 L4 记录" v-model="options.l4_clear_existing" danger />
             </div>
           </div>

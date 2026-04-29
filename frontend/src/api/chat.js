@@ -4,6 +4,7 @@ import { api } from './request'
 export const chatApi = {
     async streamAsk(
         prompt,
+        model = 'deepseek-v4-pro',
         useThinking = true,
         useAsyncClient = false,
         maxNewTokens = 800,
@@ -16,6 +17,7 @@ export const chatApi = {
             },
             body: JSON.stringify({
                 prompt,
+                model,
                 system_prompt: systemPrompt,
                 max_new_tokens: maxNewTokens,
                 use_thinking_mode: useThinking,

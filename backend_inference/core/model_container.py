@@ -1,4 +1,5 @@
 from .engine import DeepSeekEngine
+from .engine.remote.deepseek import DEFAULT_DEEPSEEK_MODEL
 from .config import settings
 
 
@@ -10,7 +11,7 @@ model_engine = DeepSeekEngine(
     chutes_api_token=settings.CHUTES_API_TOKEN,
     deepseek_api_url=settings.DEEPSEEK_API_URL,
     deepseek_api_key=settings.DEEPSEEK_API_KEY,
-    deepseek_model=getattr(settings, "DEEPSEEK_MODEL", "deepseek-reasoner"),
+    deepseek_model=getattr(settings, "DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL),
 )
 # 全局模型容器
 # 此模块充当模型引擎的单例持有者。
@@ -34,7 +35,7 @@ class _LazyClassificationEngine:
                 chutes_api_token=settings.CHUTES_API_TOKEN,
                 deepseek_api_url=settings.DEEPSEEK_API_URL,
                 deepseek_api_key=settings.DEEPSEEK_API_KEY,
-                deepseek_model=getattr(settings, "DEEPSEEK_MODEL", "deepseek-reasoner"),
+                deepseek_model=getattr(settings, "DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL),
                 labels=settings.CLASSIFICATION_LABELS,
                 other_label=settings.CLASSIFICATION_OTHER_LABEL,
             )

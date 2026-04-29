@@ -6,6 +6,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from core.model_container import model_engine
+from core.engine.remote.deepseek import DEFAULT_DEEPSEEK_MODEL
 from schemas.chat import ChatRequest
 from services.chat_service import ChatService
 
@@ -45,7 +46,8 @@ class Tool(BaseModel):
 
 class ChatCompletionRequest(BaseModel):
     messages: List[ChatMessage] = Field(..., description="List of messages")
-    model: str = Field(default="deepseek-reasoner", description="Model name")
+    model: str = Field(default=DEFAULT_DEEPSEEK_MODEL, description="Model name")
+    thinking_enabled: bool = Field(default=True, description="Enable thinking mode")
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(default=2000, ge=1, le=8000)
 
@@ -55,7 +57,8 @@ class ChatCompletionWithToolsRequest(BaseModel):
 
     messages: List[ChatMessage] = Field(..., description="List of messages")
     tools: List[Dict[str, Any]] = Field(..., description="List of tool definitions")
-    model: str = Field(default="deepseek-reasoner", description="Model name")
+    model: str = Field(default=DEFAULT_DEEPSEEK_MODEL, description="Model name")
+    thinking_enabled: bool = Field(default=True, description="Enable thinking mode")
     temperature: Optional[float] = Field(default=0.3, ge=0.0, le=2.0)
     max_tokens: int = Field(default=4096, ge=1, le=8000)
     tool_choice: Optional[str] = Field(
@@ -88,6 +91,7 @@ class ContextCompletionRequest(BaseModel):
     prompt: str = Field(..., description="Prompt content")
     system_prompt: str = Field(default="", description="System prompt")
     model: Optional[str] = Field(default=None, description="Model override")
+    thinking_enabled: bool = Field(default=True, description="Enable thinking mode")
     max_tokens: int = Field(default=8000, ge=1, le=12000)
 
 
@@ -105,7 +109,7 @@ class ChatCompletionWithToolsResponse(BaseModel):
         default=None, description="Tool calls from model"
     )
     reasoning_content: Optional[str] = Field(
-        default=None, description="Reasoning content (for reasoner model)"
+        default=None, description="Reasoning content (for thinking mode)"
     )
     finish_reason: Optional[str] = Field(
         default=None, description="Finish reason: stop, tool_calls, length"
@@ -145,6 +149,7 @@ async def stream_chat(request: ChatRequest):
                 prompt=request.prompt,
                 system_prompt=request.system_prompt,
                 max_new_tokens=request.max_new_tokens,
+                model=request.model,
                 use_thinking_mode=request.use_thinking_mode,
                 use_async_client=request.use_async_client,
             ),
@@ -195,6 +200,7 @@ async def chat_completions(request: ChatCompletionRequest):
             system_prompt=system_prompt or "",
             max_new_tokens=request.max_tokens,
             model=request.model,
+            thinking_enabled=request.thinking_enabled,
         )
 
         if isinstance(result, dict):
@@ -233,6 +239,7 @@ async def context_completion(request: ContextCompletionRequest):
             system_prompt=request.system_prompt or "",
             max_new_tokens=request.max_tokens,
             model=request.model,
+            thinking_enabled=request.thinking_enabled,
         )
         return ContextCompletionResponse(content=content or "")
     except RuntimeError:
@@ -279,6 +286,7 @@ async def context_completion_stream(request: ContextCompletionRequest):
                 system_prompt=request.system_prompt or "",
                 max_new_tokens=request.max_tokens,
                 model=request.model,
+                thinking_enabled=request.thinking_enabled,
             )
 
             async for chunk in stream:
@@ -334,6 +342,7 @@ async def chat_completions_with_tools(request: ChatCompletionWithToolsRequest):
             tool_choice=request.tool_choice,
             model=request.model,
             temperature=request.temperature,
+            thinking_enabled=request.thinking_enabled,
         )
 
         # 返回结果
@@ -383,6 +392,7 @@ async def chat_completions_with_tools_stream(
                 tool_choice=request.tool_choice,
                 model=request.model,
                 temperature=request.temperature,
+                thinking_enabled=request.thinking_enabled,
             ):
                 # Normalize engine chunk shape to business backend expectations.
                 # Engine uses {type, delta/...}; business expects {type, content/...} and tool_call wrapper.
@@ -420,6 +430,7 @@ async def chat_completions_with_tools_stream(
                 tool_choice=request.tool_choice,
                 model=request.model,
                 temperature=request.temperature,
+                thinking_enabled=request.thinking_enabled,
             ):
                 t = chunk.get("type")
                 if t in ("thinking", "content"):

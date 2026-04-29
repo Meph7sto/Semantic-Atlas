@@ -32,7 +32,7 @@ router = APIRouter(prefix="/api/v2", tags=["requirements"])
 
 requirements_service = RequirementsExtractionService(dsn=settings.POSTGRES_DSN)
 dedup_service = RequirementsDeduplicationService(dsn=settings.POSTGRES_DSN)
-_DEFAULT_L4_MODEL = "deepseek-reasoner"
+_DEFAULT_L4_MODEL = "deepseek-v4-pro"
 
 
 def _sse_event(event: str, data: Any) -> str:
@@ -85,10 +85,12 @@ def _build_l4_generation_payload(
     requirements_to_generate: list[Any],
     config: dict[str, Any],
     model: str | None,
+    use_thinking_mode: bool = True,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "requirements": [item.model_dump() for item in requirements_to_generate],
         "config": config,
+        "use_thinking_mode": use_thinking_mode,
     }
     if model:
         payload["model"] = model
@@ -199,8 +201,11 @@ def _generate_single_l4_item(
     top_requirement: Any,
     config: dict[str, Any],
     model: str | None,
+    use_thinking_mode: bool = True,
 ) -> dict[str, Any]:
-    payload = _build_l4_generation_payload([top_requirement], config, model)
+    payload = _build_l4_generation_payload(
+        [top_requirement], config, model, use_thinking_mode
+    )
     default_model = model or _DEFAULT_L4_MODEL
 
     try:
@@ -300,6 +305,7 @@ def extract_requirements(req: ExtractRequirementsRequest):
             req.overlap,
             clean_model=req.clean_model,
             extract_model=req.extract_model,
+            use_thinking_mode=req.use_thinking_mode,
         )
         return result
     except Exception as exc:
@@ -326,6 +332,7 @@ def extract_l123_requirements(req: ExtractL123Request):
             r=req.r,
             model_name=req.model,
             use_toolcall=req.use_toolcall,
+            use_thinking_mode=req.use_thinking_mode,
             adaptive_retry_r2=req.adaptive_retry_r2,
             max_spans_per_bundle=req.max_spans_per_bundle,
             token_limit=req.token_limit,
@@ -390,6 +397,7 @@ def extract_l123_requirements_stream(req: ExtractL123Request):
                 r=req.r,
                 model_name=req.model,
                 use_toolcall=req.use_toolcall,
+                use_thinking_mode=req.use_thinking_mode,
                 adaptive_retry_r2=req.adaptive_retry_r2,
                 max_spans_per_bundle=req.max_spans_per_bundle,
                 token_limit=req.token_limit,
@@ -613,7 +621,9 @@ def generate_l4_requirements(req: GenerateL4RequirementsRequest):
         model_id = req.model or _DEFAULT_L4_MODEL
 
         for item in requirements_to_generate:
-            payload = _build_l4_generation_payload([item], req.config, req.model)
+            payload = _build_l4_generation_payload(
+                [item], req.config, req.model, req.use_thinking_mode
+            )
 
             try:
                 resp = requests.post(
@@ -799,6 +809,7 @@ async def generate_l4_requirements_stream(req: GenerateL4RequirementsRequest):
                         item,
                         req.config,
                         req.model,
+                        req.use_thinking_mode,
                     )
 
             tasks = [asyncio.create_task(_run_single(item)) for item in missing_items]

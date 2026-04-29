@@ -26,7 +26,8 @@ DEFAULT_OPTIONS = {
     "max_edges_per_window": 24,
     "token_limit_per_bundle": 4000,
     "mock_llm": False,
-    "llm_model": None,
+    "llm_model": "deepseek-v4-pro",
+    "use_thinking_mode": True,
     "use_streaming_llm": False,
     "enable_parallel_windows": False,
     "max_concurrent_windows": 5,
@@ -37,6 +38,4 @@ def _resolve_llm_model(options: Dict[str, Any]) -> Optional[str]:
     raw_model = options.get("llm_model")
     if isinstance(raw_model, str) and raw_model.strip():
         return raw_model.strip()
-    if options.get("use_thinking_mode"):
-        return "deepseek-reasoner"
-    return None
+    return "deepseek-v4-pro"

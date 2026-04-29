@@ -102,10 +102,17 @@
             <div class="text-sm font-medium text-zinc-700">DeepSeek 模型</div>
             <div class="text-xs text-zinc-500">当前: {{ llmModel }}</div>
           </div>
+          <select
+            v-model="selectedModel"
+            class="h-10 rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-700 focus:border-zinc-500 focus:outline-none"
+          >
+            <option value="deepseek-v4-pro">DeepSeek V4 Pro</option>
+            <option value="deepseek-v4-flash">DeepSeek V4 Flash</option>
+          </select>
           <label class="relative inline-flex items-center cursor-pointer">
             <input type="checkbox" v-model="useThinking" class="sr-only peer">
             <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-zinc-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-zinc-900"></div>
-            <span class="ml-3 text-sm font-medium text-zinc-600">Reasoner 模式</span>
+            <span class="ml-3 text-sm font-medium text-zinc-600">思考模式</span>
           </label>
         </div>
 
@@ -445,6 +452,7 @@ const matrixRelationFilter = ref('all')
 const matrixShowStrength = ref(true)
 const matrixLoading = ref(false)
 const matrixError = ref('')
+const selectedModel = ref('deepseek-v4-pro')
 const useThinking = ref(true)
 const copyStatusText = ref('复制')
 
@@ -495,7 +503,7 @@ const options = reactive({
 })
 
 const canStart = computed(() => !isLoading.value && sessionId.value.trim().length > 0)
-const llmModel = computed(() => (useThinking.value ? 'deepseek-reasoner' : 'deepseek-chat'))
+const llmModel = computed(() => selectedModel.value)
 const filteredLinks = computed(() => {
   if (matrixRelationFilter.value === 'all') {
     return spanLinks.value
@@ -684,7 +692,7 @@ async function startBuildContext() {
 
   const payload = {
     session_id: sessionId.value.trim(),
-    options: { ...options, llm_model: llmModel.value }
+    options: { ...options, llm_model: llmModel.value, use_thinking_mode: useThinking.value }
   }
 
   try {

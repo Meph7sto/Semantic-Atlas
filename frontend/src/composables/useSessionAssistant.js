@@ -50,6 +50,7 @@ export function useSessionAssistant() {
   const sessionId = ref('')
   const messages = ref([])
   const inputMessage = ref('')
+  const selectedModel = ref('deepseek-v4-pro')
   const useThinkingMode = ref(true)
   const isSending = ref(false)
   const isLoadingProjects = ref(false)
@@ -486,6 +487,7 @@ export function useSessionAssistant() {
         sessionId: sessionId.value,
         projectId: selectedProjectId.value,
         message,
+        model: selectedModel.value,
         useThinkingMode: useThinkingMode.value,
       })
       inputMessage.value = ''
@@ -566,6 +568,7 @@ export function useSessionAssistant() {
     sessionId,
     messages,
     inputMessage,
+    selectedModel,
     useThinkingMode,
     isSending,
     isLoadingProjects,

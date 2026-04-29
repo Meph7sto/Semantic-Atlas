@@ -29,8 +29,8 @@ class _StubAIProxy:
         text: str,
         chunk_size: int = 3600,
         overlap: int = 500,
-        clean_model: str = "deepseek-reasoner",
-        extract_model: str = "deepseek-reasoner",
+        clean_model: str = "deepseek-v4-pro",
+        extract_model: str = "deepseek-v4-pro",
     ):
         self.extract_calls.append(
             {
@@ -405,7 +405,7 @@ async def test_generate_l4_requirements_timeout_isolated_per_top_requirement(
                     }
                 ],
                 "kb_version": "kb-v1",
-                "model_id": "deepseek-reasoner",
+                "model_id": "deepseek-v4-pro",
             }
         )
 
@@ -461,7 +461,7 @@ async def test_generate_l4_requirements_stream_returns_per_top_item_events(
                     }
                 ],
                 "kb_version": "kb-v1",
-                "model_id": "deepseek-reasoner",
+                "model_id": "deepseek-v4-pro",
             }
         )
 

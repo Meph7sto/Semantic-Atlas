@@ -5,6 +5,7 @@ import { Play, CheckCircle2, AlertCircle, Sparkles } from 'lucide-vue-next'
 
 const reqA = ref('')
 const reqB = ref('')
+const selectedModel = ref('deepseek-v4-pro')
 const useThinking = ref(true)
 const isLoading = ref(false)
 const result = ref(null) 
@@ -16,7 +17,12 @@ const detectConflict = async () => {
   result.value = { raw_response: '', thinking_content: '', is_conflict: null }
   
   try {
-    const stream = await conflictApi.streamCheck(reqA.value, reqB.value, useThinking.value)
+    const stream = await conflictApi.streamCheck(
+      reqA.value,
+      reqB.value,
+      selectedModel.value,
+      useThinking.value
+    )
     
     // 建立流读取器
     const reader = stream.getReader()
@@ -109,10 +115,17 @@ const detectConflict = async () => {
       <div class="flex flex-col items-center gap-4 justify-center mb-12">
         
         <div class="flex items-center gap-3">
+          <select
+            v-model="selectedModel"
+            class="h-10 rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-700 focus:border-zinc-500 focus:outline-none"
+          >
+            <option value="deepseek-v4-pro">DeepSeek V4 Pro</option>
+            <option value="deepseek-v4-flash">DeepSeek V4 Flash</option>
+          </select>
           <label class="relative inline-flex items-center cursor-pointer">
             <input type="checkbox" v-model="useThinking" class="sr-only peer">
             <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-zinc-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-zinc-900"></div>
-            <span class="ml-3 text-sm font-medium text-zinc-600">DeepSeek R1 (Reasoning Mode)</span>
+            <span class="ml-3 text-sm font-medium text-zinc-600">思考模式</span>
           </label>
         </div>
 

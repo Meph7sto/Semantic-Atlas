@@ -13,6 +13,7 @@ class _StubRequirementGraphService:
         self.latest_calls = []
         self.history_calls = []
         self.snapshot_calls = []
+        self.delete_calls = []
 
     def build_graph(self, **kwargs):
         self.calls.append(kwargs)
@@ -31,7 +32,7 @@ class _StubRequirementGraphService:
                         "source_detail": "llm_tool_review",
                         "review_action": "update",
                         "review_package_id": "pkg-2",
-                        "model": "deepseek-reasoner",
+                        "model": "deepseek-v4-pro",
                         "reason": "reviewed",
                         "evidence": ["a", "b"],
                         "confidence": 0.88,
@@ -49,7 +50,7 @@ class _StubRequirementGraphService:
                     "updated_count": 2,
                     "deleted_count": 1,
                     "fallback_used": False,
-                    "model": "deepseek-reasoner",
+                    "model": "deepseek-v4-pro",
                 },
             },
             "legend": {"edge_types": ["DEPENDS_ON"]},
@@ -99,6 +100,59 @@ class _StubRequirementGraphService:
                 },
             },
         }
+
+    def delete_relation_snapshots(self, **kwargs):
+        self.delete_calls.append(kwargs)
+        return {
+            "deleted_count": 7,
+            "project_id": kwargs.get("project_id"),
+            "session_id": kwargs.get("session_id"),
+            "relation_mode": kwargs.get("relation_mode"),
+        }
+
+    async def stream_graph_events(self, **kwargs):
+        self.calls.append({"stream": True, **kwargs})
+        yield "base_graph", {"graph": {"nodes": [], "edges": [], "stats": {}}}
+        yield "candidate_edges", {"edges": []}
+        yield "review_progress", {
+            "completed_pairs": 0,
+            "total_pairs": 0,
+            "completed_packages": 0,
+            "total_packages": 0,
+        }
+        yield "snapshot_saved", {
+            "snapshot_status": "final",
+            "snapshot": {"snapshot_id": "snap-stream"},
+        }
+        yield "done", {"snapshot": {"snapshot_id": "snap-stream"}}
+
+    async def stream_discover_relation_events(self, **kwargs):
+        self.calls.append({"discover_stream": True, **kwargs})
+        yield "base_graph", {"graph": {"nodes": [], "edges": [], "stats": {}}}
+        yield "discover_progress", {
+            "completed_packages": 0,
+            "total_packages": 1,
+            "added_edges": 0,
+            "skipped_packages": 0,
+            "review_concurrency": kwargs.get("review_concurrency"),
+        }
+        yield "relation_decision", {
+            "action": "add",
+            "edge": {
+                "source": "req:A",
+                "target": "req:B",
+                "type": "DEPENDS_ON",
+                "properties": {"source_kind": "llm"},
+            },
+            "reason": "discovered",
+            "confidence": 0.82,
+            "package_id": "top-1",
+        }
+        yield "snapshot_saved", {
+            "snapshot_status": "final",
+            "snapshot": {"snapshot_id": "snap-discover"},
+        }
+        yield "done", {"snapshot": {"snapshot_id": "snap-discover"}}
 
 
 @pytest.fixture
@@ -262,3 +316,67 @@ async def test_get_requirement_graph_snapshot_contract_returns_requested_snapsho
     assert body["success"] is True
     assert body["data"]["meta"]["relation_snapshot"]["snapshot_id"] == "snap-2"
     assert stub_service.snapshot_calls[0] == {"snapshot_id": "snap-2", "limit": 700}
+
+
+async def test_delete_requirement_graph_relations_contract(fastapi_client):
+    client, stub_service = fastapi_client
+
+    response = await client.request(
+        "DELETE",
+        "/api/v2/requirement-graph/relations",
+        json={"project_id": "P-1", "session_id": "S-1"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["deleted_count"] == 7
+    assert stub_service.delete_calls[0] == {
+        "project_id": "P-1",
+        "session_id": "S-1",
+        "relation_mode": None,
+    }
+
+
+async def test_post_requirement_graph_stream_contract_returns_sse(fastapi_client):
+    client, stub_service = fastapi_client
+
+    response = await client.post(
+        "/api/v2/requirement-graph/stream",
+        json={"project_id": "P-2", "inference_limit": 48},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    text = response.text
+    assert "event: base_graph" in text
+    assert "event: candidate_edges" in text
+    assert "event: snapshot_saved" in text
+    assert "event: done" in text
+    assert stub_service.calls[0]["stream"] is True
+    assert stub_service.calls[0]["package_size"] == 6
+    assert stub_service.calls[0]["review_concurrency"] == 3
+    assert stub_service.calls[0]["model"] == "deepseek-v4-pro"
+
+
+async def test_post_requirement_graph_discover_stream_contract_returns_sse(fastapi_client):
+    client, stub_service = fastapi_client
+
+    response = await client.post(
+        "/api/v2/requirement-graph/discover/stream",
+        json={"project_id": "P-2", "package_size": 12, "review_concurrency": 4},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    text = response.text
+    assert "event: base_graph" in text
+    assert "event: discover_progress" in text
+    assert "event: relation_decision" in text
+    assert "event: snapshot_saved" in text
+    assert "event: done" in text
+    assert stub_service.calls[0]["discover_stream"] is True
+    assert "package_size" not in stub_service.calls[0]
+    assert stub_service.calls[0]["limit"] == 900
+    assert stub_service.calls[0]["review_concurrency"] == 4
+    assert stub_service.calls[0]["model"] == "deepseek-v4-pro"

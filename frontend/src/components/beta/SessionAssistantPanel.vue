@@ -13,6 +13,7 @@ const {
   sessionId,
   messages,
   inputMessage,
+  selectedModel,
   useThinkingMode,
   isSending,
   isLoadingProjects,
@@ -189,6 +190,10 @@ const handleKeydown = (event) => {
           {{ errorMessage }}
         </div>
         <div class="footer-toolbar">
+          <select v-model="selectedModel" class="control-select model-select">
+            <option value="deepseek-v4-pro">V4 Pro</option>
+            <option value="deepseek-v4-flash">V4 Flash</option>
+          </select>
           <label class="thinking-toggle">
             <input
               v-model="useThinkingMode"
@@ -199,7 +204,7 @@ const handleKeydown = (event) => {
               <span class="thinking-toggle-thumb" />
             </span>
             <span class="thinking-toggle-label">
-              {{ useThinkingMode ? 'Reasoner' : 'Chat' }}
+              思考
             </span>
           </label>
         </div>

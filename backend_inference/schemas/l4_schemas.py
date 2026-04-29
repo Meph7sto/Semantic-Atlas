@@ -140,8 +140,9 @@ class GenerateL4Request(BaseModel):
         default_factory=GenerateConfig, description="生成配置"
     )
     model: Optional[str] = Field(
-        default=None, description="模型 ID 覆盖（如 deepseek-reasoner）"
+        default=None, description="模型 ID 覆盖（如 deepseek-v4-pro）"
     )
+    use_thinking_mode: bool = Field(default=True, description="是否启用思考模式")
 
 
 class GenerateL4Result(BaseModel):

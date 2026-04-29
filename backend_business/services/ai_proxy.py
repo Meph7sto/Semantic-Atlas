@@ -13,10 +13,6 @@ from backend_business.config import settings
 logger = logging.getLogger(__name__)
 
 
-def _is_reasoning_model(model: Optional[str]) -> bool:
-    return "reasoner" in str(model or "").strip().lower()
-
-
 def _resolve_model_provider() -> str:
     explicit = os.environ.get("MODEL_PROVIDER", "").strip().lower()
     if explicit:
@@ -36,13 +32,13 @@ def _resolve_model_provider() -> str:
     return "local"
 
 
-def _normalize_tool_choice_for_model(
-    model: Optional[str], tool_choice: Optional[str]
+def _normalize_tool_choice_for_thinking(
+    thinking_enabled: bool, tool_choice: Optional[str]
 ) -> Optional[str]:
     if not tool_choice:
         return None
     # DeepSeek thinking mode rejects tool_choice even when tool use is enabled.
-    if _is_reasoning_model(model):
+    if thinking_enabled:
         return None
     return tool_choice
 
@@ -89,8 +85,32 @@ class AIProxy:
     注意：不修改推理后端（尤其是冲突检测）内部结构，仅通过 HTTP 调用。
     """
 
-    def __init__(self, base_url: str):
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        default_model: str = "deepseek-v4-pro",
+        default_thinking_enabled: bool = True,
+    ):
         self.base_url = base_url.rstrip("/")
+        self.default_model = default_model
+        self.default_thinking_enabled = default_thinking_enabled
+
+    def with_defaults(
+        self,
+        *,
+        model: Optional[str] = None,
+        thinking_enabled: Optional[bool] = None,
+    ) -> "AIProxy":
+        return AIProxy(
+            self.base_url,
+            default_model=model or self.default_model,
+            default_thinking_enabled=(
+                self.default_thinking_enabled
+                if thinking_enabled is None
+                else bool(thinking_enabled)
+            ),
+        )
 
     @staticmethod
     def provider_name() -> str:
@@ -461,6 +481,7 @@ class AIProxy:
         self,
         requirement_a: str,
         requirement_b: str,
+        model: Optional[str] = None,
         use_thinking_mode: bool = True,
     ) -> Dict[str, Any]:
         """
@@ -471,6 +492,7 @@ class AIProxy:
             json={
                 "requirement_a": requirement_a,
                 "requirement_b": requirement_b,
+                "model": model or self.default_model,
                 "use_thinking_mode": use_thinking_mode,
             },
             timeout=300,  # 5分钟
@@ -482,6 +504,7 @@ class AIProxy:
         self,
         requirement_a: str,
         requirement_b: str,
+        model: Optional[str] = None,
         use_thinking_mode: bool = True,
     ) -> Generator[bytes, None, None]:
         """
@@ -493,6 +516,7 @@ class AIProxy:
             json={
                 "requirement_a": requirement_a,
                 "requirement_b": requirement_b,
+                "model": model or self.default_model,
                 "use_thinking_mode": use_thinking_mode,
             },
             stream=True,
@@ -508,8 +532,9 @@ class AIProxy:
         text: str,
         chunk_size: int = 3600,
         overlap: int = 500,
-        clean_model: str = "deepseek-reasoner",
-        extract_model: str = "deepseek-reasoner",
+        clean_model: str = "deepseek-v4-pro",
+        extract_model: str = "deepseek-v4-pro",
+        use_thinking_mode: bool = True,
     ) -> Dict[str, Any]:
         """
         调用推理后端进行需求抽取 (L1/L2/L3)
@@ -522,6 +547,7 @@ class AIProxy:
                 "overlap": overlap,
                 "clean_model": clean_model,
                 "extract_model": extract_model,
+                "use_thinking_mode": use_thinking_mode,
             },
             timeout=900,  # 抽取过程可能较慢，给足超时
         )
@@ -531,7 +557,8 @@ class AIProxy:
     def chat_completion(
         self,
         messages: List[Dict[str, str]],
-        model: str = "deepseek-reasoner",
+        model: Optional[str] = None,
+        thinking_enabled: Optional[bool] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
@@ -552,7 +579,12 @@ class AIProxy:
             f"{self.base_url}/chat/completions",
             json={
                 "messages": messages,
-                "model": model,
+                "model": model or self.default_model,
+                "thinking_enabled": (
+                    self.default_thinking_enabled
+                    if thinking_enabled is None
+                    else bool(thinking_enabled)
+                ),
                 "temperature": temperature,
                 "max_tokens": max_tokens or 2000,
             },
@@ -565,7 +597,8 @@ class AIProxy:
         self,
         messages: List[Dict[str, Any]],
         tools: List[Dict[str, Any]],
-        model: str = "deepseek-reasoner",
+        model: Optional[str] = None,
+        thinking_enabled: Optional[bool] = None,
         temperature: float = 0.3,
         max_tokens: Optional[int] = None,
         tool_choice: Optional[str] = None,
@@ -593,14 +626,22 @@ class AIProxy:
                 "finish_reason": "stop" | "tool_calls" | "length"
             }
         """
+        resolved_thinking = (
+            self.default_thinking_enabled
+            if thinking_enabled is None
+            else bool(thinking_enabled)
+        )
         payload = {
             "messages": messages,
             "tools": tools,
-            "model": model,
+            "model": model or self.default_model,
+            "thinking_enabled": resolved_thinking,
             "temperature": temperature,
             "max_tokens": max_tokens or 4096,
         }
-        normalized_tool_choice = _normalize_tool_choice_for_model(model, tool_choice)
+        normalized_tool_choice = _normalize_tool_choice_for_thinking(
+            resolved_thinking, tool_choice
+        )
         if normalized_tool_choice:
             payload["tool_choice"] = normalized_tool_choice
 
@@ -671,7 +712,8 @@ class AIProxy:
         self,
         messages: List[Dict[str, Any]],
         tools: List[Dict[str, Any]],
-        model: str = "deepseek-reasoner",
+        model: Optional[str] = None,
+        thinking_enabled: Optional[bool] = None,
         temperature: float = 0.3,
         max_tokens: Optional[int] = None,
         tool_choice: Optional[str] = None,
@@ -695,14 +737,22 @@ class AIProxy:
         Returns:
             响应内容（与同步版本相同）
         """
+        resolved_thinking = (
+            self.default_thinking_enabled
+            if thinking_enabled is None
+            else bool(thinking_enabled)
+        )
         payload = {
             "messages": messages,
             "tools": tools,
-            "model": model,
+            "model": model or self.default_model,
+            "thinking_enabled": resolved_thinking,
             "temperature": temperature,
             "max_tokens": max_tokens or 4096,
         }
-        normalized_tool_choice = _normalize_tool_choice_for_model(model, tool_choice)
+        normalized_tool_choice = _normalize_tool_choice_for_thinking(
+            resolved_thinking, tool_choice
+        )
         if normalized_tool_choice:
             payload["tool_choice"] = normalized_tool_choice
 
@@ -752,6 +802,7 @@ class AIProxy:
         system_prompt: str,
         max_new_tokens: int = 8000,
         model: Optional[str] = None,
+        thinking_enabled: bool = True,
     ) -> str:
         """
         调用推理后端 context-builder 专用补全接口。
@@ -760,6 +811,7 @@ class AIProxy:
             "prompt": prompt,
             "system_prompt": system_prompt,
             "max_tokens": max_new_tokens,
+            "thinking_enabled": thinking_enabled,
         }
         if model:
             payload["model"] = model
@@ -775,6 +827,7 @@ class AIProxy:
                 system_prompt=system_prompt,
                 max_new_tokens=max_new_tokens,
                 model=model,
+                thinking_enabled=thinking_enabled,
             )
         resp.raise_for_status()
         data = resp.json()
@@ -786,6 +839,7 @@ class AIProxy:
         system_prompt: str,
         max_new_tokens: int = 8000,
         model: Optional[str] = None,
+        thinking_enabled: bool = True,
         session: Optional[aiohttp.ClientSession] = None,
     ) -> str:
         """
@@ -795,6 +849,7 @@ class AIProxy:
             "prompt": prompt,
             "system_prompt": system_prompt,
             "max_tokens": max_new_tokens,
+            "thinking_enabled": thinking_enabled,
         }
         if model:
             payload["model"] = model
@@ -818,6 +873,7 @@ class AIProxy:
                         system_prompt=system_prompt,
                         max_new_tokens=max_new_tokens,
                         model=model,
+                        thinking_enabled=thinking_enabled,
                         session=session,
                     )
                 resp.raise_for_status()
@@ -833,6 +889,7 @@ class AIProxy:
         system_prompt: str,
         max_new_tokens: int,
         model: Optional[str],
+        thinking_enabled: bool,
     ) -> str:
         messages: List[Dict[str, str]] = []
         if system_prompt:
@@ -843,6 +900,7 @@ class AIProxy:
             "messages": messages,
             "max_tokens": max_new_tokens,
             "temperature": 0.7,
+            "thinking_enabled": thinking_enabled,
         }
         if model:
             payload["model"] = model
@@ -862,11 +920,13 @@ class AIProxy:
         system_prompt: str,
         max_new_tokens: int = 8000,
         model: Optional[str] = None,
+        thinking_enabled: bool = True,
     ) -> str:
         payload: Dict[str, Any] = {
             "prompt": prompt,
             "system_prompt": system_prompt,
             "max_tokens": max_new_tokens,
+            "thinking_enabled": thinking_enabled,
         }
         if model:
             payload["model"] = model
@@ -897,6 +957,7 @@ class AIProxy:
                     system_prompt=system_prompt,
                     max_new_tokens=max_new_tokens,
                     model=model,
+                    thinking_enabled=thinking_enabled,
                 )
 
             resp.raise_for_status()
@@ -920,6 +981,7 @@ class AIProxy:
         system_prompt: str,
         max_new_tokens: int,
         model: Optional[str],
+        thinking_enabled: bool,
         session: aiohttp.ClientSession,
     ) -> str:
         messages: List[Dict[str, str]] = []
@@ -931,6 +993,7 @@ class AIProxy:
             "messages": messages,
             "max_tokens": max_new_tokens,
             "temperature": 0.7,
+            "thinking_enabled": thinking_enabled,
         }
         if model:
             payload["model"] = model
@@ -950,12 +1013,14 @@ class AIProxy:
         system_prompt: str,
         max_new_tokens: int = 8000,
         model: Optional[str] = None,
+        thinking_enabled: bool = True,
         session: Optional[aiohttp.ClientSession] = None,
     ) -> str:
         payload: Dict[str, Any] = {
             "prompt": prompt,
             "system_prompt": system_prompt,
             "max_tokens": max_new_tokens,
+            "thinking_enabled": thinking_enabled,
         }
         if model:
             payload["model"] = model
@@ -991,6 +1056,7 @@ class AIProxy:
                         system_prompt=system_prompt,
                         max_new_tokens=max_new_tokens,
                         model=model,
+                        thinking_enabled=thinking_enabled,
                         session=session,
                     )
 

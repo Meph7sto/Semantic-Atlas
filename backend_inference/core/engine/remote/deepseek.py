@@ -5,8 +5,10 @@ import requests
 
 from .sse import extract_stream_content
 
-DEFAULT_DEEPSEEK_ENDPOINT = "https://api.deepseek.com/v1/chat/completions"
-DEFAULT_DEEPSEEK_MODEL = "deepseek-reasoner"
+DEFAULT_DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions"
+DEEPSEEK_THINKING_MODEL = "deepseek-v4-pro"
+DEEPSEEK_NON_THINKING_MODEL = "deepseek-v4-flash"
+DEFAULT_DEEPSEEK_MODEL = DEEPSEEK_THINKING_MODEL
 
 
 @dataclass
@@ -19,8 +21,31 @@ class ToolCallResult:
     finish_reason: Optional[str] = None
 
 
-def _is_reasoning_model(model: Optional[str]) -> bool:
-    return "reasoner" in (model or "").lower()
+def normalize_deepseek_model(model: Optional[str]) -> str:
+    """Resolve an empty DeepSeek model setting to the project default."""
+    value = str(model or "").strip()
+    if not value:
+        return DEFAULT_DEEPSEEK_MODEL
+    return value
+
+
+def _apply_generation_controls(
+    body: Dict[str, Any],
+    *,
+    target_model: str,
+    temperature: Optional[float],
+    thinking_enabled: bool = True,
+) -> None:
+    body["model"] = normalize_deepseek_model(target_model)
+    if thinking_enabled:
+        body["thinking"] = {"type": "enabled"}
+        body["reasoning_effort"] = "high"
+        body.pop("temperature", None)
+        return
+
+    body["thinking"] = {"type": "disabled"}
+    body.pop("reasoning_effort", None)
+    body["temperature"] = 0.3 if temperature is None else temperature
 
 
 def build_deepseek_tool_body(
@@ -31,34 +56,26 @@ def build_deepseek_tool_body(
     tool_choice: Optional[str],
     target_model: str,
     temperature: Optional[float],
+    thinking_enabled: bool = True,
     stream: bool,
 ) -> Dict[str, Any]:
-    resolved_model = target_model
     body: Dict[str, Any] = {
-        "model": resolved_model,
+        "model": normalize_deepseek_model(target_model),
         "messages": [dict(message) for message in messages],
         "max_tokens": max_new_tokens,
         "stream": stream,
     }
+    _apply_generation_controls(
+        body,
+        target_model=target_model,
+        temperature=temperature,
+        thinking_enabled=thinking_enabled,
+    )
 
     if tools:
         body["tools"] = tools
-        if _is_reasoning_model(target_model):
-            # DeepSeek tool calls in thinking mode are exposed via deepseek-chat
-            # plus an explicit thinking switch, not via deepseek-reasoner.
-            # As of 2026-04-20, DeepSeek still rejects tool_choice in thinking mode,
-            # so we intentionally omit it here and rely on prompt steering.
-            resolved_model = "deepseek-chat"
-            body["model"] = resolved_model
-            body["thinking"] = {"type": "enabled"}
-        elif tool_choice:
+        if tool_choice and not thinking_enabled:
             body["tool_choice"] = tool_choice
-
-    if not _is_reasoning_model(target_model) and "thinking" not in body:
-        if temperature is not None:
-            body["temperature"] = temperature
-        else:
-            body["temperature"] = 0.3
 
     return body
 
@@ -79,7 +96,7 @@ class DeepSeekClient:
         self.timeout = timeout
 
     def _resolve_endpoint(self) -> str:
-        """Normalize user-provided URL to the expected /v1/chat/completions endpoint."""
+        """Normalize user-provided URL to the expected /chat/completions endpoint."""
         url = (self.api_url or "").strip()
         if not url:
             return DEFAULT_DEEPSEEK_ENDPOINT
@@ -91,7 +108,7 @@ class DeepSeekClient:
             return f"{cleaned}/chat/completions"
         if cleaned.endswith("/v1/chat"):
             return f"{cleaned}/completions"
-        return f"{cleaned}/v1/chat/completions"
+        return f"{cleaned}/chat/completions"
 
     def generate(
         self,
@@ -99,6 +116,7 @@ class DeepSeekClient:
         system_prompt: str,
         max_new_tokens: int,
         model_override: Optional[str] = None,
+        thinking_enabled: bool = True,
     ) -> str:
         """Call DeepSeek chat completions and return concatenated content."""
         if not self.api_key:
@@ -111,7 +129,7 @@ class DeepSeekClient:
         }
         target_model = model_override or self.model
         body = {
-            "model": target_model,
+            "model": normalize_deepseek_model(target_model),
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
@@ -119,9 +137,12 @@ class DeepSeekClient:
             "max_tokens": max_new_tokens,
             "stream": True,
         }
-        # Remove unsupported parameters for reasoner model
-        if "reasoner" not in target_model:
-            body["temperature"] = 0.3
+        _apply_generation_controls(
+            body,
+            target_model=target_model,
+            temperature=0.3,
+            thinking_enabled=thinking_enabled,
+        )
 
         chunks: List[str] = []
         try:
@@ -181,6 +202,7 @@ class DeepSeekClient:
         system_prompt: str,
         max_new_tokens: int,
         model_override: Optional[str] = None,
+        thinking_enabled: bool = True,
     ):
         """Yield content chunks from DeepSeek chat completions."""
         if not self.api_key:
@@ -196,7 +218,7 @@ class DeepSeekClient:
 
         # Build body
         body = {
-            "model": target_model,
+            "model": normalize_deepseek_model(target_model),
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
@@ -204,10 +226,12 @@ class DeepSeekClient:
             "max_tokens": max_new_tokens,
             "stream": True,
         }
-
-        # Remove unsupported parameters for reasoner model
-        if "reasoner" not in target_model:
-            body["temperature"] = 0.3
+        _apply_generation_controls(
+            body,
+            target_model=target_model,
+            temperature=0.3,
+            thinking_enabled=thinking_enabled,
+        )
 
         try:
             response = requests.post(
@@ -272,6 +296,7 @@ class DeepSeekClient:
         tool_choice: Optional[str] = None,
         model_override: Optional[str] = None,
         temperature: Optional[float] = None,
+        thinking_enabled: bool = True,
     ) -> ToolCallResult:
         """
         Call DeepSeek chat completions with tool definitions.
@@ -283,7 +308,7 @@ class DeepSeekClient:
             max_new_tokens: Maximum tokens to generate
             tool_choice: "none" | "auto" | "required" | None (defaults to "auto" when tools present)
             model_override: Override the default model
-            temperature: Optional temperature (not supported for reasoner models)
+            temperature: Optional temperature (not supported in thinking mode)
 
         Returns:
             ToolCallResult with content, tool_calls, reasoning_content, and finish_reason
@@ -306,6 +331,7 @@ class DeepSeekClient:
             tool_choice=tool_choice,
             target_model=target_model,
             temperature=temperature,
+            thinking_enabled=thinking_enabled,
             stream=False,
         )
 
@@ -355,6 +381,7 @@ class DeepSeekClient:
         tool_choice: Optional[str] = None,
         model_override: Optional[str] = None,
         temperature: Optional[float] = None,
+        thinking_enabled: bool = True,
     ) -> Generator[Dict[str, Any], None, None]:
         """
         Stream chat completions with tool definitions.
@@ -392,6 +419,7 @@ class DeepSeekClient:
             tool_choice=tool_choice,
             target_model=target_model,
             temperature=temperature,
+            thinking_enabled=thinking_enabled,
             stream=True,
         )
 

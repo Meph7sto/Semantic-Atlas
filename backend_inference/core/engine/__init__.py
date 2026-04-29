@@ -6,6 +6,7 @@ import weakref
 
 from ..config import settings
 from .remote import ChutesClient, DeepSeekClient, ToolCallResult
+from .remote.deepseek import DEFAULT_DEEPSEEK_MODEL
 from .remote.async_deepseek import AsyncDeepSeekClient
 from .remote.async_chutes import AsyncChutesClient
 
@@ -38,7 +39,7 @@ class DeepSeekEngine:
         self.deepseek_api_url = deepseek_api_url or settings.DEEPSEEK_API_URL
         self.deepseek_api_key = deepseek_api_key or settings.DEEPSEEK_API_KEY
         self.deepseek_model = deepseek_model or getattr(
-            settings, "DEEPSEEK_MODEL", "deepseek-reasoner"
+            settings, "DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL
         )
         # 如果 CUDA 可用，自动配置 device_map，否则为 None
         self.device_map = "auto" if torch.cuda.is_available() else None
@@ -118,6 +119,7 @@ class DeepSeekEngine:
         system_prompt: str,
         max_new_tokens: int = 128,
         model: Optional[str] = None,
+        thinking_enabled: bool = True,
     ) -> str:
         """
         根据给定的 prompt 和 system_prompt 生成响应
@@ -128,7 +130,11 @@ class DeepSeekEngine:
         if self.provider == "deepseek":
             client = self._get_remote_client()
             return client.generate(
-                prompt, system_prompt, max_new_tokens, model_override=model
+                prompt,
+                system_prompt,
+                max_new_tokens,
+                model_override=model,
+                thinking_enabled=thinking_enabled,
             )
 
         local_engine = self._get_local_engine()
@@ -140,6 +146,7 @@ class DeepSeekEngine:
         system_prompt: str,
         max_new_tokens: int = 128,
         model: Optional[str] = None,
+        thinking_enabled: bool = True,
     ):
         """
         流式生成响应
@@ -151,11 +158,18 @@ class DeepSeekEngine:
                 system_prompt,
                 max_new_tokens,
                 model_override=model,
+                thinking_enabled=thinking_enabled,
             )
 
         # Fallback for other providers if not implemented (e.g. local/chutes)
         # return a simulated stream from the full generation
-        full_text = self.generate(prompt, system_prompt, max_new_tokens)
+        full_text = self.generate(
+            prompt,
+            system_prompt,
+            max_new_tokens,
+            model=model,
+            thinking_enabled=thinking_enabled,
+        )
 
         # Generator for fallback
         def _simulated_stream():
@@ -174,6 +188,7 @@ class DeepSeekEngine:
         tool_choice: Optional[str] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
+        thinking_enabled: bool = True,
     ) -> ToolCallResult:
         """
         使用工具定义生成响应（仅支持 deepseek provider）
@@ -202,6 +217,7 @@ class DeepSeekEngine:
             tool_choice=tool_choice,
             model_override=model,
             temperature=temperature,
+            thinking_enabled=thinking_enabled,
         )
 
     def generate_with_tools_stream(
@@ -212,6 +228,7 @@ class DeepSeekEngine:
         tool_choice: Optional[str] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
+        thinking_enabled: bool = True,
     ) -> Generator[Dict[str, Any], None, None]:
         """
         流式生成带工具调用的响应（仅支持 deepseek provider）
@@ -244,6 +261,7 @@ class DeepSeekEngine:
             tool_choice=tool_choice,
             model_override=model,
             temperature=temperature,
+            thinking_enabled=thinking_enabled,
         )
 
     # =====================================================
@@ -256,6 +274,7 @@ class DeepSeekEngine:
         system_prompt: str,
         max_new_tokens: int = 128,
         model: Optional[str] = None,
+        thinking_enabled: bool = True,
     ) -> str:
         """异步生成响应（使用aiohttp，性能更高）
 
@@ -274,7 +293,11 @@ class DeepSeekEngine:
         if self.provider == "deepseek":
             client = await self._get_async_remote_client()
             return await client.generate(
-                prompt, system_prompt, max_new_tokens, model_override=model
+                prompt,
+                system_prompt,
+                max_new_tokens,
+                model_override=model,
+                thinking_enabled=thinking_enabled,
             )
 
         # 本地引擎在线程池中运行（避免阻塞事件循环）
@@ -290,6 +313,7 @@ class DeepSeekEngine:
         system_prompt: str,
         max_new_tokens: int = 128,
         model: Optional[str] = None,
+        thinking_enabled: bool = True,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """异步流式生成响应
 
@@ -311,12 +335,19 @@ class DeepSeekEngine:
                 system_prompt,
                 max_new_tokens,
                 model_override=model,
+                thinking_enabled=thinking_enabled,
             ):
                 yield chunk
         else:
             # Fallback for other providers (chutes, local)
             # 在线程池中运行同步generate，然后模拟流式输出
-            full_text = await self.generate_async(prompt, system_prompt, max_new_tokens)
+            full_text = await self.generate_async(
+                prompt,
+                system_prompt,
+                max_new_tokens,
+                model=model,
+                thinking_enabled=thinking_enabled,
+            )
 
             # 模拟分块输出
             chunk_size = 4
@@ -339,6 +370,7 @@ class DeepSeekEngine:
         tool_choice: Optional[str] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
+        thinking_enabled: bool = True,
     ) -> ToolCallResult:
         """异步生成带工具调用的响应（仅支持 deepseek provider）
 
@@ -366,6 +398,7 @@ class DeepSeekEngine:
             tool_choice=tool_choice,
             model_override=model,
             temperature=temperature,
+            thinking_enabled=thinking_enabled,
         )
 
     async def generate_with_tools_stream_async(
@@ -376,6 +409,7 @@ class DeepSeekEngine:
         tool_choice: Optional[str] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
+        thinking_enabled: bool = True,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """异步流式生成带工具调用的响应（仅支持 deepseek provider）
 
@@ -407,6 +441,7 @@ class DeepSeekEngine:
             tool_choice=tool_choice,
             model_override=model,
             temperature=temperature,
+            thinking_enabled=thinking_enabled,
         ):
             yield chunk
 

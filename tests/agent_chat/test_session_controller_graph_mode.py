@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import re
 import sys
 import uuid
@@ -977,3 +978,24 @@ def test_ensure_graph_runtime_bindings_persists_explicit_tool_allowlists():
         "get_requirement_detail",
         "classify_requirement",
     }
+
+
+def test_session_controller_specific_logic_stays_out_of_generic_execution_layer():
+    root = pathlib.Path(ROOT_DIR)
+    subgraph_runner_text = (
+        root / "backend_business/services/agent/execution/subgraph_runner.py"
+    ).read_text(encoding="utf-8")
+    tools_text = (
+        root / "backend_business/services/agent/agents/session_controller/tools.py"
+    ).read_text(encoding="utf-8")
+    delegation_text = (
+        root / "backend_business/services/agent/agents/session_controller/delegation.py"
+    ).read_text(encoding="utf-8")
+
+    assert "graph_prompt_builders" not in subgraph_runner_text
+    assert 'prompt_builder_kind == "session_controller_' not in subgraph_runner_text
+    assert "run_inline_tool_loop" not in tools_text
+    assert "_queue_native_" not in tools_text
+    assert "run_inline_tool_loop" not in delegation_text
+    assert "stream_inline_tool_loop" not in delegation_text
+    assert "_native_invoke_enabled" not in delegation_text

@@ -31,7 +31,9 @@ from backend_business.services.agent.execution.topology_instantiator import (
 from .contracts import SessionControllerDecisionMode, SessionControllerLoopResult, SuspendReason
 from .graph_template import ensure_session_controller_template
 from .prompt_builder import SessionControllerPromptBuilder
+from .prompt_factory import create_session_controller_prompt_builder
 from .runtime_graph_recorder import SessionControllerGraphRecorder
+from .session_graph_store import SessionControllerSessionGraphStore
 from .tools import SessionControllerTools
 
 
@@ -76,10 +78,11 @@ class SessionControllerService:
         self.ai_proxy = ai_proxy_client or ai_proxy
         self.prompt_builder = prompt_builder or SessionControllerPromptBuilder()
         self.tools = tools
-
-    @staticmethod
-    def _is_graph_execution_enabled() -> bool:
-        return True
+        self._session_graph_store = SessionControllerSessionGraphStore(
+            chat_storage=chat_storage,
+            execution_graph_service=self.execution_graph_service,
+            agent_type=self.AGENT_TYPE,
+        )
 
     def _resolve_execution_mode(self, execution_mode: str | None) -> str:
         if execution_mode is None:
@@ -92,6 +95,12 @@ class SessionControllerService:
     def _ensure_execution_mode_enabled(self, execution_mode: str) -> None:
         if execution_mode != "graph":
             raise ValueError("execution_mode 仅支持 graph")
+
+    def _graph_ai_proxy_client(self, *, model: str, use_thinking_mode: bool) -> Any:
+        with_defaults = getattr(self.ai_proxy, "with_defaults", None)
+        if callable(with_defaults):
+            return with_defaults(model=model, thinking_enabled=use_thinking_mode)
+        return self.ai_proxy
 
     @staticmethod
     def _compact_write_result(write_result: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -371,25 +380,7 @@ class SessionControllerService:
     # ---- session helpers ----
 
     def _hydrate_session_graph(self, session: dict[str, Any]) -> dict[str, Any]:
-        hydrated = dict(session or {})
-        active_graph_id = hydrated.get("active_graph_id")
-        if active_graph_id:
-            active_graph = self.execution_graph_service.get_execution_graph(active_graph_id)
-            if active_graph:
-                return hydrated
-
-        latest_graph = self.execution_graph_service.get_latest_runtime_graph_by_session(
-            hydrated.get("session_id") or "",
-            project_id=hydrated.get("project_id"),
-        )
-        if latest_graph:
-            hydrated["active_graph_id"] = latest_graph["graph_id"]
-            if self.chat_storage:
-                self.chat_storage.update_session(
-                    session_id=hydrated["session_id"],
-                    active_graph_id=latest_graph["graph_id"],
-                )
-        return hydrated
+        return self._session_graph_store.hydrate_session_graph(session)
 
     def _resolve_session_graph_target(
         self,
@@ -397,29 +388,10 @@ class SessionControllerService:
         session: dict[str, Any],
         project_id: str | None,
     ) -> dict[str, str | None]:
-        graph_id = session.get("active_graph_id")
-        if graph_id:
-            graph = self.execution_graph_service.get_execution_graph(graph_id)
-            if graph:
-                if graph.get("status") == "suspended":
-                    return {"graph_id": graph_id, "prev_graph_id": None}
-                return {"graph_id": None, "prev_graph_id": graph_id}
-
-        latest_graph = self.execution_graph_service.get_latest_runtime_graph_by_session(
-            session.get("session_id") or "",
+        return self._session_graph_store.resolve_session_graph_target(
+            session=session,
             project_id=project_id,
         )
-        if not latest_graph:
-            return {"graph_id": None, "prev_graph_id": None}
-
-        if self.chat_storage:
-            self.chat_storage.update_session(
-                session_id=session["session_id"],
-                active_graph_id=latest_graph["graph_id"],
-            )
-        if latest_graph.get("status") == "suspended":
-            return {"graph_id": latest_graph["graph_id"], "prev_graph_id": None}
-        return {"graph_id": None, "prev_graph_id": latest_graph["graph_id"]}
 
     def create_or_get_session(
         self,
@@ -428,12 +400,10 @@ class SessionControllerService:
         prompt_payload_format: str | None = None,
         context_mode: str | None = None,
     ) -> dict[str, Any]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-        session = self.chat_storage.get_or_create_session(
-            user_id=user_id, project_id=project_id, agent_type=self.AGENT_TYPE
+        return self._session_graph_store.create_or_get_session(
+            user_id=user_id,
+            project_id=project_id,
         )
-        return self._hydrate_session_graph(session)
 
     def create_session(
         self,
@@ -444,17 +414,13 @@ class SessionControllerService:
         prompt_payload_format: str | None = None,
         context_mode: str | None = None,
     ) -> dict[str, Any]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-        session = self.chat_storage.create_session(
+        return self._session_graph_store.create_session(
             user_id=user_id,
             project_id=project_id,
             title=title,
             prompt_payload_format=prompt_payload_format,
-            context_mode=context_mode or "full",
-            agent_type=self.AGENT_TYPE,
+            context_mode=context_mode,
         )
-        return self._hydrate_session_graph(session)
 
     def update_session(
         self,
@@ -465,17 +431,13 @@ class SessionControllerService:
         prompt_payload_format: str | None = None,
         context_mode: str | None = None,
     ) -> dict[str, Any]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-        self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
-        self.chat_storage.update_session(
+        return self._session_graph_store.update_session(
             session_id=session_id,
+            user_id=user_id,
             title=title,
-            prompt_payload_format=prompt_payload_format if prompt_payload_format is not None else ...,
-            context_mode=context_mode if context_mode is not None else ...,
+            prompt_payload_format=prompt_payload_format,
+            context_mode=context_mode,
         )
-        current = self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
-        return self._hydrate_session_graph(current)
 
     def list_sessions(
         self,
@@ -484,58 +446,11 @@ class SessionControllerService:
         project_id: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-        sessions = self.chat_storage.list_sessions(
+        return self._session_graph_store.list_sessions(
             user_id=user_id,
             project_id=project_id,
             limit=limit,
-            agent_type=self.AGENT_TYPE,
         )
-        return [self._hydrate_session_graph(session) for session in sessions]
-
-    @staticmethod
-    def _sort_session_graphs_as_chain(graphs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if len(graphs) <= 1:
-            return list(graphs)
-
-        by_id = {graph["graph_id"]: graph for graph in graphs if graph.get("graph_id")}
-        children_by_prev: dict[str | None, list[dict[str, Any]]] = {}
-        for graph in graphs:
-            meta = graph.get("meta_json") or {}
-            prev_graph_id = meta.get("prev_graph_id")
-            if prev_graph_id not in by_id:
-                prev_graph_id = None
-            children_by_prev.setdefault(prev_graph_id, []).append(graph)
-
-        def _graph_sort_key(item: dict[str, Any]) -> tuple[str, str]:
-            return (
-                str(item.get("created_at") or ""),
-                str(item.get("graph_id") or ""),
-            )
-
-        for siblings in children_by_prev.values():
-            siblings.sort(key=_graph_sort_key)
-
-        ordered: list[dict[str, Any]] = []
-        visited: set[str] = set()
-
-        def _walk(graph: dict[str, Any]) -> None:
-            graph_id = graph.get("graph_id")
-            if not graph_id or graph_id in visited:
-                return
-            visited.add(graph_id)
-            ordered.append(graph)
-            for child in children_by_prev.get(graph_id, []):
-                _walk(child)
-
-        for root in children_by_prev.get(None, []):
-            _walk(root)
-
-        for graph in sorted(graphs, key=_graph_sort_key):
-            _walk(graph)
-
-        return ordered
 
     def list_session_graph_chain(
         self,
@@ -543,60 +458,29 @@ class SessionControllerService:
         session_id: str,
         user_id: str,
     ) -> dict[str, Any]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-
-        session = self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
-        hydrated_session = self._hydrate_session_graph(session)
-        graphs = self.execution_graph_service.list_runtime_graphs_by_session(
+        return self._session_graph_store.list_session_graph_chain(
             session_id=session_id,
-            project_id=hydrated_session.get("project_id"),
+            user_id=user_id,
         )
-        ordered_graphs = self._sort_session_graphs_as_chain(graphs)
-        chain = [
-            self.execution_graph_service.get_graph_detail(graph["graph_id"])
-            for graph in ordered_graphs
-        ]
-        return {
-            "session_id": session_id,
-            "active_graph_id": hydrated_session.get("active_graph_id"),
-            "graphs": chain,
-        }
 
     def delete_session(self, *, session_id: str, user_id: str) -> bool:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-
-        session = self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
-        session_graphs = self.execution_graph_service.list_runtime_graphs_by_session(
+        return self._session_graph_store.delete_session(
             session_id=session_id,
-            project_id=session.get("project_id"),
+            user_id=user_id,
         )
 
-        deleted = self.chat_storage.delete_session(session_id)
-        if not deleted:
-            return False
-
-        for graph in session_graphs:
-            try:
-                self.execution_graph_service.delete_execution_graph(
-                    graph["graph_id"],
-                    updated_by=user_id,
-                )
-            except Exception:
-                continue
-        return True
-
     def list_messages(self, *, session_id: str, user_id: str, limit: int = 100) -> list[dict[str, Any]]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-        return self.chat_storage.list_messages(session_id=session_id, user_id=user_id, limit=limit)
+        return self._session_graph_store.list_messages(
+            session_id=session_id,
+            user_id=user_id,
+            limit=limit,
+        )
 
     def get_graph_detail(self, graph_id: str) -> dict[str, Any]:
-        return self.execution_graph_service.get_graph_detail(graph_id)
+        return self._session_graph_store.get_graph_detail(graph_id)
 
     def get_graph(self, graph_id: str) -> dict[str, Any] | None:
-        return self.execution_graph_service.get_execution_graph(graph_id)
+        return self._session_graph_store.get_graph(graph_id)
 
     @staticmethod
     def _resolve_structured_assistant_reply(
@@ -934,6 +818,8 @@ class SessionControllerService:
         user_id: str,
         project_id: str,
         user_message: str,
+        model: str = "deepseek-v4-pro",
+        use_thinking_mode: bool = True,
         delegated_max_tool_call_rounds: int = 15,
         skip_user_message_creation: bool = False,
     ) -> Generator[dict[str, Any], None, None]:
@@ -984,6 +870,7 @@ class SessionControllerService:
 
         executor = GraphExecutor(
             experience_orchestrator=ExperienceOrchestrator(),
+            prompt_builder_factory=create_session_controller_prompt_builder,
         )
         assistant_content = ""
         loop_result = SessionControllerLoopResult(mode=SessionControllerDecisionMode.ERROR)
@@ -1005,7 +892,10 @@ class SessionControllerService:
                     suspended_subgraph_id=str(current_meta.get("suspended_subgraph_id")),
                     user_input=user_message,
                     tool_executor=self.tools,
-                    ai_proxy_client=self.ai_proxy,
+                    ai_proxy_client=self._graph_ai_proxy_client(
+                        model=model,
+                        use_thinking_mode=use_thinking_mode,
+                    ),
                     graph_service=self.execution_graph_service,
                     recorder=recorder,
                     actor=user_id,
@@ -1050,7 +940,10 @@ class SessionControllerService:
                     project_id=project_id,
                     user_message=user_message,
                     tool_executor=self.tools,
-                    ai_proxy_client=self.ai_proxy,
+                    ai_proxy_client=self._graph_ai_proxy_client(
+                        model=model,
+                        use_thinking_mode=use_thinking_mode,
+                    ),
                     graph_service=self.execution_graph_service,
                     recorder=recorder,
                     actor=user_id,
@@ -1192,11 +1085,11 @@ class SessionControllerService:
         project_id: str,
         user_message: str,
         execution_mode: str | None = None,
+        model: str = "deepseek-v4-pro",
         use_thinking_mode: bool = True,
         delegated_max_tool_call_rounds: int = 15,
         skip_user_message_creation: bool = False,
     ) -> Generator[dict[str, Any], None, None]:
-        _ = use_thinking_mode
         execution_mode = self._resolve_execution_mode(execution_mode)
         self._ensure_execution_mode_enabled(execution_mode)
         yield from self.stream_graph_executor_reply(
@@ -1204,6 +1097,8 @@ class SessionControllerService:
             user_id=user_id,
             project_id=project_id,
             user_message=user_message,
+            model=model,
+            use_thinking_mode=use_thinking_mode,
             delegated_max_tool_call_rounds=delegated_max_tool_call_rounds,
             skip_user_message_creation=skip_user_message_creation,
         )

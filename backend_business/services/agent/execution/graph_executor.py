@@ -21,6 +21,7 @@ from backend_business.services.agent.runtime import (
     ScratchpadService,
     with_runtime_state_contract,
 )
+from backend_business.services.agent.execution.prompt_interface import PromptBuilderFactory
 from backend_business.services.agent.experience import (
     ExperienceOrchestrator,
     resolve_experience_target,
@@ -252,11 +253,13 @@ class GraphExecutor:
         runner: SubgraphRunner | None = None,
         scratchpad_service: ScratchpadService | None = None,
         experience_orchestrator: ExperienceOrchestrator | None = None,
+        prompt_builder_factory: PromptBuilderFactory | None = None,
     ) -> None:
         self._instantiator = instantiator or TopologyInstantiator()
         self._experience_orchestrator = experience_orchestrator
         self._runner = runner or SubgraphRunner(
             experience_orchestrator=experience_orchestrator,
+            prompt_builder_factory=prompt_builder_factory,
         )
         self._scratchpad_service = scratchpad_service
 

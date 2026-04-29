@@ -194,6 +194,8 @@ bash deploy/stop_services.sh
 | `LLM_MODEL_RELATIVE_PATH`             | 本地 LLM 权重路径 | `data/model/deepseek_conflict` |
 | `CLASSIFICATION_MODEL_RELATIVE_PATH`  | 分类模型路径      | `data/model/deberta-v3-large`  |
 | `DEEPSEEK_API_KEY`                    | DeepSeek 模式必填 | -                               |
+| `DEEPSEEK_API_URL`                    | DeepSeek OpenAI 兼容 base URL | `https://api.deepseek.com`      |
+| `DEEPSEEK_MODEL`                      | DeepSeek 默认模型 | `deepseek-v4-pro`               |
 | `CHUTES_API_TOKEN` / `CHUTES_API_KEY` | Chutes 模式必填   | -                               |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL`  | OpenAI 兼容接口   | -                               |
 | `CLASSIFICATION_LABELS`               | 分类标签          | JSON 数组或逗号分隔             |
@@ -215,6 +217,8 @@ bash deploy/stop_services.sh
 ```bash
 MODEL_PROVIDER=deepseek
 DEEPSEEK_API_KEY=your_key_here
+DEEPSEEK_API_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-pro
 SKIP_MODEL_LOAD=true
 POSTGRES_HOST=127.0.0.1
 POSTGRES_PORT=5432

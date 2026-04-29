@@ -8,6 +8,7 @@ import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from .engine.remote import ChutesClient, DeepSeekClient
+from .engine.remote.deepseek import DEFAULT_DEEPSEEK_MODEL
 
 DEFAULT_CLASSIFICATION_LABELS = [
     "功能性需求",
@@ -74,7 +75,7 @@ class RequirementClassificationEngine:
         self.chutes_api_token = chutes_api_token
         self.deepseek_api_url = deepseek_api_url or ""
         self.deepseek_api_key = deepseek_api_key
-        self.deepseek_model = deepseek_model or "deepseek-reasoner"
+        self.deepseek_model = deepseek_model or DEFAULT_DEEPSEEK_MODEL
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model: Optional[AutoModelForSequenceClassification] = None
         self.tokenizer: Optional[AutoTokenizer] = None

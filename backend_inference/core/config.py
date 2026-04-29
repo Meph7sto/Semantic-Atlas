@@ -73,10 +73,10 @@ class Settings:
     CHUTES_API_TOKEN = os.getenv("CHUTES_API_TOKEN") or os.getenv("CHUTES_API_KEY", "")
     DEEPSEEK_API_URL = os.getenv(
         "DEEPSEEK_API_URL",
-        "https://api.deepseek.com/v1",
+        "https://api.deepseek.com",
     )
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-    DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-reasoner")
+    DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
 
     # OpenAI / Compatibility config
     # 显式优先读取 OPENAI_API_KEY，如果没有设置，则回退使用 DEEPSEEK_API_KEY

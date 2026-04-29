@@ -70,6 +70,7 @@ export const sessionControllerChatApi = {
     sessionId,
     projectId,
     message,
+    model = 'deepseek-v4-pro',
     useThinkingMode = true,
     delegatedMaxToolCallRounds = 15
   }) {
@@ -77,6 +78,7 @@ export const sessionControllerChatApi = {
       project_id: projectId,
       message,
       execution_mode: 'graph',
+      model,
       use_thinking_mode: useThinkingMode,
       delegated_max_tool_call_rounds: delegatedMaxToolCallRounds
     }

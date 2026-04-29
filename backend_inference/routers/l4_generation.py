@@ -33,6 +33,7 @@ def generate_l4(request: GenerateL4Request) -> GenerateL4Response:
             requirements=request.requirements,
             config=request.config,
             model_id=request.model,
+            use_thinking_mode=request.use_thinking_mode,
         )
         log_audit_event(
             event_type="l4.generate",

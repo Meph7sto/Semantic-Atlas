@@ -151,7 +151,7 @@ def test_chat_completion_with_tools_logs_empty_response_summary(monkeypatch, cap
     assert any("reasoning_content_present" in message for message in warning_messages)
 
 
-def test_chat_completion_with_tools_omits_tool_choice_for_reasoner_models(monkeypatch):
+def test_chat_completion_with_tools_omits_tool_choice_for_thinking_models(monkeypatch):
     proxy = AIProxy("http://localhost:8000")
     calls = []
 
@@ -164,7 +164,7 @@ def test_chat_completion_with_tools_omits_tool_choice_for_reasoner_models(monkey
     proxy.chat_completion_with_tools(
         messages=[{"role": "user", "content": "hi"}],
         tools=[{"type": "function", "function": {"name": "dummy", "parameters": {"type": "object"}}}],
-        model="deepseek-reasoner",
+        model="deepseek-v4-pro",
         tool_choice="required",
     )
 
@@ -225,14 +225,14 @@ async def test_tools_async_timeout_retries_then_succeeds(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_with_tools_async_omits_tool_choice_for_reasoner_models():
+async def test_chat_completion_with_tools_async_omits_tool_choice_for_thinking_models():
     proxy = AIProxy("http://localhost:8000")
     session = _FakeSession()
 
     await proxy.chat_completion_with_tools_async(
         messages=[{"role": "user", "content": "hi"}],
         tools=[{"type": "function", "function": {"name": "dummy", "parameters": {"type": "object"}}}],
-        model="deepseek-reasoner",
+        model="deepseek-v4-pro",
         tool_choice="required",
         session=session,
     )

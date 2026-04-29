@@ -11,7 +11,9 @@ from .deepseek import (
     DEFAULT_DEEPSEEK_ENDPOINT,
     DEFAULT_DEEPSEEK_MODEL,
     ToolCallResult,
+    _apply_generation_controls,
     build_deepseek_tool_body,
+    normalize_deepseek_model,
 )
 
 
@@ -58,7 +60,7 @@ class AsyncDeepSeekClient:
             await asyncio.sleep(0.25)
 
     def _resolve_endpoint(self) -> str:
-        """规范化用户提供的URL为标准的 /v1/chat/completions 端点。
+        """规范化用户提供的URL为标准的 /chat/completions 端点。
 
         此方法与同步版本完全相同，保持兼容性。
         """
@@ -73,7 +75,7 @@ class AsyncDeepSeekClient:
             return f"{cleaned}/chat/completions"
         if cleaned.endswith("/v1/chat"):
             return f"{cleaned}/completions"
-        return f"{cleaned}/v1/chat/completions"
+        return f"{cleaned}/chat/completions"
 
     async def generate(
         self,
@@ -81,6 +83,7 @@ class AsyncDeepSeekClient:
         system_prompt: str,
         max_new_tokens: int,
         model_override: Optional[str] = None,
+        thinking_enabled: bool = True,
     ) -> str:
         """异步调用DeepSeek chat completions并返回内容。
 
@@ -107,7 +110,7 @@ class AsyncDeepSeekClient:
         }
         target_model = model_override or self.model
         body = {
-            "model": target_model,
+            "model": normalize_deepseek_model(target_model),
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
@@ -115,9 +118,12 @@ class AsyncDeepSeekClient:
             "max_tokens": max_new_tokens,
             "stream": False,
         }
-        # Remove unsupported parameters for reasoner model
-        if "reasoner" not in target_model:
-            body["temperature"] = 0.3
+        _apply_generation_controls(
+            body,
+            target_model=target_model,
+            temperature=0.3,
+            thinking_enabled=thinking_enabled,
+        )
 
         try:
             async with self._session.post(
@@ -164,6 +170,7 @@ class AsyncDeepSeekClient:
         system_prompt: str,
         max_new_tokens: int,
         model_override: Optional[str] = None,
+        thinking_enabled: bool = True,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """异步流式生成，逐块yield内容。
 
@@ -195,7 +202,7 @@ class AsyncDeepSeekClient:
 
         # Build body
         body = {
-            "model": target_model,
+            "model": normalize_deepseek_model(target_model),
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
@@ -203,10 +210,12 @@ class AsyncDeepSeekClient:
             "max_tokens": max_new_tokens,
             "stream": True,
         }
-
-        # Remove unsupported parameters for reasoner model
-        if "reasoner" not in target_model:
-            body["temperature"] = 0.3
+        _apply_generation_controls(
+            body,
+            target_model=target_model,
+            temperature=0.3,
+            thinking_enabled=thinking_enabled,
+        )
 
         try:
             async with self._session.post(
@@ -290,6 +299,7 @@ class AsyncDeepSeekClient:
         tool_choice: Optional[str] = None,
         model_override: Optional[str] = None,
         temperature: Optional[float] = None,
+        thinking_enabled: bool = True,
     ) -> ToolCallResult:
         """异步调用DeepSeek chat completions并支持工具调用。
 
@@ -300,7 +310,7 @@ class AsyncDeepSeekClient:
             max_new_tokens: 最大生成token数
             tool_choice: "none" | "auto" | "required" | None（存在工具时默认为"auto"）
             model_override: 覆盖默认模型
-            temperature: 可选的温度参数（reasoner模型不支持）
+            temperature: 可选的温度参数（thinking 模式不支持）
 
         Returns:
             ToolCallResult，包含content、tool_calls、reasoning_content和finish_reason
@@ -327,6 +337,7 @@ class AsyncDeepSeekClient:
             tool_choice=tool_choice,
             target_model=target_model,
             temperature=temperature,
+            thinking_enabled=thinking_enabled,
             stream=False,
         )
 
@@ -371,6 +382,7 @@ class AsyncDeepSeekClient:
         tool_choice: Optional[str] = None,
         model_override: Optional[str] = None,
         temperature: Optional[float] = None,
+        thinking_enabled: bool = True,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """异步流式调用，支持工具定义。
 
@@ -411,6 +423,7 @@ class AsyncDeepSeekClient:
             tool_choice=tool_choice,
             target_model=target_model,
             temperature=temperature,
+            thinking_enabled=thinking_enabled,
             stream=True,
         )
 

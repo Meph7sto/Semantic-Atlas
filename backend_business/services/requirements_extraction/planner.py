@@ -106,6 +106,7 @@ def call_planner(
     use_toolcall: bool = True,
     existing_requirements: Optional[List[Dict[str, Any]]] = None,
     history_aware: bool = False,
+    use_thinking_mode: bool = True,
     connect_timeout: Optional[float] = None,
     read_timeout: Optional[float] = None,
     max_retries: Optional[int] = None,
@@ -143,6 +144,7 @@ def call_planner(
                 ],
                 tools=tools,
                 model=model_name,
+                thinking_enabled=use_thinking_mode,
                 temperature=0.3,
                 tool_choice="auto",  # 让模型自动决定是否调用工具
                 connect_timeout=connect_timeout,
@@ -187,6 +189,7 @@ def call_planner(
                     {"role": "user", "content": prompt},
                 ],
                 model=model_name,
+                thinking_enabled=use_thinking_mode,
                 temperature=0.3,
             )
             output = response.get("content", "")
@@ -220,6 +223,7 @@ async def call_planner_async(
     session: Optional[aiohttp.ClientSession] = None,
     existing_requirements: Optional[List[Dict[str, Any]]] = None,
     history_aware: bool = False,
+    use_thinking_mode: bool = True,
     connect_timeout: Optional[float] = None,
     read_timeout: Optional[float] = None,
     max_retries: Optional[int] = None,
@@ -257,6 +261,7 @@ async def call_planner_async(
                 ],
                 tools=tools,
                 model=model_name,
+                thinking_enabled=use_thinking_mode,
                 temperature=0.3,
                 tool_choice="auto",
                 session=session,

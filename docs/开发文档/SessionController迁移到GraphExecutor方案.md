@@ -2,14 +2,14 @@
 
 ## 1. 文档定位
 
-这份文档是 `SessionController` 从当前实现演进到 `GraphExecutor` 的统一主方案，用来替代原先拆开的 Phase 1 / Phase 2 两份文档。
+这份文档记录 `SessionController` 从 classic 演进到 `GraphExecutor` 的迁移口径。当前代码已经进入迁移后的 graph-only 状态，本文保留历史阶段说明，但以本节“当前状态与边界”为准。
 
 本文档统一回答四件事：
 
 - 当前正式架构是什么
-- 为什么要先做 classic 收敛
-- GraphExecutor 迁移在什么前提下开始、怎么推进
-- 什么时候可以把 `graph` 从实验链路切成默认链路
+- classic 历史链路如何收敛和退出
+- GraphExecutor 迁移的职责边界
+- 后续如何继续拆分 service 与清理 legacy 代码
 
 这是一份方案文档，不是实现说明。
 
@@ -17,16 +17,16 @@
 
 当前口径必须统一为：
 
-- `classic` 仍是生产默认链路
-- `graph` 只能作为实验链路存在
-- 实验链路必须由显式开关控制：`SESSION_CONTROLLER_GRAPH_ENABLED`
-- 未开启时，公开 API 不接受 `execution_mode="graph"`
+- `SessionController` 公开入口只支持 `execution_mode="graph"`
+- `graph` 是当前生产主路径，不再由 `SESSION_CONTROLLER_GRAPH_ENABLED` 控制
+- 公开 API 不接受 `execution_mode="classic"` 或其他值
+- SessionController 工具委托通过 graph/native invoke 表达，不再回落到 classic inline tool-loop
 
 补充边界：
 
-- 仓库里如果已经存在 `execution_mode="graph"`、`GraphExecutor`、拓扑图建模代码，只能视为后续阶段预研或实验实现
-- 实验链路可存在，但不代表迁移完成
-- 迁移完成的判断标准不是“graph 能跑”，而是“graph 可以替代 classic 成为默认主路径”
+- 子 Agent 自身仍可能保留 standalone classic tool-loop 能力，属于 legacy 兼容范围，不是 SessionController 主链路
+- `*_classic` experience target 仍可存在，用于旧子 Agent 经验注入测试和兼容场景
+- 后续清理目标是逐步删除 SessionController 之外不再被直接入口使用的 classic 能力
 
 ## 3. 背景与问题
 
@@ -55,7 +55,7 @@
 - 高层决策没有统一的结构化协议，只能靠零散 context 字段和副作用推断
 - 这会同时阻碍 classic 稳定性和后续 GraphExecutor 迁移
 
-因此，迁移不能直接从“老结构”跳到“graph 默认”，而要分阶段推进。
+当前迁移已经完成默认链路切换，后续工作重点从“切换默认”转为“删除遗留 fallback、拆薄 service、同步文档测试”。
 
 ## 4. 总体迁移原则
 
@@ -75,17 +75,17 @@ tools 可以调用浏览能力和子 Agent，但不能决定父循环何时结�
 
 service 负责 session 校验、graph 生命周期、SSE、挂起恢复、消息持久化；不负责猜测业务语义。
 
-### 4.5 原则五：双轨期间必须有明确默认与回滚口径
+### 4.5 原则五：graph-only 期间必须明确 legacy 边界
 
-在 `classic` 和 `graph` 并存阶段，必须始终明确：
+在 `graph` 成为默认后，必须始终明确：
 
-- 哪条是生产默认链路
-- 哪条是实验入口
-- 关闭实验链路后系统是否能完全回退到 classic
+- SessionController 主路径只允许 graph
+- 子 Agent standalone classic 是否仍有独立入口或测试依赖
+- 删除 legacy 能力前是否已清理对应 experience target、测试和文档
 
 ## 5. 总体阶段划分
 
-整个迁移统一拆成三个阶段：
+历史迁移可拆成三个阶段；当前代码状态已经越过 Phase 3，进入 Phase 4 清理阶段：
 
 ### 5.1 Phase 1：classic 架构收敛
 
@@ -97,17 +97,26 @@ service 负责 session 校验、graph 生命周期、SSE、挂起恢复、消息
 - 不引入 `controller_intake_llm / handoff / invoke` 的图节点建模
 - 不把 runtime 原生 `invoke/handoff` 作为正式依赖
 
-本阶段完成后，`classic` 仍是生产默认。
+本阶段完成后，历史口径中 `classic` 仍是生产默认；当前代码已不处于该阶段。
 
 ### 5.2 Phase 2：GraphExecutor 迁移落地
 
 在 Phase 1 收敛完成后，再让 `GraphExecutor` 接管 `SessionController` 主流程，并把 `clarify / suspend / final_reply` 变成图中的显式阶段。
 
-本阶段的 `graph` 仍默认视为实验链路，直到满足切默认条件。
+本阶段的历史口径中 `graph` 仍默认视为实验链路；当前代码已不处于该阶段。
 
 ### 5.3 Phase 3：graph 切默认
 
 当 `graph` 方案经过联调、回归、灰度和回滚验证后，才允许把默认执行路径从 `classic` 切到 `graph`。
+
+### 5.4 Phase 4：graph-only 收敛
+
+当前代码处于本阶段：
+
+- `SessionController` API 和 service 只接受 `graph`
+- `SubgraphRunner` 通过 `PromptBuilderFactory` 接入业务 prompt builder，不直接 import SessionController
+- `SessionControllerTools` 不再执行 classic inline tool-loop
+- 后续继续拆分 `SessionControllerService`，并评估子 Agent standalone classic 能力是否还有保留价值
 
 ## 6. Phase 1：classic 收敛方案
 
@@ -276,7 +285,7 @@ Phase 2 的目标是：
 - 让 `GraphExecutor` 接管 `SessionController` 主流程
 - 将 `clarify / suspend / final_reply` 变成图中的显式阶段
 - 将子 Agent 委托从兼容工具调用升级为 runtime 原生调度
-- 继续保留 classic 作为可回滚链路，直到 graph 满足切默认条件
+- 不再通过 SessionController 保留 classic 回滚链路；回滚策略应基于 graph 修复或版本回滚
 
 ### 7.3 Graph 方案边界
 
@@ -289,9 +298,9 @@ Phase 2 中允许引入：
 
 但必须满足：
 
-- `graph` 仍由显式开关控制
-- 未开启开关时，外部请求不能进入 graph 默认路径
-- graph 实现不能破坏 classic 现有回滚能力
+- graph 配置必须显式表达 runtime 行为，不能靠 prompt_builder 名称推断
+- 通用执行层不能 import 业务 Agent 的 prompt builder
+- graph 实现不能重新引入 SessionController classic fallback
 
 ### 7.4 迁移方式
 
@@ -308,21 +317,21 @@ Phase 2 中允许引入：
 
 ### 8.1 切默认前提
 
-只有在以下条件全部满足后，才允许把 `graph` 设为默认主链路：
+历史上只有在以下条件全部满足后，才允许把 `graph` 设为默认主链路：
 
 - 前后端明确切换到 `graph` 入口
 - 推理服务、工具调用提供方、Postgres、挂起恢复链路全部完成联调
 - SSE、会话持久化、审批挂起、澄清挂起全链路验证通过
-- 回滚开关明确可用，关闭后可完整退回 classic
+- 回滚方案明确可用
 - 验收口径从“实验可运行”升级为“默认主路径稳定”
 
 ### 8.2 双轨并存要求
 
-在切默认前，必须始终明确区分：
+切默认完成后，必须始终明确区分：
 
-- 生产默认链路
-- 实验入口
-- 回滚方式
+- graph 主路径
+- legacy 子 Agent classic 能力
+- 删除 legacy 前的兼容范围
 
 任何时候都不能出现“graph 已经部分接管，但默认和回滚口径不清楚”的状态。
 
@@ -340,20 +349,20 @@ Phase 2 中允许引入：
 
 如果直接把当前隐式逻辑搬进 GraphExecutor，图只会成为新的耦合承载体，不会自动带来清晰边界。
 
-### 9.4 风险四：graph 入口先于回滚口径落地
+### 9.4 风险四：文档和代码默认链路不一致
 
-如果 graph 能进但没有明确开关、默认口径和回滚方案，就会把实验链路误当成正式架构。
+如果文档继续描述 classic 默认，而代码已经 graph-only，会误导维护者保留或删除错误路径。
 
 ## 10. 统一结论
 
-`SessionController -> GraphExecutor` 的正确路径不是“一步到位切 graph 默认”，而是：
+`SessionController -> GraphExecutor` 的历史迁移路径不是“一步到位切 graph 默认”，而是：
 
 1. 先完成 classic 收敛，清理职责边界。
 2. 再把稳定的语义迁入 GraphExecutor。
 3. 最后在双轨可回滚的前提下切换默认链路。
 
-统一后的架构判断标准也应固定为：
+当前架构判断标准应固定为：
 
-- 当前正式架构：`classic`
-- 当前迁移方向：`GraphExecutor`
-- 当前实施顺序：先收敛、再迁移、后切默认
+- 当前正式架构：`GraphExecutor / graph-only`
+- 当前清理方向：删除 SessionController classic fallback，拆薄 service
+- 当前 legacy 边界：子 Agent standalone classic tool-loop 和 `*_classic` experience target 单独评估

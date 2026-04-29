@@ -28,7 +28,8 @@ const options = reactive({
   anchor_strategy: 'informative',
   r: 2,
   adaptive_retry_r2: true,
-  model: 'deepseek-reasoner',
+  model: 'deepseek-v4-pro',
+  use_thinking_mode: true,
   use_toolcall: true,
   max_spans_per_bundle: 12,
   token_limit: 1500,
@@ -58,14 +59,12 @@ const options = reactive({
   l4_min_per_top_req: 1,
   l4_confidence_threshold: 0.6,
   l4_max_concurrent: 4,
-  l4_use_reasoning_model: true,
+  l4_model: 'deepseek-v4-pro',
+  l4_use_thinking_mode: true,
   l4_clear_existing: true,
 })
 
-// Phase 4 computed model id
-const l4ModelId = computed(() =>
-  options.l4_use_reasoning_model ? 'deepseek-reasoner' : 'deepseek-chat',
-)
+const l4ModelId = computed(() => options.l4_model || 'deepseek-v4-pro')
 
 // ---- 流程状态（也共享） ----
 const pipelineState = reactive({
@@ -213,6 +212,7 @@ async function runPhase2() {
       enable_parallel_windows: options.enable_parallel_windows,
       max_concurrent_windows: options.max_concurrent_windows,
       llm_model: options.model,
+      use_thinking_mode: !!options.use_thinking_mode,
     },
   }
 
@@ -291,6 +291,7 @@ async function runPhase3() {
     r: Number(options.r) || 2,
     adaptive_retry_r2: !!options.adaptive_retry_r2,
     model: options.model,
+    use_thinking_mode: !!options.use_thinking_mode,
     use_toolcall: !!options.use_toolcall,
     max_spans_per_bundle: Number(options.max_spans_per_bundle) || 12,
     token_limit: Number(options.token_limit) || 0,
@@ -396,6 +397,7 @@ async function runPhase4() {
         max_concurrent: options.l4_max_concurrent,
       },
       model: l4ModelId.value,
+      useThinkingMode: !!options.l4_use_thinking_mode,
       forceRegenerate: !!options.l4_clear_existing,
     },
   )

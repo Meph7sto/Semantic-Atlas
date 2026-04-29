@@ -70,7 +70,10 @@ const extractionForm = ref({
   maxR: 2,
   adaptiveRetryR2: true,
   useToolcall: true,
-  model: 'deepseek-reasoner',
+  model: 'deepseek-v4-pro',
+  useThinkingMode: true,
+  l4Model: 'deepseek-v4-pro',
+  l4UseThinkingMode: true,
   maxSpansPerBundle: 12,
   tokenLimit: 1500,
   topM2Hop: 5,
@@ -481,6 +484,7 @@ async function startExtraction() {
       r: Number(extractionForm.value.maxR) || 2,
       adaptive_retry_r2: !!extractionForm.value.adaptiveRetryR2,
       model: extractionForm.value.model,
+      use_thinking_mode: !!extractionForm.value.useThinkingMode,
       use_toolcall: !!extractionForm.value.useToolcall,
       max_spans_per_bundle: Number(extractionForm.value.maxSpansPerBundle) || 12,
       token_limit: Number(extractionForm.value.tokenLimit) || 0,
@@ -535,7 +539,8 @@ async function extractLowLevelRequirements() {
         min_l4_per_top_req: 1,
         confidence_threshold: 0.6,
       },
-      model: 'deepseek-reasoner',
+      model: extractionForm.value.l4Model,
+      useThinkingMode: !!extractionForm.value.l4UseThinkingMode,
     })
 
     // 获取当前 session 的全部底层需求（缓存 + 新生成）
@@ -1465,8 +1470,8 @@ onMounted(async () => {
                   v-model="extractionForm.model"
                   class="w-full text-xs border-zinc-300 rounded-md focus:ring-black focus:border-black"
                 >
-                  <option value="deepseek-chat">deepseek-chat</option>
-                  <option value="deepseek-reasoner">deepseek-reasoner</option>
+                  <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+                  <option value="deepseek-v4-flash">deepseek-v4-flash</option>
                 </select>
               </div>
               <div>
@@ -1479,6 +1484,26 @@ onMounted(async () => {
                   <option :value="2">2</option>
                 </select>
               </div>
+            </div>
+            <label class="flex items-center gap-2 text-xs text-zinc-600">
+              <input v-model="extractionForm.useThinkingMode" type="checkbox" class="w-3 h-3 rounded border-zinc-300" />
+              L1-L3 思考模式
+            </label>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-xs font-medium text-zinc-600 block mb-1">L4 model</label>
+                <select
+                  v-model="extractionForm.l4Model"
+                  class="w-full text-xs border-zinc-300 rounded-md focus:ring-black focus:border-black"
+                >
+                  <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+                  <option value="deepseek-v4-flash">deepseek-v4-flash</option>
+                </select>
+              </div>
+              <label class="flex items-center gap-2 text-xs text-zinc-600 pt-6">
+                <input v-model="extractionForm.l4UseThinkingMode" type="checkbox" class="w-3 h-3 rounded border-zinc-300" />
+                L4 思考模式
+              </label>
             </div>
             <label class="flex items-center gap-2 text-xs text-zinc-600">
               <input v-model="extractionForm.useToolcall" type="checkbox" class="w-3 h-3 rounded border-zinc-300" />

@@ -1,3 +1,6 @@
+from core.engine.remote.deepseek import DEFAULT_DEEPSEEK_MODEL
+
+
 class ChatService:
     """
     General chat service.
@@ -11,6 +14,7 @@ class ChatService:
         prompt: str,
         system_prompt: str = "",
         max_new_tokens: int = 512,
+        model: str = DEFAULT_DEEPSEEK_MODEL,
         use_thinking_mode: bool = True,
         use_async_client: bool = False,
     ):
@@ -20,11 +24,11 @@ class ChatService:
         """
         if use_async_client:
             return self._ask_stream_async(
-                prompt, system_prompt, max_new_tokens, use_thinking_mode
+                prompt, system_prompt, max_new_tokens, model, use_thinking_mode
             )
         else:
             return self._ask_stream_sync(
-                prompt, system_prompt, max_new_tokens, use_thinking_mode
+                prompt, system_prompt, max_new_tokens, model, use_thinking_mode
             )
 
     async def _ask_stream_async(
@@ -32,11 +36,11 @@ class ChatService:
         prompt: str,
         system_prompt: str,
         max_new_tokens: int,
+        model: str,
         use_thinking_mode: bool,
     ):
         import json
 
-        model_name = "deepseek-reasoner" if use_thinking_mode else None
         full_response = ""
 
         def handle_chunk(chunk):
@@ -59,7 +63,8 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt or "",
             max_new_tokens=max_new_tokens,
-            model=model_name,
+            model=model,
+            thinking_enabled=use_thinking_mode,
         )
 
         async for chunk in stream:
@@ -96,11 +101,11 @@ class ChatService:
         prompt: str,
         system_prompt: str,
         max_new_tokens: int,
+        model: str,
         use_thinking_mode: bool,
     ):
         import json
 
-        model_name = "deepseek-reasoner" if use_thinking_mode else None
         full_response = ""
 
         def handle_chunk(chunk):
@@ -123,7 +128,8 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt or "",
             max_new_tokens=max_new_tokens,
-            model=model_name,
+            model=model,
+            thinking_enabled=use_thinking_mode,
         )
 
         for chunk in stream:

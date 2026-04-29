@@ -25,6 +25,7 @@ class _StubModelEngine:
         system_prompt: str,
         max_new_tokens: int = 128,
         model: str | None = None,
+        thinking_enabled: bool = True,
     ) -> str:
         self.generate_async_calls.append(
             {
@@ -32,6 +33,7 @@ class _StubModelEngine:
                 "system_prompt": system_prompt,
                 "max_new_tokens": max_new_tokens,
                 "model": model,
+                "thinking_enabled": thinking_enabled,
             }
         )
         return '{"links":[],"noise":[]}'
@@ -42,6 +44,7 @@ class _StubModelEngine:
         system_prompt: str,
         max_new_tokens: int = 128,
         model: str | None = None,
+        thinking_enabled: bool = True,
     ):
         self.generate_stream_async_calls.append(
             {
@@ -49,6 +52,7 @@ class _StubModelEngine:
                 "system_prompt": system_prompt,
                 "max_new_tokens": max_new_tokens,
                 "model": model,
+                "thinking_enabled": thinking_enabled,
             }
         )
         yield {"type": "thinking", "delta": "reasoning"}
@@ -73,7 +77,8 @@ async def test_context_completion_uses_async_generation(fastapi_client):
         json={
             "prompt": "Analyze these spans",
             "system_prompt": "Return JSON only",
-            "model": "deepseek-chat",
+            "model": "deepseek-v4-pro",
+            "thinking_enabled": False,
             "max_tokens": 512,
         },
     )
@@ -86,7 +91,8 @@ async def test_context_completion_uses_async_generation(fastapi_client):
             "prompt": "Analyze these spans",
             "system_prompt": "Return JSON only",
             "max_new_tokens": 512,
-            "model": "deepseek-chat",
+            "model": "deepseek-v4-pro",
+            "thinking_enabled": False,
         }
     ]
 
@@ -99,7 +105,8 @@ async def test_context_completion_stream_uses_async_stream_generation(fastapi_cl
         json={
             "prompt": "Analyze these spans",
             "system_prompt": "Return JSON only",
-            "model": "deepseek-chat",
+            "model": "deepseek-v4-pro",
+            "thinking_enabled": False,
             "max_tokens": 512,
         },
     )
@@ -115,6 +122,7 @@ async def test_context_completion_stream_uses_async_stream_generation(fastapi_cl
             "prompt": "Analyze these spans",
             "system_prompt": "Return JSON only",
             "max_new_tokens": 512,
-            "model": "deepseek-chat",
+            "model": "deepseek-v4-pro",
+            "thinking_enabled": False,
         }
     ]

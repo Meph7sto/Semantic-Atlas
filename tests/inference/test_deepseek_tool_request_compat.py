@@ -45,7 +45,27 @@ def _sample_tools():
     ]
 
 
-def test_build_deepseek_tool_body_maps_reasoner_to_thinking_mode():
+def test_deepseek_endpoint_defaults_to_current_chat_completions_path():
+    client = DeepSeekClient(
+        api_url="https://api.deepseek.com",
+        api_key="test-key",
+        model="deepseek-v4-pro",
+    )
+
+    assert client._resolve_endpoint() == "https://api.deepseek.com/chat/completions"
+
+
+def test_deepseek_endpoint_preserves_legacy_v1_base_url():
+    client = DeepSeekClient(
+        api_url="https://api.deepseek.com/v1",
+        api_key="test-key",
+        model="deepseek-v4-pro",
+    )
+
+    assert client._resolve_endpoint() == "https://api.deepseek.com/v1/chat/completions"
+
+
+def test_build_deepseek_tool_body_uses_v4_pro_thinking_mode():
     body = build_deepseek_tool_body(
         messages=[
             {
@@ -58,37 +78,77 @@ def test_build_deepseek_tool_body_maps_reasoner_to_thinking_mode():
         tools=_sample_tools(),
         max_new_tokens=2048,
         tool_choice="required",
-        target_model="deepseek-reasoner",
+        target_model="deepseek-v4-pro",
         temperature=0.2,
         stream=False,
     )
 
-    assert body["model"] == "deepseek-chat"
+    assert body["model"] == "deepseek-v4-pro"
     assert body["thinking"] == {"type": "enabled"}
+    assert body["reasoning_effort"] == "high"
     assert "tool_choice" not in body
     assert "temperature" not in body
     assert body["messages"][0]["reasoning_content"] == "internal chain of thought"
 
 
-def test_build_deepseek_tool_body_keeps_chat_model_sampling_controls():
+def test_build_deepseek_tool_body_defaults_to_v4_pro_thinking_mode():
     body = build_deepseek_tool_body(
         messages=[{"role": "user", "content": "Hi"}],
         tools=_sample_tools(),
         max_new_tokens=1024,
         tool_choice="auto",
-        target_model="deepseek-chat",
+        target_model="",
         temperature=0.6,
         stream=True,
     )
 
-    assert body["model"] == "deepseek-chat"
-    assert "thinking" not in body
-    assert body["temperature"] == 0.6
-    assert body["tool_choice"] == "auto"
+    assert body["model"] == "deepseek-v4-pro"
+    assert body["thinking"] == {"type": "enabled"}
+    assert body["reasoning_effort"] == "high"
+    assert "temperature" not in body
+    assert "tool_choice" not in body
     assert body["stream"] is True
 
 
-def test_generate_with_tools_posts_reasoner_requests_in_compatible_shape(monkeypatch):
+def test_build_deepseek_tool_body_allows_explicit_v4_flash_with_default_thinking():
+    body = build_deepseek_tool_body(
+        messages=[{"role": "user", "content": "Hi"}],
+        tools=_sample_tools(),
+        max_new_tokens=1024,
+        tool_choice="auto",
+        target_model="deepseek-v4-flash",
+        temperature=0.6,
+        stream=True,
+    )
+
+    assert body["model"] == "deepseek-v4-flash"
+    assert body["thinking"] == {"type": "enabled"}
+    assert body["reasoning_effort"] == "high"
+    assert "temperature" not in body
+    assert "tool_choice" not in body
+    assert body["stream"] is True
+
+
+def test_build_deepseek_tool_body_can_disable_thinking_for_v4_pro():
+    body = build_deepseek_tool_body(
+        messages=[{"role": "user", "content": "Hi"}],
+        tools=_sample_tools(),
+        max_new_tokens=1024,
+        tool_choice="auto",
+        target_model="deepseek-v4-pro",
+        temperature=0.6,
+        thinking_enabled=False,
+        stream=True,
+    )
+
+    assert body["model"] == "deepseek-v4-pro"
+    assert body["thinking"] == {"type": "disabled"}
+    assert body["temperature"] == 0.6
+    assert body["tool_choice"] == "auto"
+    assert "reasoning_effort" not in body
+
+
+def test_generate_with_tools_posts_v4_pro_requests(monkeypatch):
     captured = {}
 
     class _Response:
@@ -131,7 +191,7 @@ def test_generate_with_tools_posts_reasoner_requests_in_compatible_shape(monkeyp
     client = DeepSeekClient(
         api_url="https://api.deepseek.com",
         api_key="test-key",
-        model="deepseek-reasoner",
+        model="deepseek-v4-pro",
     )
 
     result = client.generate_with_tools(
@@ -147,15 +207,16 @@ def test_generate_with_tools_posts_reasoner_requests_in_compatible_shape(monkeyp
         tool_choice="required",
     )
 
-    assert captured["json"]["model"] == "deepseek-chat"
+    assert captured["json"]["model"] == "deepseek-v4-pro"
     assert captured["json"]["thinking"] == {"type": "enabled"}
+    assert captured["json"]["reasoning_effort"] == "high"
     assert captured["json"]["messages"][0]["reasoning_content"] == "should not be sent back"
     assert "tool_choice" not in captured["json"]
     assert result.finish_reason == "tool_calls"
     assert result.tool_calls[0]["function"]["name"] == "get_weather"
 
 
-def test_async_generate_with_tools_posts_reasoner_requests_in_compatible_shape():
+def test_async_generate_with_tools_posts_v4_pro_requests():
     captured = {}
 
     class _AsyncResponse:
@@ -200,7 +261,7 @@ def test_async_generate_with_tools_posts_reasoner_requests_in_compatible_shape()
         client = AsyncDeepSeekClient(
             api_url="https://api.deepseek.com",
             api_key="test-key",
-            model="deepseek-reasoner",
+            model="deepseek-v4-pro",
         )
         client._session = _AsyncSession()
         return await client.generate_with_tools(
@@ -218,8 +279,9 @@ def test_async_generate_with_tools_posts_reasoner_requests_in_compatible_shape()
 
     result = asyncio.run(_run())
 
-    assert captured["json"]["model"] == "deepseek-chat"
+    assert captured["json"]["model"] == "deepseek-v4-pro"
     assert captured["json"]["thinking"] == {"type": "enabled"}
+    assert captured["json"]["reasoning_effort"] == "high"
     assert "tool_choice" not in captured["json"]
     assert captured["json"]["messages"][0]["reasoning_content"] == "should not be sent back"
     assert result.content == "done"

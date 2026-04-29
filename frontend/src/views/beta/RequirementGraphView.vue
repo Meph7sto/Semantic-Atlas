@@ -40,26 +40,47 @@
                 {{ formatSnapshotOption(snapshot) }}
               </option>
             </select>
+            <select v-model="packageSize" class="project-select package-select" :disabled="isInferringGraph">
+              <option v-for="option in packageSizeOptions" :key="option" :value="String(option)">
+                每包 {{ option }}
+              </option>
+            </select>
             <select v-model="reviewConcurrency" class="project-select review-select" :disabled="isInferringGraph">
               <option v-for="option in reviewConcurrencyOptions" :key="option" :value="String(option)">
                 并发 {{ option }}
               </option>
             </select>
-            <button
-              type="button"
-              class="action-btn"
-              :disabled="isLoadingGraph || isInferringGraph"
-              @click="loadLocalVectorGraph"
-            >
-              {{ isLoadingGraph ? '向量产出中' : '本地向量关系' }}
-            </button>
+            <select v-model="selectedModel" class="project-select review-select" :disabled="isInferringGraph">
+              <option value="deepseek-v4-pro">V4 Pro</option>
+              <option value="deepseek-v4-flash">V4 Flash</option>
+            </select>
+            <label class="graph-toggle">
+              <input v-model="useThinkingMode" type="checkbox" />
+              <span>思考</span>
+            </label>
             <button
               type="button"
               class="action-btn infer-btn"
-              :disabled="isLoadingGraph || isInferringGraph || !hasLocalReviewSeed"
-              @click="runDeepSeekJudgement"
+              :disabled="isLoadingGraph || isInferringGraph || (!selectedProjectId && !sessionId)"
+              @click="generateRequirementGraph"
             >
-              {{ isInferringGraph ? '判断中' : 'DeepSeek 判断' }}
+              {{ isInferringGraph && activeGraphStreamMode === 'review' ? '生成中' : '生成图谱' }}
+            </button>
+            <button
+              type="button"
+              class="action-btn discover-btn"
+              :disabled="isLoadingGraph || isInferringGraph || (!selectedProjectId && !sessionId)"
+              @click="discoverRequirementRelations"
+            >
+              {{ isInferringGraph && activeGraphStreamMode === 'discover' ? '发现中' : 'DeepSeek 发现关系' }}
+            </button>
+            <button
+              type="button"
+              class="action-btn danger-btn"
+              :disabled="isLoadingGraph || isInferringGraph || (!selectedProjectId && !sessionId)"
+              @click="deleteAllRelations"
+            >
+              删除补充关系
             </button>
           </div>
         </section>
@@ -230,37 +251,33 @@
 
             <div v-if="relationReviewSummary" class="legend-block compact-block">
               <div class="block-title-row">
-                <h3>复核统计</h3>
+                <h3>{{ relationReviewSummary.discovery_mode ? '发现进度' : '判断进度' }}</h3>
                 <span class="analysis-chip emphasis">{{ relationReviewSummary.model || '未命名模型' }}</span>
               </div>
               <div class="metric-grid">
-                <div class="metric-item">
-                  <span>分包数</span>
-                  <strong>{{ relationReviewSummary.package_count || 0 }}</strong>
+                <div v-if="relationReviewSummary.discovery_mode" class="metric-item">
+                  <span>已处理顶层包</span>
+                  <strong>{{ relationReviewSummary.completed_packages || 0 }} / {{ relationReviewSummary.total_packages || relationReviewSummary.package_count || 0 }}</strong>
+                </div>
+                <div v-else class="metric-item">
+                  <span>已判断</span>
+                  <strong>{{ relationReviewSummary.completed_pairs || 0 }} / {{ relationReviewSummary.total_pairs || relationReviewSummary.reviewed_pair_count || 0 }}</strong>
                 </div>
                 <div class="metric-item">
-                  <span>候选对</span>
-                  <strong>{{ relationReviewSummary.reviewed_pair_count || 0 }}</strong>
+                  <span>{{ relationReviewSummary.discovery_mode ? '已发现关系' : '已确认' }}</span>
+                  <strong>{{ relationReviewSummary.discovery_mode ? (relationReviewSummary.added_edges || relationReviewSummary.added_count || 0) : ((relationReviewSummary.added_count || 0) + (relationReviewSummary.updated_count || 0)) }}</strong>
                 </div>
-                <div class="metric-item">
-                  <span>新增</span>
-                  <strong>{{ relationReviewSummary.added_count || 0 }}</strong>
+                <div v-if="relationReviewSummary.discovery_mode" class="metric-item">
+                  <span>已跳过包</span>
+                  <strong>{{ relationReviewSummary.skipped_packages || relationReviewSummary.skipped_package_count || 0 }}</strong>
                 </div>
-                <div class="metric-item">
-                  <span>修改</span>
-                  <strong>{{ relationReviewSummary.updated_count || 0 }}</strong>
-                </div>
-                <div class="metric-item">
-                  <span>删除</span>
-                  <strong>{{ relationReviewSummary.deleted_count || 0 }}</strong>
+                <div v-else class="metric-item">
+                  <span>已排除</span>
+                  <strong>{{ (relationReviewSummary.deleted_count || 0) + (relationReviewSummary.rejected_count || 0) }}</strong>
                 </div>
                 <div class="metric-item">
                   <span>并发</span>
                   <strong>{{ relationReviewSummary.applied_concurrency || relationReviewSummary.requested_concurrency || 0 }}</strong>
-                </div>
-                <div class="metric-item">
-                  <span>回退</span>
-                  <strong>{{ relationReviewSummary.fallback_used ? '有' : '无' }}</strong>
                 </div>
               </div>
             </div>
@@ -341,13 +358,18 @@
           <div class="graph-stage" :class="{ 'with-analysis': isAnalysisDrawerOpen }">
             <div v-if="graphError" class="state-panel error-state">{{ graphError }}</div>
             <div v-else-if="!hasGraph && !isLoadingGraph" class="state-panel">
-              选择项目后，先点击“本地向量关系”产出候选关系，再点击“DeepSeek 判断”并发复核这些候选边。
+              选择项目后点击“生成图谱”或“DeepSeek 发现关系”，图谱会按流式结果更新。
             </div>
             <div v-else-if="isLoadingGraph" class="state-panel">
               正在生成本地向量关系图谱。
             </div>
             <div v-else-if="isInferringGraph" class="state-panel">
-              正在调用 DeepSeek 对候选关系做判断。
+              <template v-if="activeGraphStreamMode === 'discover'">
+                正在调用 DeepSeek 主动发现关系：{{ streamProgress.completed_packages }} / {{ streamProgress.total_packages || 0 }}
+              </template>
+              <template v-else>
+                正在调用 DeepSeek 对候选关系做判断：{{ streamProgress.completed_pairs }} / {{ streamProgress.total_pairs || 0 }}
+              </template>
             </div>
             <div ref="chartContainer" class="graph-chart"></div>
             <aside v-if="isAnalysisDrawerOpen" class="analysis-drawer">
@@ -547,16 +569,21 @@ const { roleType, roleLabel, timestamp, notificationCount } = useBetaSidebarProp
 const projects = ref([])
 const selectedProjectId = ref(localStorage.getItem('lastProjectId') || '')
 const sessionId = ref(localStorage.getItem('lastSessionId') || '')
+const packageSize = ref(localStorage.getItem('requirementGraphPackageSize') || '6')
 const reviewConcurrency = ref(localStorage.getItem('requirementGraphReviewConcurrency') || '3')
+const selectedModel = ref(localStorage.getItem('requirementGraphModel') || 'deepseek-v4-pro')
+const useThinkingMode = ref(localStorage.getItem('requirementGraphThinking') !== 'false')
 const snapshotHistory = ref([])
 const selectedSnapshotId = ref('')
 const isLoadingProjects = ref(false)
 const isLoadingGraph = ref(false)
 const isInferringGraph = ref(false)
 const isLoadingSnapshots = ref(false)
+const activeGraphStreamMode = ref('')
 const graphError = ref('')
 const graphData = ref({ nodes: [], edges: [], stats: {} })
 const lastLocalReviewEdges = ref([])
+const streamProgress = ref(createEmptyStreamProgress())
 const selectedNode = ref(null)
 const selectedEdge = ref(null)
 const selectedLevel = ref('__all__')
@@ -571,7 +598,28 @@ const analysisError = ref('')
 const chartContainer = ref(null)
 let chart = null
 let resizeObserver = null
+let graphStreamAbortController = null
+const packageSizeOptions = [3, 6, 9, 12]
 const reviewConcurrencyOptions = [1, 2, 3, 4, 6]
+const protectedRelationSourceKinds = new Set([
+  'structural',
+  'trace_analysis',
+  'conflict_analysis',
+  'classification_analysis',
+])
+const supplementalRelationSourceKinds = new Set(['local_vector', 'rule_extra', 'rule', 'llm'])
+
+function createEmptyStreamProgress() {
+  return {
+    completed_pairs: 0,
+    total_pairs: 0,
+    completed_packages: 0,
+    total_packages: 0,
+    added_edges: 0,
+    skipped_packages: 0,
+    review_concurrency: 0,
+  }
+}
 
 const levelPalette = {
   L1: { fill: '#dbeafe', border: '#2563eb' },
@@ -607,7 +655,11 @@ const requirementStatusOptions = [
 
 const stats = computed(() => graphData.value?.stats || {})
 const hasGraph = computed(() => (graphData.value?.nodes || []).length > 0)
-const hasLocalReviewSeed = computed(() => lastLocalReviewEdges.value.length > 0)
+const selectedPackageSize = computed(() => {
+  const value = Number(packageSize.value)
+  if (!Number.isFinite(value)) return 6
+  return Math.max(1, Math.min(24, Math.trunc(value)))
+})
 const selectedReviewConcurrency = computed(() => {
   const value = Number(reviewConcurrency.value)
   if (!Number.isFinite(value)) return 3
@@ -626,9 +678,17 @@ const categoryCounts = computed(() => {
   return counts
 })
 const relationReviewSummary = computed(() => {
-  const summary = stats.value.relation_review
+  const summary = {
+    ...(stats.value.relation_review || {}),
+    completed_pairs: streamProgress.value.completed_pairs,
+    total_pairs: streamProgress.value.total_pairs,
+    completed_packages: streamProgress.value.completed_packages,
+    total_packages: streamProgress.value.total_packages,
+    added_edges: streamProgress.value.added_edges,
+    skipped_packages: streamProgress.value.skipped_packages,
+  }
   if (!summary) return null
-  if (!(summary.package_count || summary.reviewed_pair_count || summary.added_count || summary.updated_count || summary.deleted_count || summary.fallback_used)) {
+  if (!(summary.package_count || summary.reviewed_pair_count || summary.total_pairs || summary.total_packages || summary.added_count || summary.updated_count || summary.deleted_count || summary.rejected_count || summary.added_edges || summary.skipped_packages || summary.fallback_used)) {
     return null
   }
   return summary
@@ -852,6 +912,7 @@ function clearGraphState() {
   graphError.value = ''
   graphData.value = { nodes: [], edges: [], stats: {} }
   lastLocalReviewEdges.value = []
+  streamProgress.value = createEmptyStreamProgress()
   selectedNode.value = null
   selectedEdge.value = null
   selectedLevel.value = '__all__'
@@ -1093,85 +1154,372 @@ async function handleSnapshotSelection() {
   await loadSnapshotGraph(selectedSnapshotId.value)
 }
 
-async function loadLocalVectorGraph() {
+async function generateRequirementGraph() {
   graphError.value = ''
   selectedNode.value = null
   selectedEdge.value = null
   selectedLevel.value = '__all__'
   selectedCategory.value = '__all__'
+  selectedEdgeType.value = '__all__'
+  selectedSourceScope.value = '__all__'
   resetAnalysisState()
   if (!selectedProjectId.value && !sessionId.value) {
     graphError.value = '请选择项目或填写 Session ID'
     return
   }
-  isLoadingGraph.value = true
+  if (graphStreamAbortController) graphStreamAbortController.abort()
+  graphStreamAbortController = new AbortController()
+  graphData.value = { nodes: [], edges: [], stats: {} }
+  lastLocalReviewEdges.value = []
+  streamProgress.value = createEmptyStreamProgress()
+  activeGraphStreamMode.value = 'review'
+  isInferringGraph.value = true
   try {
-    const resp = await requirementGraphApi.getGraph({
+    await requirementGraphApi.streamGraph({
       projectId: selectedProjectId.value,
       sessionId: sessionId.value,
       limit: 900,
-      infer: false,
-      relationMode: 'local',
       inferenceLimit: 48,
-      model: 'deepseek-reasoner',
+      packageSize: selectedPackageSize.value,
+      reviewConcurrency: selectedReviewConcurrency.value,
+      model: selectedModel.value,
+      useThinkingMode: useThinkingMode.value,
+      signal: graphStreamAbortController.signal,
+      onEvent: handleRequirementGraphStreamEvent,
     })
-    applyGraphPayload(resp?.data)
-    const localVectorError = graphData.value?.stats?.local_vector?.error
-    const localVectorAvailable = graphData.value?.stats?.local_vector?.available
-    if (localVectorError && localVectorAvailable === false) {
-      graphError.value = `本地向量模型当前不可用：${localVectorError}`
-    }
     await refreshSnapshotHistory()
-    await nextTick()
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      graphError.value = err.message || '需求图谱生成失败'
+    }
+  } finally {
+    isInferringGraph.value = false
+    activeGraphStreamMode.value = ''
+    graphStreamAbortController = null
+  }
+}
+
+async function discoverRequirementRelations() {
+  graphError.value = ''
+  selectedNode.value = null
+  selectedEdge.value = null
+  selectedLevel.value = '__all__'
+  selectedCategory.value = '__all__'
+  selectedEdgeType.value = '__all__'
+  selectedSourceScope.value = '__all__'
+  resetAnalysisState()
+  if (!selectedProjectId.value && !sessionId.value) {
+    graphError.value = '请选择项目或填写 Session ID'
+    return
+  }
+  if (graphStreamAbortController) graphStreamAbortController.abort()
+  graphStreamAbortController = new AbortController()
+  graphData.value = { nodes: [], edges: [], stats: {} }
+  lastLocalReviewEdges.value = []
+  streamProgress.value = createEmptyStreamProgress()
+  activeGraphStreamMode.value = 'discover'
+  isInferringGraph.value = true
+  try {
+    await requirementGraphApi.streamDiscoverGraph({
+      projectId: selectedProjectId.value,
+      sessionId: sessionId.value,
+      limit: 900,
+      reviewConcurrency: selectedReviewConcurrency.value,
+      model: selectedModel.value,
+      useThinkingMode: useThinkingMode.value,
+      signal: graphStreamAbortController.signal,
+      onEvent: handleRequirementGraphStreamEvent,
+    })
+    await refreshSnapshotHistory()
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      graphError.value = err.message || 'DeepSeek 发现关系失败'
+    }
+  } finally {
+    isInferringGraph.value = false
+    activeGraphStreamMode.value = ''
+    graphStreamAbortController = null
+  }
+}
+
+async function deleteAllRelations() {
+  if (!selectedProjectId.value && !sessionId.value) {
+    graphError.value = '请选择项目或填写 Session ID'
+    return
+  }
+  const confirmed = window.confirm('确定删除当前项目/Session 的补充关系吗？原有结构和追溯分析关系会保留。')
+  if (!confirmed) return
+
+  graphError.value = ''
+  isLoadingGraph.value = true
+  try {
+    await requirementGraphApi.deleteAllRelations({
+      projectId: selectedProjectId.value,
+      sessionId: sessionId.value,
+    })
+    graphData.value = {
+      ...(graphData.value || { nodes: [], edges: [], stats: {} }),
+      edges: (graphData.value?.edges || [])
+        .filter(isProtectedRelationEdge)
+        .map(preserveProtectedRelationEdge),
+      stats: {
+        ...(graphData.value?.stats || {}),
+        local_vector: null,
+        relation_review: null,
+      },
+    }
+    refreshGraphEdgeStats()
+    lastLocalReviewEdges.value = []
+    streamProgress.value = createEmptyStreamProgress()
+    selectedEdge.value = null
+    selectedSnapshotId.value = ''
+    await refreshSnapshotHistory()
     renderGraph()
   } catch (err) {
-    graphError.value = err.message || '本地向量关系生成失败'
-    graphData.value = { nodes: [], edges: [], stats: {} }
-    lastLocalReviewEdges.value = []
-    renderGraph()
+    graphError.value = err.message || '删除关系失败'
   } finally {
     isLoadingGraph.value = false
   }
 }
 
-async function runDeepSeekJudgement() {
-  graphError.value = ''
-  selectedNode.value = null
-  selectedEdge.value = null
-  selectedCategory.value = '__all__'
-  resetAnalysisState()
-  if (!selectedProjectId.value && !sessionId.value) {
-    graphError.value = '请选择项目或填写 Session ID'
-    return
-  }
-  const reviewEdges = lastLocalReviewEdges.value.length
-    ? lastLocalReviewEdges.value
-    : extractLocalReviewEdges(graphData.value)
-  if (!reviewEdges.length) {
-    graphError.value = '请先点击“本地向量关系”生成候选边，再执行 DeepSeek 复核'
-    return
-  }
-  isInferringGraph.value = true
-  try {
-    const resp = await requirementGraphApi.inferGraph({
-      projectId: selectedProjectId.value,
-      sessionId: sessionId.value,
-      limit: 80,
-      relationMode: 'llm',
-      inferenceLimit: 48,
-      reviewConcurrency: selectedReviewConcurrency.value,
-      model: 'deepseek-reasoner',
-      reviewEdges,
-    })
-    applyGraphPayload(resp?.data, { reviewEdges })
-    await refreshSnapshotHistory()
-    await nextTick()
+function handleRequirementGraphStreamEvent({ event, data }) {
+  if (event === 'base_graph') {
+    applyGraphPayload(data?.graph || { nodes: [], edges: [], stats: {} }, { reviewEdges: [] })
     renderGraph()
-  } catch (err) {
-    graphError.value = err.message || 'DeepSeek 判断失败'
-  } finally {
-    isInferringGraph.value = false
+    return
   }
+  if (event === 'candidate_edges') {
+    mergeGraphEdges(data?.edges || [], { candidate: true })
+    graphData.value.stats = {
+      ...(graphData.value.stats || {}),
+      local_vector: data?.stats || {},
+    }
+    lastLocalReviewEdges.value = extractLocalReviewEdges(graphData.value)
+    renderGraph()
+    return
+  }
+  if (event === 'review_progress') {
+    streamProgress.value = {
+      ...streamProgress.value,
+      completed_pairs: data?.completed_pairs || 0,
+      total_pairs: data?.total_pairs || 0,
+      completed_packages: data?.completed_packages || 0,
+      total_packages: data?.total_packages || 0,
+    }
+    updateRelationReviewStats({})
+    return
+  }
+  if (event === 'discover_progress') {
+    streamProgress.value = {
+      ...streamProgress.value,
+      completed_packages: data?.completed_packages || 0,
+      total_packages: data?.total_packages || 0,
+      added_edges: data?.added_edges || 0,
+      skipped_packages: data?.skipped_packages || 0,
+      review_concurrency: data?.review_concurrency || selectedReviewConcurrency.value,
+    }
+    updateRelationReviewStats({
+      discovery_mode: 'top_l4_tool',
+      added_edges: 0,
+      skipped_packages: 0,
+    })
+    return
+  }
+  if (event === 'package_skipped') {
+    updateRelationReviewStats({ discovery_mode: 'top_l4_tool' })
+    return
+  }
+  if (event === 'relation_decision') {
+    applyRelationDecision(data)
+    renderGraph()
+    return
+  }
+  if (event === 'snapshot_saved') {
+    selectedSnapshotId.value = data?.snapshot?.snapshot_id || selectedSnapshotId.value
+    return
+  }
+  if (event === 'done') {
+    updateRelationReviewStats(data?.stats?.relation_review || {})
+    return
+  }
+  if (event === 'error') {
+    graphError.value = data?.message || '流式生成失败，已保留当前收到的结果'
+  }
+}
+
+function applyRelationDecision(decision) {
+  const action = String(decision?.action || '').toLowerCase()
+  const edge = decision?.edge
+  if (!edge?.source || !edge?.target || !edge?.type) return
+  if (action === 'add' || action === 'update') {
+    mergeGraphEdges([{
+      ...edge,
+      properties: {
+        ...(edge.properties || {}),
+        source_kind: 'llm',
+        review_action: action,
+        confidence: decision?.confidence ?? edge.properties?.confidence,
+        reason: decision?.reason || edge.properties?.reason,
+        review_package_id: decision?.package_id || edge.properties?.review_package_id,
+      },
+    }])
+    updateRelationReviewStats({ [action === 'add' ? 'added_count' : 'updated_count']: 1 })
+    return
+  }
+  markEdgeForRemoval(edge, action)
+  updateRelationReviewStats({ [action === 'delete' ? 'deleted_count' : 'rejected_count']: 1 })
+}
+
+function mergeGraphEdges(edges, { candidate = false } = {}) {
+  const current = new Map((graphData.value.edges || []).map(edge => [graphEdgeKey(edge), edge]))
+  ;(edges || []).forEach(edge => {
+    if (!edge?.source || !edge?.target || !edge?.type) return
+    current.set(graphEdgeKey(edge), {
+      ...edge,
+      properties: {
+        ...(edge.properties || {}),
+        review_state: candidate ? 'candidate' : edge.properties?.review_state,
+      },
+    })
+  })
+  graphData.value = {
+    ...graphData.value,
+    edges: Array.from(current.values()),
+  }
+  refreshGraphEdgeStats()
+}
+
+function markEdgeForRemoval(edge, action) {
+  const key = graphEdgeKey(edge)
+  graphData.value = {
+    ...graphData.value,
+    edges: (graphData.value.edges || []).map(item =>
+      graphEdgeKey(item) === key
+        ? { ...item, properties: { ...(item.properties || {}), review_state: action === 'delete' ? 'deleting' : 'rejecting' } }
+        : item,
+    ),
+  }
+  setTimeout(() => {
+    graphData.value = {
+      ...graphData.value,
+      edges: (graphData.value.edges || []).filter(item => graphEdgeKey(item) !== key),
+    }
+    refreshGraphEdgeStats()
+    renderGraph()
+  }, 380)
+}
+
+function updateRelationReviewStats(increment) {
+  const current = graphData.value.stats?.relation_review || {}
+  const next = {
+    model: selectedModel.value,
+    package_size: selectedPackageSize.value,
+    requested_concurrency: selectedReviewConcurrency.value,
+    applied_concurrency: selectedReviewConcurrency.value,
+    ...current,
+  }
+  Object.entries(increment || {}).forEach(([key, value]) => {
+    if (typeof value === 'string') {
+      next[key] = value
+      return
+    }
+    next[key] = (Number(next[key]) || 0) + (Number(value) || 0)
+  })
+  if (activeGraphStreamMode.value === 'discover' || next.discovery_mode) {
+    next.discovery_mode = next.discovery_mode || 'top_l4_tool'
+  }
+  next.completed_pairs = streamProgress.value.completed_pairs
+  next.total_pairs = streamProgress.value.total_pairs
+  next.completed_package_count = streamProgress.value.completed_packages
+  next.package_count = streamProgress.value.total_packages || next.package_count
+  next.completed_packages = streamProgress.value.completed_packages
+  next.total_packages = streamProgress.value.total_packages
+  next.added_edges = streamProgress.value.added_edges
+  next.skipped_packages = streamProgress.value.skipped_packages
+  graphData.value = {
+    ...graphData.value,
+    stats: {
+      ...(graphData.value.stats || {}),
+      relation_review: next,
+      review_concurrency: selectedReviewConcurrency.value,
+    },
+  }
+}
+
+function refreshGraphEdgeStats() {
+  const edges = graphData.value.edges || []
+  const edgeCounts = {}
+  const edgeSourceCounts = {}
+  let structuralEdgeCount = 0
+  let analysisEdgeCount = 0
+  let supplementalEdgeCount = 0
+  edges.forEach(edge => {
+    edgeCounts[edge.type] = (edgeCounts[edge.type] || 0) + 1
+    const scopes = edgeSourceScopes(edge)
+    scopes.forEach(sourceKind => {
+      edgeSourceCounts[sourceKind] = (edgeSourceCounts[sourceKind] || 0) + 1
+    })
+    if (scopes.includes('structural')) structuralEdgeCount += 1
+    if (scopes.some(scope => ['trace_analysis', 'conflict_analysis', 'classification_analysis'].includes(scope))) {
+      analysisEdgeCount += 1
+    }
+    if (scopes.some(scope => supplementalRelationSourceKinds.has(scope))) {
+      supplementalEdgeCount += 1
+    }
+  })
+  graphData.value.stats = {
+    ...(graphData.value.stats || {}),
+    edge_count: edges.length,
+    edge_counts: edgeCounts,
+    edge_source_counts: edgeSourceCounts,
+    structural_edge_count: structuralEdgeCount,
+    analysis_edge_count: analysisEdgeCount,
+    supplemental_edge_count: supplementalEdgeCount,
+    inferred_edge_count: edgeSourceCounts.llm || 0,
+  }
+}
+
+function edgeSourceScopes(edge) {
+  const props = edge?.properties || {}
+  const scopes = []
+  ;(Array.isArray(props.source_kinds) ? props.source_kinds : []).forEach(scope => {
+    const normalized = String(scope || '').trim()
+    if (normalized && !scopes.includes(normalized)) scopes.push(normalized)
+  })
+  const primary = String(props.source_kind || 'rule').trim() || 'rule'
+  if (!scopes.includes(primary)) scopes.push(primary)
+  return scopes
+}
+
+function isProtectedRelationEdge(edge) {
+  return edgeSourceScopes(edge).some(scope => protectedRelationSourceKinds.has(scope))
+}
+
+function preserveProtectedRelationEdge(edge) {
+  const props = edge?.properties || {}
+  const protectedScopes = edgeSourceScopes(edge).filter(scope => protectedRelationSourceKinds.has(scope))
+  const sources = Array.isArray(props.sources)
+    ? props.sources.filter(item => protectedRelationSourceKinds.has(String(item?.kind || '').trim()))
+    : []
+  return {
+    ...edge,
+    properties: {
+      ...props,
+      source_kind: protectedScopes[0] || props.source_kind,
+      source_kinds: protectedScopes,
+      sources: sources.length ? sources : props.sources,
+    },
+  }
+}
+
+function graphEdgeKey(edge) {
+  const type = edge?.type || ''
+  let source = edge?.source || ''
+  let target = edge?.target || ''
+  if (['CONFLICTS_WITH', 'SIMILAR_TO', 'VALIDATES_WITH'].includes(type) && source > target) {
+    ;[source, target] = [target, source]
+  }
+  return `${type}:${source}->${target}`
 }
 
 function initChart() {
@@ -1512,6 +1860,7 @@ function reviewActionLabel(value) {
     add: '新增',
     update: '修改',
     delete: '删除',
+    reject: '排除',
   }[String(value || '').trim().toLowerCase()] || formatValue(value)
 }
 
@@ -1529,6 +1878,7 @@ function sourceScopeLabel(scope) {
 }
 
 function edgeMatchesFilters(edge) {
+  if (isTopLevelSimilarityEdge(edge)) return false
   if (selectedEdgeType.value !== '__all__' && edge.type !== selectedEdgeType.value) return false
   const scopes = edge?.properties?.source_kinds || [edgeSourceType(edge)]
   const matchesSourceScope = (() => {
@@ -1547,8 +1897,18 @@ function edgeMatchesFilters(edge) {
   return true
 }
 
+function isTopLevelSimilarityEdge(edge) {
+  if (edge?.type !== 'SIMILAR_TO') return false
+  const nodes = graphData.value?.nodes || []
+  const sourceNode = nodes.find(node => node.id === edge.source)
+  const targetNode = nodes.find(node => node.id === edge.target)
+  const topLevels = new Set(['L1', 'L2', 'L3'])
+  return topLevels.has(normalizeLevel(sourceNode || {})) && topLevels.has(normalizeLevel(targetNode || {}))
+}
+
 function edgeLineStyle(edge) {
   const sourceScope = edgeSourceType(edge)
+  const reviewState = edge?.properties?.review_state || ''
   const edgeKey = analysisEdgeKey({
     source: edge.source.replace(/^req:/, ''),
     target: edge.target.replace(/^req:/, ''),
@@ -1557,7 +1917,7 @@ function edgeLineStyle(edge) {
   const inAnyPath = analysisPathEdgeKeys.value.has(edgeKey)
   const inFocusedPath = analysisFocusedEdgeKeys.value.has(edgeKey)
   return {
-    color: edgeColor(edge.type),
+    color: reviewState === 'rejecting' || reviewState === 'deleting' ? '#b91c1c' : edgeColor(edge.type),
     width: inFocusedPath
       ? 5.6
       : inAnyPath
@@ -1568,7 +1928,9 @@ function edgeLineStyle(edge) {
             ? 3
             : ['rule_extra', 'rule'].includes(sourceScope)
             ? 2.8
-            : 2.4,
+            : reviewState === 'candidate'
+              ? 2
+              : 2.4,
     opacity: inFocusedPath
       ? 1
       : inAnyPath
@@ -1577,8 +1939,12 @@ function edgeLineStyle(edge) {
           ? 0.9
           : sourceScope === 'llm'
             ? 0.84
-            : 0.7,
-    type: sourceScope === 'llm' ? 'dashed' : ['rule_extra', 'rule'].includes(sourceScope) ? 'dotted' : 'solid',
+            : reviewState === 'candidate'
+              ? 0.34
+              : reviewState === 'rejecting' || reviewState === 'deleting'
+                ? 0.2
+                : 0.7,
+    type: reviewState === 'candidate' ? 'dotted' : sourceScope === 'llm' ? 'solid' : ['rule_extra', 'rule'].includes(sourceScope) ? 'dotted' : 'solid',
     curveness: edge.type === 'CONFLICTS_WITH' ? 0.22 : 0.1,
   }
 }
@@ -1592,10 +1958,11 @@ function formatConfidence(value) {
 
 function formatSnapshotOption(snapshot) {
   const mode = snapshotModeLabel(snapshot?.relation_mode)
+  const status = snapshotStatusLabel(snapshot?.snapshot_status)
   const time = formatSnapshotTime(snapshot?.created_at)
   const edgeCount = Number(snapshot?.edge_count) || 0
   const activity = snapshot?.is_active ? '当前' : '历史'
-  return `${time} · ${mode} · ${edgeCount} 边 · ${activity}`
+  return `${time} · ${status} · ${mode} · ${edgeCount} 边 · ${activity}`
 }
 
 function formatSnapshotTime(value) {
@@ -1617,6 +1984,15 @@ function snapshotModeLabel(value) {
     llm: 'DeepSeek 复核',
     none: '基础图谱',
   }[String(value || '').trim().toLowerCase()] || '未标注'
+}
+
+function snapshotStatusLabel(value) {
+  return {
+    running: '运行中',
+    final: '最终',
+    failed: '失败',
+    interrupted: '中断',
+  }[String(value || 'final').trim().toLowerCase()] || '最终'
 }
 
 function formatValue(value) {
@@ -1732,6 +2108,15 @@ watch(sessionId, (value, oldValue) => {
   }
 })
 
+watch(packageSize, value => {
+  const normalized = String(Math.max(1, Math.min(24, Number(value) || 6)))
+  if (normalized !== value) {
+    packageSize.value = normalized
+    return
+  }
+  localStorage.setItem('requirementGraphPackageSize', normalized)
+})
+
 watch(reviewConcurrency, value => {
   const normalized = String(Math.max(1, Math.min(8, Number(value) || 3)))
   if (normalized !== value) {
@@ -1739,6 +2124,14 @@ watch(reviewConcurrency, value => {
     return
   }
   localStorage.setItem('requirementGraphReviewConcurrency', normalized)
+})
+
+watch(selectedModel, value => {
+  localStorage.setItem('requirementGraphModel', value || 'deepseek-v4-pro')
+})
+
+watch(useThinkingMode, value => {
+  localStorage.setItem('requirementGraphThinking', value ? 'true' : 'false')
 })
 
 watch(levelCounts, () => {
@@ -1763,6 +2156,10 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  if (graphStreamAbortController) {
+    graphStreamAbortController.abort()
+    graphStreamAbortController = null
+  }
   if (resizeObserver && chartContainer.value) resizeObserver.unobserve(chartContainer.value)
   if (chart) {
     chart.dispose()
@@ -1809,7 +2206,27 @@ onBeforeUnmount(() => {
   max-width: 240px;
 }
 
+.graph-toggle {
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: #fff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .review-select {
+  flex: 0 0 120px;
+  min-width: 120px;
+  max-width: 120px;
+}
+
+.package-select {
   flex: 0 0 120px;
   min-width: 120px;
   max-width: 120px;
@@ -1878,6 +2295,14 @@ onBeforeUnmount(() => {
 
 .infer-btn {
   background: #1d4ed8;
+}
+
+.discover-btn {
+  background: #0f766e;
+}
+
+.danger-btn {
+  background: #b91c1c;
 }
 
 .metric-item {
@@ -2482,6 +2907,7 @@ dt {
 
 @media (max-width: 760px) {
   .project-select,
+  .package-select,
   .review-select,
   .snapshot-select,
   .session-input,

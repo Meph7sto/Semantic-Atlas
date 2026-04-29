@@ -210,9 +210,10 @@ def run_single_turn(messages: list, user_query: str, turn_label: str = ""):
         print(f"\n--- API 调用 (第 {round_count} 轮) ---")
 
         response = client.chat.completions.create(
-            model="deepseek-chat",
+            model="deepseek-v4-pro",
             messages=messages,
             tools=tools,
+            reasoning_effort="high",
             extra_body={"thinking": {"type": "enabled"}},
             max_tokens=8192,
         )
@@ -271,7 +272,7 @@ def run_single_turn(messages: list, user_query: str, turn_label: str = ""):
 def main():
     print("=" * 70)
     print("  DeepSeek 深度思考 + 工具调用 测试脚本")
-    print("  模型: deepseek-chat + thinking.enabled")
+    print("  模型: deepseek-v4-pro + thinking.enabled")
     print(f"  后端: {BACKEND_BASE_URL}")
     print("=" * 70)
 
@@ -344,4 +345,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

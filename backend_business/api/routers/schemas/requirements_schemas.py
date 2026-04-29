@@ -12,8 +12,9 @@ class ExtractRequirementsRequest(BaseModel):
     text: str = Field(min_length=1)
     chunk_size: int = Field(default=3600, ge=1)
     overlap: int = Field(default=500, ge=0)
-    clean_model: str = Field(default="deepseek-reasoner", min_length=1)
-    extract_model: str = Field(default="deepseek-reasoner", min_length=1)
+    clean_model: str = Field(default="deepseek-v4-pro", min_length=1)
+    extract_model: str = Field(default="deepseek-v4-pro", min_length=1)
+    use_thinking_mode: StrictBool = True
 
     @field_validator("text", "clean_model", "extract_model")
     @classmethod
@@ -30,7 +31,8 @@ class ExtractL123Request(BaseModel):
     bundle_strategy: Literal["sequence", "graph"] = "sequence"
     anchor_strategy: Literal["all", "keyword", "informative"] = "informative"
     r: int = Field(default=2, ge=1)
-    model: str = Field(default="deepseek-reasoner", min_length=1)
+    model: str = Field(default="deepseek-v4-pro", min_length=1)
+    use_thinking_mode: StrictBool = True
     use_toolcall: StrictBool = True
     adaptive_retry_r2: StrictBool | None = None
     max_spans_per_bundle: int | None = Field(default=None, ge=1)
@@ -96,6 +98,7 @@ class GenerateL4RequirementsRequest(BaseModel):
     requirements: list[L4TopRequirementItem] = Field(min_length=1)
     config: dict[str, Any] = Field(default_factory=dict)
     model: str | None = None
+    use_thinking_mode: StrictBool = True
     force_regenerate: StrictBool = False
 
     @field_validator("session_id")

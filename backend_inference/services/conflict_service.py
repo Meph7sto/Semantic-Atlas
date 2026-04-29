@@ -1,4 +1,5 @@
 from schemas.conflict_report import ConflictCheckResponse
+from core.engine.remote.deepseek import DEFAULT_DEEPSEEK_MODEL
 
 
 # 定义系统提示词，用于指导模型进行冲突检测
@@ -35,6 +36,7 @@ class ConflictService:
         self,
         requirement_a: str,
         requirement_b: str,
+        model: str = DEFAULT_DEEPSEEK_MODEL,
         use_thinking_mode: bool = True,
     ) -> ConflictCheckResponse:
         """
@@ -55,7 +57,8 @@ class ConflictService:
             prompt=prompt,
             system_prompt=SYSTEM_PROMPT_CONFLICT,
             max_new_tokens=2048,
-            model="deepseek-reasoner" if use_thinking_mode else None,
+            model=model,
+            thinking_enabled=use_thinking_mode,
         )
         
         # 鲁棒的解析逻辑
@@ -82,6 +85,7 @@ class ConflictService:
         self,
         requirement_a: str,
         requirement_b: str,
+        model: str = DEFAULT_DEEPSEEK_MODEL,
         use_thinking_mode: bool = True,
     ):
         """
@@ -94,15 +98,13 @@ class ConflictService:
         # 构造用户提示词
         prompt = f"需求A：{requirement_a}\n需求B：{requirement_b}\n这两个需求冲突吗？"
         
-        # Determine model
-        model_name = "deepseek-reasoner" if use_thinking_mode else None
-
         # 获取流式生成器
         stream = self.model_engine.generate_stream(
             prompt=prompt,
             system_prompt=SYSTEM_PROMPT_CONFLICT,
             max_new_tokens=2048,
-            model=model_name
+            model=model,
+            thinking_enabled=use_thinking_mode,
         )
         
         full_response = ""

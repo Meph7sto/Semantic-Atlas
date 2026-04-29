@@ -25,6 +25,7 @@ async def check_conflict(request: ConflictCheckRequest):
         result = conflict_service.check_conflict(
             requirement_a=request.requirement_a,
             requirement_b=request.requirement_b,
+            model=request.model,
             use_thinking_mode=request.use_thinking_mode,
         )
         return result
@@ -48,6 +49,7 @@ async def stream_check_conflict(request: ConflictCheckRequest):
         conflict_service.check_conflict_stream(
             request.requirement_a, 
             request.requirement_b,
+            model=request.model,
             use_thinking_mode=request.use_thinking_mode
         ),
         media_type="application/x-ndjson"

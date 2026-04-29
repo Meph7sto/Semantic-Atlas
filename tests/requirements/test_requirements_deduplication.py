@@ -284,7 +284,7 @@ class TestRequirementMerger(unittest.TestCase):
 
     def test_build_merge_prompt(self):
         """Test prompt construction."""
-        merger = RequirementMerger(model_name="deepseek-reasoner")
+        merger = RequirementMerger(model_name="deepseek-v4-pro")
 
         group_data = {
             "level": "L2",
@@ -316,7 +316,7 @@ class TestRequirementMerger(unittest.TestCase):
             ]
         }
 
-        merger = RequirementMerger(model_name="deepseek-reasoner")
+        merger = RequirementMerger(model_name="deepseek-v4-pro")
 
         group_data = {
             "level": "L2",
@@ -348,7 +348,7 @@ class TestRequirementMerger(unittest.TestCase):
             ]
         }
 
-        merger = RequirementMerger(model_name="deepseek-reasoner")
+        merger = RequirementMerger(model_name="deepseek-v4-pro")
 
         group_data = {
             "level": "L2",
@@ -369,7 +369,7 @@ class TestRequirementMerger(unittest.TestCase):
         """Test handling of API errors."""
         mock_ai_proxy.chat_completion_with_tools.side_effect = Exception("API Error")
 
-        merger = RequirementMerger(model_name="deepseek-reasoner")
+        merger = RequirementMerger(model_name="deepseek-v4-pro")
 
         group_data = {
             "level": "L2",
@@ -405,7 +405,7 @@ class TestRequirementMerger(unittest.TestCase):
 
         mock_ai_proxy.chat_completion_with_tools_async = mock_async_call
 
-        merger = RequirementMerger(model_name="deepseek-reasoner")
+        merger = RequirementMerger(model_name="deepseek-v4-pro")
 
         groups = [
             {
@@ -449,7 +449,7 @@ class TestRequirementsDeduplicationService(unittest.TestCase):
         self.service.merger = MagicMock()
         self.service.executor = MagicMock()
         self.service.data_access = MagicMock()
-        self.service.default_model = "deepseek-reasoner"
+        self.service.default_model = "deepseek-v4-pro"
 
     def test_detect_duplicates_empty(self):
         """Test detection with no requirements."""

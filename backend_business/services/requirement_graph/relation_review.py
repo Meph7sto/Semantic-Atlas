@@ -17,7 +17,7 @@ class _RelationReviewToolDef:
             "function": {
                 "name": "submit_relation_mutations",
                 "description": (
-                    "基于候选需求对与现有关系，输出新增、修改或删除关系的修订动作。"
+                    "基于候选需求对与现有关系，输出新增、修改、删除或排除关系的修订动作。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -33,8 +33,8 @@ class _RelationReviewToolDef:
                                     },
                                     "action": {
                                         "type": "string",
-                                        "enum": ["add", "update", "delete"],
-                                        "description": "新增、修改或删除关系。",
+                                        "enum": ["add", "update", "delete", "reject"],
+                                        "description": "新增、修改、删除或排除候选关系。",
                                     },
                                     "target_edge": {
                                         "type": "object",
@@ -99,7 +99,7 @@ class _RelationReviewToolDef:
             f"{relation_types}。"
             "结构边（如 REFINES）不允许删除或修改。"
             "必须调用 submit_relation_mutations 工具输出。"
-            "如果证据不足，可以不输出任何 mutation。"
+            "如果证据不足，对候选关系输出 reject。"
         )
 
 
@@ -149,6 +149,7 @@ class _RequirementGraphRelationReviewCoordinator:
         model: str,
         inference_limit: int,
         review_concurrency: int,
+        package_size: int = 6,
         requirement_features: Dict[str, Dict[str, Any]],
         candidate_pairs: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
@@ -159,6 +160,7 @@ class _RequirementGraphRelationReviewCoordinator:
             "added_count": 0,
             "updated_count": 0,
             "deleted_count": 0,
+            "rejected_count": 0,
             "fallback_used": False,
             "model": model,
             "requested_concurrency": normalized_concurrency,
@@ -181,6 +183,7 @@ class _RequirementGraphRelationReviewCoordinator:
             requirement_features=requirement_features,
             candidate_pairs=selected_pairs,
             review_concurrency=normalized_concurrency,
+            package_size=package_size,
         )
         if not packages:
             return empty_stats
@@ -202,6 +205,7 @@ class _RequirementGraphRelationReviewCoordinator:
             "added_count": 0,
             "updated_count": 0,
             "deleted_count": 0,
+            "rejected_count": 0,
             "fallback_used": False,
             "model": model,
             "requested_concurrency": normalized_concurrency,
@@ -246,6 +250,8 @@ class _RequirementGraphRelationReviewCoordinator:
                     stats["updated_count"] += 1
                 elif applied_action == "delete":
                     stats["deleted_count"] += 1
+                elif applied_action == "reject":
+                    stats["rejected_count"] += 1
 
         return stats
 
@@ -256,17 +262,14 @@ class _RequirementGraphRelationReviewCoordinator:
         requirement_features: Dict[str, Dict[str, Any]],
         candidate_pairs: List[Dict[str, Any]],
         review_concurrency: int,
+        package_size: int = 6,
     ) -> List[Dict[str, Any]]:
         if not candidate_pairs:
             return []
-        package_count = max(1, min(max(1, int(review_concurrency or 1)), len(candidate_pairs)))
-        base_size, remainder = divmod(len(candidate_pairs), package_count)
+        normalized_package_size = max(1, min(24, int(package_size or 6)))
         packages: List[Dict[str, Any]] = []
-        start = 0
-        for index in range(package_count):
-            size = base_size + (1 if index < remainder else 0)
-            package_pairs = candidate_pairs[start : start + size]
-            start += size
+        for start in range(0, len(candidate_pairs), normalized_package_size):
+            package_pairs = candidate_pairs[start : start + normalized_package_size]
             accepted_pairs = []
             candidates = []
             for pair in package_pairs:
@@ -305,6 +308,29 @@ class _RequirementGraphRelationReviewCoordinator:
                 }
             )
         return packages
+
+    def build_review_packages(
+        self,
+        builder: Any,
+        *,
+        requirement_features: Dict[str, Dict[str, Any]],
+        candidate_pairs: List[Dict[str, Any]],
+        inference_limit: int,
+        package_size: int = 6,
+    ) -> List[Dict[str, Any]]:
+        pair_budget = max(6, min(80, int(inference_limit or 48)))
+        selected_pairs = [
+            pair
+            for pair in candidate_pairs[:pair_budget]
+            if pair.get("source") in requirement_features and pair.get("target") in requirement_features
+        ]
+        return self._build_packages(
+            builder,
+            requirement_features=requirement_features,
+            candidate_pairs=selected_pairs,
+            review_concurrency=1,
+            package_size=package_size,
+        )
 
     def _review_packages_with_llm(
         self,
@@ -381,6 +407,43 @@ class _RequirementGraphRelationReviewCoordinator:
                 for package in packages
             ]
             return await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def review_packages_as_completed(
+        self,
+        packages: List[Dict[str, Any]],
+        *,
+        model: str,
+        review_concurrency: int,
+    ):
+        if not packages:
+            return
+        if self._supports_tool_review(model):
+            concurrency = max(1, min(int(review_concurrency or 1), len(packages)))
+            semaphore = asyncio.Semaphore(concurrency)
+            connector = aiohttp.TCPConnector(limit=max(6, len(packages) * 2))
+            async with aiohttp.ClientSession(connector=connector) as session:
+                async def _run(package):
+                    try:
+                        result = await self._review_package(
+                            package,
+                            model=model,
+                            session=session,
+                            semaphore=semaphore,
+                        )
+                        return package, result
+                    except Exception as exc:
+                        return package, exc
+
+                tasks = [asyncio.create_task(_run(package)) for package in packages]
+                for task in asyncio.as_completed(tasks):
+                    yield await task
+            return
+
+        for package in packages:
+            try:
+                yield package, self._review_package_with_json(package, model=model)
+            except Exception as exc:
+                yield package, exc
 
     async def _review_package(
         self,
@@ -523,7 +586,7 @@ class _RequirementGraphRelationReviewCoordinator:
             return None
 
         action = str(raw_mutation.get("action") or "").strip().lower()
-        if action not in {"add", "update", "delete"}:
+        if action not in {"add", "update", "delete", "reject"}:
             return None
 
         target_edge = self._normalize_edge(
@@ -599,6 +662,19 @@ class _RequirementGraphRelationReviewCoordinator:
         if action == "add":
             if not replacement_edge:
                 return None
+            existing_edge = builder.edges.get(
+                self.normalize_edge_key(
+                    replacement_edge["source"],
+                    replacement_edge["target"],
+                    replacement_edge["type"],
+                )
+            )
+            if existing_edge and not self._is_protected_edge(existing_edge):
+                builder.remove_edge(
+                    replacement_edge["source"],
+                    replacement_edge["target"],
+                    replacement_edge["type"],
+                )
             builder.add_edge(
                 replacement_edge["source"],
                 replacement_edge["target"],
@@ -612,6 +688,9 @@ class _RequirementGraphRelationReviewCoordinator:
                 ),
             )
             return "add"
+
+        if action == "reject":
+            return "reject"
 
         existing_edge = builder.edges.get(
             self.normalize_edge_key(

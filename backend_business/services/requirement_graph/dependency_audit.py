@@ -113,7 +113,7 @@ class RequirementGraphDependencyAudit:
         requirement_features: Dict[str, Dict[str, Any]],
         candidate_pairs: List[Dict[str, Any]],
         *,
-        dependency_model: str = "deepseek-reasoner",
+        dependency_model: str = "deepseek-v4-pro",
         dependency_review_limit: int = 48,
         include_authoritative_relations: bool = True,
     ) -> Dict[str, Any]:

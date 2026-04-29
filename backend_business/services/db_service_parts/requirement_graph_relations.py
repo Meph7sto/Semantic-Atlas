@@ -7,6 +7,14 @@ from psycopg2.extras import RealDictCursor
 from backend_business.services.db_service_parts.utils import _utc_now_iso
 
 
+_PROTECTED_RELATION_SOURCE_KINDS = {
+    "structural",
+    "trace_analysis",
+    "conflict_analysis",
+    "classification_analysis",
+}
+
+
 class RequirementGraphRelationsMixin:
     def save_requirement_graph_snapshot(
         self,
@@ -15,10 +23,17 @@ class RequirementGraphRelationsMixin:
         session_id: Optional[str],
         relation_mode: str,
         edges: List[Dict[str, Any]],
+        run_id: Optional[str] = None,
+        snapshot_status: str = "final",
+        progress_json: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         normalized_relation_mode = str(relation_mode or "").strip().lower() or "default"
         normalized_project_id = str(project_id or "").strip() or None
         normalized_session_id = str(session_id or "").strip() or None
+        normalized_run_id = str(run_id or "").strip() or None
+        normalized_snapshot_status = str(snapshot_status or "final").strip().lower()
+        if normalized_snapshot_status not in {"running", "final", "failed", "interrupted"}:
+            normalized_snapshot_status = "final"
         if not normalized_project_id and not normalized_session_id:
             raise ValueError("project_id 和 session_id 至少提供一个")
 
@@ -38,34 +53,37 @@ class RequirementGraphRelationsMixin:
 
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    UPDATE requirement_graph_relations
-                    SET is_active = FALSE, invalidated_at = %s
-                    WHERE {where_sql}
-                    """,
-                    (now, *where_params),
-                )
+                if normalized_snapshot_status == "final":
+                    cur.execute(
+                        f"""
+                        UPDATE requirement_graph_relations
+                        SET is_active = FALSE, invalidated_at = %s
+                        WHERE {where_sql} AND snapshot_status = 'final'
+                        """,
+                        (now, *where_params),
+                    )
                 for edge in normalized_edges:
                     cur.execute(
                         """
                         INSERT INTO requirement_graph_relations (
-                            snapshot_id, project_id, session_id, relation_mode,
+                            snapshot_id, run_id, snapshot_status, project_id, session_id, relation_mode,
                             source_node_id, target_node_id, source_req_id, target_req_id,
                             relation_type, source_kind, source_detail, weight, confidence,
                             reason, evidence, model, review_action, review_package_id,
-                            properties, is_active, created_at
+                            properties, is_active, created_at, progress_json
                         )
                         VALUES (
-                            %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s, %s,
                             %s, %s, %s, %s,
                             %s, %s, %s, %s, %s,
                             %s, %s, %s, %s, %s,
-                            %s, TRUE, %s
+                            %s, TRUE, %s, %s
                         )
                         """,
                         (
                             snapshot_id,
+                            normalized_run_id,
+                            normalized_snapshot_status,
                             normalized_project_id,
                             normalized_session_id,
                             normalized_relation_mode,
@@ -85,11 +103,14 @@ class RequirementGraphRelationsMixin:
                             edge["review_package_id"],
                             json.dumps(edge["properties"], ensure_ascii=False),
                             now,
+                            json.dumps(progress_json or {}, ensure_ascii=False),
                         ),
                     )
 
         return {
             "snapshot_id": snapshot_id,
+            "run_id": normalized_run_id,
+            "snapshot_status": normalized_snapshot_status,
             "relation_mode": normalized_relation_mode,
             "edge_count": len(normalized_edges),
         }
@@ -118,11 +139,11 @@ class RequirementGraphRelationsMixin:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     f"""
-                    SELECT snapshot_id, project_id, session_id, relation_mode,
+                    SELECT snapshot_id, run_id, snapshot_status, project_id, session_id, relation_mode,
                            is_active, created_at::text AS created_at,
                            invalidated_at::text AS invalidated_at
                     FROM requirement_graph_relations
-                    WHERE {where_sql}
+                    WHERE {where_sql} AND snapshot_status = 'final'
                     ORDER BY id DESC
                     LIMIT 1
                     """,
@@ -130,8 +151,64 @@ class RequirementGraphRelationsMixin:
                 )
                 row = cur.fetchone()
                 if not row:
+                    cur.execute(
+                        f"""
+                        SELECT snapshot_id, run_id, snapshot_status, project_id, session_id, relation_mode,
+                               is_active, created_at::text AS created_at,
+                               invalidated_at::text AS invalidated_at
+                        FROM requirement_graph_relations
+                        WHERE {where_sql} AND snapshot_status = 'running'
+                        ORDER BY id DESC
+                        LIMIT 1
+                        """,
+                        where_params,
+                    )
+                    row = cur.fetchone()
+                if not row:
                     return None
         return self.get_requirement_graph_snapshot_by_id(row["snapshot_id"])
+
+    def delete_requirement_graph_relations(
+        self,
+        *,
+        project_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        relation_mode: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        normalized_relation_mode = str(relation_mode or "").strip().lower() or None
+        normalized_project_id = str(project_id or "").strip() or None
+        normalized_session_id = str(session_id or "").strip() or None
+        if not normalized_project_id and not normalized_session_id:
+            raise ValueError("project_id 和 session_id 至少提供一个")
+
+        where_sql, where_params = self._build_relation_snapshot_where_clause(
+            project_id=normalized_project_id,
+            session_id=normalized_session_id,
+            relation_mode=normalized_relation_mode,
+            active_only=False,
+        )
+
+        protected_source_kinds = sorted(_PROTECTED_RELATION_SOURCE_KINDS)
+
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    DELETE FROM requirement_graph_relations
+                    WHERE {where_sql}
+                      AND source_kind <> ALL(%s::text[])
+                    """,
+                    (*where_params, protected_source_kinds),
+                )
+                deleted_count = cur.rowcount or 0
+
+        return {
+            "deleted_count": deleted_count,
+            "protected_source_kinds": list(protected_source_kinds),
+            "project_id": normalized_project_id,
+            "session_id": normalized_session_id,
+            "relation_mode": normalized_relation_mode,
+        }
 
     def list_requirement_graph_snapshots(
         self,
@@ -159,7 +236,7 @@ class RequirementGraphRelationsMixin:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     f"""
-                    SELECT snapshot_id, project_id, session_id, relation_mode,
+                    SELECT snapshot_id, run_id, snapshot_status, project_id, session_id, relation_mode,
                            BOOL_OR(is_active) AS is_active,
                            COUNT(*)::int AS edge_count,
                            MAX(created_at)::text AS created_at,
@@ -167,7 +244,7 @@ class RequirementGraphRelationsMixin:
                            MAX(id) AS latest_row_id
                     FROM requirement_graph_relations
                     WHERE {where_sql}
-                    GROUP BY snapshot_id, project_id, session_id, relation_mode
+                    GROUP BY snapshot_id, run_id, snapshot_status, project_id, session_id, relation_mode
                     ORDER BY latest_row_id DESC
                     LIMIT %s
                     """,
@@ -186,14 +263,15 @@ class RequirementGraphRelationsMixin:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     """
-                    SELECT snapshot_id, project_id, session_id, relation_mode,
+                    SELECT snapshot_id, run_id, snapshot_status, project_id, session_id, relation_mode,
                            BOOL_OR(is_active) AS is_active,
                            COUNT(*)::int AS edge_count,
                            MAX(created_at)::text AS created_at,
-                           MAX(invalidated_at)::text AS invalidated_at
+                           MAX(invalidated_at)::text AS invalidated_at,
+                           MAX(progress_json::text) AS progress_json
                     FROM requirement_graph_relations
                     WHERE snapshot_id = %s
-                    GROUP BY snapshot_id, project_id, session_id, relation_mode
+                    GROUP BY snapshot_id, run_id, snapshot_status, project_id, session_id, relation_mode
                     """,
                     (normalized_snapshot_id,),
                 )
@@ -222,6 +300,8 @@ class RequirementGraphRelationsMixin:
     def _serialize_requirement_graph_snapshot_summary(row: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "snapshot_id": row.get("snapshot_id"),
+            "run_id": row.get("run_id"),
+            "snapshot_status": row.get("snapshot_status") or "final",
             "project_id": row.get("project_id"),
             "session_id": row.get("session_id"),
             "relation_mode": row.get("relation_mode"),
@@ -229,6 +309,7 @@ class RequirementGraphRelationsMixin:
             "invalidated_at": row.get("invalidated_at"),
             "is_active": bool(row.get("is_active")),
             "edge_count": int(row.get("edge_count") or 0),
+            "progress_json": row.get("progress_json"),
         }
 
     @staticmethod

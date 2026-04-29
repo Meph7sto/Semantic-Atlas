@@ -7,7 +7,7 @@ from typing import Any
 
 _TEMPLATE_KIND = "session_controller_graph_executor_phase2"
 _TEMPLATE_NAME = "Session Controller GraphExecutor Template"
-_TEMPLATE_VERSION = 2
+_TEMPLATE_VERSION = 3
 
 
 def ensure_session_controller_template(
@@ -87,7 +87,10 @@ def ensure_session_controller_template(
         phase_label="总控决策",
         task_prompt="执行 Session Controller 的结构化决策与工具调度。",
         conditional_edges=[],
-        config_json={"prompt_builder": "session_controller_decision"},
+        config_json={
+            "prompt_builder": "session_controller_decision",
+            "native_invoke_enabled": True,
+        },
         order_index=0,
         created_by=actor,
     )
@@ -128,7 +131,10 @@ def ensure_session_controller_template(
         phase_label="恢复后总控决策",
         task_prompt="基于用户补充继续执行 Session Controller 的结构化决策。",
         conditional_edges=[],
-        config_json={"prompt_builder": "session_controller_decision"},
+        config_json={
+            "prompt_builder": "session_controller_decision",
+            "native_invoke_enabled": True,
+        },
         order_index=3,
         created_by=actor,
     )
@@ -208,6 +214,7 @@ def ensure_session_controller_template(
         conditional_edges=[],
         config_json={
             "prompt_builder": "session_controller_requirement_delegate",
+            "complete_phase_enabled": False,
             "result_contract": "requirement_agent",
         },
         order_index=0,
@@ -225,6 +232,7 @@ def ensure_session_controller_template(
         conditional_edges=[],
         config_json={
             "prompt_builder": "session_controller_conflict_delegate",
+            "complete_phase_enabled": False,
             "result_contract": "conflict_detection",
         },
         order_index=0,
@@ -242,6 +250,7 @@ def ensure_session_controller_template(
         conditional_edges=[],
         config_json={
             "prompt_builder": "session_controller_classification_delegate",
+            "complete_phase_enabled": False,
             "result_contract": "requirement_classification",
         },
         order_index=0,

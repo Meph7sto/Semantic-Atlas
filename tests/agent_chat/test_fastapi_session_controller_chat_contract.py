@@ -126,6 +126,7 @@ def test_stream_message_passes_graph_mode():
         "project_id": "p-1",
         "user_message": "现在需要我做什么？",
         "execution_mode": "graph",
+        "model": "deepseek-v4-pro",
         "use_thinking_mode": False,
         "delegated_max_tool_call_rounds": 9,
     }

@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field
+from core.engine.remote.deepseek import DEFAULT_DEEPSEEK_MODEL
 
 class ConflictCheckRequest(BaseModel):
     """
@@ -6,6 +7,7 @@ class ConflictCheckRequest(BaseModel):
     """
     requirement_a: str = Field(..., description="Description of the first requirement") # 需求 A 的描述
     requirement_b: str = Field(..., description="Description of the second requirement") # 需求 B 的描述
+    model: str = Field(DEFAULT_DEEPSEEK_MODEL, description="DeepSeek model name")
     use_thinking_mode: bool = Field(True, description="Whether to use reasoning model")
 
 class ConflictCheckResponse(BaseModel):

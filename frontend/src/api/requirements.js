@@ -87,7 +87,7 @@ export const conflictApi = {
     },
 
     // 冲突检测（统一走业务后端 FastAPI，不再前端直连 inference）
-    async streamCheck(requirementA, requirementB, useThinking = true) {
+    async streamCheck(requirementA, requirementB, model = 'deepseek-v4-pro', useThinking = true) {
         const response = await fetch('/api/v2/conflict/stream_check', {
             method: 'POST',
             headers: {
@@ -96,6 +96,7 @@ export const conflictApi = {
             body: JSON.stringify({
                 requirement_a: requirementA,
                 requirement_b: requirementB,
+                model,
                 use_thinking_mode: useThinking,
             }),
         })
@@ -288,11 +289,12 @@ export const l4RequirementsApi = {
      * 生成 L4 底层需求
      * 如有缓存直接返回，否则调用推理后端生成
      */
-    async generate(sessionId, requirements, { config = {}, model = null, forceRegenerate = false } = {}) {
+    async generate(sessionId, requirements, { config = {}, model = null, useThinkingMode = true, forceRegenerate = false } = {}) {
         const payload = {
             session_id: sessionId,
             requirements,
             config,
+            use_thinking_mode: useThinkingMode,
             force_regenerate: forceRegenerate,
         }
         if (model) {
@@ -306,11 +308,12 @@ export const l4RequirementsApi = {
         return resp.data
     },
 
-    async generateStream(sessionId, requirements, onEvent, { config = {}, model = null, forceRegenerate = false } = {}) {
+    async generateStream(sessionId, requirements, onEvent, { config = {}, model = null, useThinkingMode = true, forceRegenerate = false } = {}) {
         const payload = {
             session_id: sessionId,
             requirements,
             config,
+            use_thinking_mode: useThinkingMode,
             force_regenerate: forceRegenerate,
         }
         if (model) {
@@ -389,10 +392,11 @@ export const classifyCsv = (file) => {
 
 // Phase 4 (L4) 软件需求生成与校验
 export const l4Api = {
-    async generate(requirements, config = {}, model = null) {
+    async generate(requirements, config = {}, model = null, useThinkingMode = true) {
         const payload = {
             requirements,
             config,
+            use_thinking_mode: useThinkingMode,
         }
         if (model) {
             payload.model = model

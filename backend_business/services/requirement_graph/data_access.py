@@ -115,6 +115,26 @@ class RequirementGraphDataAccess:
                 )
                 return [dict(row) for row in cur.fetchall()]
 
+    def load_l4_requirement_links(
+        self,
+        session_id: Optional[str],
+    ) -> List[Dict[str, Any]]:
+        if not session_id:
+            return []
+        with self._db.get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT req_id, session_id, top_req_id,
+                           created_at::text AS created_at
+                    FROM low_level_requirement_links
+                    WHERE session_id = %s
+                    ORDER BY created_at ASC
+                    """,
+                    (session_id,),
+                )
+                return [dict(row) for row in cur.fetchall()]
+
     def load_project_members(self, project_id: Optional[str]) -> Dict[str, Dict[str, Any]]:
         if not project_id:
             return {}

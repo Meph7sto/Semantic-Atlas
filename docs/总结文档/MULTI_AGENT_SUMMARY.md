@@ -135,9 +135,9 @@ Scratchpad 是当前容器级共享工作记忆：
 
 ## 四、当前多 Agent 协作方式
 
-### 4.1 不是 MessageBus，而是工具内联委托
+### 4.1 不是 MessageBus，而是 graph/native invoke 委托
 
-当前代码里已经没有 `MessageBus + Channel` 运行链路。现行协作方式是：
+当前代码里已经没有 `MessageBus + Channel` 运行链路。`SessionController` 现行协作方式是：
 
 ```text
 SessionController LLM
@@ -146,25 +146,28 @@ invoke_requirement_agent / invoke_conflict_detection /
 invoke_requirement_classification_agent
   ↓
 SessionControllerTools
-  ├── 在 execution graph 中创建 call 边
-  ├── 内联执行被委托 Agent 的 tool loop
-  ├── 记录子容器节点轨迹
-  └── 创建 return 边并恢复父节点游标
+  └── 返回 native_invoke payload
+        ↓
+GraphExecutor / SubgraphRunner
+  ├── 根据 invoke_route_key 运行子 Agent subgraph
+  ├── 在 execution graph 中记录 call / return 轨迹
+  └── 将子 Agent 输出回流到 SessionController 后续阶段
 ```
 
 这意味着：
 
-- “多 Agent” 在当前实现里主要表现为多个专职 Agent service 的内联协作，不是进程间消息总线。
+- “多 Agent” 在当前实现里主要表现为 graph runtime 对多个专职 Agent subgraph 的编排，不是进程间消息总线。
 - 跨容器协作首先体现为 execution graph 里的 `call/return` 边，而不是独立的消息对象。
+- 子 Agent 自身仍可能保留 standalone classic tool-loop 入口，但不再是 `SessionController` 主链路的 fallback。
 
 ### 4.2 Session Controller 的职责
 
 `SessionControllerService + SessionControllerTools` 是当前会话总控入口，负责：
 
 - 浏览型查询：`list_requirements`、`search_requirements`
-- 委托需求管理 Agent
-- 委托冲突检测 Agent
-- 委托需求分类 Agent
+- 规划需求管理 Agent native invoke
+- 规划冲突检测 Agent native invoke
+- 规划需求分类 Agent native invoke
 - 维护跨轮 scratchpad 摘要
 
 ### 4.3 Requirement Agent 与领域状态
@@ -186,9 +189,9 @@ RequirementActor / EventStore
 ### 4.4 冲突检测与分类 Agent
 
 - `ConflictDetectionAgentService` 同时保留：
-  - classic tool-loop 路径
+  - standalone classic tool-loop 路径
   - graph executor 路径
-- `RequirementClassificationAgentService` 当前主要是独立 tool-loop Agent，可被 Session Controller 内联委托。
+- `RequirementClassificationAgentService` 当前仍保留独立 tool-loop 能力；被 Session Controller 调用时走 graph/native invoke。
 
 ### 4.5 旧执行器仍存在
 

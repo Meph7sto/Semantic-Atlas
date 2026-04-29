@@ -43,7 +43,7 @@ from .subgraph_state import (
     SuspendSignal,
     validate_subgraph_transition,
 )
-from .prompt_interface import PromptBuilderProtocol
+from .prompt_interface import PromptBuilderFactory, PromptBuilderProtocol
 from .tool_loop_runner import ToolLoopRunner, ToolLoopResult
 from .topology_instantiator import (
     RuntimeContainer,
@@ -223,6 +223,7 @@ class SubgraphRunner:
         skill_loader: SkillLoader | None = None,
         skill_registry: SkillRegistry | None = None,
         policies: ExperiencePolicyResolver | None = None,
+        prompt_builder_factory: PromptBuilderFactory | None = None,
     ) -> None:
         self._agent_runtime_registry = agent_runtime_registry
         self._experience_orchestrator = experience_orchestrator
@@ -230,6 +231,7 @@ class SubgraphRunner:
         self._skill_loader = skill_loader or SkillLoader()
         self._skill_registry = skill_registry or SkillRegistry(self._experience_retriever.root_path)
         self._policies = policies or ExperiencePolicyResolver()
+        self._prompt_builder_factory = prompt_builder_factory
 
     # -- public API -----------------------------------------------------------
 
@@ -1184,6 +1186,7 @@ class SubgraphRunner:
             sg=sg,
             pad=pad,
             context=context,
+            prompt_builder_factory=self._prompt_builder_factory,
         )
         resolved_graph_service = _resolve_graph_service(
             graph_service=graph_service,
@@ -1757,7 +1760,7 @@ def _build_subgraph_context(
         )
 
         context["routing_hint"] = infer_routing_hint(resolved_user_message)
-    if prompt_builder_kind == "session_controller_decision":
+    if bool(config.get("native_invoke_enabled")):
         context["_native_invoke_enabled"] = True
     return context
 
@@ -1797,45 +1800,19 @@ def _resolve_prompt_builder(
     sg: RuntimeSubgraph,
     pad: Scratchpad,
     context: dict[str, Any],
+    prompt_builder_factory: PromptBuilderFactory | None = None,
 ) -> PromptBuilderProtocol:
     config = sg.config_json or {}
     prompt_builder_kind = str(config.get("prompt_builder") or "").strip()
-    if prompt_builder_kind == "session_controller_decision":
-        from backend_business.services.agent.agents.session_controller.graph_prompt_builders import (
-            SessionControllerDecisionGraphPromptBuilder,
+    if prompt_builder_factory is not None:
+        prompt_builder = prompt_builder_factory(
+            prompt_builder_kind=prompt_builder_kind,
+            subgraph=sg,
+            scratchpad=pad,
+            context=context,
         )
-
-        return SessionControllerDecisionGraphPromptBuilder()
-    if prompt_builder_kind == "session_controller_final_reply":
-        from backend_business.services.agent.agents.session_controller.graph_prompt_builders import (
-            SessionControllerReplyGraphPromptBuilder,
-        )
-
-        return SessionControllerReplyGraphPromptBuilder(reply_kind="final")
-    if prompt_builder_kind == "session_controller_suspend_reply":
-        from backend_business.services.agent.agents.session_controller.graph_prompt_builders import (
-            SessionControllerReplyGraphPromptBuilder,
-        )
-
-        return SessionControllerReplyGraphPromptBuilder(reply_kind="suspend")
-    if prompt_builder_kind == "session_controller_requirement_delegate":
-        from backend_business.services.agent.agents.session_controller.graph_prompt_builders import (
-            SessionControllerRequirementDelegatePromptBuilder,
-        )
-
-        return SessionControllerRequirementDelegatePromptBuilder()
-    if prompt_builder_kind == "session_controller_conflict_delegate":
-        from backend_business.services.agent.agents.session_controller.graph_prompt_builders import (
-            SessionControllerConflictDelegatePromptBuilder,
-        )
-
-        return SessionControllerConflictDelegatePromptBuilder()
-    if prompt_builder_kind == "session_controller_classification_delegate":
-        from backend_business.services.agent.agents.session_controller.graph_prompt_builders import (
-            SessionControllerClassificationDelegatePromptBuilder,
-        )
-
-        return SessionControllerClassificationDelegatePromptBuilder()
+        if prompt_builder is not None:
+            return prompt_builder
     return SubgraphPromptBuilder(
         task_description=sg.task_description,
         scratchpad=pad,
@@ -1844,12 +1821,10 @@ def _resolve_prompt_builder(
 
 
 def _should_enable_complete_phase(sg: RuntimeSubgraph) -> bool:
-    prompt_builder_kind = str((sg.config_json or {}).get("prompt_builder") or "").strip()
-    return prompt_builder_kind not in {
-        "session_controller_requirement_delegate",
-        "session_controller_conflict_delegate",
-        "session_controller_classification_delegate",
-    }
+    config = sg.config_json or {}
+    if "complete_phase_enabled" in config:
+        return bool(config.get("complete_phase_enabled"))
+    return True
 
 
 def _resolve_tool_loop_round_limit(context: dict[str, Any]) -> int:

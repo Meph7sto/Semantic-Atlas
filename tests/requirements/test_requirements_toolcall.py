@@ -523,7 +523,7 @@ class TestChatRouterToolsEndpoint(unittest.TestCase):
                     },
                 }
             ],
-            model="deepseek-chat",
+            model="deepseek-v4-pro",
             temperature=0.3,
             tool_choice="auto",
         )

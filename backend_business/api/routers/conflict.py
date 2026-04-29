@@ -38,6 +38,7 @@ def check_conflict(req: ConflictCheckRequest):
         result = ai_proxy.conflict_check(
             req.requirement_a,
             req.requirement_b,
+            model=req.model,
             use_thinking_mode=req.use_thinking_mode,
         )
         record_id = None
@@ -79,6 +80,7 @@ def stream_check_conflict(req: ConflictCheckRequest):
         stream = ai_proxy.conflict_stream_check(
             req.requirement_a,
             req.requirement_b,
+            model=req.model,
             use_thinking_mode=req.use_thinking_mode,
         )
         return StreamingResponse(stream, media_type="application/x-ndjson")
@@ -100,7 +102,12 @@ def check_conflict_batch(req: ConflictCheckBatchRequest):
         conflicts_to_save = []
 
         for pair in req.pairs:
-            result = ai_proxy.conflict_check(pair.requirement_a, pair.requirement_b)
+            result = ai_proxy.conflict_check(
+                pair.requirement_a,
+                pair.requirement_b,
+                model=req.model,
+                use_thinking_mode=req.use_thinking_mode,
+            )
             results.append(
                 {
                     "requirement_a": pair.requirement_a,

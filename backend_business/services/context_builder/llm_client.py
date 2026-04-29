@@ -20,12 +20,18 @@ class LLMClient:
             "true",
         )
 
-    def _generate_text(self, prompt: str, model_name: Optional[str]) -> str:
+    def _generate_text(
+        self,
+        prompt: str,
+        model_name: Optional[str],
+        thinking_enabled: bool = True,
+    ) -> str:
         return ai_proxy.context_builder_completion(
             prompt=prompt,
             system_prompt=SYSTEM_PROMPT_LINK,
             max_new_tokens=8000,
             model=model_name,
+            thinking_enabled=thinking_enabled,
         )
 
     @staticmethod
@@ -40,6 +46,7 @@ class LLMClient:
         ref_map: Dict[str, str],
         model_name: Optional[str] = None,
         use_streaming: bool = False,
+        thinking_enabled: bool = True,
     ) -> Tuple[List[Dict], List[str]]:
         if self.mock_mode:
             return self._mock_generate(spans, ref_map)
@@ -53,9 +60,10 @@ class LLMClient:
                     system_prompt=SYSTEM_PROMPT_LINK,
                     max_new_tokens=8000,
                     model=model_name,
+                    thinking_enabled=thinking_enabled,
                 )
             else:
-                response = self._generate_text(prompt, model_name)
+                response = self._generate_text(prompt, model_name, thinking_enabled)
             return self._parse_llm_response(response)
         except Exception as exc:
             print(f"[LLMClient] Error calling LLM: {self._format_exception(exc)}")
@@ -67,6 +75,7 @@ class LLMClient:
         ref_map: Dict[str, str],
         model_name: Optional[str] = None,
         use_streaming: bool = False,
+        thinking_enabled: bool = True,
     ) -> Tuple[List[Dict], List[str]]:
         """Async version of generate_links for parallel processing."""
         if self.mock_mode:
@@ -82,6 +91,7 @@ class LLMClient:
                     system_prompt=SYSTEM_PROMPT_LINK,
                     max_new_tokens=8000,
                     model=model_name,
+                    thinking_enabled=thinking_enabled,
                 )
             else:
                 response = await ai_proxy.context_builder_completion_async(
@@ -89,6 +99,7 @@ class LLMClient:
                     system_prompt=SYSTEM_PROMPT_LINK,
                     max_new_tokens=8000,
                     model=model_name,
+                    thinking_enabled=thinking_enabled,
                 )
             return self._parse_llm_response(response)
         except Exception as exc:

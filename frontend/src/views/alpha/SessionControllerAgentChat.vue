@@ -35,6 +35,7 @@ const selectedProjectId = ref('')
 const sessionId = ref('')
 const messages = ref([])
 const inputMessage = ref('')
+const selectedModel = ref('deepseek-v4-pro')
 const useThinkingMode = ref(true)
 const isSending = ref(false)
 const isLoadingProjects = ref(false)
@@ -707,6 +708,7 @@ const sendMessage = async () => {
       sessionId: sessionId.value,
       projectId: selectedProjectId.value,
       message,
+      model: selectedModel.value,
       useThinkingMode: useThinkingMode.value,
       delegatedMaxToolCallRounds: effectiveDelegatedMaxToolCallRounds
     })
@@ -927,6 +929,13 @@ onBeforeUnmount(() => {
               {{ errorMessage }}
             </div>
             <div class="mb-3 flex items-center justify-between">
+              <select
+                v-model="selectedModel"
+                class="border border-stone-300 bg-white px-2 py-1 text-xs text-stone-800 outline-none transition focus:border-stone-500"
+              >
+                <option value="deepseek-v4-pro">V4 Pro</option>
+                <option value="deepseek-v4-flash">V4 Flash</option>
+              </select>
               <label class="inline-flex items-center gap-3 text-xs font-medium text-stone-600">
                 <input
                   v-model="useThinkingMode"
@@ -942,7 +951,7 @@ onBeforeUnmount(() => {
                     :class="useThinkingMode ? 'translate-x-4' : 'translate-x-0'"
                   />
                 </span>
-                <span>{{ useThinkingMode ? 'Reasoner 模式' : 'Chat 模式' }}</span>
+            <span>思考模式</span>
               </label>
               <div class="flex items-center gap-3">
                 <div

@@ -23,6 +23,7 @@ from schemas.l4_schemas import (
     ValidatorStatus,
 )
 from services.kb_service import get_kb_service
+from core.engine.remote.deepseek import DEFAULT_DEEPSEEK_MODEL
 from services.l4_validator_service import get_l4_validator_service
 
 
@@ -205,7 +206,7 @@ class L4GenerationService:
 
     def __init__(self):
         self._kb_service = None
-        self._model_id = "deepseek-reasoner"
+        self._model_id = DEFAULT_DEEPSEEK_MODEL
 
     def _get_kb_service(self):
         """获取 KB Service"""
@@ -218,12 +219,14 @@ class L4GenerationService:
         prompt: str,
         system_prompt: str,
         model_id: Optional[str],
+        use_thinking_mode: bool = True,
     ) -> str:
         return model_engine.generate(
             prompt=prompt,
             system_prompt=system_prompt,
             max_new_tokens=4096,
             model=model_id,
+            thinking_enabled=use_thinking_mode,
         )
 
     def preprocess(self, top_req: TopRequirement) -> Dict[str, Any]:
@@ -276,6 +279,7 @@ class L4GenerationService:
         top_req: TopRequirement,
         config: GenerateConfig,
         model_id: Optional[str] = None,
+        use_thinking_mode: bool = True,
     ) -> GenerateL4Result:
         """为单条顶层需求生成 L4"""
 
@@ -305,6 +309,7 @@ class L4GenerationService:
                 prompt=prompt,
                 system_prompt=SYSTEM_PROMPT,
                 model_id=model_id,
+                use_thinking_mode=use_thinking_mode,
             )
         except Exception as e:
             return GenerateL4Result(
@@ -393,6 +398,7 @@ class L4GenerationService:
         requirements: List[TopRequirement],
         config: Optional[GenerateConfig] = None,
         model_id: Optional[str] = None,
+        use_thinking_mode: bool = True,
     ) -> GenerateL4Response:
         """批量生成 L4"""
 
@@ -413,7 +419,10 @@ class L4GenerationService:
 
         for idx, req in enumerate(requirements):
             result = self.generate_l4_for_single(
-                req, config, model_id=resolved_model_id
+                req,
+                config,
+                model_id=resolved_model_id,
+                use_thinking_mode=use_thinking_mode,
             )
             results[idx] = result
             if not result.l4_requirements and _needs_json_retry(result.open_questions):
@@ -428,7 +437,10 @@ class L4GenerationService:
 
             for idx, req in current_queue:
                 result = self.generate_l4_for_single(
-                    req, config, model_id=resolved_model_id
+                    req,
+                    config,
+                    model_id=resolved_model_id,
+                    use_thinking_mode=use_thinking_mode,
                 )
                 if result.l4_requirements:
                     for l4 in result.l4_requirements:

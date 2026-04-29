@@ -30,8 +30,8 @@ pytestmark = pytest.mark.skipif(
 # 测试配置
 # ========================================
 TEST_DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "your-api-key-here")
-TEST_DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL", "https://api.deepseek.com/v1")
-TEST_MODEL = "deepseek-chat"
+TEST_DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL", "https://api.deepseek.com")
+TEST_MODEL = "deepseek-v4-pro"
 
 # 测试参数
 CONCURRENT_REQUESTS = 5  # 并发请求数

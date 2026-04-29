@@ -7,6 +7,10 @@ from dataclasses import dataclass, asdict
 from typing import Any, Callable, Dict, List, Optional
 from openai import OpenAI
 from core.config import settings
+from core.engine.remote.deepseek import (
+    DEFAULT_DEEPSEEK_MODEL,
+    normalize_deepseek_model,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -126,13 +130,25 @@ def _emit_progress(callback: Optional[Callable[[Dict[str, Any]], None]], payload
     except Exception:
         logger.debug("Progress callback failed", exc_info=True)
 
-def call_openai_json(client: OpenAI, messages: List[dict], model: str, temperature: float) -> dict:
+def call_openai_json(
+    client: OpenAI,
+    messages: List[dict],
+    model: str,
+    temperature: float,
+    thinking_enabled: bool = True,
+) -> dict:
     def _run(with_response_format: bool) -> str:
+        resolved_model = normalize_deepseek_model(model)
         kwargs = {
-            "model": model,
-            "temperature": temperature,
+            "model": resolved_model,
             "messages": messages,
         }
+        if thinking_enabled:
+            kwargs["reasoning_effort"] = "high"
+            kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+        else:
+            kwargs["temperature"] = temperature
+            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
         if with_response_format:
             kwargs["response_format"] = {"type": "json_object"}
         resp = client.chat.completions.create(**kwargs)
@@ -273,7 +289,7 @@ class RequirementsAcquisitionService:
             logger.error(f"Failed to init OpenAI client: {e}")
             self.client = None
 
-        self.model = "deepseek-reasoner" # Or from settings
+        self.model = DEFAULT_DEEPSEEK_MODEL
         self.temperature = 0.2
         self.chunk_size = 3600
         self.overlap = 500
@@ -281,8 +297,9 @@ class RequirementsAcquisitionService:
     def process(
         self,
         raw_text: str,
-        clean_model: str = "deepseek-reasoner",
-        extract_model: str = "deepseek-reasoner",
+        clean_model: str = DEFAULT_DEEPSEEK_MODEL,
+        extract_model: str = DEFAULT_DEEPSEEK_MODEL,
+        use_thinking_mode: bool = True,
         on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> RequirementGroup:
         if not self.client:
@@ -298,12 +315,24 @@ class RequirementsAcquisitionService:
         for idx, chunk in enumerate(chunks, start=1):
             # Clean
             clean_msgs = build_clean_prompt(chunk, previous_summary)
-            clean_res = call_openai_json(self.client, clean_msgs, clean_model, self.temperature)
+            clean_res = call_openai_json(
+                self.client,
+                clean_msgs,
+                clean_model,
+                self.temperature,
+                thinking_enabled=use_thinking_mode,
+            )
             cleaned = clean_res.get("cleaned_text", "")
             
             # Polish
             polish_msgs = build_polish_prompt(cleaned, previous_summary)
-            polish_res = call_openai_json(self.client, polish_msgs, clean_model, self.temperature)
+            polish_res = call_openai_json(
+                self.client,
+                polish_msgs,
+                clean_model,
+                self.temperature,
+                thinking_enabled=use_thinking_mode,
+            )
             polished = polish_res.get("cleaned_text", "")
             summary = polish_res.get("short_summary", "")
             
@@ -323,7 +352,13 @@ class RequirementsAcquisitionService:
 
         for idx, chunk in enumerate(extract_chunks, start=1):
             msgs = build_extract_prompt(chunk, previous_summary)
-            data = call_openai_json(self.client, msgs, extract_model, self.temperature)
+            data = call_openai_json(
+                self.client,
+                msgs,
+                extract_model,
+                self.temperature,
+                thinking_enabled=use_thinking_mode,
+            )
             
             for key, target_dict in [
                 ("business_requirements", merged_business),
@@ -342,7 +377,13 @@ class RequirementsAcquisitionService:
                                     target_dict[k] = parsed
             
             # Context summary for next extraction chunk
-            sum_res = call_openai_json(self.client, build_summary_prompt(chunk), "deepseek-reasoner", self.temperature)
+            sum_res = call_openai_json(
+                self.client,
+                build_summary_prompt(chunk),
+                DEFAULT_DEEPSEEK_MODEL,
+                self.temperature,
+                thinking_enabled=use_thinking_mode,
+            )
             previous_summary = sum_res.get("short_summary", "")
             _emit_progress(on_progress, {"stage": "extract", "current": idx, "total": len(extract_chunks)})
 

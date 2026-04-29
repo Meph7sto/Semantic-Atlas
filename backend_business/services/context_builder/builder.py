@@ -115,6 +115,7 @@ class ContextBuilder:
         llm: LLMClient,
         llm_model: Optional[str],
         use_streaming_llm: bool,
+        use_thinking_mode: bool,
         tau: float,
         top_k: int,
         max_edges_per_window: int,
@@ -122,7 +123,7 @@ class ContextBuilder:
         """异步处理单个窗口"""
         # 调用异步 LLM
         raw_links, noise_refs = await llm.generate_links_async(
-            window_spans, ref_map, llm_model, use_streaming_llm
+            window_spans, ref_map, llm_model, use_streaming_llm, use_thinking_mode
         )
 
         # CPU 密集操作（解析和剪枝）
@@ -144,6 +145,7 @@ class ContextBuilder:
         llm: LLMClient,
         llm_model: Optional[str],
         use_streaming_llm: bool,
+        use_thinking_mode: bool,
         tau: float,
         top_k: int,
         max_edges_per_window: int,
@@ -171,6 +173,7 @@ class ContextBuilder:
                         llm,
                         llm_model,
                         use_streaming_llm,
+                        use_thinking_mode,
                         tau,
                         top_k,
                         max_edges_per_window,
@@ -267,6 +270,7 @@ class ContextBuilder:
         mock_llm = opts.get("mock_llm", False)
         llm_model = _resolve_llm_model(opts)
         use_streaming_llm = opts.get("use_streaming_llm", False)
+        use_thinking_mode = bool(opts.get("use_thinking_mode", True))
 
         spans = self.load_spans(session_id)
         if not spans:
@@ -284,7 +288,11 @@ class ContextBuilder:
                 spans, window_size, step_size
             ):
                 raw_links, noise_refs = llm.generate_links(
-                    window_spans, ref_map, llm_model, use_streaming_llm
+                    window_spans,
+                    ref_map,
+                    llm_model,
+                    use_streaming_llm,
+                    use_thinking_mode,
                 )
                 window_edges = self.parse_window_edges(raw_links, ref_map, window_spans)
                 pruned_edges = self.prune_edges(
@@ -418,6 +426,7 @@ class ContextBuilder:
         mock_llm = opts.get("mock_llm", False)
         llm_model = _resolve_llm_model(opts)
         use_streaming_llm = opts.get("use_streaming_llm", False)
+        use_thinking_mode = bool(opts.get("use_thinking_mode", True))
 
         spans = self.load_spans(session_id)
         if not spans:
@@ -464,6 +473,7 @@ class ContextBuilder:
                         llm,
                         llm_model,
                         use_streaming_llm,
+                        use_thinking_mode,
                         tau,
                         top_k,
                         max_edges_per_window,
@@ -543,7 +553,11 @@ class ContextBuilder:
                     )
 
                     raw_links, noise_refs = llm.generate_links(
-                        window_spans, ref_map, llm_model, use_streaming_llm
+                        window_spans,
+                        ref_map,
+                        llm_model,
+                        use_streaming_llm,
+                        use_thinking_mode,
                     )
 
                     yield SSEEvent(

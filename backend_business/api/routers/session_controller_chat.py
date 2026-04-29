@@ -56,10 +56,11 @@ class SessionControllerMessageRequest(BaseModel):
     project_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
     execution_mode: str = Field(default_factory=_default_execution_mode_value)
+    model: str = Field(default="deepseek-v4-pro", min_length=1)
     use_thinking_mode: bool = True
     delegated_max_tool_call_rounds: int = Field(default=15, ge=1, le=50)
 
-    @field_validator("project_id", "message")
+    @field_validator("project_id", "message", "model")
     @classmethod
     def normalize_required_text(cls, value: str) -> str:
         text = value.strip()
@@ -231,6 +232,7 @@ def stream_message(
                 project_id=payload.project_id,
                 user_message=payload.message,
                 execution_mode=payload.execution_mode,
+                model=payload.model,
                 use_thinking_mode=payload.use_thinking_mode,
                 delegated_max_tool_call_rounds=payload.delegated_max_tool_call_rounds,
             ):
@@ -289,10 +291,11 @@ class MobileMessageRequest(BaseModel):
     project_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
     execution_mode: str = Field(default_factory=_default_execution_mode_value)
+    model: str = Field(default="deepseek-v4-pro", min_length=1)
     use_thinking_mode: bool = True
     delegated_max_tool_call_rounds: int = Field(default=15, ge=1, le=50)
 
-    @field_validator("project_id", "message")
+    @field_validator("project_id", "message", "model")
     @classmethod
     def normalize_required_text(cls, value: str) -> str:
         text = value.strip()
@@ -313,6 +316,7 @@ def _run_agent_in_background(
     project_id: str,
     user_message: str,
     execution_mode: str,
+    model: str,
     use_thinking_mode: bool,
     delegated_max_tool_call_rounds: int,
 ) -> None:
@@ -325,6 +329,7 @@ def _run_agent_in_background(
             project_id=project_id,
             user_message=user_message,
             execution_mode=execution_mode,
+            model=model,
             use_thinking_mode=use_thinking_mode,
             delegated_max_tool_call_rounds=delegated_max_tool_call_rounds,
             skip_user_message_creation=True,
@@ -379,6 +384,7 @@ def send_message_async(
             "project_id": payload.project_id,
             "user_message": payload.message,
             "execution_mode": payload.execution_mode,
+            "model": payload.model,
             "use_thinking_mode": payload.use_thinking_mode,
             "delegated_max_tool_call_rounds": payload.delegated_max_tool_call_rounds,
         },

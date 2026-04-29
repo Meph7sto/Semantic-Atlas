@@ -22,7 +22,8 @@ const form = ref({
   maxR: 2, // 1 or 2
   adaptiveRetryR2: true, // r>=2 时：先 r=1，不足再 r=2
   useToolcall: true,
-  model: 'deepseek-reasoner',
+  model: 'deepseek-v4-pro',
+  useThinkingMode: true,
   maxSpansPerBundle: 12,
   tokenLimit: 1500, // null/0 表示不限制
   topM2Hop: 5,
@@ -62,13 +63,6 @@ const reqData = ref(null)
 const reqStats = ref(null)
 const isLoadingReqs = ref(false)
 const reqError = ref('')
-
-const useReasoningModel = computed({
-  get: () => form.value.model === 'deepseek-reasoner',
-  set: (value) => {
-    form.value.model = value ? 'deepseek-reasoner' : 'deepseek-chat'
-  }
-})
 
 const selectedRun = computed(() => {
   return contextRuns.value.find((run) => run.context_run_id === contextRunId.value) || null
@@ -428,6 +422,7 @@ async function startExtraction() {
       r: Number(form.value.maxR) || 2,
       adaptive_retry_r2: !!form.value.adaptiveRetryR2,
       model: form.value.model,
+      use_thinking_mode: !!form.value.useThinkingMode,
       use_toolcall: !!form.value.useToolcall,
       max_spans_per_bundle: Number(form.value.maxSpansPerBundle) || 12,
       token_limit: Number(form.value.tokenLimit) || 0,
@@ -627,10 +622,17 @@ onMounted(async () => {
               <div>
                 <label class="block text-sm font-medium text-zinc-700">model</label>
                 <div class="mt-2 flex items-center gap-3">
+                  <select
+                    v-model="form.model"
+                    class="rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-black focus:ring-black"
+                  >
+                    <option value="deepseek-v4-pro">DeepSeek V4 Pro</option>
+                    <option value="deepseek-v4-flash">DeepSeek V4 Flash</option>
+                  </select>
                   <label class="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" v-model="useReasoningModel" class="sr-only peer">
+                    <input type="checkbox" v-model="form.useThinkingMode" class="sr-only peer">
                     <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-zinc-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-zinc-900"></div>
-                    <span class="ml-3 text-sm font-medium text-zinc-600">DeepSeek R1 (Reasoning Mode)</span>
+                    <span class="ml-3 text-sm font-medium text-zinc-600">思考模式</span>
                   </label>
                 </div>
                 <label class="mt-2 flex items-center gap-2 text-xs text-zinc-600">

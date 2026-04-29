@@ -211,6 +211,8 @@ class RequirementGraphEnricher:
         for label, node_ids in grouped_nodes.items():
             unique_ids = list(dict.fromkeys(node_ids))[:12]
             for source, target in zip(unique_ids, unique_ids[1:]):
+                if self._both_top_level_requirements(builder, source, target):
+                    continue
                 builder.add_edge(
                     source,
                     target,
@@ -241,6 +243,17 @@ class RequirementGraphEnricher:
             "total": int(latest.get("total") or sum(label_distribution.values()) or matched_count),
             "edge_count": edge_count,
         }
+
+    @staticmethod
+    def _both_top_level_requirements(builder, source: str, target: str) -> bool:
+        top_levels = {"L1", "L2", "L3"}
+        source_node = builder.nodes.get(source) or {}
+        target_node = builder.nodes.get(target) or {}
+        source_props = source_node.get("properties") or {}
+        target_props = target_node.get("properties") or {}
+        source_level = str(source_props.get("source_level") or source_props.get("level") or source_node.get("group") or "").upper()
+        target_level = str(target_props.get("source_level") or target_props.get("level") or target_node.get("group") or "").upper()
+        return source_level in top_levels and target_level in top_levels
 
     def apply_stakeholders(
         self,

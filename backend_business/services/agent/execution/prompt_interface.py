@@ -23,3 +23,16 @@ class PromptBuilderProtocol(Protocol):
     ) -> dict[str, Any]:
         ...
 
+
+class PromptBuilderFactory(Protocol):
+    """Optionally resolve a prompt builder for an agent-specific subgraph."""
+
+    def __call__(
+        self,
+        *,
+        prompt_builder_kind: str,
+        subgraph: Any,
+        scratchpad: Any,
+        context: dict[str, Any],
+    ) -> PromptBuilderProtocol | None:
+        ...
