@@ -1,0 +1,1066 @@
+/*
+  New style theme notes
+  ---------------------
+  This file is the scoped version of the Wise-inspired reference stylesheet.
+  It is active only when App.vue adds `.semantic-style-new` to the beta/guide
+  route shell, so the original Semantic Atlas styles remain unchanged.
+
+  Usage map from preview.html:
+  - Background: use `--white` for the page, `--mint` for soft highlighted
+    panels, and `--light` for dividers or quiet surfaces.
+  - Text: use `--black` for primary text, `--warm-dark` for secondary copy,
+    and `--gray` for muted labels and helper text.
+  - Primary buttons / CTA: use `.btn-green` or `.nav-cta`.
+  - Secondary buttons: use `.btn-subtle`.
+  - Cards: use `.card`; highlighted cards add mint background plus green border,
+    or use `.accent-card`.
+  - Forms: use `.form-label`, `.form-input`, `.form-textarea`; focus state is
+    the green ring, error state is `.form-input--error`.
+  - Layout sections: use `.section`, `.section-label`, `.section-title`, and
+    `.section-divider` for documentation or landing-style areas.
+*/
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;900&display=swap');
+
+/* Theme tokens: scoped so they do not overwrite the original app variables. */
+.semantic-style-new {
+  --white:#ffffff; --black:#0e0f0c; --green:#9fe870; --dark-green:#163300;
+  --mint:#e2f6d5; --gray:#868685; --warm-dark:#454745; --light:#e8ebe6;
+  --danger:#d03238; --warning:#ffd11a;
+  --font:'Inter',Helvetica,Arial,sans-serif;
+  --button-start:#d98cf6;
+  --button-mid:#82dbf7;
+  --button-end:#b9acf3;
+  --button-text:#2f2347;
+  --hero-primary-start:#39a8f4;
+  --hero-primary-mid:#2fb7a8;
+  --hero-primary-end:#58c86d;
+  --hero-primary-text:#083040;
+  --hero-secondary-start:#0f8d1e;
+  --hero-secondary-mid:#2db33f;
+  --hero-secondary-end:#4d9e1f;
+  --hero-secondary-text:#07250d;
+}
+
+/* Scoped reset: applies only inside the new-style shell, not to the whole app. */
+.semantic-style-new * { margin:0; padding:0; box-sizing:border-box; }
+
+.semantic-style-new {
+  scroll-behavior: smooth;
+}
+
+.semantic-style-new {
+  background:var(--white);
+  color:var(--black);
+  font-family:var(--font);
+  font-size:18px;
+  font-weight:400;
+  line-height:1.44;
+  font-feature-settings:"calt" 1;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* Top navigation: white sticky bar, black text, optional green/gradient CTA on the right. */
+.semantic-style-new .nav {
+  position:sticky;
+  top:0;
+  z-index:100;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:14px 24px;
+  background:var(--white);
+  border-bottom:1px solid rgba(14,15,12,0.08);
+}
+
+.semantic-style-new .nav-brand {
+  font-size:18px;
+  font-weight:600;
+  color:var(--black);
+  text-decoration:none;
+}
+
+.semantic-style-new .nav-links {
+  display:flex;
+  gap:20px;
+  list-style:none;
+}
+
+.semantic-style-new .nav-links a {
+  font-size:16px;
+  font-weight:600;
+  color:var(--black);
+  text-decoration:none;
+  transition:opacity 0.15s;
+}
+
+.semantic-style-new .nav-links a:hover { opacity:0.7; }
+
+.semantic-style-new .nav-cta {
+  display:inline-block;
+  background:linear-gradient(135deg, var(--button-start) 0%, var(--button-mid) 52%, var(--button-end) 100%);
+  color:var(--button-text);
+  padding:8px 20px;
+  border-radius:9999px;
+  font-size:16px;
+  font-weight:600;
+  text-decoration:none;
+  transition:transform 0.2s;
+  border: none;
+  cursor: pointer;
+  box-shadow:0 10px 24px rgba(157, 142, 244, 0.22);
+}
+
+.semantic-style-new .nav-cta:hover { transform:scale(1.05); }
+
+/* Hero area: large marketing/display treatment from preview.html. Use for entry/landing blocks. */
+.semantic-style-new .hero {
+  padding:80px 24px 64px;
+  text-align:center;
+  max-width:900px;
+  margin:0 auto;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+}
+
+.semantic-style-new .hero h1 {
+  font-size:80px;
+  font-weight:900;
+  line-height:0.95;
+  margin-bottom:24px;
+  text-align:center;
+}
+
+.semantic-style-new .hero h1 span {
+  display: block;
+  color:var(--dark-green);
+  margin-top: 28px;
+}
+
+.semantic-style-new .hero-intro {
+  max-width: 760px;
+  margin: 12px auto 0;
+  text-align: center;
+  font-size: 20px;
+  line-height: 1.7;
+  color: var(--warm-dark);
+}
+
+.semantic-style-new .hero p {
+  font-size:18px;
+  font-weight:400;
+  color:var(--warm-dark);
+  max-width:500px;
+  margin-bottom:32px;
+  letter-spacing:0.18px;
+}
+
+.semantic-style-new .hero-buttons {
+  display:flex;
+  gap:34px;
+  flex-wrap:wrap;
+  justify-content:center;
+  margin-top:58px;
+}
+
+.semantic-style-new .hero-buttons .btn-green,
+.semantic-style-new .hero-buttons .btn-subtle {
+  padding:18px 42px;
+  font-size:22px;
+}
+
+.semantic-style-new .hero-buttons .hero-primary-btn {
+  background:
+    radial-gradient(circle at 18% 24%, rgba(166, 255, 129, 0.42), transparent 26%),
+    radial-gradient(circle at 72% 32%, rgba(54, 182, 255, 0.44), transparent 32%),
+    radial-gradient(circle at 44% 76%, rgba(73, 214, 117, 0.34), transparent 28%),
+    linear-gradient(115deg, rgba(255,255,255,0.18) 18%, rgba(255,255,255,0.02) 36%, rgba(255,255,255,0.16) 54%, rgba(255,255,255,0.02) 72%),
+    linear-gradient(135deg, var(--hero-primary-start) 0%, var(--hero-primary-mid) 48%, var(--hero-primary-end) 100%);
+  color: var(--hero-primary-text);
+  box-shadow: 0 14px 28px rgba(44, 167, 156, 0.26);
+  background-size: 165% 165%, 180% 180%, 170% 170%, 240% 240%, 200% 200%;
+  animation: hero-primary-flow 7s ease-in-out infinite;
+}
+
+.semantic-style-new .hero-buttons .hero-secondary-btn {
+  background:
+    radial-gradient(circle at 24% 22%, rgba(37, 144, 255, 0.3), transparent 24%),
+    radial-gradient(circle at 72% 34%, rgba(116, 242, 84, 0.34), transparent 30%),
+    radial-gradient(circle at 46% 78%, rgba(18, 86, 201, 0.24), transparent 26%),
+    linear-gradient(115deg, rgba(255,255,255,0.14) 18%, rgba(255,255,255,0.02) 38%, rgba(255,255,255,0.12) 58%, rgba(255,255,255,0.02) 76%),
+    linear-gradient(135deg, var(--hero-secondary-start) 0%, var(--hero-secondary-mid) 52%, var(--hero-secondary-end) 100%);
+  color: var(--hero-secondary-text);
+  box-shadow: 0 14px 28px rgba(40, 132, 44, 0.24);
+  background-size: 160% 160%, 170% 170%, 165% 165%, 230% 230%, 200% 200%;
+  animation: hero-secondary-flow 7.6s ease-in-out infinite;
+}
+
+/* Animated hero button backgrounds: decorative motion for the two large hero CTAs. */
+@keyframes hero-primary-flow {
+  0% {
+    background-position: 12% 18%, 78% 28%, 40% 74%, 0% 46%, 0% 50%;
+  }
+  50% {
+    background-position: 26% 34%, 62% 42%, 54% 62%, 88% 58%, 100% 50%;
+  }
+  100% {
+    background-position: 12% 18%, 78% 28%, 40% 74%, 0% 46%, 0% 50%;
+  }
+}
+
+@keyframes hero-secondary-flow {
+  0% {
+    background-position: 22% 20%, 74% 30%, 46% 76%, 0% 48%, 0% 50%;
+  }
+  50% {
+    background-position: 34% 36%, 60% 40%, 56% 58%, 92% 56%, 100% 50%;
+  }
+  100% {
+    background-position: 22% 20%, 74% 30%, 46% 76%, 0% 48%, 0% 50%;
+  }
+}
+
+.semantic-style-new .home-screen {
+  min-height: calc(100vh - 73px);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Home/guide footer: quiet secondary content at the bottom of a landing-style page. */
+.semantic-style-new .home-footer {
+  margin-top: auto;
+  padding: 40px 24px 20px;
+  text-align: center;
+  color: var(--warm-dark);
+}
+
+.semantic-style-new .home-footer p {
+  margin-bottom: 8px;
+  font-size: 15px;
+}
+
+.semantic-style-new .home-footer strong {
+  color: var(--black);
+}
+
+.semantic-style-new .home-footer-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--black);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(14,15,12,0.2);
+  padding-bottom: 2px;
+}
+
+.semantic-style-new .home-footer-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.semantic-style-new .home-footer-link:hover {
+  opacity: 0.72;
+}
+
+/* Guide/documentation card helpers: small reference panels and endpoint lists. */
+.semantic-style-new .guide-card {
+  margin-top: 24px;
+}
+
+.semantic-style-new .guide-card h3 {
+  margin-bottom: 12px;
+}
+
+.semantic-style-new .guide-card code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+  background: rgba(14,15,12,0.05);
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+
+.semantic-style-new .endpoint-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.semantic-style-new .endpoint-item {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid rgba(14,15,12,0.12);
+  border-radius: 18px;
+  background: #fafbf8;
+}
+
+.semantic-style-new .endpoint-item strong {
+  font-size: 15px;
+}
+
+.semantic-style-new .guide-note {
+  margin-top: 18px;
+  display: grid;
+  gap: 10px;
+}
+
+.semantic-style-new .guide-note p {
+  margin: 0;
+}
+
+/* Primary button: use for the main action. Preview calls this "Primary Green". */
+.semantic-style-new .btn-green {
+  display:inline-block;
+  background:linear-gradient(135deg, var(--button-start) 0%, var(--button-mid) 52%, var(--button-end) 100%);
+  color:var(--button-text);
+  padding:12px 28px;
+  border-radius:9999px;
+  font-family:var(--font);
+  font-size:18px;
+  font-weight:600;
+  text-decoration:none;
+  border:none;
+  cursor:pointer;
+  transition:transform 0.2s;
+  box-shadow:0 12px 28px rgba(157, 142, 244, 0.24);
+}
+
+.semantic-style-new .btn-green:hover { transform:scale(1.05); }
+.semantic-style-new .btn-green:active { transform:scale(0.95); }
+
+/* Secondary button: use for lower-priority actions such as Learn More, Cancel, Back. */
+.semantic-style-new .btn-subtle {
+  display:inline-block;
+  background:rgba(22,51,0,0.08);
+  color:var(--black);
+  padding:12px 28px;
+  border-radius:9999px;
+  font-family:var(--font);
+  font-size:18px;
+  font-weight:600;
+  text-decoration:none;
+  border:none;
+  cursor:pointer;
+  transition:transform 0.2s;
+}
+
+.semantic-style-new .btn-subtle:hover { transform:scale(1.05); }
+
+/* Section blocks: documentation/landing layout with numbered labels and bold titles. */
+.semantic-style-new .section {
+  padding:64px 24px;
+  max-width:1100px;
+  margin:0 auto;
+}
+
+.semantic-style-new .section-label {
+  font-size:12px;
+  font-weight:600;
+  color:var(--gray);
+  text-transform:uppercase;
+  letter-spacing:0.5px;
+  margin-bottom:8px;
+}
+
+.semantic-style-new .section-title {
+  font-size:40px;
+  font-weight:900;
+  line-height:0.85;
+  margin-bottom:32px;
+}
+
+.semantic-style-new .section-divider {
+  border:none;
+  border-top:1px solid rgba(14,15,12,0.08);
+  margin:0;
+}
+
+/* Color palette demo blocks: used by the preview/design-system reference page. */
+.semantic-style-new .color-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(145px,1fr));
+  gap:10px;
+  margin-bottom:20px;
+}
+
+.semantic-style-new .color-swatch {
+  border-radius:16px;
+  overflow:hidden;
+  border:1px solid rgba(14,15,12,0.12);
+}
+
+.semantic-style-new .color-swatch-block {
+  height:64px;
+  width:100%;
+}
+
+.semantic-style-new .color-swatch-info { padding:10px; }
+
+.semantic-style-new .color-swatch-name {
+  font-size:13px;
+  font-weight:600;
+  margin-bottom:2px;
+}
+
+.semantic-style-new .color-swatch-hex {
+  font-size:10px;
+  color:var(--gray);
+  font-family:monospace;
+}
+
+.semantic-style-new .color-swatch-role {
+  font-size:9px;
+  color:var(--gray);
+  margin-top:2px;
+}
+
+.semantic-style-new .color-group-label {
+  font-size:12px;
+  font-weight:600;
+  color:var(--warm-dark);
+  margin:20px 0 8px;
+}
+
+/* Typography samples: use these only for style reference pages, not dense app screens. */
+.semantic-style-new .type-sample {
+  margin-bottom:24px;
+  padding-bottom:20px;
+  border-bottom:1px solid var(--light);
+}
+
+.semantic-style-new .type-sample:last-child { border-bottom:none; }
+
+.semantic-style-new .type-meta {
+  font-size:10px;
+  color:var(--gray);
+  margin-top:4px;
+  font-family:monospace;
+}
+
+/* Button showcase helpers: wraps primary and secondary button examples. */
+.semantic-style-new .button-row {
+  display:flex;
+  gap:12px;
+  flex-wrap:wrap;
+  align-items:center;
+}
+
+.semantic-style-new .button-item { text-align:center; }
+
+.semantic-style-new .button-label {
+  font-size:10px;
+  color:var(--gray);
+  margin-top:6px;
+}
+
+/* Card system: white surface, thin border, large rounded corners. */
+.semantic-style-new .card-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fit, minmax(300px,1fr));
+  gap:16px;
+}
+
+.semantic-style-new .card {
+  background:var(--white);
+  border:1px solid rgba(14,15,12,0.12);
+  border-radius:30px;
+  padding:24px;
+}
+
+.semantic-style-new .card h3 {
+  font-size:22px;
+  font-weight:600;
+  margin-bottom:8px;
+  letter-spacing:-0.396px;
+}
+
+.semantic-style-new .card p {
+  font-size:16px;
+  color:var(--warm-dark);
+  letter-spacing:0.08px;
+}
+
+/* Form system: labels, inputs, focus ring, error state, and textarea. */
+.semantic-style-new .form-group {
+  margin-bottom:16px;
+  max-width:400px;
+}
+
+.semantic-style-new .form-label {
+  display:block;
+  font-size:14px;
+  font-weight:600;
+  margin-bottom:4px;
+}
+
+.semantic-style-new .form-input {
+  width:100%;
+  background:var(--white);
+  color:var(--black);
+  border:1px solid rgba(14,15,12,0.12);
+  padding:12px 16px;
+  border-radius:10px;
+  font-family:var(--font);
+  font-size:16px;
+  outline:none;
+}
+
+.semantic-style-new .form-input:focus {
+  box-shadow:rgba(14,15,12,0.12) 0px 0px 0px 1px, 0 0 0 2px var(--green);
+}
+
+.semantic-style-new .form-input--focus {
+  box-shadow:rgba(14,15,12,0.12) 0px 0px 0px 1px, 0 0 0 2px var(--green);
+}
+
+.semantic-style-new .form-input--error {
+  border-color:var(--danger);
+  box-shadow:0 0 0 2px var(--danger);
+}
+
+.semantic-style-new .form-textarea {
+  width:100%;
+  min-height:80px;
+  background:var(--white);
+  color:var(--black);
+  border:1px solid rgba(14,15,12,0.12);
+  padding:12px 16px;
+  border-radius:10px;
+  font-family:var(--font);
+  font-size:16px;
+  resize:vertical;
+  outline:none;
+}
+
+.semantic-style-new .form-state-label {
+  font-size:9px;
+  color:var(--gray);
+  margin-top:4px;
+}
+
+/* Spacing reference: visualizes spacing tokens from the preview page. */
+.semantic-style-new .spacing-row {
+  display:flex;
+  align-items:flex-end;
+  gap:8px;
+  flex-wrap:wrap;
+  margin-bottom:16px;
+}
+
+.semantic-style-new .spacing-item { text-align:center; }
+
+.semantic-style-new .spacing-block {
+  background:var(--green);
+  border-radius:4px;
+  margin-bottom:4px;
+  height:24px;
+}
+
+.semantic-style-new .spacing-value {
+  font-size:9px;
+  color:var(--gray);
+  font-family:monospace;
+}
+
+/* Radius reference: 10px inputs, 16px swatches, 30px cards, 9999px pills. */
+.semantic-style-new .radius-row {
+  display:flex;
+  gap:12px;
+  flex-wrap:wrap;
+  align-items:center;
+}
+
+.semantic-style-new .radius-item { text-align:center; }
+
+.semantic-style-new .radius-box {
+  width:52px;
+  height:52px;
+  background:var(--mint);
+  border:1px solid var(--green);
+  margin-bottom:4px;
+}
+
+.semantic-style-new .radius-label {
+  font-size:9px;
+  color:var(--gray);
+  font-family:monospace;
+}
+
+/* Elevation reference: bordered cards with minimal shadow, matching the Wise-style restraint. */
+.semantic-style-new .elevation-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fit, minmax(200px,1fr));
+  gap:12px;
+}
+
+.semantic-style-new .elevation-card {
+  background:var(--white);
+  border:1px solid rgba(14,15,12,0.12);
+  border-radius:30px;
+  padding:16px;
+  text-align:center;
+}
+
+.semantic-style-new .elevation-label {
+  font-size:13px;
+  font-weight:600;
+  margin-bottom:4px;
+}
+
+.semantic-style-new .elevation-desc {
+  font-size:9px;
+  color:var(--gray);
+  font-family:monospace;
+}
+
+.semantic-style-new .footer {
+  padding:32px;
+  text-align:center;
+  background:var(--black);
+  color:var(--gray);
+  font-size:13px;
+}
+
+.semantic-style-new .footer a {
+  color:var(--green);
+  text-decoration:underline;
+}
+
+/* Mobile reference behavior from preview.html. */
+@media (max-width:576px) {
+  .semantic-style-new .hero h1 { font-size:48px; }
+  .semantic-style-new .nav-links { display:none; }
+  .semantic-style-new .section { padding:48px 16px; }
+  .semantic-style-new .card-grid { grid-template-columns:1fr; }
+}
+
+/* getdesign.md nav additions */
+/* Preview-header extras: brand link, GitHub pill, and centered nav layout. */
+.semantic-style-new .nav-left { display: flex; align-items: center; gap: 20px; }
+.semantic-style-new .nav-brand-link,
+.semantic-style-new .nav-brand-link:link,
+.semantic-style-new .nav-brand-link:visited,
+.semantic-style-new .nav-brand-link:hover,
+.semantic-style-new .nav-brand-link:active { text-decoration: none; color: inherit; }
+
+.semantic-style-new .nav-brand-button {
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.semantic-style-new .nav-github,
+.semantic-style-new .nav-github:link,
+.semantic-style-new .nav-github:visited,
+.semantic-style-new .nav-github:hover,
+.semantic-style-new .nav-github:active {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: inherit;
+  text-decoration: none;
+  padding: 5px 10px;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 6px;
+  opacity: 0.75;
+  transition: opacity 200ms ease, border-color 200ms ease;
+  font-family: inherit;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.semantic-style-new .nav-github:hover { opacity: 1; border-color: rgba(128, 128, 128, 0.55); }
+.semantic-style-new .nav-github svg { display: block; flex-shrink: 0; }
+
+/* getdesign.md nav centering */
+.semantic-style-new .nav { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; }
+.semantic-style-new .nav > .nav-left { justify-self: start; }
+.semantic-style-new .nav > .nav-links { justify-self: center; }
+.semantic-style-new .nav > :last-child { justify-self: end; }
+
+.semantic-style-new .nav-tab {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--black);
+  cursor: pointer;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.semantic-style-new .nav-tab:hover {
+  opacity: 0.7;
+}
+
+.semantic-style-new .nav-tab.active {
+  color: var(--dark-green);
+}
+
+/* App-specific extensions below this line */
+/*
+  App adaptation notes:
+  - `.ref-app` keeps the existing page shell white under the new theme.
+  - `.eyebrow` / `.panel-kicker` are compact uppercase labels.
+  - `.accent-card` is the mint highlighted card variant from the preview.
+  - `.mode-btn` is a segmented-control button; active uses the primary gradient.
+  - `.toggle-label` is for switch rows; `.toggle-chip` shows the on/off value.
+  - `.status-box` uses mint for success/normal state and danger red for errors.
+*/
+
+.semantic-style-new,
+.semantic-style-new .ref-app {
+  min-height: 100vh;
+}
+
+.semantic-style-new .ref-app {
+  background: var(--white);
+}
+
+.semantic-style-new .summary-grid {
+  margin-bottom: 18px;
+}
+
+.semantic-style-new .summary-card h3,
+.semantic-style-new .info-card h3 {
+  margin: 0 0 8px;
+}
+
+.semantic-style-new .eyebrow,
+.semantic-style-new .panel-kicker {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gray);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.semantic-style-new .stage-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.semantic-style-new .settings-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.semantic-style-new .settings-side {
+  display: grid;
+  gap: 16px;
+}
+
+/* Highlighted card: use for emphasized panels or recommended choices. */
+.semantic-style-new .accent-card {
+  background: var(--mint);
+  border-color: var(--green);
+}
+
+.semantic-style-new .feature-list {
+  margin: 14px 0 0;
+  padding-left: 18px;
+  color: var(--warm-dark);
+  font-size: 15px;
+}
+
+.semantic-style-new .feature-list li + li {
+  margin-top: 8px;
+}
+
+.semantic-style-new .control-panel,
+.semantic-style-new .chat-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.semantic-style-new .panel-title {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  margin: 0;
+}
+
+.semantic-style-new .panel-copy {
+  margin-top: 8px;
+  font-size: 15px;
+  color: var(--warm-dark);
+}
+
+/* Segmented mode selector: neutral pill buttons, gradient for the active option. */
+.semantic-style-new .mode-switch {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.semantic-style-new .mode-btn {
+  padding: 12px 14px;
+  border-radius: 9999px;
+  border: 1px solid rgba(14,15,12,0.12);
+  background: rgba(22,51,0,0.08);
+  color: var(--black);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: transform 0.2s;
+}
+
+.semantic-style-new .mode-btn:hover {
+  transform: scale(1.03);
+}
+
+.semantic-style-new .mode-btn.active {
+  background: linear-gradient(135deg, var(--button-start) 0%, var(--button-mid) 52%, var(--button-end) 100%);
+  color: var(--button-text);
+  border-color: rgba(137,126,232,0.35);
+}
+
+.semantic-style-new .form-input-static {
+  background: #f6f8f3;
+  color: var(--warm-dark);
+}
+
+/* Toggle row: full-width clickable setting row with a small status chip. */
+.semantic-style-new .toggle-row {
+  padding-top: 4px;
+}
+
+.semantic-style-new .toggle-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid rgba(14,15,12,0.12);
+  border-radius: 16px;
+  background: #fbfcfa;
+  cursor: pointer;
+}
+
+.semantic-style-new .toggle-label input {
+  display: none;
+}
+
+.semantic-style-new .toggle-text {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.semantic-style-new .toggle-chip {
+  min-width: 50px;
+  text-align: center;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  background: rgba(22,51,0,0.08);
+  color: var(--dark-green);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.semantic-style-new .action-row {
+  display: flex;
+}
+
+.semantic-style-new .danger-soft {
+  color: var(--danger);
+  background: rgba(208,50,56,0.08);
+}
+
+/* Status chip/box: mint means normal/success; `.error` switches to danger red. */
+.semantic-style-new .status-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  background: var(--mint);
+  color: var(--dark-green);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.semantic-style-new .status-box.error {
+  background: rgba(208,50,56,0.1);
+  color: var(--danger);
+}
+
+.semantic-style-new .status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.semantic-style-new .chat-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 24px 24px 0;
+}
+
+.semantic-style-new .message-count {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 9999px;
+  background: rgba(22,51,0,0.08);
+  color: var(--dark-green);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.semantic-style-new .message-log {
+  min-height: 420px;
+  max-height: 620px;
+  overflow-y: auto;
+  padding: 20px 24px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.semantic-style-new .empty-state-chat {
+  display: grid;
+  place-items: center;
+  min-height: 300px;
+  text-align: center;
+  color: var(--warm-dark);
+}
+
+.semantic-style-new .empty-title {
+  margin: 0 0 6px;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--black);
+}
+
+.semantic-style-new .empty-hint {
+  margin: 0;
+  max-width: 320px;
+}
+
+.semantic-style-new .message-bubble {
+  max-width: min(720px, 100%);
+  padding: 18px 20px;
+  border-radius: 24px;
+  border: 1px solid rgba(14,15,12,0.12);
+}
+
+.semantic-style-new .bubble-user {
+  align-self: flex-end;
+  background: var(--green);
+  color: var(--dark-green);
+  border-color: rgba(22,51,0,0.2);
+}
+
+.semantic-style-new .bubble-assistant {
+  align-self: flex-start;
+  background: var(--white);
+}
+
+.semantic-style-new .bubble-system {
+  align-self: center;
+  background: #f5f7f2;
+}
+
+.semantic-style-new .bubble-header {
+  margin-bottom: 6px;
+}
+
+.semantic-style-new .role-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gray);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.semantic-style-new .bubble-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.semantic-style-new .composer {
+  padding: 16px 24px 24px;
+  border-top: 1px solid rgba(14,15,12,0.08);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+}
+
+.semantic-style-new .composer-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.semantic-style-new .textarea-wrapper textarea {
+  width: 100%;
+  min-height: 112px;
+  background: var(--white);
+  color: var(--black);
+  border: 1px solid rgba(14,15,12,0.12);
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-family: var(--font);
+  font-size: 16px;
+  resize: vertical;
+  outline: none;
+}
+
+.semantic-style-new .textarea-wrapper textarea:focus {
+  box-shadow: rgba(14,15,12,0.12) 0px 0px 0px 1px, 0 0 0 2px var(--green);
+}
+
+.semantic-style-new .composer-btn {
+  min-width: 132px;
+  min-height: 48px;
+}
+
+.semantic-style-new .composer-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.semantic-style-new .spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(22,51,0,0.3);
+  border-top-color: var(--dark-green);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 900px) {
+  .semantic-style-new .settings-layout,
+.semantic-style-new .composer {
+    grid-template-columns: 1fr;
+  }
+
+  .semantic-style-new .mode-switch {
+    grid-template-columns: 1fr;
+  }
+}

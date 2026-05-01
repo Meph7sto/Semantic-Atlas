@@ -4,6 +4,7 @@ import App from './App.vue'
 import router from './router'
 import './style.css'
 import './assets/ref-styles.css'
+import './assets/theme-new.css'
 import { hasPermission, hasRole } from './directives/permission.js'
 
 const app = createApp(App)
