@@ -1,11 +1,11 @@
 <template>
-  <div class="card">
+  <div class="card sa-card">
     <div class="card-header no-border">
       <div>
         <p class="card-kicker">Projects</p>
         <h2 class="section-title">关联项目</h2>
       </div>
-      <button type="button" class="action-btn brown small" @click="$emit('create')">
+      <button type="button" class="action-btn brown small sa-button sa-button--primary" @click="$emit('create')">
         新建项目
       </button>
     </div>
@@ -14,7 +14,7 @@
 
     <div v-else-if="projects.length === 0" class="empty-state">
       <p>暂无关联项目</p>
-      <button type="button" class="action-btn brown" @click="$emit('create')">
+      <button type="button" class="action-btn brown sa-button sa-button--primary" @click="$emit('create')">
         创建第一个项目
       </button>
     </div>
@@ -38,9 +38,9 @@
         </span>
         <span>{{ formatDate(project.created_at) }}</span>
         <span class="row-actions">
-          <button type="button" class="ghost-small" @click="$emit('goto', project)">查看</button>
-          <button type="button" class="ghost-small" @click="$emit('edit', project)">编辑</button>
-          <button type="button" class="ghost-small danger" @click="$emit('delete', project)">归档</button>
+          <button type="button" class="ghost-small sa-button sa-button--secondary" @click="$emit('goto', project)">查看</button>
+          <button type="button" class="ghost-small sa-button sa-button--secondary" @click="$emit('edit', project)">编辑</button>
+          <button type="button" class="ghost-small danger sa-button sa-button--secondary" @click="$emit('delete', project)">归档</button>
         </span>
       </div>
     </div>

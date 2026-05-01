@@ -19,27 +19,27 @@
             <span class="jama-pill">Jama 思路：先 Project，再 Explorer Tree</span>
           </div>
           <div class="page-actions">
-            <button type="button" class="action-btn brown">新建条目</button>
-            <button type="button" class="action-btn white">导入</button>
-            <button type="button" class="action-btn white">发起评审</button>
-            <button type="button" class="action-btn white">创建基线</button>
+            <button type="button" class="action-btn brown sa-button sa-button--primary">新建条目</button>
+            <button type="button" class="action-btn white sa-button sa-button--secondary">导入</button>
+            <button type="button" class="action-btn white sa-button sa-button--secondary">发起评审</button>
+            <button type="button" class="action-btn white sa-button sa-button--secondary">创建基线</button>
             <span class="nav-text">通知 · 3</span>
           </div>
         </section>
 
         <section class="grid split-layout" data-animate style="--delay: 0.12s">
           <!-- Left Column: Explorer Tree -->
-          <div class="card">
+          <div class="card sa-card">
             <div class="card-header no-border">
               <div>
                 <p class="card-kicker">Project Content</p>
                 <h2 class="section-title">Explorer Tree (项目结构)</h2>
               </div>
-              <button type="button" class="ghost-small square">+ 文件夹</button>
+              <button type="button" class="ghost-small square sa-button sa-button--secondary">+ 文件夹</button>
             </div>
 
             <div class="form-group">
-              <input type="text" placeholder="搜索文件夹/条目（原型）" class="search-input full-width" />
+              <input type="text" placeholder="搜索文件夹/条目（原型）" class="search-input full-width sa-input" />
             </div>
 
             <div class="tree-list">
@@ -91,26 +91,26 @@
           </div>
 
           <!-- Right Column: Items List -->
-          <div class="card">
+          <div class="card sa-card">
             <div class="card-header no-border">
               <div>
                 <p class="card-kicker">Items</p>
                 <h2 class="section-title">条目列表（按类型筛选）</h2>
               </div>
-              <button type="button" class="ghost-small square">批量操作</button>
+              <button type="button" class="ghost-small square sa-button sa-button--secondary">批量操作</button>
             </div>
 
             <div class="filter-bar">
-              <select class="select-clean">
+              <select class="select-clean sa-input">
                 <option>全部类型 (All Item Types)</option>
               </select>
-              <select class="select-clean">
+              <select class="select-clean sa-input">
                 <option>全部状态</option>
               </select>
             </div>
 
             <div class="search-legend-bar">
-              <input type="text" placeholder="搜索标题 / ID / 关键词（原型）" class="search-input flex-grow" />
+              <input type="text" placeholder="搜索标题 / ID / 关键词（原型）" class="search-input flex-grow sa-input" />
               <div class="legend-group">
                 <span class="legend-item"><span class="dot approved"></span>已批准</span>
                 <span class="legend-item"><span class="dot review"></span>待评审</span>

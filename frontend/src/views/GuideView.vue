@@ -1,6 +1,6 @@
 <template>
-  <div class="ref-app">
-    <div class="guide-layout">
+  <div class="ref-app sa-page">
+    <div class="guide-layout sa-page-surface">
       <!-- 主内容区 -->
       <main class="guide-canvas">
         <section class="hero-overview" data-animate style="--delay: 0.05s">
@@ -22,7 +22,10 @@
 
           <!-- 入口卡片 -->
           <div class="entry-cards">
-            <div class="entry-card main-card" @click="navigateTo('/beta/login')">
+            <div
+              class="entry-card main-card sa-card sa-card--interactive"
+              @click="navigateTo('/beta/login')"
+            >
               <div class="card-header">
                 <div class="card-icon main-icon">
                   <Home class="icon-svg" />
@@ -52,14 +55,17 @@
                 </ul>
               </div>
               <div class="card-footer">
-                <button type="button" class="primary card-btn">
+                <button type="button" class="primary card-btn sa-button sa-button--primary">
                   进入正式版
                   <ArrowRight class="btn-icon" />
                 </button>
               </div>
             </div>
 
-            <div class="entry-card alpha-card" @click="navigateTo('/alpha/conflict')">
+            <div
+              class="entry-card alpha-card sa-card sa-card--interactive sa-card--accent"
+              @click="navigateTo('/alpha/conflict')"
+            >
               <div class="card-header">
                 <div class="card-icon alpha-icon">
                   <Beaker class="icon-svg" />
@@ -89,7 +95,7 @@
                 </ul>
               </div>
               <div class="card-footer">
-                <button type="button" class="primary card-btn alpha-btn">
+                <button type="button" class="primary card-btn alpha-btn sa-button sa-button--primary">
                   进入测试版
                   <ArrowRight class="btn-icon" />
                 </button>

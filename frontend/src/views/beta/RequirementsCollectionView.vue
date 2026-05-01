@@ -22,7 +22,7 @@
           <div class="page-actions">
             <button
               type="button"
-              class="action-btn secondary"
+              class="action-btn secondary sa-button sa-button--secondary"
               @click="router.push({ name: 'beta-requirements-session' })"
             >
               查看会话需求

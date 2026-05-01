@@ -276,12 +276,12 @@ class SkillCompiler:
             return ["适用于总控需要先判断任务路由、是否委托以及是否直接回复的决策阶段。"]
         if target.target_id.endswith("_delegate"):
             return ["适用于总控已决定委托，并需要把任务收束为单一子阶段执行目标的阶段。"]
-        if target.target_id == "requirement_agent_classic":
-            return ["适用于需求管理 Agent 直接通过 classic tool-loop 处理需求读写、澄清或审批的场景。"]
-        if target.target_id == "conflict_detection_classic":
-            return ["适用于冲突检测 Agent 在 classic tool-loop 中完成需求定位、详情读取和冲突结论输出。"]
-        if target.target_id == "requirement_classification_classic":
-            return ["适用于需求分类 Agent 在 classic tool-loop 中完成目标需求定位与分类结果输出。"]
+        if target.target_id == "requirement_agent_tool_loop":
+            return ["适用于需求管理 Agent 在独立工具循环中处理需求读写、澄清或审批的测试场景。"]
+        if target.target_id == "conflict_detection_tool_loop":
+            return ["适用于冲突检测 Agent 在独立工具循环中完成需求定位、详情读取和冲突结论输出。"]
+        if target.target_id == "requirement_classification_tool_loop":
+            return ["适用于需求分类 Agent 在独立工具循环中完成目标需求定位与分类结果输出。"]
         if material.task_description:
             return [
                 _truncate(
@@ -317,21 +317,21 @@ class SkillCompiler:
                 "委托结果返回后先校验是否回答了当前阶段目标，再决定是继续总控流程、澄清还是挂起。",
                 "最终输出保持为可供后续节点消费的结构化结论，不把中间推理铺陈成无约束长文本。",
             ]
-        if target.target_id == "requirement_agent_classic":
+        if target.target_id == "requirement_agent_tool_loop":
             return [
                 "先确认目标 requirement 是否已锁定；若未锁定，优先通过检索或澄清定位唯一对象。",
                 "执行写操作前先读取当前详情、审批状态和相关上下文，避免在旧状态上直接修改。",
                 "当出现澄清或审批分支时，立即把模式切换为 clarification 或 approval_pending，不继续假设用户已授权。",
                 "最终回复同时给出处理结果、受影响 requirement 和下一步动作，便于主流程继续消费。",
             ]
-        if target.target_id == "conflict_detection_classic":
+        if target.target_id == "conflict_detection_tool_loop":
             return [
                 "先定位参与比较的需求集合，再读取每条需求详情，不要只凭标题或摘要判断冲突。",
                 "比较时优先基于目标、约束、状态变化和互斥条件逐项对照，避免泛化为抽象风险。",
                 "若证据不足以确认冲突，应明确指出缺失信息，而不是输出强结论。",
                 "最终先给出是否冲突，再列出支撑证据和需要补充确认的点。",
             ]
-        if target.target_id == "requirement_classification_classic":
+        if target.target_id == "requirement_classification_tool_loop":
             return [
                 "先锁定目标 requirement；若上下文存在多个候选，先澄清或检索，不要默认选择其中之一。",
                 "分类前先读取最新需求内容和上下文，避免依据旧版本或局部片段做判断。",

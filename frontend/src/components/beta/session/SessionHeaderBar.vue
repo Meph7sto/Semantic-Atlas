@@ -6,7 +6,7 @@
       <span class="session-label">项目:</span>
       <select
         :value="selectedProjectId"
-        class="session-input"
+        class="session-input sa-input"
         style="width: min(200px, 18vw); padding: 3px 6px;"
         @change="$emit('update:selectedProjectId', $event.target.value)"
       >
@@ -23,7 +23,7 @@
       <input
         :value="sessionIdDraft"
         type="text"
-        class="session-input"
+        class="session-input sa-input"
         placeholder="输入 Session ID"
         spellcheck="false"
         autocomplete="off"

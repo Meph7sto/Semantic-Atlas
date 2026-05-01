@@ -74,13 +74,13 @@ class ExperiencePolicyResolver:
                 allow_shared_patterns=True,
                 compiler_mode="delegate",
             )
-        if target_id.endswith("_classic"):
+        if target_id.endswith("_tool_loop"):
             return replace(
                 policy,
                 retrieval_threshold=min(policy.retrieval_threshold, 0.66),
                 min_tool_calls=max(1, policy.min_tool_calls),
                 allow_shared_patterns=True,
-                compiler_mode="classic",
+                compiler_mode="agent_tool_loop",
             )
         return policy
 

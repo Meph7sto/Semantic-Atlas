@@ -22,7 +22,7 @@
           <div class="page-actions">
             <button 
               type="button" 
-              class="action-btn brown" 
+              class="action-btn brown sa-button sa-button--primary"
               @click="loadSampleTranscript"
               :disabled="isSampleLoading"
             >
@@ -47,7 +47,7 @@
                     v-model="sessionId"
                     type="text"
                     placeholder="留空则后端自动生成"
-                    class="form-input"
+                    class="form-input sa-input"
                   />
                 </div>
 
@@ -56,7 +56,7 @@
                   <label class="form-label">会议转写文本</label>
                   <textarea
                     v-model="transcriptText"
-                    class="form-textarea"
+                    class="form-textarea sa-input"
                     placeholder="粘贴会议转写文本（支持 [start-end] speaker text 或 speaker: text）"
                   ></textarea>
                 </div>
@@ -65,7 +65,7 @@
                 <button
                   @click="ingestTranscript"
                   :disabled="!canSubmit"
-                  class="action-btn brown full-width"
+                  class="action-btn brown full-width sa-button sa-button--primary"
                 >
                   {{ isLoading ? '解析中...' : '开始解析并入库' }}
                 </button>
@@ -548,4 +548,3 @@ async function ingestTranscript() {
   }
 }
 </style>
-

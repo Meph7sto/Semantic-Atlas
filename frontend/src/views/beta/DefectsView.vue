@@ -16,10 +16,10 @@
             <span class="nav-title">缺陷与问题 · 全局工作台</span>
           </div>
           <div class="page-actions">
-            <button v-if="showBackToRequirement" type="button" class="action-btn ghost" @click="backToRequirement">
+            <button v-if="showBackToRequirement" type="button" class="action-btn ghost sa-button sa-button--secondary" @click="backToRequirement">
               返回需求
             </button>
-            <button type="button" class="action-btn ghost" @click="handleReload">
+            <button type="button" class="action-btn ghost sa-button sa-button--secondary" @click="handleReload">
               <RefreshCw class="btn-icon" />
               刷新
             </button>
@@ -27,13 +27,13 @@
         </section>
 
         <section class="grid" data-animate style="--delay: 0.12s">
-          <article class="card wide">
+          <article class="card wide sa-card">
             <div class="card-header">
               <h3>项目与看板概览</h3>
             </div>
             <div class="card-body">
               <div class="filter-row">
-                <select v-model="selectedProjectId" class="form-select">
+                <select v-model="selectedProjectId" class="form-select sa-input">
                   <option value="">请选择项目</option>
                   <option v-for="p in projects" :key="p.project_id" :value="p.project_id">{{ p.name }}</option>
                 </select>
@@ -53,41 +53,41 @@
             </div>
           </article>
 
-          <article v-if="selectedProjectId" class="card wide">
+          <article v-if="selectedProjectId" class="card wide sa-card">
             <div class="card-header">
               <h3>新增缺陷（标准化录入）</h3>
             </div>
             <div class="card-body">
               <div class="form-grid">
-                <input v-model="newForm.title" type="text" class="form-input" placeholder="缺陷标题（必填）" />
-                <select v-model="newForm.requirement_id" class="form-select">
+                <input v-model="newForm.title" type="text" class="form-input sa-input" placeholder="缺陷标题（必填）" />
+                <select v-model="newForm.requirement_id" class="form-select sa-input">
                   <option value="">关联需求（必选）</option>
                   <option v-for="r in requirementOptions" :key="r.id" :value="r.id">{{ r.title }}</option>
                 </select>
                 <textarea
                   v-model="newForm.reproduce_steps"
                   rows="3"
-                  class="form-input span-2"
+                  class="form-input span-2 sa-input"
                   placeholder="复现步骤（必填）"
                 ></textarea>
-                <select v-model="newForm.severity" class="form-select">
+                <select v-model="newForm.severity" class="form-select sa-input">
                   <option v-for="s in severityOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
                 </select>
-                <select v-model="newForm.priority" class="form-select">
+                <select v-model="newForm.priority" class="form-select sa-input">
                   <option v-for="p in priorityOptions" :key="p.value" :value="p.value">{{ p.label }}</option>
                 </select>
-                <input v-model="newForm.reporter" type="text" class="form-input" placeholder="报告人（测试）" />
-                <input v-model="newForm.dev_assignee" type="text" class="form-input" placeholder="指派开发" />
-                <input v-model="newForm.tester_assignee" type="text" class="form-input" placeholder="验证测试" />
+                <input v-model="newForm.reporter" type="text" class="form-input sa-input" placeholder="报告人（测试）" />
+                <input v-model="newForm.dev_assignee" type="text" class="form-input sa-input" placeholder="指派开发" />
+                <input v-model="newForm.tester_assignee" type="text" class="form-input sa-input" placeholder="验证测试" />
               </div>
               <div class="form-actions">
-                <button type="button" class="action-btn brown" @click="createNewDefect">创建缺陷</button>
+                <button type="button" class="action-btn brown sa-button sa-button--primary" @click="createNewDefect">创建缺陷</button>
               </div>
               <p v-if="reqError" class="error-text">{{ reqError }}</p>
             </div>
           </article>
 
-          <article v-if="selectedProjectId" class="card wide">
+          <article v-if="selectedProjectId" class="card wide sa-card">
             <div class="card-header">
               <h3>缺陷全局看板</h3>
             </div>
@@ -97,15 +97,15 @@
                   <input v-model="filter.onlyUnresolved" type="checkbox" />
                   仅看未解决
                 </label>
-                <select v-model="filter.status" class="form-select compact">
+                <select v-model="filter.status" class="form-select compact sa-input">
                   <option value="">全部状态</option>
                   <option v-for="s in statusOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
                 </select>
-                <select v-model="filter.severity" class="form-select compact">
+                <select v-model="filter.severity" class="form-select compact sa-input">
                   <option value="">全部严重度</option>
                   <option v-for="s in severityOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
                 </select>
-                <input v-model="filter.assignee" type="text" class="form-input compact" placeholder="按处理人筛选" />
+                <input v-model="filter.assignee" type="text" class="form-input compact sa-input" placeholder="按处理人筛选" />
               </div>
 
               <div class="table-wrap">
@@ -139,7 +139,7 @@
                       <td>
                         <select
                           :value="item.severity"
-                          class="form-select compact"
+                          class="form-select compact sa-input"
                           @change="updateDefectField(item.defect_id, { severity: $event.target.value })"
                         >
                           <option v-for="s in severityOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
@@ -148,7 +148,7 @@
                       <td>
                         <select
                           :value="item.priority"
-                          class="form-select compact"
+                          class="form-select compact sa-input"
                           @change="updateDefectField(item.defect_id, { priority: $event.target.value })"
                         >
                           <option v-for="p in priorityOptions" :key="p.value" :value="p.value">{{ p.label }}</option>
@@ -160,14 +160,14 @@
                       <td>
                         <input
                           :value="item.dev_assignee || ''"
-                          class="form-input compact"
+                          class="form-input compact sa-input"
                           @change="updateDefectField(item.defect_id, { dev_assignee: $event.target.value })"
                         />
                       </td>
                       <td>
                         <input
                           :value="item.tester_assignee || ''"
-                          class="form-input compact"
+                          class="form-input compact sa-input"
                           @change="updateDefectField(item.defect_id, { tester_assignee: $event.target.value })"
                         />
                       </td>
@@ -176,7 +176,7 @@
                         <div class="ops">
                           <select
                             :value="item.status"
-                            class="form-select compact"
+                            class="form-select compact sa-input"
                             @change="updateStatus(item.defect_id, $event.target.value)"
                           >
                             <option v-for="s in statusOptions" :key="s.value" :value="s.value">{{ s.label }}</option>

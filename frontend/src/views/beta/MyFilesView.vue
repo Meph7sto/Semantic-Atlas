@@ -23,7 +23,7 @@
 
           <div class="files-content">
             <!-- 左侧：文件树 -->
-            <div class="tree-panel card">
+            <div class="tree-panel card sa-card">
               <div class="panel-header">
                 <span class="panel-title">文件结构</span>
                 <span class="panel-meta">{{ totalFiles }} 个文件 | {{ folderCount }} 个文件夹</span>
@@ -122,7 +122,7 @@
             </div>
 
             <!-- 右侧：预览面板 -->
-            <div class="preview-panel card">
+            <div class="preview-panel card sa-card">
               <div class="panel-header">
                 <span class="panel-title">预览</span>
                 <button v-if="selectedFile" class="text-btn" @click="closePreview">关闭</button>

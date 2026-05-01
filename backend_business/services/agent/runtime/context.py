@@ -28,8 +28,8 @@ class ContextEntry:
 class ExecutionContext:
     """Mutable context store shared by runtime stages.
 
-    When used WITHOUT subgraph management (legacy mode), behaves exactly like
-    a simple append-only list — full backward compatibility.
+    When used without subgraph management, behaves as a simple append-only
+    context list for single-stage runtime flows.
 
     When used WITH subgraph management:
       - begin_subgraph(key): clears subgraph-local entries, injects Scratchpad content
@@ -56,7 +56,7 @@ class ExecutionContext:
     def current_subgraph(self) -> str | None:
         return self._current_subgraph
 
-    # ---- basic operations (backward compatible) ----
+    # ---- basic append-only operations ----
 
     def add(self, entry: ContextEntry) -> None:
         tagged = ContextEntry(

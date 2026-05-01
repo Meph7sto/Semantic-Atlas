@@ -18,11 +18,11 @@ def test_skill_loader_renders_compact_prompt_context():
     loaded = loader.render_prompt(
         retrieved_skill=RetrievedSkill(
             skill_id="skill-1",
-            target_id="conflict_detection_classic",
+            target_id="conflict_detection_tool_loop",
             score=0.88,
             content="""---
 skill_id: skill-1
-experience_target: conflict_detection_classic
+experience_target: conflict_detection_tool_loop
 task_pattern_summary: 检测需求冲突
 ---
 
@@ -48,7 +48,7 @@ task_pattern_summary: 检测需求冲突
     )
 
     assert loaded.skill_id == "skill-1"
-    assert loaded.target_id == "conflict_detection_classic"
+    assert loaded.target_id == "conflict_detection_tool_loop"
     assert "## 已命中的经验技能" in loaded.prompt_text
     assert "### 推荐步骤" in loaded.prompt_text
     assert "relevance_score: 0.88" in loaded.prompt_text
@@ -61,11 +61,11 @@ def test_skill_loader_renders_bundle_with_shared_patterns():
         retrieved_skills=[
             RetrievedSkill(
                 skill_id="skill-1",
-                target_id="conflict_detection_classic",
+                target_id="conflict_detection_tool_loop",
                 score=0.88,
                 content="""---
 skill_id: skill-1
-experience_target: conflict_detection_classic
+experience_target: conflict_detection_tool_loop
 task_pattern_summary: 检测需求冲突
 ---
 

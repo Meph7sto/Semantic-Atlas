@@ -36,19 +36,19 @@ def test_experience_metrics_aggregates_registry_counts(tmp_path: Path):
         at=datetime(2026, 4, 18, 14, 0, tzinfo=timezone.utc),
     )
     registry.upsert_target(
-        "requirement_agent_classic",
+        "requirement_agent_tool_loop",
         skill_id="skill-2",
-        current_skill_path="requirement_agent_classic/current.md",
+        current_skill_path="requirement_agent_tool_loop/current.md",
         iteration=1,
         updated_at=datetime(2026, 4, 18, 12, 0, tzinfo=timezone.utc),
     )
     registry.record_injection_result(
-        "requirement_agent_classic",
+        "requirement_agent_tool_loop",
         missed=True,
         used_at=datetime(2026, 4, 18, 15, 0, tzinfo=timezone.utc),
     )
     registry.record_writeback_result(
-        "requirement_agent_classic",
+        "requirement_agent_tool_loop",
         status="skipped_review",
         at=datetime(2026, 4, 18, 16, 0, tzinfo=timezone.utc),
     )
@@ -60,4 +60,4 @@ def test_experience_metrics_aggregates_registry_counts(tmp_path: Path):
     assert snapshot.skill_rewrite_count == 1
     assert snapshot.skill_review_fail_count == 1
     assert snapshot.skill_target_distribution["session_controller_conflict_delegate"] == 1
-    assert snapshot.skill_target_distribution["requirement_agent_classic"] == 1
+    assert snapshot.skill_target_distribution["requirement_agent_tool_loop"] == 1

@@ -179,6 +179,8 @@ def test_stream_message_passes_requirement_id(monkeypatch):
         "project_id": "p-1",
         "user_message": "请分类",
         "requirement_id": "REQ-1",
+        "model": "deepseek-v4-pro",
+        "use_thinking_mode": True,
     }
 
 

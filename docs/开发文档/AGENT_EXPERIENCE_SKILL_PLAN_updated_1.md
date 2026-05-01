@@ -118,10 +118,10 @@ Semantic-Atlas/
 │   ├── session_controller_classification_delegate/
 │   │   ├── current.md
 │   │   └── archive/
-│   ├── requirement_agent_classic/
+│   ├── requirement_agent_tool_loop/
 │   │   ├── current.md
 │   │   └── archive/
-│   ├── conflict_detection_classic/
+│   ├── conflict_detection_tool_loop/
 │   │   ├── current.md
 │   │   └── archive/
 │   └── shared_patterns/
@@ -679,9 +679,9 @@ ExperiencePolicy(
 2. `session_controller_requirement_delegate`
 3. `session_controller_conflict_delegate`
 4. `session_controller_classification_delegate`
-5. `requirement_agent_classic`
-6. `conflict_detection_classic`
-7. `requirement_classification_classic`
+5. `requirement_agent_tool_loop`
+6. `conflict_detection_tool_loop`
+7. `requirement_classification_tool_loop`
 
 开发内容：
 
@@ -829,7 +829,7 @@ ExperiencePolicy(
 
 - `tests/agent_chat/test_experience_skill_pipeline.py`
 - `tests/agent_chat/test_experience_skill_graph_integration.py`
-- `tests/agent_chat/test_experience_skill_classic_integration.py`
+- `tests/agent_chat/test_experience_skill_tool_loop_integration.py`
 
 ### 8.3 对现有测试的补充
 

@@ -27,7 +27,7 @@
           type="text"
           v-model="searchQuery"
           placeholder="搜索产品..."
-          class="search-input"
+          class="search-input sa-input"
           ref="searchInput"
         />
       </div>

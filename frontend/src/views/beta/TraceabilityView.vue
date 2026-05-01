@@ -16,15 +16,15 @@
             <span class="nav-title">追踪 · 分支级需求追溯工作台</span>
           </div>
           <div class="page-actions">
-            <button type="button" class="action-btn white" @click="refreshContext">刷新上下文</button>
-            <button type="button" class="action-btn brown" :disabled="triggeringImpact || !selectedBranchId" @click="triggerImpactAnalysis()">
+            <button type="button" class="action-btn white sa-button sa-button--secondary" @click="refreshContext">刷新上下文</button>
+            <button type="button" class="action-btn brown sa-button sa-button--primary" :disabled="triggeringImpact || !selectedBranchId" @click="triggerImpactAnalysis()">
               {{ triggeringImpact ? '分析中…' : '触发影响分析' }}
             </button>
           </div>
         </section>
 
         <section class="grid" data-animate style="--delay: 0.1s">
-          <div class="card wide traceability-shell">
+          <div class="card wide traceability-shell sa-card">
             <div class="card-header no-border">
               <div>
                 <p class="card-kicker">Traceability Context</p>
@@ -57,7 +57,7 @@
             <div class="traceability-toolbar">
               <label class="traceability-field">
                 <span>项目</span>
-                <select v-model="selectedProjectId" class="select-clean">
+                <select v-model="selectedProjectId" class="select-clean sa-input">
                   <option value="">选择项目</option>
                   <option v-for="project in projects" :key="project.project_id" :value="project.project_id">
                     {{ project.name }}
@@ -67,7 +67,7 @@
 
               <label class="traceability-field">
                 <span>分支</span>
-                <select v-model="selectedBranchId" class="select-clean" :disabled="!selectedProjectId || loadingBranches">
+                <select v-model="selectedBranchId" class="select-clean sa-input" :disabled="!selectedProjectId || loadingBranches">
                   <option value="">{{ loadingBranches ? '加载中…' : '选择分支' }}</option>
                   <option v-for="branch in branches" :key="branch.ref_id" :value="branch.ref_id">
                     {{ branch.branch_name || branch.ref_name }}

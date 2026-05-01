@@ -525,8 +525,8 @@ class GraphExecutor:
             return ExecutionResult(
                 status="failed",
                 graph_id=skeleton.graph_id,
-                error=f"resume 执行异常: {exc}",
-            )
+            error=f"resume 执行异常: {exc}",
+        )
 
         # Succeeded
         scratchpad_service.save_snapshot(
@@ -899,6 +899,56 @@ class GraphExecutor:
             status="succeeded",
             graph_id=skeleton.graph_id,
             final_output=container_result.conclusion,
+        )
+
+    def execute_agent_tool_loop(
+        self,
+        *,
+        agent_runner: Any,
+        graph_service: Any,
+        recorder: Any,
+        actor: str,
+        user_message: str,
+        runner_kwargs: dict[str, Any] | None = None,
+    ) -> Generator[dict[str, Any], None, ExecutionResult]:
+        """Run a registered agent's direct tool loop through GraphExecutor.
+
+        This is the graph-first no-topology path for standalone agent APIs:
+        the application service still owns chat persistence and final response
+        shaping, while GraphExecutor owns the runtime execution entry and
+        delegates the actual LLM/tool loop to the shared agent runner.
+        """
+
+        payload: dict[str, Any] | None = None
+        try:
+            payload = yield from agent_runner.run(
+                recorder=recorder,
+                user_id=actor,
+                user_message=user_message,
+                **(runner_kwargs or {}),
+            )
+        except Exception as exc:
+            _persist_graph_status(
+                graph_service,
+                getattr(recorder, "graph_id", ""),
+                "failed",
+                actor,
+            )
+            return ExecutionResult(
+                status="failed",
+                graph_id=getattr(recorder, "graph_id", ""),
+                error=str(exc),
+                metadata={"execution_path": "agent_tool_loop"},
+            )
+
+        return ExecutionResult(
+            status="succeeded",
+            graph_id=getattr(recorder, "graph_id", ""),
+            final_output=str((payload or {}).get("tool_loop_reply") or ""),
+            metadata={
+                "execution_path": "agent_tool_loop",
+                "payload": payload or {},
+            },
         )
 
     def _resolve_scratchpad_service(self, graph_service: Any) -> ScratchpadService:

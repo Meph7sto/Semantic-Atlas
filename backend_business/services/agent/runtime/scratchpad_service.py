@@ -12,7 +12,12 @@ from .state_contract import (
 
 
 class ScratchpadService:
-    """Loads and saves Scratchpad snapshots from container state store."""
+    """Loads and saves Scratchpad snapshots from the container state store.
+
+    The state store is the canonical runtime location. The graph meta snapshot
+    is retained as a readable mirror and, for previously stored graphs, as an
+    import source during the first load.
+    """
 
     META_KEY = "scratchpad_snapshot"
     ENTRY_COUNT_KEY = "scratchpad_entry_count"
@@ -30,7 +35,7 @@ class ScratchpadService:
         )
         state_snapshot = self._load_state_snapshot(graph_id) if supports_state_store else []
         if supports_state_store and not state_snapshot:
-            migrated_snapshot = self._migrate_legacy_snapshot_to_state_store(
+            migrated_snapshot = self._import_meta_snapshot_to_state_store(
                 graph_id,
                 graph=graph,
             )
@@ -52,7 +57,7 @@ class ScratchpadService:
         *,
         updated_by: str,
     ) -> dict[str, Any]:
-        """Persist the full Scratchpad snapshot into graph metadata."""
+        """Persist the full Scratchpad snapshot into runtime state and graph meta."""
         return self.save_snapshot(
             graph_id,
             scratchpad.snapshot_all(),
@@ -83,19 +88,19 @@ class ScratchpadService:
             updated_by=updated_by,
         )
 
-    def _migrate_legacy_snapshot_to_state_store(
+    def _import_meta_snapshot_to_state_store(
         self,
         graph_id: str,
         *,
         graph: dict[str, Any] | None,
     ) -> list[dict[str, Any]]:
         meta = dict((graph or {}).get("meta_json") or {})
-        legacy_snapshot = list(meta.get(self.META_KEY) or [])
-        if not legacy_snapshot:
+        meta_snapshot = list(meta.get(self.META_KEY) or [])
+        if not meta_snapshot:
             self._stamp_runtime_state_contract(graph_id)
             return []
 
-        normalized_snapshot = Scratchpad.from_store_snapshot(legacy_snapshot).snapshot_all()
+        normalized_snapshot = Scratchpad.from_store_snapshot(meta_snapshot).snapshot_all()
         self._save_container_state_snapshot(
             graph_id=graph_id,
             snapshot=normalized_snapshot,

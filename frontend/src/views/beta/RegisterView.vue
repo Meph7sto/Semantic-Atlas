@@ -1,7 +1,7 @@
 <template>
-  <div class="ref-app">
-    <div class="login-shell">
-      <div class="login-card" data-animate style="--delay: 0.05s">
+  <div class="ref-app sa-page">
+    <div class="login-shell sa-page-surface">
+      <div class="login-card sa-card" data-animate style="--delay: 0.05s">
         <div class="login-header">
           <div>
             <p class="eyebrow">Semantic Atlas</p>
@@ -19,6 +19,7 @@
               id="username"
               v-model="username"
               type="text"
+              class="sa-input"
               placeholder="请输入用户名"
               @input="usernameError = ''"
             />
@@ -31,6 +32,7 @@
               id="displayName"
               v-model="displayName"
               type="text"
+              class="sa-input"
               placeholder="请输入显示名称"
               @input="displayNameError = ''"
             />
@@ -42,6 +44,7 @@
               id="password"
               v-model="password"
               type="password"
+              class="sa-input"
               placeholder="请输入密码（至少 6 位）"
               @input="passwordError = ''"
             />
@@ -53,16 +56,17 @@
               id="confirmPassword"
               v-model="confirmPassword"
               type="password"
+              class="sa-input"
               placeholder="请再次输入密码"
               @input="confirmPasswordError = ''"
             />
             <p v-if="confirmPasswordError" class="field-error">{{ confirmPasswordError }}</p>
           </div>
           <div class="login-actions">
-            <button type="submit" class="primary" :disabled="loading">
+            <button type="submit" class="primary sa-button sa-button--primary" :disabled="loading">
               {{ loading ? "注册中..." : "注册账号" }}
             </button>
-            <button type="button" class="ghost" @click="handleBack">
+            <button type="button" class="ghost sa-button sa-button--secondary" @click="handleBack">
               返回登录
             </button>
           </div>
@@ -205,4 +209,3 @@ const handleBack = () => {
   margin-top: 0.25rem;
 }
 </style>
-

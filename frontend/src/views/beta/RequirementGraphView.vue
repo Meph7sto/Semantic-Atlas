@@ -16,7 +16,7 @@
             <span class="nav-title">项目管理 · 需求图谱</span>
           </div>
           <div class="graph-toolbar">
-            <select v-model="selectedProjectId" class="project-select" :disabled="isLoadingProjects">
+            <select v-model="selectedProjectId" class="project-select sa-input" :disabled="isLoadingProjects">
               <option value="">选择项目</option>
               <option v-for="project in projects" :key="project.project_id" :value="project.project_id">
                 {{ project.name }}
@@ -24,13 +24,13 @@
             </select>
             <input
               v-model.trim="sessionId"
-              class="session-input"
+              class="session-input sa-input"
               placeholder="Session ID"
               spellcheck="false"
             />
             <select
               v-model="selectedSnapshotId"
-              class="project-select snapshot-select"
+              class="project-select snapshot-select sa-input"
               :disabled="isLoadingGraph || isInferringGraph || (!selectedProjectId && !sessionId)"
               @focus="refreshSnapshotHistory"
               @change="handleSnapshotSelection"
@@ -40,17 +40,17 @@
                 {{ formatSnapshotOption(snapshot) }}
               </option>
             </select>
-            <select v-model="packageSize" class="project-select package-select" :disabled="isInferringGraph">
+            <select v-model="packageSize" class="project-select package-select sa-input" :disabled="isInferringGraph">
               <option v-for="option in packageSizeOptions" :key="option" :value="String(option)">
                 每包 {{ option }}
               </option>
             </select>
-            <select v-model="reviewConcurrency" class="project-select review-select" :disabled="isInferringGraph">
+            <select v-model="reviewConcurrency" class="project-select review-select sa-input" :disabled="isInferringGraph">
               <option v-for="option in reviewConcurrencyOptions" :key="option" :value="String(option)">
                 并发 {{ option }}
               </option>
             </select>
-            <select v-model="selectedModel" class="project-select review-select" :disabled="isInferringGraph">
+            <select v-model="selectedModel" class="project-select review-select sa-input" :disabled="isInferringGraph">
               <option value="deepseek-v4-pro">V4 Pro</option>
               <option value="deepseek-v4-flash">V4 Flash</option>
             </select>
@@ -60,7 +60,7 @@
             </label>
             <button
               type="button"
-              class="action-btn infer-btn"
+              class="action-btn infer-btn sa-button sa-button--primary"
               :disabled="isLoadingGraph || isInferringGraph || (!selectedProjectId && !sessionId)"
               @click="generateRequirementGraph"
             >
@@ -68,7 +68,7 @@
             </button>
             <button
               type="button"
-              class="action-btn discover-btn"
+              class="action-btn discover-btn sa-button sa-button--primary"
               :disabled="isLoadingGraph || isInferringGraph || (!selectedProjectId && !sessionId)"
               @click="discoverRequirementRelations"
             >
@@ -76,7 +76,7 @@
             </button>
             <button
               type="button"
-              class="action-btn danger-btn"
+              class="action-btn danger-btn sa-button sa-button--danger"
               :disabled="isLoadingGraph || isInferringGraph || (!selectedProjectId && !sessionId)"
               @click="deleteAllRelations"
             >
@@ -386,7 +386,7 @@
                   <h4>变更输入</h4>
                   <button
                     type="button"
-                    class="action-btn analysis-submit-btn"
+                    class="action-btn analysis-submit-btn sa-button sa-button--primary"
                     :disabled="analysisLoading"
                     @click="submitAnalysis"
                   >
@@ -928,9 +928,140 @@ function clearSnapshotHistoryState() {
 }
 
 function applyGraphPayload(graph, { reviewEdges = null } = {}) {
-  graphData.value = graph || { nodes: [], edges: [], stats: {} }
+  graphData.value = normalizeGraphPayload(graph)
+  refreshGraphStats()
   lastLocalReviewEdges.value = Array.isArray(reviewEdges) ? reviewEdges : extractLocalReviewEdges(graphData.value)
   selectedSnapshotId.value = graphData.value?.meta?.relation_snapshot?.snapshot_id || ''
+}
+
+function normalizeGraphPayload(graph) {
+  const payload = graph || { nodes: [], edges: [], stats: {} }
+  const nodeMap = new Map()
+  ;(payload.nodes || []).forEach(node => {
+    const normalized = normalizeGraphNode(node)
+    if (!normalized) return
+    const existing = nodeMap.get(normalized.id)
+    nodeMap.set(normalized.id, existing ? mergeGraphNodePayload(existing, normalized) : normalized)
+  })
+
+  const edgeMap = new Map()
+  ;(payload.edges || []).forEach(edge => {
+    const normalized = normalizeGraphEdge(edge)
+    if (!normalized) return
+    const existing = edgeMap.get(graphEdgeKey(normalized))
+    edgeMap.set(graphEdgeKey(normalized), existing ? mergeGraphEdgePayload(existing, normalized) : normalized)
+  })
+
+  return {
+    ...payload,
+    nodes: Array.from(nodeMap.values()),
+    edges: Array.from(edgeMap.values()).filter(edge => nodeMap.has(edge.source) && nodeMap.has(edge.target)),
+    stats: { ...(payload.stats || {}) },
+  }
+}
+
+function normalizeGraphNode(node) {
+  const properties = node.properties && typeof node.properties === 'object' ? node.properties : {}
+  const kind = node.kind || 'requirement'
+  const id = normalizeGraphNodeId(node?.id || properties.req_id, kind, properties.req_id)
+  if (!id) return null
+  return {
+    ...node,
+    id,
+    label: node.label || properties.title || properties.text || id,
+    kind,
+    group: node.group || properties.source_level || properties.level || 'UNKNOWN_LEVEL',
+    properties: { ...properties },
+  }
+}
+
+function normalizeGraphNodeId(value, kind = 'requirement', reqId = '') {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  if (raw.startsWith('req:') || raw.startsWith('stakeholder:')) return raw
+  if (kind === 'requirement' || reqId) return `req:${raw}`
+  return raw
+}
+
+function mergeGraphNodePayload(existing, incoming) {
+  const existingLevel = normalizeLevel(existing)
+  const incomingLevel = normalizeLevel(incoming)
+  const useIncomingLevel = existingLevel === 'UNKNOWN_LEVEL' && incomingLevel !== 'UNKNOWN_LEVEL'
+  return {
+    ...existing,
+    ...incoming,
+    label: chooseGraphNodeLabel(existing, incoming),
+    group: useIncomingLevel ? incoming.group : existing.group || incoming.group,
+    properties: {
+      ...(existing.properties || {}),
+      ...(incoming.properties || {}),
+      source_level: useIncomingLevel
+        ? incoming.properties?.source_level || incoming.group
+        : existing.properties?.source_level || incoming.properties?.source_level,
+      level: useIncomingLevel
+        ? incoming.properties?.level || incoming.group
+        : existing.properties?.level || incoming.properties?.level,
+    },
+  }
+}
+
+function chooseGraphNodeLabel(existing, incoming) {
+  const labels = [existing?.label, incoming?.label, incoming?.properties?.title, existing?.properties?.title]
+    .map(value => String(value || '').trim())
+    .filter(Boolean)
+  if (!labels.length) return incoming?.id || existing?.id || ''
+  return labels.find(label => label !== incoming?.id && label !== existing?.id) || labels[0]
+}
+
+function normalizeGraphEdge(edge) {
+  let source = normalizeGraphNodeId(edge?.source)
+  let target = normalizeGraphNodeId(edge?.target)
+  const type = String(edge?.type || '').trim()
+  if (!source || !target || !type || source === target) return null
+  if (['CONFLICTS_WITH', 'SIMILAR_TO', 'VALIDATES_WITH'].includes(type) && source > target) {
+    ;[source, target] = [target, source]
+  }
+  const properties = edge.properties && typeof edge.properties === 'object' ? edge.properties : {}
+  return {
+    ...edge,
+    id: edge.id || `${type}:${source}->${target}`,
+    source,
+    target,
+    type,
+    label: edge.label || edgeLabel(type),
+    weight: typeof edge.weight === 'number' ? edge.weight : Number(edge.weight) || 0,
+    properties: { ...properties },
+  }
+}
+
+function mergeGraphEdgePayload(existing, incoming) {
+  const existingProps = existing.properties || {}
+  const incomingProps = incoming.properties || {}
+  const sourceKinds = uniqueList([
+    ...asCompactArray(existingProps.source_kinds),
+    existingProps.source_kind,
+    ...asCompactArray(incomingProps.source_kinds),
+    incomingProps.source_kind,
+  ])
+  return {
+    ...existing,
+    ...incoming,
+    weight: Math.max(Number(existing.weight) || 0, Number(incoming.weight) || 0),
+    properties: {
+      ...existingProps,
+      ...incomingProps,
+      source_kind: incomingProps.source_kind || existingProps.source_kind,
+      source_kinds: sourceKinds.length ? sourceKinds : incomingProps.source_kinds || existingProps.source_kinds,
+    },
+  }
+}
+
+function asCompactArray(value) {
+  return Array.isArray(value) ? value.filter(Boolean) : []
+}
+
+function uniqueList(values) {
+  return Array.from(new Set(values.map(value => String(value || '').trim()).filter(Boolean)))
 }
 
 function normalizeReviewEdgePayload(edge) {
@@ -1373,20 +1504,23 @@ function applyRelationDecision(decision) {
 function mergeGraphEdges(edges, { candidate = false } = {}) {
   const current = new Map((graphData.value.edges || []).map(edge => [graphEdgeKey(edge), edge]))
   ;(edges || []).forEach(edge => {
-    if (!edge?.source || !edge?.target || !edge?.type) return
-    current.set(graphEdgeKey(edge), {
-      ...edge,
+    const normalized = normalizeGraphEdge(edge)
+    if (!normalized) return
+    const nextEdge = {
+      ...normalized,
       properties: {
-        ...(edge.properties || {}),
-        review_state: candidate ? 'candidate' : edge.properties?.review_state,
+        ...(normalized.properties || {}),
+        review_state: candidate ? 'candidate' : normalized.properties?.review_state,
       },
-    })
+    }
+    const existing = current.get(graphEdgeKey(nextEdge))
+    current.set(graphEdgeKey(nextEdge), existing ? mergeGraphEdgePayload(existing, nextEdge) : nextEdge)
   })
   graphData.value = {
     ...graphData.value,
     edges: Array.from(current.values()),
   }
-  refreshGraphEdgeStats()
+  refreshGraphStats()
 }
 
 function markEdgeForRemoval(edge, action) {
@@ -1444,6 +1578,27 @@ function updateRelationReviewStats(increment) {
       review_concurrency: selectedReviewConcurrency.value,
     },
   }
+}
+
+function refreshGraphStats() {
+  const nodes = graphData.value.nodes || []
+  const nodeCounts = {}
+  const levelCounts = {}
+  nodes.forEach(node => {
+    const kind = node.kind || 'requirement'
+    nodeCounts[kind] = (nodeCounts[kind] || 0) + 1
+    if (kind === 'requirement') {
+      const level = normalizeLevel(node)
+      levelCounts[level] = (levelCounts[level] || 0) + 1
+    }
+  })
+  graphData.value.stats = {
+    ...(graphData.value.stats || {}),
+    node_count: nodes.length,
+    node_counts: nodeCounts,
+    level_counts: levelCounts,
+  }
+  refreshGraphEdgeStats()
 }
 
 function refreshGraphEdgeStats() {
@@ -1514,8 +1669,8 @@ function preserveProtectedRelationEdge(edge) {
 
 function graphEdgeKey(edge) {
   const type = edge?.type || ''
-  let source = edge?.source || ''
-  let target = edge?.target || ''
+  let source = normalizeGraphNodeId(edge?.source)
+  let target = normalizeGraphNodeId(edge?.target)
   if (['CONFLICTS_WITH', 'SIMILAR_TO', 'VALIDATES_WITH'].includes(type) && source > target) {
     ;[source, target] = [target, source]
   }
@@ -1564,7 +1719,8 @@ function renderGraph() {
   if (!chart) return
   const allNodes = graphData.value?.nodes || []
   const allEdges = graphData.value?.edges || []
-  const { nodes, edges } = filterGraph(allNodes, allEdges)
+  const filteredGraph = filterGraph(allNodes, allEdges)
+  const { nodes, edges } = normalizeGraphPayload(filteredGraph)
   if (!nodes.length) {
     chart.clear()
     return
@@ -1576,6 +1732,7 @@ function renderGraph() {
     itemStyle: { color: item.color },
   }))
   const categoryIndex = Object.fromEntries(categories.map((item, index) => [item.name, index]))
+  const initialPositions = buildGraphInitialPositions(nodes, edges)
 
   chart.setOption({
     backgroundColor: '#f8fafc',
@@ -1596,6 +1753,7 @@ function renderGraph() {
     },
     series: [
       {
+        id: 'requirement-graph',
         type: 'graph',
         layout: 'force',
         legendHoverLink: false,
@@ -1604,14 +1762,14 @@ function renderGraph() {
         draggable: true,
         data: nodes.map(node => {
           const chartCategory = chartCategoryName(node)
-          const color = categoryIndex[chartCategory] !== undefined
-            ? categories[categoryIndex[chartCategory]].itemStyle.color
-            : '#64748b'
           const visual = analysisNodeVisual(node)
+          const initialPosition = initialPositions.get(node.id) || {}
           return {
             id: node.id,
             name: node.label,
             raw: node,
+            x: initialPosition.x,
+            y: initialPosition.y,
             category: categoryIndex[chartCategory] ?? 0,
             symbol: 'circle',
             symbolSize: visual.symbolSize ?? nodeSize(node),
@@ -1643,9 +1801,9 @@ function renderGraph() {
         edgeSymbol: ['none', 'arrow'],
         edgeSymbolSize: [0, 9],
         force: {
-          repulsion: 260,
-          edgeLength: [90, 190],
-          gravity: 0.06,
+          repulsion: 520,
+          edgeLength: [130, 260],
+          gravity: 0.035,
         },
         emphasis: {
           focus: 'adjacency',
@@ -1655,9 +1813,72 @@ function renderGraph() {
         animationEasingUpdate: 'quinticInOut',
       },
     ],
-  }, true)
+  }, { notMerge: true, lazyUpdate: false, replaceMerge: ['series'] })
   patchFullCanvasRoamArea()
   focusAnalysisRequirement(analysisFocusedRequirementId.value || analysisSourceRequirementId.value)
+}
+
+function buildGraphInitialPositions(nodes, edges) {
+  const positions = new Map()
+  if (!nodes.length) return positions
+
+  const adjacency = new Map(nodes.map(node => [node.id, new Set()]))
+  edges.forEach(edge => {
+    if (!adjacency.has(edge.source) || !adjacency.has(edge.target)) return
+    adjacency.get(edge.source).add(edge.target)
+    adjacency.get(edge.target).add(edge.source)
+  })
+
+  const components = []
+  const visited = new Set()
+  nodes.forEach(node => {
+    if (visited.has(node.id)) return
+    const stack = [node.id]
+    const component = []
+    visited.add(node.id)
+    while (stack.length) {
+      const nodeId = stack.pop()
+      component.push(nodeId)
+      ;(adjacency.get(nodeId) || []).forEach(nextId => {
+        if (visited.has(nextId)) return
+        visited.add(nextId)
+        stack.push(nextId)
+      })
+    }
+    components.push(component)
+  })
+  components.sort((left, right) => right.length - left.length || String(left[0]).localeCompare(String(right[0])))
+
+  const width = Math.max(chartContainer.value?.clientWidth || 1200, 900)
+  const height = Math.max(chartContainer.value?.clientHeight || 700, 600)
+  const columns = Math.ceil(Math.sqrt(components.length || 1))
+  const rows = Math.ceil((components.length || 1) / columns)
+  const cellWidth = width / Math.max(columns, 1)
+  const cellHeight = height / Math.max(rows, 1)
+
+  components.forEach((component, index) => {
+    const column = index % columns
+    const row = Math.floor(index / columns)
+    const centerX = cellWidth * (column + 0.5)
+    const centerY = cellHeight * (row + 0.5)
+    if (component.length === 1) {
+      positions.set(component[0], { x: centerX, y: centerY })
+      return
+    }
+    const radius = Math.max(64, Math.min(cellWidth, cellHeight) * 0.28, Math.sqrt(component.length) * 34)
+    component
+      .slice()
+      .sort((left, right) => String(left).localeCompare(String(right)))
+      .forEach((nodeId, nodeIndex) => {
+        const angle = (-Math.PI / 2) + (Math.PI * 2 * nodeIndex) / component.length
+        positions.set(nodeId, {
+          x: centerX + Math.cos(angle) * radius,
+          y: centerY + Math.sin(angle) * radius,
+        })
+      })
+  })
+
+  return positions
 }
 
 function normalizeLevel(node) {

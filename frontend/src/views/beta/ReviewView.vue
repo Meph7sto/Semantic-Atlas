@@ -33,12 +33,12 @@
             <button
               v-if="activeTab === 'publish'"
               type="button"
-              class="action-btn brown"
+              class="action-btn brown sa-button sa-button--primary"
               @click="showCreateForm = true"
             >
               新建推送
             </button>
-            <button type="button" class="action-btn ghost" @click="refreshData" :disabled="isLoading">
+            <button type="button" class="action-btn ghost sa-button sa-button--secondary" @click="refreshData" :disabled="isLoading">
               <RefreshCw class="btn-icon" :class="{ 'spin': isLoading }" />
               刷新
             </button>
@@ -121,10 +121,10 @@
               </div>
             </div>
             <div class="form-actions">
-              <button type="button" class="action-btn ghost" @click="showCreateForm = false">取消</button>
+              <button type="button" class="action-btn ghost sa-button sa-button--secondary" @click="showCreateForm = false">取消</button>
               <button
                 type="button"
-                class="action-btn brown"
+                class="action-btn brown sa-button sa-button--primary"
                 :disabled="isCreating || !newMessage.title.trim() || newMessage.target_groups.length === 0"
                 @click="handleCreateMessage"
               >
@@ -201,14 +201,14 @@
                 <button
                   v-if="!msg.pushed"
                   type="button"
-                  class="action-btn blue"
+                  class="action-btn blue sa-button sa-button--primary"
                   @click="handlePushMessage(msg.message_id)"
                 >
                   <Send class="btn-icon" /> 推送
                 </button>
                 <button
                   type="button"
-                  class="action-btn danger-ghost"
+                  class="action-btn danger-ghost sa-button sa-button--danger-secondary"
                   @click="handleDeleteMessage(msg.message_id)"
                 >
                   <Trash2 class="btn-icon" />
@@ -273,7 +273,7 @@
                   <div class="review-btns">
                     <button
                       type="button"
-                      class="action-btn green"
+                      class="action-btn green sa-button sa-button--primary"
                       :disabled="isProcessing"
                       @click="handleApprove(review.id)"
                     >
@@ -281,7 +281,7 @@
                     </button>
                     <button
                       type="button"
-                      class="action-btn red"
+                      class="action-btn red sa-button sa-button--danger"
                       :disabled="isProcessing"
                       @click="handleReject(review.id)"
                     >
@@ -289,7 +289,7 @@
                     </button>
                     <button
                       type="button"
-                      class="action-btn ghost"
+                      class="action-btn ghost sa-button sa-button--secondary"
                       @click="expandedReview = null; reviewComment = ''"
                     >
                       取消
@@ -299,7 +299,7 @@
                 <div v-else class="review-btns">
                   <button
                     type="button"
-                    class="action-btn brown"
+                    class="action-btn brown sa-button sa-button--primary"
                     @click="expandedReview = review.id; reviewComment = ''"
                   >
                     处理评审

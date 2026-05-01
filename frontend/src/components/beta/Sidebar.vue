@@ -95,7 +95,7 @@
     <div class="rail-meta">
       <button
         type="button"
-        class="ghost rail-guide"
+        class="ghost rail-guide sa-button sa-button--secondary"
         @click="router.push('/guide')"
         :title="isCollapsed ? '返回 Guide' : ''"
       >
@@ -131,7 +131,7 @@
 
       <button
         type="button"
-        class="ghost rail-exit"
+        class="ghost rail-exit sa-button sa-button--secondary"
         @click="handleLogout"
         :title="isCollapsed ? '退出登录' : ''"
       >

@@ -30,9 +30,11 @@ class ConflictAgentMessageRequest(BaseModel):
 
     project_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
+    model: str = Field(default="deepseek-v4-pro", min_length=1)
+    use_thinking_mode: bool = True
     execution_mode: str = Field(default="graph")
 
-    @field_validator("project_id", "message")
+    @field_validator("project_id", "message", "model")
     @classmethod
     def normalize_required_text(cls, value: str) -> str:
         text = value.strip()
@@ -212,6 +214,8 @@ def stream_message(
                 project_id=payload.project_id,
                 user_message=payload.message,
                 execution_mode=payload.execution_mode,
+                model=payload.model,
+                use_thinking_mode=payload.use_thinking_mode,
             ):
                 yield _sse_event(event["event"], event.get("data", {}))
         except Exception as exc:

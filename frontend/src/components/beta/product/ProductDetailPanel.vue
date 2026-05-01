@@ -1,13 +1,13 @@
 <template>
-  <div class="card">
+  <div class="card sa-card">
     <div class="card-header no-border">
       <div>
         <button type="button" class="back-btn" @click="$emit('back')">← 返回列表</button>
         <h2 class="section-title">{{ product.name }}</h2>
       </div>
       <div class="header-actions">
-        <button type="button" class="ghost-small" @click="$emit('edit')">编辑</button>
-        <button type="button" class="ghost-small danger" @click="$emit('delete')">归档</button>
+        <button type="button" class="ghost-small sa-button sa-button--secondary" @click="$emit('edit')">编辑</button>
+        <button type="button" class="ghost-small danger sa-button sa-button--secondary" @click="$emit('delete')">归档</button>
       </div>
     </div>
 
@@ -84,7 +84,7 @@
               :value="aggSearch"
               @input="$emit('update:aggSearch', $event.target.value)"
               placeholder="搜索需求标题/项目..."
-              class="search-input full-width"
+              class="search-input full-width sa-input"
             />
           </div>
           <div v-if="aggRequirements.length === 0" class="empty-state">暂无需求</div>

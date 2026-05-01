@@ -17,12 +17,12 @@
 
     <!-- 右侧: 视图切换 -->
     <div class="view-switcher">
-      <button type="button" class="view-btn" :class="{ active: activeView === 'tree' }" title="树状视图" @click="$emit('update:activeView', 'tree')">
+      <button type="button" class="view-btn sa-button" :class="{ active: activeView === 'tree' }" title="树状视图" @click="$emit('update:activeView', 'tree')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M12 3v18M3 9l9-6 9 6M3 15l9 6 9-6" />
         </svg>
       </button>
-      <button type="button" class="view-btn" :class="{ active: activeView === 'table' }" title="表格视图" @click="$emit('update:activeView', 'table')">
+      <button type="button" class="view-btn sa-button" :class="{ active: activeView === 'table' }" title="表格视图" @click="$emit('update:activeView', 'table')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="3" y="3" width="18" height="18" rx="2" />
           <line x1="3" y1="9" x2="21" y2="9" />
@@ -30,7 +30,7 @@
           <line x1="9" y1="3" x2="9" y2="21" />
         </svg>
       </button>
-      <button type="button" class="view-btn" :class="{ active: activeView === 'card' }" title="卡片视图" @click="$emit('update:activeView', 'card')">
+      <button type="button" class="view-btn sa-button" :class="{ active: activeView === 'card' }" title="卡片视图" @click="$emit('update:activeView', 'card')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="3" y="3" width="7" height="7" rx="1" />
           <rect x="14" y="3" width="7" height="7" rx="1" />

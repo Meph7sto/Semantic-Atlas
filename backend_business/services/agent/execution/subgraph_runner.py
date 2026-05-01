@@ -1337,6 +1337,7 @@ class SubgraphRunner:
 
         loaded_prompt = self._skill_loader.render_prompt_bundle(
             retrieved_skills=retrieved_skills,
+            relevance_text=str(sg.task_description or "").strip(),
         )
         existing_context = str(context.get("_extra_system_context") or "").strip()
         prompt_text = loaded_prompt.prompt_text

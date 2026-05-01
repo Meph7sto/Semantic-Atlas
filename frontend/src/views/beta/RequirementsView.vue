@@ -31,7 +31,7 @@
               <span class="session-label">项目:</span>
               <select
                 v-model="selectedProjectId"
-                class="session-input"
+                class="session-input sa-input"
                 style="width: min(220px, 20vw); padding: 3px 6px"
               >
                 <option value="">未选择</option>
@@ -67,7 +67,7 @@
             />
             <button
               type="button"
-              class="action-btn secondary"
+              class="action-btn secondary sa-button sa-button--secondary"
               :disabled="!selectedProjectId || isImporting"
               @click="csvFileInputRef.click()"
             >
@@ -76,7 +76,7 @@
             </button>
             <button
               type="button"
-              class="action-btn secondary"
+              class="action-btn secondary sa-button sa-button--secondary"
               :disabled="!selectedProjectId || isExporting"
               @click="exportRequirements"
             >
@@ -86,7 +86,7 @@
             <button
               v-if="hasPermission('req:create')"
               type="button"
-              class="action-btn primary"
+              class="action-btn primary sa-button sa-button--primary"
               :disabled="!selectedProjectId"
               @click="openAddRequirementModal"
             >
@@ -95,7 +95,7 @@
             </button>
             <button
               type="button"
-              class="action-btn brown"
+              class="action-btn brown sa-button sa-button--primary"
               :disabled="isLoading"
               @click="refreshData"
             >
@@ -125,7 +125,7 @@
                 <input
                   v-model="newRequirement.title"
                   type="text"
-                  class="form-input"
+                  class="form-input sa-input"
                   placeholder="输入需求标题"
                   required
                 />
@@ -136,7 +136,7 @@
                 <label class="form-label">需求描述</label>
                 <textarea
                   v-model="newRequirement.description"
-                  class="form-textarea"
+                  class="form-textarea sa-input"
                   placeholder="详细描述需求内容..."
                   rows="4"
                 ></textarea>
@@ -146,7 +146,7 @@
               <div class="form-row">
                 <div class="form-group">
                   <label class="form-label required">需求类型</label>
-                  <select v-model="newRequirement.requirement_type" class="form-select" required>
+                  <select v-model="newRequirement.requirement_type" class="form-select sa-input" required>
                     <option value="top_level">顶层需求</option>
                     <option value="low_level">底层需求</option>
                     <option value="task">任务</option>
@@ -154,7 +154,7 @@
                 </div>
                 <div class="form-group">
                   <label class="form-label">层级</label>
-                  <select v-model="newRequirement.level" class="form-select">
+                  <select v-model="newRequirement.level" class="form-select sa-input">
                     <option value="L1">L1 - 业务需求</option>
                     <option value="L2">L2 - 利益相关者需求</option>
                     <option value="L3">L3 - 系统需求</option>
@@ -167,7 +167,7 @@
               <div class="form-row">
                 <div class="form-group">
                   <label class="form-label">优先级</label>
-                  <select v-model="newRequirement.priority" class="form-select">
+                  <select v-model="newRequirement.priority" class="form-select sa-input">
                     <option value="high">高</option>
                     <option value="medium">中</option>
                     <option value="low">低</option>
@@ -175,7 +175,7 @@
                 </div>
                 <div class="form-group">
                   <label class="form-label">状态</label>
-                  <select v-model="newRequirement.status" class="form-select">
+                  <select v-model="newRequirement.status" class="form-select sa-input">
                     <option value="draft">草稿</option>
                     <option value="under_review">审核中</option>
                     <option value="confirmed">已确认</option>
@@ -188,7 +188,7 @@
               <!-- 父需求（可选） -->
               <div class="form-group">
                 <label class="form-label">父需求（可选）</label>
-                <select v-model="newRequirement.parent_id" class="form-select">
+                <select v-model="newRequirement.parent_id" class="form-select sa-input">
                   <option value="">无</option>
                   <option
                     v-for="req in parentRequirementOptions"
@@ -206,7 +206,7 @@
                 <input
                   v-model="newRequirement.tags"
                   type="text"
-                  class="form-input"
+                  class="form-input sa-input"
                   placeholder="例如: 功能, 性能, 安全"
                 />
               </div>
@@ -215,12 +215,12 @@
               <div class="modal-footer">
                 <button
                   type="button"
-                  class="action-btn secondary"
+                  class="action-btn secondary sa-button sa-button--secondary"
                   @click="closeAddRequirementModal"
                 >
                   取消
                 </button>
-                <button type="submit" class="action-btn primary" :disabled="isSubmitting">
+                <button type="submit" class="action-btn primary sa-button sa-button--primary" :disabled="isSubmitting">
                   <Loader2 v-if="isSubmitting" class="w-4 h-4 animate-spin" />
                   {{ isSubmitting ? '提交中...' : '确认添加' }}
                 </button>
@@ -249,7 +249,7 @@
                 <input
                   v-model="editRequirement.title"
                   type="text"
-                  class="form-input"
+                  class="form-input sa-input"
                   placeholder="输入需求标题"
                   required
                 />
@@ -260,7 +260,7 @@
                 <label class="form-label">需求描述</label>
                 <textarea
                   v-model="editRequirement.description"
-                  class="form-textarea"
+                  class="form-textarea sa-input"
                   placeholder="详细描述需求内容..."
                   rows="4"
                 ></textarea>
@@ -270,7 +270,7 @@
               <div class="form-row">
                 <div class="form-group">
                   <label class="form-label">优先级</label>
-                  <select v-model="editRequirement.priority" class="form-select">
+                  <select v-model="editRequirement.priority" class="form-select sa-input">
                     <option value="high">高</option>
                     <option value="medium">中</option>
                     <option value="low">低</option>
@@ -278,7 +278,7 @@
                 </div>
                 <div class="form-group">
                   <label class="form-label">状态</label>
-                  <select v-model="editRequirement.status" class="form-select">
+                  <select v-model="editRequirement.status" class="form-select sa-input">
                     <option value="draft">草稿</option>
                     <option value="under_review">审核中</option>
                     <option value="confirmed">已确认</option>
@@ -294,7 +294,7 @@
                 <input
                   v-model="editRequirement.tags"
                   type="text"
-                  class="form-input"
+                  class="form-input sa-input"
                   placeholder="例如: 功能, 性能, 安全"
                 />
               </div>
@@ -303,12 +303,12 @@
               <div class="modal-footer">
                 <button
                   type="button"
-                  class="action-btn secondary"
+                  class="action-btn secondary sa-button sa-button--secondary"
                   @click="closeEditRequirementModal"
                 >
                   取消
                 </button>
-                <button type="submit" class="action-btn primary" :disabled="isEditSubmitting">
+                <button type="submit" class="action-btn primary sa-button sa-button--primary" :disabled="isEditSubmitting">
                   <Loader2 v-if="isEditSubmitting" class="w-4 h-4 animate-spin" />
                   {{ isEditSubmitting ? '保存中...' : '保存修改' }}
                 </button>
@@ -338,7 +338,7 @@
           <div class="view-switcher">
             <button
               type="button"
-              class="view-btn"
+              class="view-btn sa-button"
               :class="{ active: activeView === 'tree' }"
               title="树状视图"
               @click="activeView = 'tree'"
@@ -349,7 +349,7 @@
             </button>
             <button
               type="button"
-              class="view-btn"
+              class="view-btn sa-button"
               :class="{ active: activeView === 'table' }"
               title="表格视图"
               @click="activeView = 'table'"
@@ -363,7 +363,7 @@
             </button>
             <button
               type="button"
-              class="view-btn"
+              class="view-btn sa-button"
               :class="{ active: activeView === 'card' }"
               title="卡片视图"
               @click="activeView = 'card'"
@@ -400,7 +400,7 @@
             <button
               v-if="!selectedProjectId"
               type="button"
-              class="action-btn brown mt-4"
+              class="action-btn brown mt-4 sa-button sa-button--primary"
               @click="router.push({ name: 'beta-project' })"
             >
               前往项目管理
@@ -443,9 +443,7 @@
                 <span class="detail-label">未解决:</span>
                 <span
                   class="detail-value"
-                  :class="
-                    requirementDetailUnresolvedDefects.length ? 'text-red-600' : 'text-emerald-600'
-                  "
+                  :class="requirementDetailUnresolvedDefects.length ? 'text-red-600' : 'text-emerald-600'"
                 >
                   {{ requirementDetailUnresolvedDefects.length }}
                 </span>
@@ -532,15 +530,11 @@
                         <div class="sort-icons">
                           <ChevronUp
                             class="w-3 h-3"
-                            :class="
-                              tableSortKey === col.key && tableSortOrder === 'asc' ? 'active' : ''
-                            "
+                            :class="tableSortKey === col.key && tableSortOrder === 'asc' ? 'active' : ''"
                           />
                           <ChevronDown
                             class="w-3 h-3"
-                            :class="
-                              tableSortKey === col.key && tableSortOrder === 'desc' ? 'active' : ''
-                            "
+                            :class="tableSortKey === col.key && tableSortOrder === 'desc' ? 'active' : ''"
                           />
                         </div>
                       </div>
@@ -665,9 +659,7 @@
                   }}</strong></span
                 >
                 <span
-                  :class="
-                    requirementDetailUnresolvedDefects.length ? 'text-red-600' : 'text-emerald-600'
-                  "
+                  :class="requirementDetailUnresolvedDefects.length ? 'text-red-600' : 'text-emerald-600'"
                 >
                   未解决：<strong>{{ requirementDetailUnresolvedDefects.length }}</strong>
                 </span>

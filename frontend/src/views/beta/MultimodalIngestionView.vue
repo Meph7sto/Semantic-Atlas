@@ -47,7 +47,7 @@
               <p>上传图片生成文字预览，并可确认写入 spans。</p>
             </header>
 
-            <section class="card-block">
+            <section class="card-block sa-card">
               <h3>步骤 1：上传图片并生成图生文</h3>
 
               <div class="form-grid">
@@ -83,7 +83,7 @@
 
               <button
                 type="button"
-                class="action-btn dark"
+                class="action-btn dark sa-button sa-button--primary"
                 :disabled="visionGenerating"
                 @click="generateCaption"
               >
@@ -91,7 +91,7 @@
               </button>
             </section>
 
-            <section v-if="visionGenerated" class="card-block">
+            <section v-if="visionGenerated" class="card-block sa-card">
               <h3>步骤 2：确认入库 spans</h3>
 
               <div class="info-grid">
@@ -115,7 +115,7 @@
                 <div class="preview-box mono">{{ visionGenerated.result?.transcript_text }}</div>
               </div>
 
-              <div class="card-subtle">
+              <div class="card-subtle sa-card">
                 <h4>入库参数</h4>
 
                 <div class="form-grid triple">
@@ -145,7 +145,7 @@
 
                 <button
                   type="button"
-                  class="action-btn dark"
+                  class="action-btn dark sa-button sa-button--primary"
                   :disabled="visionConfirming"
                   @click="confirmVisionIngest"
                 >
@@ -169,10 +169,10 @@
               <p>上传音视频文件，远端转写后可查看详情并导出结果。</p>
             </header>
 
-            <section class="card-block">
+            <section class="card-block sa-card">
               <div class="toolbar-row">
                 <h3>上传文件</h3>
-                <button type="button" class="action-btn light" @click="loadAsrSessions">刷新列表</button>
+                <button type="button" class="action-btn light sa-button sa-button--secondary" @click="loadAsrSessions">刷新列表</button>
               </div>
 
               <div class="upload-row">
@@ -184,7 +184,7 @@
                 />
                 <button
                   type="button"
-                  class="action-btn dark"
+                  class="action-btn dark sa-button sa-button--primary"
                   :disabled="!asrSelectedFile || asrUploading"
                   @click="createAsrSession"
                 >
@@ -194,7 +194,7 @@
               </div>
             </section>
 
-            <section class="card-block">
+            <section class="card-block sa-card">
               <h3>会话列表</h3>
 
               <div class="table-wrap">
@@ -221,12 +221,12 @@
                       <td>{{ item.attempt_count }}</td>
                       <td>{{ item.updated_at }}</td>
                       <td class="actions">
-                        <button type="button" class="action-btn tiny light" @click="viewAsrDetail(item.session_id)">
+                        <button type="button" class="action-btn tiny light sa-button sa-button--secondary" @click="viewAsrDetail(item.session_id)">
                           查看
                         </button>
                         <button
                           type="button"
-                          class="action-btn tiny light"
+                          class="action-btn tiny light sa-button sa-button--secondary"
                           :disabled="item.status !== 'failed' && item.status !== 'timeout'"
                           @click="retryAsrSession(item.session_id)"
                         >
@@ -234,7 +234,7 @@
                         </button>
                         <button
                           type="button"
-                          class="action-btn tiny light"
+                          class="action-btn tiny light sa-button sa-button--secondary"
                           :disabled="item.status !== 'succeeded'"
                           @click="downloadAsr(item.session_id, 'txt')"
                         >
@@ -242,7 +242,7 @@
                         </button>
                         <button
                           type="button"
-                          class="action-btn tiny light"
+                          class="action-btn tiny light sa-button sa-button--secondary"
                           :disabled="item.status !== 'succeeded'"
                           @click="downloadAsr(item.session_id, 'json')"
                         >
@@ -268,13 +268,13 @@
         <div class="drawer-actions">
           <button
             type="button"
-            class="action-btn light"
+            class="action-btn light sa-button sa-button--secondary"
             :disabled="!asrCurrentDetail || asrCurrentDetail.status !== 'succeeded'"
             @click="downloadAsrRawOut"
           >
             下载 raw_out
           </button>
-          <button type="button" class="action-btn light" @click="closeAsrDetail">关闭</button>
+          <button type="button" class="action-btn light sa-button sa-button--secondary" @click="closeAsrDetail">关闭</button>
         </div>
       </div>
 

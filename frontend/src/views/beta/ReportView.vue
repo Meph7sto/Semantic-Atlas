@@ -30,19 +30,19 @@
             </button>
           </div>
           <div class="page-actions">
-            <select v-model="selectedProjectId" class="project-select">
+            <select v-model="selectedProjectId" class="project-select sa-input">
               <option value="">选择项目</option>
               <option v-for="p in projects" :key="p.project_id" :value="p.project_id">
                 {{ p.name }}
               </option>
             </select>
-            <button type="button" class="action-btn ghost" @click="refreshAll" :disabled="isLoading">
+            <button type="button" class="action-btn ghost sa-button sa-button--secondary" @click="refreshAll" :disabled="isLoading">
               <RefreshCw class="btn-icon" :class="{ spin: isLoading }" />
               刷新
             </button>
             <button
               type="button"
-              class="action-btn brown"
+              class="action-btn brown sa-button sa-button--primary"
               :disabled="!selectedProjectId"
               @click="exportMarkdown"
             >

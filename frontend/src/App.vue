@@ -8,7 +8,7 @@ import { useStyleVariant } from '@/composables/useStyleVariant.js'
 import { useAuthStore } from '@/stores/auth.js'
 
 const authStore = useAuthStore()
-const { isNewStyle, setStyleVariant, styleVariant } = useStyleVariant()
+const { setStyleVariant, styleVariant } = useStyleVariant()
 
 const route = useRoute()
 
@@ -27,7 +27,7 @@ const isSidebarOpen = ref(true)
   <div
     v-if="isMainRoute"
     class="min-h-screen semantic-style-shell"
-    :class="{ 'semantic-style-new': isNewStyle }"
+    :data-style-variant="styleVariant"
   >
     <RouterView v-slot="{ Component, route: viewRoute }">
       <KeepAlive>
@@ -50,7 +50,7 @@ const isSidebarOpen = ref(true)
   <div
     v-else-if="isGuideRoute"
     class="min-h-screen bg-white semantic-style-shell"
-    :class="{ 'semantic-style-new': isNewStyle }"
+    :data-style-variant="styleVariant"
   >
     <RouterView />
   </div>

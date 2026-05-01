@@ -19,7 +19,7 @@
             <span class="jama-pill">产品→项目归属关系</span>
           </div>
           <div class="page-actions">
-            <button type="button" class="action-btn brown" @click="showCreateModal = true">新建产品</button>
+            <button type="button" class="action-btn brown sa-button sa-button--primary" @click="showCreateModal = true">新建产品</button>
             <span class="nav-text">通知 · {{ notificationCount }}</span>
           </div>
         </section>

@@ -10,18 +10,18 @@
       <form class="modal-body" @submit.prevent="$emit('submit')">
         <div class="form-group">
           <label class="form-label required">需求标题</label>
-          <input v-model="form.title" type="text" class="form-input" placeholder="输入需求标题" required />
+          <input v-model="form.title" type="text" class="form-input sa-input" placeholder="输入需求标题" required />
         </div>
 
         <div class="form-group">
           <label class="form-label">需求描述</label>
-          <textarea v-model="form.description" class="form-textarea" placeholder="详细描述需求内容..." rows="4"></textarea>
+          <textarea v-model="form.description" class="form-textarea sa-input" placeholder="详细描述需求内容..." rows="4"></textarea>
         </div>
 
         <div class="form-row">
           <div class="form-group">
             <label class="form-label required">需求类型</label>
-            <select v-model="form.requirement_type" class="form-select" required>
+            <select v-model="form.requirement_type" class="form-select sa-input" required>
               <option value="top_level">顶层需求</option>
               <option value="low_level">底层需求</option>
               <option value="task">任务</option>
@@ -29,7 +29,7 @@
           </div>
           <div class="form-group">
             <label class="form-label">层级</label>
-            <select v-model="form.level" class="form-select">
+            <select v-model="form.level" class="form-select sa-input">
               <option value="L1">L1 - 业务需求</option>
               <option value="L2">L2 - 利益相关者需求</option>
               <option value="L3">L3 - 系统需求</option>
@@ -41,7 +41,7 @@
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">优先级</label>
-            <select v-model="form.priority" class="form-select">
+            <select v-model="form.priority" class="form-select sa-input">
               <option value="high">高</option>
               <option value="medium">中</option>
               <option value="low">低</option>
@@ -49,7 +49,7 @@
           </div>
           <div class="form-group">
             <label class="form-label">状态</label>
-            <select v-model="form.status" class="form-select">
+            <select v-model="form.status" class="form-select sa-input">
               <option value="draft">草稿</option>
               <option value="under_review">审核中</option>
               <option value="confirmed">已确认</option>
@@ -61,7 +61,7 @@
 
         <div class="form-group">
           <label class="form-label">父需求（可选）</label>
-          <select v-model="form.parent_id" class="form-select">
+          <select v-model="form.parent_id" class="form-select sa-input">
             <option value="">无</option>
             <option v-for="req in parentRequirementOptions" :key="req.req_id" :value="req.req_id">
               {{ req.title || req.req_id }}
@@ -71,12 +71,12 @@
 
         <div class="form-group">
           <label class="form-label">标签（用逗号分隔）</label>
-          <input v-model="form.tags" type="text" class="form-input" placeholder="例如: 功能, 性能, 安全" />
+          <input v-model="form.tags" type="text" class="form-input sa-input" placeholder="例如: 功能, 性能, 安全" />
         </div>
 
         <div class="modal-footer">
-          <button type="button" class="action-btn secondary" @click="$emit('close')">取消</button>
-          <button type="submit" class="action-btn primary" :disabled="isSubmitting">
+          <button type="button" class="action-btn secondary sa-button sa-button--secondary" @click="$emit('close')">取消</button>
+          <button type="submit" class="action-btn primary sa-button sa-button--primary" :disabled="isSubmitting">
             <Loader2 v-if="isSubmitting" class="w-4 h-4 animate-spin" />
             {{ isSubmitting ? '提交中...' : '确认添加' }}
           </button>

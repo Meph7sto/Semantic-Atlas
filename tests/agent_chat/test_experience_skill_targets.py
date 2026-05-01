@@ -55,7 +55,7 @@ def test_resolve_experience_target_from_subgraph_uses_prompt_builder():
     )
 
 
-def test_resolve_experience_target_falls_back_to_classic_agent_mapping():
+def test_resolve_experience_target_uses_tool_loop_agent_mapping():
     target = resolve_experience_target(
         container_key="requirement_agent",
         agent_type="requirement_agent",
@@ -63,7 +63,7 @@ def test_resolve_experience_target_falls_back_to_classic_agent_mapping():
     )
 
     assert target == ExperienceTarget(
-        target_id="requirement_agent_classic",
+        target_id="requirement_agent_tool_loop",
         container_key="requirement_agent",
         prompt_builder_kind="",
         node_type="llm",

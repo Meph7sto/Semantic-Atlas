@@ -145,12 +145,12 @@ class ContextBuilder:
         llm: LLMClient,
         llm_model: Optional[str],
         use_streaming_llm: bool,
-        use_thinking_mode: bool,
         tau: float,
         top_k: int,
         max_edges_per_window: int,
         max_concurrent: int,
         event_queue: asyncio.Queue,
+        use_thinking_mode: bool = True,
     ) -> List[WindowResult]:
         """并行处理所有窗口，分批控制并发度"""
         results = []
@@ -469,16 +469,16 @@ class ContextBuilder:
 
                 async def process_with_events():
                     return await self._process_windows_parallel(
-                        windows,
-                        llm,
-                        llm_model,
-                        use_streaming_llm,
-                        use_thinking_mode,
-                        tau,
-                        top_k,
-                        max_edges_per_window,
-                        max_concurrent,
-                        event_queue,
+                        windows=windows,
+                        llm=llm,
+                        llm_model=llm_model,
+                        use_streaming_llm=use_streaming_llm,
+                        tau=tau,
+                        top_k=top_k,
+                        max_edges_per_window=max_edges_per_window,
+                        max_concurrent=max_concurrent,
+                        event_queue=event_queue,
+                        use_thinking_mode=use_thinking_mode,
                     )
 
                 # 在新事件循环中运行

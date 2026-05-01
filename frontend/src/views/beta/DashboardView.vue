@@ -23,7 +23,7 @@
                 <line x1="8" y1="21" x2="16" y2="21" />
                 <line x1="12" y1="17" x2="12" y2="21" />
               </svg>
-              <select v-model="selectedProjectId" class="project-select">
+              <select v-model="selectedProjectId" class="project-select sa-input">
                 <option value="">请选择项目</option>
                 <option
                   v-for="p in projects"
@@ -39,7 +39,7 @@
             </span>
             <button
               type="button"
-              class="action-btn refresh-btn"
+              class="action-btn refresh-btn sa-button sa-button--primary"
               @click="handleRefresh"
               :disabled="isLoadingData"
             >
@@ -76,7 +76,7 @@
             </svg>
             <h2>选择一个项目开始</h2>
             <p>请从顶部下拉菜单选择项目，仪表盘将展示该项目的实时统计数据。</p>
-            <button type="button" class="primary-btn" @click="handleNavigate('project-management')">
+            <button type="button" class="primary-btn sa-button sa-button--primary" @click="handleNavigate('project-management')">
               前往项目管理
             </button>
           </div>

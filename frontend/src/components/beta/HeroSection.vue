@@ -7,9 +7,27 @@
         项目健康摘要、需求状态分布、评审队列、缺陷跟踪、基线进度 — 所有关键指标的实时聚合。
       </p>
       <div class="hero-actions">
-        <button type="button" class="primary" @click="$emit('navigate', 'requirements')">进入需求管理</button>
-        <button type="button" class="ghost" @click="$emit('navigate', 'reviews')">查看评审中心</button>
-        <button type="button" class="ghost" @click="$emit('navigate', 'tracking')">打开追踪视图</button>
+        <button
+          type="button"
+          class="primary sa-button sa-button--primary"
+          @click="$emit('navigate', 'requirements')"
+        >
+          进入需求管理
+        </button>
+        <button
+          type="button"
+          class="ghost sa-button sa-button--secondary"
+          @click="$emit('navigate', 'reviews')"
+        >
+          查看评审中心
+        </button>
+        <button
+          type="button"
+          class="ghost sa-button sa-button--secondary"
+          @click="$emit('navigate', 'tracking')"
+        >
+          打开追踪视图
+        </button>
       </div>
       <div class="ribbon chips-row">
         <span class="chip-status">
@@ -33,7 +51,7 @@
 
     <!-- 骨架屏 -->
     <div v-if="loading" class="stats-row">
-      <div v-for="i in 4" :key="i" class="stat-box skeleton-box">
+      <div v-for="i in 4" :key="i" class="stat-box skeleton-box sa-card">
         <div class="skeleton-line short"></div>
         <div class="skeleton-line wide"></div>
         <div class="skeleton-line medium"></div>
@@ -42,7 +60,7 @@
 
     <!-- 真实数据 -->
     <div v-else class="stats-row">
-      <div class="stat-box">
+      <div class="stat-box sa-card">
         <div class="stat-header">
           <span>项目总览</span>
           <span class="tag">All</span>
@@ -58,7 +76,7 @@
         </div>
       </div>
 
-      <div class="stat-box">
+      <div class="stat-box sa-card">
         <div class="stat-header">
           <span>评审队列</span>
           <span class="tag">Review</span>
@@ -70,7 +88,7 @@
         </div>
       </div>
 
-      <div class="stat-box">
+      <div class="stat-box sa-card">
         <div class="stat-header">
           <span>缺陷跟踪</span>
           <span class="tag">Defects</span>
@@ -82,7 +100,7 @@
         </div>
       </div>
 
-      <div class="stat-box">
+      <div class="stat-box sa-card">
         <div class="stat-header">
           <span>基线状态</span>
           <span class="tag">Baseline</span>

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 from .skill_compiler import parse_skill_document
 from .skill_retriever import RetrievedSkill
@@ -35,10 +36,12 @@ class SkillLoader:
         *,
         retrieved_skill: RetrievedSkill,
         max_items_per_section: int = 4,
+        relevance_text: str = "",
     ) -> LoadedSkillPrompt:
         return self.render_prompt_bundle(
             retrieved_skills=[retrieved_skill],
             max_items_per_section=max_items_per_section,
+            relevance_text=relevance_text,
         )
 
     def render_prompt_bundle(
@@ -46,6 +49,7 @@ class SkillLoader:
         *,
         retrieved_skills: list[RetrievedSkill],
         max_items_per_section: int = 4,
+        relevance_text: str = "",
     ) -> LoadedSkillPrompt:
         normalized_skills = [
             item for item in retrieved_skills
@@ -57,6 +61,7 @@ class SkillLoader:
             self._render_single_prompt(
                 retrieved_skill=item,
                 max_items_per_section=max_items_per_section,
+                relevance_text=relevance_text,
             )
             for item in normalized_skills
         ]
@@ -80,6 +85,7 @@ class SkillLoader:
         *,
         retrieved_skill: RetrievedSkill,
         max_items_per_section: int = 4,
+        relevance_text: str = "",
     ) -> str:
         metadata, sections = parse_skill_document(retrieved_skill.content)
         heading = (
@@ -114,6 +120,11 @@ class SkillLoader:
                 for item in (sections.get(section_name) or [])[:max_items_per_section]
                 if str(item or "").strip()
             ]
+            if section_name == "适用场景":
+                items = _filter_relevant_scenarios(
+                    items,
+                    relevance_text=relevance_text,
+                )
             if not items:
                 continue
             lines.extend(["", f"### {section_name}"])
@@ -125,3 +136,48 @@ class SkillLoader:
                     lines.append(f"- {item}")
 
         return "\n".join(lines).strip()
+
+
+def _filter_relevant_scenarios(
+    items: list[str],
+    *,
+    relevance_text: str,
+) -> list[str]:
+    """Keep scenario bullets focused on the active phase when possible."""
+
+    normalized_relevance = _normalize_text(relevance_text)
+    if not items or not normalized_relevance:
+        return items
+
+    exact_matches = [
+        item for item in items
+        if normalized_relevance in _normalize_text(item)
+        or _normalize_text(item) in normalized_relevance
+    ]
+    if exact_matches:
+        return exact_matches
+
+    relevance_tokens = _extract_cjk_bigrams(normalized_relevance)
+    if not relevance_tokens:
+        return items
+    scored_items: list[tuple[int, str]] = []
+    for item in items:
+        item_tokens = _extract_cjk_bigrams(_normalize_text(item))
+        overlap = len(relevance_tokens & item_tokens)
+        if overlap:
+            scored_items.append((overlap, item))
+    if not scored_items:
+        return items
+    max_overlap = max(score for score, _item in scored_items)
+    return [item for score, item in scored_items if score == max_overlap]
+
+
+def _normalize_text(value: str) -> str:
+    return re.sub(r"\s+", "", str(value or "").strip().lower())
+
+
+def _extract_cjk_bigrams(value: str) -> set[str]:
+    text = _normalize_text(value)
+    if len(text) < 2:
+        return {text} if text else set()
+    return {text[index : index + 2] for index in range(len(text) - 1)}

@@ -302,7 +302,12 @@ class TestL4GenerationService:
 
         call_order = []
 
-        def fake_generate(prompt: str, system_prompt: str, model_id: str | None) -> str:
+        def fake_generate(
+            prompt: str,
+            system_prompt: str,
+            model_id: str | None,
+            use_thinking_mode: bool = True,
+        ) -> str:
             if "REQ-1" in prompt:
                 call_order.append("REQ-1")
                 if call_order.count("REQ-1") == 1:

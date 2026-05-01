@@ -1,5 +1,5 @@
 <template>
-  <div class="card my-work-card">
+  <div class="card my-work-card sa-card">
     <div class="card-header full-header">
       <div class="header-main">
         <p class="card-kicker">My Work</p>

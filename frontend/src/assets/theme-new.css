@@ -1,9 +1,14 @@
 /*
   New style theme notes
   ---------------------
-  This file is the scoped version of the Wise-inspired reference stylesheet.
-  It is active only when App.vue adds `.semantic-style-new` to the beta/guide
-  route shell, so the original Semantic Atlas styles remain unchanged.
+  This file is the documented Wise-inspired reference stylesheet adapted from
+  the root `styles.css` / `preview.html`. It is intentionally not imported by
+  the app runtime.
+
+  Runtime switching now happens in `theme-components.css` through explicit Vue
+  semantic hooks such as `sa-button`, `sa-card`, and `sa-input`, so the original
+  Semantic Atlas styles remain unchanged and no broad compatibility overrides
+  are applied.
 
   Usage map from preview.html:
   - Background: use `--white` for the page, `--mint` for soft highlighted

@@ -5,6 +5,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from backend_business.services.agent.runtime.agent_registry import (
+    BUILTIN_AGENT_REGISTRY,
+    AgentRegistry,
+)
 from backend_business.services.requirements_manage_service import RequirementsManageService
 
 from .delegation import SessionControllerDelegationDispatcher
@@ -54,11 +58,18 @@ class SessionControllerTools:
         requirement_agent_service: Any,
         conflict_agent_service: Any,
         requirement_classification_agent_service: Any | None = None,
+        agent_registry: AgentRegistry | None = None,
     ) -> None:
         self.requirements_service = requirements_service
         self._requirement_agent_service = requirement_agent_service
         self._conflict_agent_service = conflict_agent_service
         self._requirement_classification_agent_service = requirement_classification_agent_service
+        self._agent_registry = agent_registry or BUILTIN_AGENT_REGISTRY
+        self._runtime_tool_executor_services = {
+            "requirement_agent": requirement_agent_service,
+            "conflict_detection": conflict_agent_service,
+            "requirement_classification_agent": requirement_classification_agent_service,
+        }
         self._delegation_dispatcher = SessionControllerDelegationDispatcher(
             requirement_agent_service=requirement_agent_service,
             conflict_agent_service=conflict_agent_service,
@@ -69,14 +80,13 @@ class SessionControllerTools:
         """Resolve the tool executor bound to a runtime container."""
         if container_key in {"conductor", "session_controller", ""}:
             return self
-        if container_key == "requirement_agent":
-            return getattr(self._requirement_agent_service, "tools", None)
-        if container_key == "conflict_detection":
-            return getattr(self._conflict_agent_service, "tools", None)
-        if container_key == "requirement_classification_agent":
-            service = self._requirement_classification_agent_service
-            return getattr(service, "tools", None) if service is not None else None
-        return None
+        definition = self._agent_registry.get_by_container_key(container_key)
+        if definition is None:
+            return None
+        service = self._runtime_tool_executor_services.get(definition.container_key)
+        if service is None:
+            return None
+        return getattr(service, "tools", None)
 
     def get_tools_list(
         self,

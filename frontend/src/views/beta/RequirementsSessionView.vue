@@ -33,7 +33,7 @@
           <div class="page-actions">
             <button
               type="button"
-              class="action-btn white"
+              class="action-btn white sa-button sa-button--secondary"
               :disabled="!selectedProjectId || !sessionId || isImportingToManage"
               @click="handleImportToManage"
             >
@@ -42,7 +42,7 @@
             </button>
             <button
               type="button"
-              class="action-btn primary"
+              class="action-btn primary sa-button sa-button--primary"
               :disabled="!selectedProjectId"
               @click="openAddRequirementModal"
             >
@@ -51,7 +51,7 @@
             </button>
             <button
               type="button"
-              class="action-btn brown"
+              class="action-btn brown sa-button sa-button--primary"
               :disabled="isLoading"
               @click="refreshData"
             >
@@ -107,7 +107,7 @@
             <button
               v-if="!sessionId"
               type="button"
-              class="action-btn brown mt-4"
+              class="action-btn brown mt-4 sa-button sa-button--primary"
               @click="router.push({ name: 'beta-requirements-analysis' })"
             >
               前往需求分析

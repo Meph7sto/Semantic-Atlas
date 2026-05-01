@@ -1,7 +1,7 @@
 <template>
-  <div class="ref-app">
-    <div class="login-shell">
-      <div class="login-card" data-animate style="--delay: 0.05s">
+  <div class="ref-app sa-page">
+    <div class="login-shell sa-page-surface">
+      <div class="login-card sa-card" data-animate style="--delay: 0.05s">
         <div class="login-header">
           <div>
             <p class="eyebrow">Semantic Atlas</p>
@@ -21,7 +21,7 @@
                 v-for="role in roles"
                 :key="role.value"
                 type="button"
-                class="role-card"
+                class="role-card sa-card sa-card--interactive sa-card--selectable"
                 :class="{ active: selectedRole === role.value }"
                 :aria-pressed="selectedRole === role.value ? 'true' : 'false'"
                 @click="selectedRole = role.value"
@@ -40,6 +40,7 @@
                 id="account"
                 v-model="account"
                 type="text"
+                class="sa-input"
                 placeholder="工号 / 学号 / 手机号"
               />
             </div>
@@ -49,23 +50,24 @@
                 id="password"
                 v-model="password"
                 type="password"
+                class="sa-input"
                 placeholder="请输入密码"
               />
             </div>
             <div class="login-field">
               <label for="role">当前角色</label>
-              <select id="role" v-model="selectedRole">
+              <select id="role" v-model="selectedRole" class="sa-input">
                 <option v-for="role in roles" :key="role.value" :value="role.value">
                   {{ role.title }}
                 </option>
               </select>
             </div>
             <div class="login-actions">
-              <button type="submit" class="primary" :disabled="loading">
+              <button type="submit" class="primary sa-button sa-button--primary" :disabled="loading">
                 {{ loading ? "登录中..." : "进入系统" }}
               </button>
-              <button type="button" class="ghost">找回密码</button>
-              <button type="button" class="ghost" @click="handleRegister">
+              <button type="button" class="ghost sa-button sa-button--secondary">找回密码</button>
+              <button type="button" class="ghost sa-button sa-button--secondary" @click="handleRegister">
                 注册账号
               </button>
             </div>

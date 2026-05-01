@@ -3,7 +3,7 @@
     <div class="trace-matrix-toolbar">
       <label class="trace-matrix-filter">
         <span>状态筛选</span>
-        <select v-model="statusFilter" class="select-clean">
+        <select v-model="statusFilter" class="select-clean sa-input">
           <option value="">全部状态</option>
           <option value="draft">草稿</option>
           <option value="under_review">评审中</option>
@@ -16,7 +16,7 @@
 
       <label class="trace-matrix-filter trace-matrix-filter--search">
         <span>关键词</span>
-        <input v-model="keyword" type="text" class="search-input full-width" placeholder="搜索需求标题 / ID" />
+        <input v-model="keyword" type="text" class="search-input full-width sa-input" placeholder="搜索需求标题 / ID" />
       </label>
     </div>
 

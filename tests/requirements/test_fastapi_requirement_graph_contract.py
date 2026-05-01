@@ -161,7 +161,7 @@ async def fastapi_client(monkeypatch):
     monkeypatch.setattr(
         requirement_graph,
         "_require_graph_service",
-        lambda: stub_service,
+        lambda **_kwargs: stub_service,
     )
     app = build_test_app(requirement_graph.router)
     async with async_client(app) as client:

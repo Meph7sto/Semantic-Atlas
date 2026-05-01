@@ -192,6 +192,8 @@ def stream_message(
                 project_id=payload.project_id,
                 user_message=payload.message,
                 requirement_id=payload.requirement_id,
+                model=payload.model,
+                use_thinking_mode=payload.use_thinking_mode,
             ):
                 yield _sse_event(event["event"], event.get("data", {}))
         except Exception as exc:

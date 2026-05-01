@@ -3,32 +3,32 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Generator
 import logging
+from collections.abc import Generator
 from typing import Any
 
 import requests
-
 from backend_business.config import settings
-from backend_business.services.ai_chat_service import AiChatService, ai_chat_service
-from backend_business.services.ai_proxy import ai_proxy
-from backend_business.services.agent.execution_graph_service import ExecutionGraphService
 from backend_business.services.agent.execution.graph_executor import (
     ExecutionResult,
     GraphExecutor,
 )
+from backend_business.services.agent.execution_graph_service import ExecutionGraphService
 from backend_business.services.agent.experience import ExperienceOrchestrator
+from backend_business.services.agent.runtime.agent_registry import BUILTIN_AGENT_REGISTRY
 from backend_business.services.agent.runtime.binding_bootstrap import (
     ensure_runtime_bindings,
-    extract_tool_names,
 )
+from backend_business.services.agent.runtime.session_graph_store import AgentSessionGraphStore
 from backend_business.services.agent.tools import ConflictDetectionTools
+from backend_business.services.ai_chat_service import AiChatService, ai_chat_service
+from backend_business.services.ai_proxy import ai_proxy
 from backend_business.services.requirements_manage_service import RequirementsManageService
 
 from .prompt_builder import ConflictDetectionPromptBuilder
+from .definition import STANDALONE_CONFLICT_DETECTION_AGENT_DEFINITION
 from .runtime_graph_recorder import ConflictDetectionGraphRecorder
 from .tool_loop_runner import ConflictDetectionToolLoopRunner
-
 
 logger = logging.getLogger(__name__)
 
@@ -60,56 +60,25 @@ class ConflictDetectionAgentService:
             requirements_service=self.requirements_service,
             conflict_check_fn=self.ai_proxy.conflict_check,
         )
+        self._session_graph_store = AgentSessionGraphStore(
+            chat_storage=chat_storage,
+            execution_graph_service=self.execution_graph_service,
+            agent_type=self.AGENT_TYPE,
+            create_or_get_prompt_update_policy="truthy",
+            create_or_get_context_update_policy="allowed",
+        )
 
     def _ensure_graph_runtime_bindings(self) -> None:
-        binding_specs = [
-            {
-                "container_key": "conflict_detection_agent",
-                "agent_type": "conflict_detection_agent",
-                "runtime_profile": "default",
-                "implementation_type": "local",
-                "capability_policy_json": {
-                    "policy_id": "conflict_detection::runtime",
-                    "scope": "conflict_detection_agent",
-                    "tool_names": extract_tool_names(self.tools),
-                },
-                "quota_policy_json": {
-                    "policy_id": "conflict_detection::runtime::quota",
-                    "max_rounds": self.MAX_TOOL_CALL_ROUNDS,
-                    "timeout_seconds": 180,
-                    "max_concurrent_runs": 2,
-                    "max_parallel_runs_per_scope": 1,
-                },
-                "memory_policy_json": {
-                    "scope": "container",
-                    "strict_memory_contract": True,
-                },
-            }
-        ]
+        binding_specs = BUILTIN_AGENT_REGISTRY.build_runtime_binding_specs(
+            definitions=[STANDALONE_CONFLICT_DETECTION_AGENT_DEFINITION],
+            tool_executor_resolver=lambda _definition: self.tools,
+        )
         ensure_runtime_bindings(self.execution_graph_service, binding_specs)
 
     # ---- session helpers (modeled after RequirementAgentChatService) ----
 
     def _hydrate_session_graph(self, session: dict[str, Any]) -> dict[str, Any]:
-        hydrated = dict(session or {})
-        active_graph_id = hydrated.get("active_graph_id")
-        if active_graph_id:
-            active_graph = self.execution_graph_service.get_execution_graph(active_graph_id)
-            if active_graph:
-                return hydrated
-
-        latest_graph = self.execution_graph_service.get_latest_runtime_graph_by_session(
-            hydrated.get("session_id") or "",
-            project_id=hydrated.get("project_id"),
-        )
-        if latest_graph:
-            hydrated["active_graph_id"] = latest_graph["graph_id"]
-            if self.chat_storage:
-                self.chat_storage.update_session(
-                    session_id=hydrated["session_id"],
-                    active_graph_id=latest_graph["graph_id"],
-                )
-        return hydrated
+        return self._session_graph_store.hydrate_session_graph(session)
 
     def _resolve_session_graph_target(
         self,
@@ -117,29 +86,10 @@ class ConflictDetectionAgentService:
         session: dict[str, Any],
         project_id: str | None,
     ) -> dict[str, str | None]:
-        graph_id = session.get("active_graph_id")
-        if graph_id:
-            graph = self.execution_graph_service.get_execution_graph(graph_id)
-            if graph:
-                if graph.get("status") == "suspended":
-                    return {"graph_id": graph_id, "prev_graph_id": None}
-                return {"graph_id": None, "prev_graph_id": graph_id}
-
-        latest_graph = self.execution_graph_service.get_latest_runtime_graph_by_session(
-            session.get("session_id") or "",
+        return self._session_graph_store.resolve_session_graph_target(
+            session=session,
             project_id=project_id,
         )
-        if not latest_graph:
-            return {"graph_id": None, "prev_graph_id": None}
-
-        if self.chat_storage:
-            self.chat_storage.update_session(
-                session_id=session["session_id"],
-                active_graph_id=latest_graph["graph_id"],
-            )
-        if latest_graph.get("status") == "suspended":
-            return {"graph_id": latest_graph["graph_id"], "prev_graph_id": None}
-        return {"graph_id": None, "prev_graph_id": latest_graph["graph_id"]}
 
     def create_or_get_session(
         self,
@@ -148,24 +98,12 @@ class ConflictDetectionAgentService:
         prompt_payload_format: str | None = None,
         context_mode: str | None = None,
     ) -> dict[str, Any]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-        session = self.chat_storage.get_or_create_session(user_id=user_id, project_id=project_id, agent_type=self.AGENT_TYPE)
-        if prompt_payload_format:
-            if session.get("prompt_payload_format") != prompt_payload_format:
-                self.chat_storage.update_session(
-                    session_id=session["session_id"],
-                    prompt_payload_format=prompt_payload_format,
-                )
-                session["prompt_payload_format"] = prompt_payload_format
-        if context_mode and context_mode in ("full", "incremental", "scratchpad"):
-            if session.get("context_mode") != context_mode:
-                self.chat_storage.update_session(
-                    session_id=session["session_id"],
-                    context_mode=context_mode,
-                )
-                session["context_mode"] = context_mode
-        return self._hydrate_session_graph(session)
+        return self._session_graph_store.create_or_get_session(
+            user_id=user_id,
+            project_id=project_id,
+            prompt_payload_format=prompt_payload_format,
+            context_mode=context_mode,
+        )
 
     def create_session(
         self,
@@ -176,18 +114,13 @@ class ConflictDetectionAgentService:
         prompt_payload_format: str | None = None,
         context_mode: str | None = None,
     ) -> dict[str, Any]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-        normalized_context_mode = context_mode if context_mode in ("full", "incremental", "scratchpad") else "full"
-        session = self.chat_storage.create_session(
+        return self._session_graph_store.create_session(
             user_id=user_id,
             project_id=project_id,
             title=title,
             prompt_payload_format=prompt_payload_format,
-            context_mode=normalized_context_mode,
-            agent_type=self.AGENT_TYPE,
+            context_mode=context_mode,
         )
-        return self._hydrate_session_graph(session)
 
     def update_session(
         self,
@@ -198,20 +131,13 @@ class ConflictDetectionAgentService:
         prompt_payload_format: str | None = None,
         context_mode: str | None = None,
     ) -> dict[str, Any]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-        self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
-        normalized_context_mode = None
-        if context_mode is not None:
-            normalized_context_mode = context_mode if context_mode in ("full", "incremental", "scratchpad") else "full"
-        self.chat_storage.update_session(
+        return self._session_graph_store.update_session(
             session_id=session_id,
+            user_id=user_id,
             title=title,
-            prompt_payload_format=prompt_payload_format if prompt_payload_format is not None else ...,
-            context_mode=normalized_context_mode if context_mode is not None else ...,
+            prompt_payload_format=prompt_payload_format,
+            context_mode=context_mode,
         )
-        current = self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
-        return self._hydrate_session_graph(current)
 
     def list_sessions(
         self,
@@ -220,58 +146,15 @@ class ConflictDetectionAgentService:
         project_id: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-        sessions = self.chat_storage.list_sessions(
+        return self._session_graph_store.list_sessions(
             user_id=user_id,
             project_id=project_id,
             limit=limit,
-            agent_type=self.AGENT_TYPE,
         )
-        return [self._hydrate_session_graph(session) for session in sessions]
 
     @staticmethod
     def _sort_session_graphs_as_chain(graphs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if len(graphs) <= 1:
-            return list(graphs)
-
-        by_id = {graph["graph_id"]: graph for graph in graphs if graph.get("graph_id")}
-        children_by_prev: dict[str | None, list[dict[str, Any]]] = {}
-        for graph in graphs:
-            meta = graph.get("meta_json") or {}
-            prev_graph_id = meta.get("prev_graph_id")
-            if prev_graph_id not in by_id:
-                prev_graph_id = None
-            children_by_prev.setdefault(prev_graph_id, []).append(graph)
-
-        def _graph_sort_key(item: dict[str, Any]) -> tuple[str, str]:
-            return (
-                str(item.get("created_at") or ""),
-                str(item.get("graph_id") or ""),
-            )
-
-        for siblings in children_by_prev.values():
-            siblings.sort(key=_graph_sort_key)
-
-        ordered: list[dict[str, Any]] = []
-        visited: set[str] = set()
-
-        def _walk(graph: dict[str, Any]) -> None:
-            graph_id = graph.get("graph_id")
-            if not graph_id or graph_id in visited:
-                return
-            visited.add(graph_id)
-            ordered.append(graph)
-            for child in children_by_prev.get(graph_id, []):
-                _walk(child)
-
-        for root in children_by_prev.get(None, []):
-            _walk(root)
-
-        for graph in sorted(graphs, key=_graph_sort_key):
-            _walk(graph)
-
-        return ordered
+        return AgentSessionGraphStore.sort_session_graphs_as_chain(graphs)
 
     def list_session_graph_chain(
         self,
@@ -279,60 +162,31 @@ class ConflictDetectionAgentService:
         session_id: str,
         user_id: str,
     ) -> dict[str, Any]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-
-        session = self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
-        hydrated_session = self._hydrate_session_graph(session)
-        graphs = self.execution_graph_service.list_runtime_graphs_by_session(
+        return self._session_graph_store.list_session_graph_chain(
             session_id=session_id,
-            project_id=hydrated_session.get("project_id"),
+            user_id=user_id,
         )
-        ordered_graphs = self._sort_session_graphs_as_chain(graphs)
-        chain = [
-            self.execution_graph_service.get_graph_detail(graph["graph_id"])
-            for graph in ordered_graphs
-        ]
-        return {
-            "session_id": session_id,
-            "active_graph_id": hydrated_session.get("active_graph_id"),
-            "graphs": chain,
-        }
 
     def delete_session(self, *, session_id: str, user_id: str) -> bool:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-
-        session = self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
-        session_graphs = self.execution_graph_service.list_runtime_graphs_by_session(
+        return self._session_graph_store.delete_session(
             session_id=session_id,
-            project_id=session.get("project_id"),
+            user_id=user_id,
         )
 
-        deleted = self.chat_storage.delete_session(session_id)
-        if not deleted:
-            return False
-
-        for graph in session_graphs:
-            try:
-                self.execution_graph_service.delete_execution_graph(
-                    graph["graph_id"],
-                    updated_by=user_id,
-                )
-            except Exception:
-                continue
-        return True
-
-    def list_messages(self, *, session_id: str, user_id: str, limit: int = 100) -> list[dict[str, Any]]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-        return self.chat_storage.list_messages(session_id=session_id, user_id=user_id, limit=limit)
+    def list_messages(
+        self, *, session_id: str, user_id: str, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        return self._session_graph_store.list_messages(
+            session_id=session_id,
+            user_id=user_id,
+            limit=limit,
+        )
 
     def get_graph_detail(self, graph_id: str) -> dict[str, Any]:
-        return self.execution_graph_service.get_graph_detail(graph_id)
+        return self._session_graph_store.get_graph_detail(graph_id)
 
     def get_graph(self, graph_id: str) -> dict[str, Any] | None:
-        return self.execution_graph_service.get_execution_graph(graph_id)
+        return self._session_graph_store.get_graph(graph_id)
 
     # ---- candidate template loading ----
 
@@ -358,18 +212,27 @@ class ConflictDetectionAgentService:
             ]
         except Exception:
             logger.warning(
-                "加载候选拓扑模板失败 (project_id=%s)", project_id,
+                "加载候选拓扑模板失败 (project_id=%s)",
+                project_id,
                 exc_info=True,
             )
             return []
 
     # ---- streaming reply ----
 
+    def _graph_ai_proxy_client(self, *, model: str, use_thinking_mode: bool) -> Any:
+        with_defaults = getattr(self.ai_proxy, "with_defaults", None)
+        if callable(with_defaults):
+            return with_defaults(model=model, thinking_enabled=use_thinking_mode)
+        return self.ai_proxy
+
     def _stream_llm_reply(
         self,
         *,
         prompt: str,
         system_prompt: str,
+        model: str = "deepseek-v4-pro",
+        use_thinking_mode: bool = True,
         max_new_tokens: int = 1200,
     ) -> Generator[dict[str, Any], None, str]:
         inference_base = settings.INFERENCE_BASE_URL.rstrip("/")
@@ -378,8 +241,9 @@ class ConflictDetectionAgentService:
             json={
                 "prompt": prompt,
                 "system_prompt": system_prompt,
+                "model": model,
                 "max_new_tokens": max_new_tokens,
-                "use_thinking_mode": True,
+                "use_thinking_mode": use_thinking_mode,
                 "use_async_client": False,
             },
             stream=True,
@@ -481,6 +345,8 @@ class ConflictDetectionAgentService:
         project_id: str,
         user_message: str,
         execution_mode: str = "graph",
+        model: str = "deepseek-v4-pro",
+        use_thinking_mode: bool = True,
     ) -> Generator[dict[str, Any], None, None]:
         if str(execution_mode or "").strip().lower() != "graph":
             raise ValueError("execution_mode 仅支持 graph")
@@ -489,6 +355,8 @@ class ConflictDetectionAgentService:
             user_id=user_id,
             project_id=project_id,
             user_message=user_message,
+            model=model,
+            use_thinking_mode=use_thinking_mode,
         )
 
     def stream_graph_executor_reply(
@@ -498,20 +366,26 @@ class ConflictDetectionAgentService:
         user_id: str,
         project_id: str,
         user_message: str,
+        model: str = "deepseek-v4-pro",
+        use_thinking_mode: bool = True,
     ) -> Generator[dict[str, Any], None, None]:
         """Drive the execution-graph engine (GraphExecutor internal judge)."""
         if not self.chat_storage:
             raise RuntimeError("AI chat storage not initialized")
 
         session = self.chat_storage._ensure_session_access(
-            session_id=session_id, user_id=user_id,
+            session_id=session_id,
+            user_id=user_id,
         )
         user_record = self.chat_storage.create_message(
             session_id=session_id,
             user_id=user_id,
             role="user",
             content=user_message,
-            metadata={},
+            metadata={
+                "model": model,
+                "use_thinking_mode": use_thinking_mode,
+            },
             is_read=True,
         )
         self.chat_storage.update_session(session_id=session_id)
@@ -521,7 +395,8 @@ class ConflictDetectionAgentService:
 
         # --- GraphExecutor pipeline ------------------------------------------
         graph_target = self._resolve_session_graph_target(
-            session=session, project_id=project_id,
+            session=session,
+            project_id=project_id,
         )
         recorder = ConflictDetectionGraphRecorder(
             execution_graph_service=self.execution_graph_service,
@@ -550,7 +425,10 @@ class ConflictDetectionAgentService:
                 project_id=project_id,
                 user_message=user_message,
                 tool_executor=self.tools,
-                ai_proxy_client=self.ai_proxy,
+                ai_proxy_client=self._graph_ai_proxy_client(
+                    model=model,
+                    use_thinking_mode=use_thinking_mode,
+                ),
                 graph_service=self.execution_graph_service,
                 recorder=recorder,
                 actor=user_id,
@@ -569,7 +447,8 @@ class ConflictDetectionAgentService:
 
             if result is None:
                 result = ExecutionResult(
-                    status="failed", graph_id=recorder.graph_id,
+                    status="failed",
+                    graph_id=recorder.graph_id,
                     error="GraphExecutor 未返回结果",
                 )
 
@@ -643,6 +522,7 @@ class ConflictDetectionAgentService:
             is_read=False,
         )
         yield {"event": "assistant_message", "data": assistant_message}
+
 
 conflict_detection_agent_service = ConflictDetectionAgentService(
     chat_storage=ai_chat_service,

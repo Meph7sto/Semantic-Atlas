@@ -143,6 +143,8 @@ async def test_stream_message_returns_sse_events(monkeypatch):
         "project_id": "p-1",
         "user_message": "修改标题",
         "requirement_id": "r-1",
+        "model": "deepseek-v4-pro",
+        "use_thinking_mode": True,
     }
 
 

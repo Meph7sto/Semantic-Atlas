@@ -4,7 +4,7 @@ targets:
     degraded_reason: ''
     injection_miss_count: 0
     invocation_count: 0
-    last_observed_at: '2026-04-25T15:50:33Z'
+    last_observed_at: '2026-05-01T17:17:24Z'
     last_writeback_reason: insufficient_tool_calls
     miss_ratio: 0.0
     needs_refinement: false
@@ -14,48 +14,13 @@ targets:
     rollback_count: 0
     sanitizer_fail_count: 0
     skill_hit_count: 0
-    writeback_skip_count: 10
-  conflict_detection_classic:
-    created_at: '2026-04-18T00:00:00Z'
-    current_skill_path: conflict_detection_classic/current.md
+    writeback_skip_count: 18
+  conflict_detection_agent_normal_conversation:
+    degraded: false
+    degraded_reason: ''
     injection_miss_count: 0
     invocation_count: 0
-    iteration: 1
-    last_updated_at: '2026-04-18T00:00:00Z'
-    skill_id: exp_conflict_detection_classic_seed_20260418_001
-  requirement_agent_classic:
-    created_at: '2026-04-18T00:00:00Z'
-    current_skill_path: requirement_agent_classic/current.md
-    degraded: false
-    degraded_reason: ''
-    injection_miss_count: 3
-    invocation_count: 21
-    iteration: 1
-    last_observed_at: '2026-04-25T15:50:33Z'
-    last_updated_at: '2026-04-18T00:00:00Z'
-    last_used_at: '2026-04-25T15:50:33Z'
-    last_writeback_reason: insufficient_tool_calls
-    miss_ratio: 0.1429
-    needs_refinement: false
-    requires_manual_review: true
-    review_fail_count: 0
-    rewrite_count: 0
-    rollback_count: 0
-    sanitizer_fail_count: 8
-    skill_hit_count: 18
-    skill_id: exp_requirement_agent_classic_seed_20260418_001
-    writeback_skip_count: 20
-  requirement_classification_classic:
-    created_at: '2026-04-18T00:00:00Z'
-    current_skill_path: requirement_classification_classic/current.md
-    degraded: false
-    degraded_reason: ''
-    injection_miss_count: 0
-    invocation_count: 6
-    iteration: 1
-    last_observed_at: '2026-04-25T15:50:33Z'
-    last_updated_at: '2026-04-18T00:00:00Z'
-    last_used_at: '2026-04-25T15:50:33Z'
+    last_observed_at: '2026-05-01T16:48:55Z'
     last_writeback_reason: insufficient_tool_calls
     miss_ratio: 0.0
     needs_refinement: false
@@ -64,9 +29,60 @@ targets:
     rewrite_count: 0
     rollback_count: 0
     sanitizer_fail_count: 0
-    skill_hit_count: 6
-    skill_id: exp_requirement_classification_classic_seed_20260418_001
-    writeback_skip_count: 8
+    skill_hit_count: 0
+    writeback_skip_count: 1
+  conflict_detection_tool_loop:
+    created_at: '2026-04-18T00:00:00Z'
+    current_skill_path: conflict_detection_tool_loop/current.md
+    injection_miss_count: 0
+    invocation_count: 0
+    iteration: 1
+    last_updated_at: '2026-04-18T00:00:00Z'
+    skill_id: exp_conflict_detection_tool_loop_seed_20260418_001
+  requirement_agent_tool_loop:
+    created_at: '2026-04-18T00:00:00Z'
+    current_skill_path: requirement_agent_tool_loop/current.md
+    degraded: false
+    degraded_reason: ''
+    injection_miss_count: 11
+    invocation_count: 85
+    iteration: 1
+    last_observed_at: '2026-05-01T17:17:23Z'
+    last_updated_at: '2026-04-18T00:00:00Z'
+    last_used_at: '2026-05-01T17:17:23Z'
+    last_writeback_reason: insufficient_tool_calls
+    miss_ratio: 0.1294
+    needs_refinement: false
+    requires_manual_review: true
+    review_fail_count: 0
+    rewrite_count: 0
+    rollback_count: 0
+    sanitizer_fail_count: 24
+    skill_hit_count: 74
+    skill_id: exp_requirement_agent_tool_loop_seed_20260418_001
+    writeback_skip_count: 68
+  requirement_classification_tool_loop:
+    created_at: '2026-04-18T00:00:00Z'
+    current_skill_path: requirement_classification_tool_loop/current.md
+    degraded: false
+    degraded_reason: ''
+    injection_miss_count: 0
+    invocation_count: 22
+    iteration: 1
+    last_observed_at: '2026-05-01T17:17:23Z'
+    last_updated_at: '2026-04-18T00:00:00Z'
+    last_used_at: '2026-05-01T17:17:23Z'
+    last_writeback_reason: insufficient_tool_calls
+    miss_ratio: 0.0
+    needs_refinement: false
+    requires_manual_review: false
+    review_fail_count: 0
+    rewrite_count: 0
+    rollback_count: 0
+    sanitizer_fail_count: 0
+    skill_hit_count: 22
+    skill_id: exp_requirement_classification_tool_loop_seed_20260418_001
+    writeback_skip_count: 24
   session_controller_classification_delegate:
     created_at: '2026-04-18T00:00:00Z'
     current_skill_path: session_controller_classification_delegate/current.md
@@ -89,12 +105,12 @@ targets:
     degraded: false
     degraded_reason: ''
     injection_miss_count: 0
-    invocation_count: 46
+    invocation_count: 86
     iteration: 2
-    last_observed_at: '2026-04-25T15:50:33Z'
+    last_observed_at: '2026-05-01T17:17:24Z'
     last_rewrite_at: '2026-04-18T06:26:47Z'
     last_updated_at: '2026-04-18T06:26:47Z'
-    last_used_at: '2026-04-25T15:50:33Z'
+    last_used_at: '2026-05-01T17:17:24Z'
     last_writeback_reason: content_unchanged
     miss_ratio: 0.0
     needs_refinement: false
@@ -103,15 +119,15 @@ targets:
     rewrite_count: 1
     rollback_count: 0
     sanitizer_fail_count: 0
-    skill_hit_count: 46
+    skill_hit_count: 86
     skill_id: exp_session_controller_decision_20260418T062647Z_002
-    writeback_skip_count: 101
+    writeback_skip_count: 181
   session_controller_final_reply:
     degraded: false
     degraded_reason: ''
     injection_miss_count: 0
     invocation_count: 0
-    last_observed_at: '2026-04-25T15:50:33Z'
+    last_observed_at: '2026-05-01T17:17:24Z'
     last_writeback_reason: insufficient_tool_calls
     miss_ratio: 0.0
     needs_refinement: false
@@ -121,18 +137,18 @@ targets:
     rollback_count: 0
     sanitizer_fail_count: 0
     skill_hit_count: 0
-    writeback_skip_count: 41
+    writeback_skip_count: 73
   session_controller_requirement_delegate:
     created_at: '2026-04-18T00:00:00Z'
     current_skill_path: session_controller_requirement_delegate/current.md
     degraded: false
     degraded_reason: ''
     injection_miss_count: 0
-    invocation_count: 28
+    invocation_count: 52
     iteration: 1
-    last_observed_at: '2026-04-25T15:50:33Z'
+    last_observed_at: '2026-05-01T17:17:24Z'
     last_updated_at: '2026-04-18T00:00:00Z'
-    last_used_at: '2026-04-25T15:50:33Z'
+    last_used_at: '2026-05-01T17:17:24Z'
     last_writeback_reason: insufficient_tool_calls
     miss_ratio: 0.0
     needs_refinement: false
@@ -141,15 +157,15 @@ targets:
     rewrite_count: 0
     rollback_count: 0
     sanitizer_fail_count: 1
-    skill_hit_count: 28
+    skill_hit_count: 52
     skill_id: exp_session_controller_requirement_delegate_seed_20260418_001
-    writeback_skip_count: 30
+    writeback_skip_count: 54
   session_controller_suspend_reply:
     degraded: false
     degraded_reason: ''
     injection_miss_count: 0
     invocation_count: 0
-    last_observed_at: '2026-04-25T15:50:33Z'
+    last_observed_at: '2026-05-01T17:17:24Z'
     last_writeback_reason: insufficient_tool_calls
     miss_ratio: 0.0
     needs_refinement: false
@@ -159,20 +175,20 @@ targets:
     rollback_count: 0
     sanitizer_fail_count: 0
     skill_hit_count: 0
-    writeback_skip_count: 10
+    writeback_skip_count: 18
   topology_conflict_agent_llm:
     created_at: '2026-04-25T15:12:55Z'
     current_skill_path: topology_conflict_agent_llm/current.md
     degraded: false
     degraded_reason: ''
     injection_miss_count: 0
-    invocation_count: 33
+    invocation_count: 138
     iteration: 3
-    last_observed_at: '2026-04-25T15:50:32Z'
+    last_observed_at: '2026-05-01T17:17:22Z'
     last_rewrite_at: '2026-04-25T15:12:55Z'
     last_updated_at: '2026-04-25T15:12:55Z'
-    last_used_at: '2026-04-25T15:50:32Z'
-    last_writeback_reason: content_unchanged
+    last_used_at: '2026-05-01T17:17:22Z'
+    last_writeback_reason: insufficient_tool_calls
     miss_ratio: 0.0
     needs_refinement: false
     requires_manual_review: false
@@ -180,7 +196,7 @@ targets:
     rewrite_count: 3
     rollback_count: 0
     sanitizer_fail_count: 0
-    skill_hit_count: 33
+    skill_hit_count: 138
     skill_id: exp_topology_conflict_agent_llm_20260425T151255Z_003
-    writeback_skip_count: 57
+    writeback_skip_count: 197
 version: 1

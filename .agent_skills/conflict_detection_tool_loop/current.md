@@ -1,6 +1,6 @@
 ---
-skill_id: exp_conflict_detection_classic_seed_20260418_001
-experience_target: conflict_detection_classic
+skill_id: exp_conflict_detection_tool_loop_seed_20260418_001
+experience_target: conflict_detection_tool_loop
 container_key: conflict_detection
 prompt_builder_kind: ""
 node_type: llm

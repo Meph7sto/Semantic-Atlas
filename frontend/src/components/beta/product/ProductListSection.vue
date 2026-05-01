@@ -1,6 +1,6 @@
 <template>
   <section class="grid" data-animate style="--delay: 0.12s">
-    <div class="card wide">
+    <div class="card wide sa-card">
       <div class="card-header no-border">
         <div>
           <p class="card-kicker">Products</p>
@@ -12,7 +12,7 @@
             :value="searchQuery"
             @input="$emit('update:searchQuery', $event.target.value)"
             placeholder="搜索产品..."
-            class="search-input"
+            class="search-input sa-input"
           />
           <div class="view-toggle" role="tablist" aria-label="产品视图切换">
             <button

@@ -84,4 +84,6 @@ def test_stream_message_passes_graph_mode_without_template_override(monkeypatch)
         "project_id": "p-1",
         "user_message": "请检测 r-1 和 r-2 的冲突",
         "execution_mode": "graph",
+        "model": "deepseek-v4-pro",
+        "use_thinking_mode": True,
     }

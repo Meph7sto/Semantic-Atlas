@@ -8,18 +8,7 @@ from collections.abc import Generator
 from typing import Any
 
 from backend_business.config import settings
-from backend_business.services.ai_chat_service import AiChatService, ai_chat_service
-from backend_business.services.ai_proxy import ai_proxy
 from backend_business.services.agent.execution.graph_executor import GraphExecutor
-from backend_business.services.agent.experience import ExperienceOrchestrator
-from backend_business.services.agent.execution_graph_service import ExecutionGraphService
-from backend_business.services.agent.runtime.scratchpad import Scratchpad
-from backend_business.services.agent.runtime.scratchpad_service import ScratchpadService
-from backend_business.services.agent.runtime.binding_bootstrap import (
-    ensure_runtime_bindings,
-    extract_tool_names,
-)
-from backend_business.services.requirements_manage_service import RequirementsManageService
 from backend_business.services.agent.execution.topology_instantiator import (
     RuntimeContainer,
     RuntimeEdge,
@@ -27,15 +16,27 @@ from backend_business.services.agent.execution.topology_instantiator import (
     RuntimeNode,
     RuntimeSubgraph,
 )
+from backend_business.services.agent.execution_graph_service import ExecutionGraphService
+from backend_business.services.agent.experience import ExperienceOrchestrator
+from backend_business.services.agent.runtime.agent_registry import (
+    BUILTIN_AGENT_REGISTRY,
+    SESSION_CONTROLLER_DEFINITION,
+    AgentRegistry,
+)
+from backend_business.services.agent.runtime.binding_bootstrap import ensure_runtime_bindings
+from backend_business.services.agent.runtime.session_graph_store import AgentSessionGraphStore
+from backend_business.services.agent.runtime.scratchpad import Scratchpad
+from backend_business.services.agent.runtime.scratchpad_service import ScratchpadService
+from backend_business.services.ai_chat_service import AiChatService, ai_chat_service
+from backend_business.services.ai_proxy import ai_proxy
+from backend_business.services.requirements_manage_service import RequirementsManageService
 
 from .contracts import SessionControllerDecisionMode, SessionControllerLoopResult, SuspendReason
 from .graph_template import ensure_session_controller_template
 from .prompt_builder import SessionControllerPromptBuilder
 from .prompt_factory import create_session_controller_prompt_builder
 from .runtime_graph_recorder import SessionControllerGraphRecorder
-from .session_graph_store import SessionControllerSessionGraphStore
 from .tools import SessionControllerTools
-
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,7 @@ class SessionControllerService:
         tools: SessionControllerTools | None = None,
         ai_proxy_client: Any = None,
         prompt_builder: SessionControllerPromptBuilder | None = None,
+        agent_registry: AgentRegistry | None = None,
     ) -> None:
         self.chat_storage = chat_storage
         self.execution_graph_service = execution_graph_service or ExecutionGraphService(
@@ -78,10 +80,14 @@ class SessionControllerService:
         self.ai_proxy = ai_proxy_client or ai_proxy
         self.prompt_builder = prompt_builder or SessionControllerPromptBuilder()
         self.tools = tools
-        self._session_graph_store = SessionControllerSessionGraphStore(
+        self.agent_registry = agent_registry or BUILTIN_AGENT_REGISTRY
+        self._session_graph_store = AgentSessionGraphStore(
             chat_storage=chat_storage,
             execution_graph_service=self.execution_graph_service,
             agent_type=self.AGENT_TYPE,
+            context_mode_normalizer=lambda value: value or "full",
+            create_or_get_prompt_update_policy="never",
+            create_or_get_context_update_policy="never",
         )
 
     def _resolve_execution_mode(self, execution_mode: str | None) -> str:
@@ -116,111 +122,24 @@ class SessionControllerService:
         return {key: value for key, value in compact.items() if value is not None}
 
     def _ensure_graph_runtime_bindings(self) -> None:
-        conductor_tool_names = extract_tool_names(self.tools)
-        requirement_tool_names = extract_tool_names(
-            self.tools.resolve_runtime_tool_executor(container_key="requirement_agent")
-            if self.tools is not None
-            else None
-        )
-        conflict_tool_names = extract_tool_names(
-            self.tools.resolve_runtime_tool_executor(container_key="conflict_detection")
-            if self.tools is not None
-            else None
-        )
-        classification_tool_names = extract_tool_names(
-            self.tools.resolve_runtime_tool_executor(
-                container_key="requirement_classification_agent"
-            )
-            if self.tools is not None
-            else None
-        )
-        binding_specs = [
-            {
-                "container_key": "conductor",
-                "agent_type": "session_controller",
-                "runtime_profile": "default",
-                "implementation_type": "local",
-                "capability_policy_json": {
-                    "policy_id": "session_controller::conductor",
-                    "scope": "conductor",
-                    "tool_names": conductor_tool_names,
-                },
-                "quota_policy_json": {
-                    "policy_id": "session_controller::conductor::quota",
-                    "max_rounds": self.MAX_TOOL_CALL_ROUNDS,
-                    "timeout_seconds": 180,
-                    "max_concurrent_runs": 1,
-                    "max_parallel_runs_per_scope": 1,
-                },
-                "memory_policy_json": {
-                    "scope": "container",
-                    "strict_memory_contract": True,
-                },
-            },
-            {
-                "container_key": "requirement_agent",
-                "agent_type": "requirement_agent",
-                "runtime_profile": "default",
-                "implementation_type": "local",
-                "capability_policy_json": {
-                    "policy_id": "session_controller::requirement_agent",
-                    "scope": "delegated_requirement",
-                    "tool_names": requirement_tool_names,
-                },
-                "quota_policy_json": {
-                    "policy_id": "session_controller::requirement_agent::quota",
-                    "timeout_seconds": 180,
-                    "max_concurrent_runs": 4,
-                    "max_parallel_runs_per_scope": 1,
-                },
-                "memory_policy_json": {
-                    "scope": "container",
-                    "strict_memory_contract": True,
-                },
-            },
-            {
-                "container_key": "conflict_detection",
-                "agent_type": "conflict_detection",
-                "runtime_profile": "default",
-                "implementation_type": "local",
-                "capability_policy_json": {
-                    "policy_id": "session_controller::conflict_detection",
-                    "scope": "delegated_conflict",
-                    "tool_names": conflict_tool_names,
-                },
-                "quota_policy_json": {
-                    "policy_id": "session_controller::conflict_detection::quota",
-                    "timeout_seconds": 180,
-                    "max_concurrent_runs": 4,
-                    "max_parallel_runs_per_scope": 1,
-                },
-                "memory_policy_json": {
-                    "scope": "container",
-                    "strict_memory_contract": True,
-                },
-            },
-            {
-                "container_key": "requirement_classification_agent",
-                "agent_type": "requirement_classification_agent",
-                "runtime_profile": "default",
-                "implementation_type": "local",
-                "capability_policy_json": {
-                    "policy_id": "session_controller::requirement_classification_agent",
-                    "scope": "delegated_classification",
-                    "tool_names": classification_tool_names,
-                },
-                "quota_policy_json": {
-                    "policy_id": "session_controller::requirement_classification_agent::quota",
-                    "timeout_seconds": 180,
-                    "max_concurrent_runs": 4,
-                    "max_parallel_runs_per_scope": 1,
-                },
-                "memory_policy_json": {
-                    "scope": "container",
-                    "strict_memory_contract": True,
-                },
-            },
+        definitions = [
+            SESSION_CONTROLLER_DEFINITION,
+            *self.agent_registry.selectable_definitions(),
         ]
+        binding_specs = self.agent_registry.build_runtime_binding_specs(
+            definitions=definitions,
+            tool_executor_resolver=lambda definition: (
+                self.tools
+                if definition.container_key == "conductor"
+                else (
+                    self.tools.resolve_runtime_tool_executor(
+                        container_key=definition.container_key,
+                    )
+                    if self.tools is not None
+                    else None
+                )
+            ),
+        )
         ensure_runtime_bindings(self.execution_graph_service, binding_specs)
 
     def _inherit_session_scratchpad(
@@ -288,9 +207,7 @@ class SessionControllerService:
                 f"本轮已执行更新：{json.dumps(write_result['applied_updates'], ensure_ascii=False)}。"
             )
         elif payload["dispatched_agents"]:
-            fallback_parts.append(
-                f"本轮调用了 {', '.join(payload['dispatched_agents'])}。"
-            )
+            fallback_parts.append(f"本轮调用了 {', '.join(payload['dispatched_agents'])}。")
         if assistant_reply.strip():
             fallback_parts.append(f"结果：{assistant_reply.strip()}")
         elif tool_loop_reply.strip():
@@ -469,7 +386,9 @@ class SessionControllerService:
             user_id=user_id,
         )
 
-    def list_messages(self, *, session_id: str, user_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    def list_messages(
+        self, *, session_id: str, user_id: str, limit: int = 100
+    ) -> list[dict[str, Any]]:
         return self._session_graph_store.list_messages(
             session_id=session_id,
             user_id=user_id,
@@ -536,16 +455,22 @@ class SessionControllerService:
             mode=mode,
             tool_loop_reply=str(normalized.get("tool_loop_reply") or "").strip(),
             assistant_reply_seed=str(normalized.get("assistant_reply_seed") or "").strip() or None,
-            clarification_question=str(normalized.get("clarification_question") or "").strip() or None,
+            clarification_question=str(normalized.get("clarification_question") or "").strip()
+            or None,
             delegated_agent=str(normalized.get("delegated_agent") or "").strip() or None,
-            resolved_requirement_id=str(normalized.get("resolved_requirement_id") or "").strip() or None,
+            resolved_requirement_id=str(normalized.get("resolved_requirement_id") or "").strip()
+            or None,
             dispatched_agents=[
                 str(item).strip()
                 for item in (normalized.get("dispatched_agents") or [])
                 if str(item).strip()
             ],
             approval_pending=bool(normalized.get("approval_pending")),
-            approval_result=normalized.get("approval_result") if isinstance(normalized.get("approval_result"), dict) else None,
+            approval_result=(
+                normalized.get("approval_result")
+                if isinstance(normalized.get("approval_result"), dict)
+                else None
+            ),
             should_suspend=bool(normalized.get("should_suspend")),
             suspend_reason=suspend_reason,
             context=context,
@@ -586,9 +511,13 @@ class SessionControllerService:
     ) -> tuple[SessionControllerLoopResult, dict[str, Any], str]:
         graph = self.execution_graph_service.get_execution_graph(graph_id) or {}
         meta = graph.get("meta_json") or {}
-        snapshot = ScratchpadService(
-            execution_graph_service=self.execution_graph_service,
-        ).load(graph_id).snapshot_all()
+        snapshot = (
+            ScratchpadService(
+                execution_graph_service=self.execution_graph_service,
+            )
+            .load(graph_id)
+            .snapshot_all()
+        )
         decision_content = self._find_latest_stage_output_for_sources(
             snapshot,
             source_subgraphs={
@@ -644,18 +573,14 @@ class SessionControllerService:
             else {}
         )
         assistant_reply = str(
-            result.final_output
-            or tool_loop_payload.get("tool_loop_reply")
-            or ""
+            result.final_output or tool_loop_payload.get("tool_loop_reply") or ""
         ).strip()
 
         tool_results = context.get("tool_results") or []
         last_tool_entry = tool_results[-1] if tool_results else {}
         last_tool_name = str(last_tool_entry.get("tool_name") or "").strip()
         last_tool_result = (
-            last_tool_entry.get("result")
-            if isinstance(last_tool_entry.get("result"), dict)
-            else {}
+            last_tool_entry.get("result") if isinstance(last_tool_entry.get("result"), dict) else {}
         )
         mode = _NORMAL_CONVERSATION_TOOL_TO_MODE.get(
             last_tool_name,
@@ -746,7 +671,10 @@ class SessionControllerService:
             )
             for item in sorted(
                 detail.get("containers") or [],
-                key=lambda entry: (int(entry.get("order_index") or 0), str(entry.get("container_id") or "")),
+                key=lambda entry: (
+                    int(entry.get("order_index") or 0),
+                    str(entry.get("container_id") or ""),
+                ),
             )
         )
         subgraphs = tuple(
@@ -761,13 +689,15 @@ class SessionControllerService:
                 node_type=str((item.get("config_json") or {}).get("node_type") or "llm"),
                 config_json=dict(item.get("config_json") or {}),
                 source_node_id=str(
-                    ((item.get("config_json") or {}).get("source_node_id"))
-                    or item["subgraph_id"]
+                    ((item.get("config_json") or {}).get("source_node_id")) or item["subgraph_id"]
                 ),
             )
             for item in sorted(
                 detail.get("subgraphs") or [],
-                key=lambda entry: (int(entry.get("order_index") or 0), str(entry.get("subgraph_id") or "")),
+                key=lambda entry: (
+                    int(entry.get("order_index") or 0),
+                    str(entry.get("subgraph_id") or ""),
+                ),
             )
         )
         nodes = tuple(
@@ -784,7 +714,10 @@ class SessionControllerService:
             )
             for item in sorted(
                 detail.get("nodes") or [],
-                key=lambda entry: (int(entry.get("order_index") or 0), str(entry.get("node_id") or "")),
+                key=lambda entry: (
+                    int(entry.get("order_index") or 0),
+                    str(entry.get("node_id") or ""),
+                ),
             )
         )
         edges = tuple(
@@ -800,7 +733,10 @@ class SessionControllerService:
             )
             for item in sorted(
                 detail.get("edges") or [],
-                key=lambda entry: (int(entry.get("order_index") or 0), str(entry.get("edge_id") or "")),
+                key=lambda entry: (
+                    int(entry.get("order_index") or 0),
+                    str(entry.get("edge_id") or ""),
+                ),
             )
         )
         return RuntimeGraphSkeleton(
@@ -905,6 +841,7 @@ class SessionControllerService:
                     execution_graph_service=self.execution_graph_service,
                     project_id=project_id,
                     actor=user_id,
+                    agent_registry=self.agent_registry,
                 )
                 template_graph = (
                     self.execution_graph_service.get_execution_graph(template_graph_id) or {}
@@ -918,23 +855,7 @@ class SessionControllerService:
                                 template_graph.get("description")
                                 or "Session Controller GraphExecutor builtin template"
                             ),
-                            "selectable_containers": [
-                                {
-                                    "container_key": "requirement_agent",
-                                    "label": "Requirement Agent",
-                                    "description": "需求检索、需求分析、需求修改",
-                                },
-                                {
-                                    "container_key": "conflict_detection",
-                                    "label": "Conflict Detection Agent",
-                                    "description": "需求冲突检测与冲突解释",
-                                },
-                                {
-                                    "container_key": "requirement_classification_agent",
-                                    "label": "Requirement Classification Agent",
-                                    "description": "需求分类、标签归类、类别判断",
-                                },
-                            ],
+                            "selectable_containers": self.agent_registry.selectable_containers(),
                         }
                     ],
                     project_id=project_id,
@@ -1013,8 +934,12 @@ class SessionControllerService:
             if loop_result.approval_result:
                 meta_patch.update(
                     {
-                        "approval_request_id": loop_result.approval_result.get("approval_request_id"),
-                        "approval_push_message_id": loop_result.approval_result.get("push_message_id"),
+                        "approval_request_id": loop_result.approval_result.get(
+                            "approval_request_id"
+                        ),
+                        "approval_push_message_id": loop_result.approval_result.get(
+                            "push_message_id"
+                        ),
                         "approval_status": "pending",
                     }
                 )
@@ -1106,14 +1031,14 @@ class SessionControllerService:
 
 def _make_session_controller_service() -> SessionControllerService:
     """Deferred factory to avoid circular imports at module load time."""
+    from backend_business.services.agent.agents.conflict_detection_agent import (
+        conflict_detection_agent_service,
+    )
     from backend_business.services.agent.agents.requirement_agent import (
         requirement_agent_chat_service,
     )
     from backend_business.services.agent.agents.requirement_classification_agent import (
         requirement_classification_agent_service,
-    )
-    from backend_business.services.agent.agents.conflict_detection_agent import (
-        conflict_detection_agent_service,
     )
 
     tools = SessionControllerTools(

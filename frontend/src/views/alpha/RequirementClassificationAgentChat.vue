@@ -40,6 +40,8 @@ const selectedRequirementId = ref('')
 const sessionId = ref('')
 const messages = ref([])
 const inputMessage = ref('')
+const selectedModel = ref('deepseek-v4-pro')
+const useThinkingMode = ref(true)
 const isSending = ref(false)
 const isLoadingProjects = ref(false)
 const isLoadingRequirements = ref(false)
@@ -533,10 +535,17 @@ const sendMessage = async () => {
       sessionId: sessionId.value,
       projectId: selectedProjectId.value,
       requirementId: selectedRequirementId.value || null,
-      message
+      message,
+      model: selectedModel.value,
+      useThinkingMode: useThinkingMode.value
     })
     inputMessage.value = ''
-    appendTimeline('submit', { message, requirement_id: selectedRequirementId.value || null })
+    appendTimeline('submit', {
+      message,
+      requirement_id: selectedRequirementId.value || null,
+      model: selectedModel.value,
+      use_thinking_mode: useThinkingMode.value
+    })
     upsertSessionPatch(sessionId.value, { updated_at: new Date().toISOString() })
     await consumeSSEStream(stream)
     await loadSessions({ preferredSessionId: sessionId.value })
@@ -763,6 +772,34 @@ onMounted(async () => {
             <div class="border-t border-stone-200 px-5 py-4">
               <div v-if="errorMessage" class="mb-3 bg-rose-50 px-3 py-2 text-xs text-rose-700">
                 {{ errorMessage }}
+              </div>
+              <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <select
+                  v-model="selectedModel"
+                  class="border border-stone-300 bg-white px-2 py-1 text-xs text-stone-800 outline-none transition focus:border-stone-500 disabled:cursor-not-allowed disabled:opacity-60"
+                  :disabled="isSending || !sessionId"
+                >
+                  <option value="deepseek-v4-pro">V4 Pro</option>
+                  <option value="deepseek-v4-flash">V4 Flash</option>
+                </select>
+                <label class="inline-flex items-center gap-3 text-xs font-medium text-stone-600">
+                  <input
+                    v-model="useThinkingMode"
+                    type="checkbox"
+                    class="peer sr-only"
+                    :disabled="isSending || !sessionId"
+                  >
+                  <span
+                    class="relative h-5 w-9 transition"
+                    :class="useThinkingMode ? 'bg-stone-900' : 'bg-stone-300'"
+                  >
+                    <span
+                      class="absolute left-0.5 top-0.5 h-4 w-4 bg-white shadow-sm transition-transform"
+                      :class="useThinkingMode ? 'translate-x-4' : 'translate-x-0'"
+                    />
+                  </span>
+                  <span>思考模式</span>
+                </label>
               </div>
               <textarea
                 v-model="inputMessage"

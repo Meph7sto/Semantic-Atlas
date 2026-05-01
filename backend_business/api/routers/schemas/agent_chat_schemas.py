@@ -49,8 +49,11 @@ class AgentChatMessageRequest(BaseModel):
     project_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
     requirement_id: Optional[str] = Field(default=None)
+    model: str = Field(default="deepseek-v4-pro", min_length=1)
+    use_thinking_mode: bool = True
+    execution_mode: Literal["graph"] = "graph"
 
-    @field_validator("project_id", "message")
+    @field_validator("project_id", "message", "model")
     @classmethod
     def normalize_required_text(cls, value: str) -> str:
         text = value.strip()

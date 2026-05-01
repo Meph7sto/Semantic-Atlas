@@ -23,10 +23,10 @@
         <input type="text" v-model="form.tagsInput" placeholder="tag1, tag2, tag3" />
       </div>
       <div class="modal-actions">
-        <button type="button" class="action-btn white" @click="$emit('close')">取消</button>
+        <button type="button" class="action-btn white sa-button sa-button--secondary" @click="$emit('close')">取消</button>
         <button
           type="button"
-          class="action-btn brown"
+          class="action-btn brown sa-button sa-button--primary"
           @click="handleSubmit"
           :disabled="!form.name.trim()"
         >

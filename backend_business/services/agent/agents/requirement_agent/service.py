@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 from collections.abc import Generator
 from typing import Any
 
 import requests
-
 from backend_business.config import settings
-from backend_business.services.ai_chat_service import AiChatService, ai_chat_service
-from backend_business.services.ai_proxy import ai_proxy
+from backend_business.services.agent.execution.graph_executor import GraphExecutor
 from backend_business.services.agent.execution_graph_service import ExecutionGraphService
 from backend_business.services.agent.experience import ExperienceOrchestrator
+from backend_business.services.agent.runtime.session_graph_store import AgentSessionGraphStore
 from backend_business.services.agent.tools import RequirementAgentTools
+from backend_business.services.ai_chat_service import AiChatService, ai_chat_service
+from backend_business.services.ai_proxy import ai_proxy
 from backend_business.services.requirement_change_approval_service import (
     RequirementChangeApprovalService,
 )
@@ -68,37 +68,17 @@ class RequirementAgentChatService:
             actor_write_fn=self._actor_write,
             approval_service=self.approval_service,
         )
+        self._session_graph_store = AgentSessionGraphStore(
+            chat_storage=chat_storage,
+            execution_graph_service=self.execution_graph_service,
+            agent_type=self.AGENT_TYPE,
+            prompt_payload_normalizer=normalize_prompt_payload_format,
+            create_or_get_prompt_update_policy="truthy",
+            create_or_get_context_update_policy="allowed",
+        )
 
     def _hydrate_session_graph(self, session: dict[str, Any]) -> dict[str, Any]:
-        hydrated = dict(session or {})
-        active_graph_id = hydrated.get("active_graph_id")
-        if active_graph_id:
-            active_graph = self.execution_graph_service.get_execution_graph(active_graph_id)
-            if active_graph:
-                return hydrated
-
-        latest_graph = self.execution_graph_service.get_latest_runtime_graph_by_session(
-            hydrated.get("session_id") or "",
-            project_id=hydrated.get("project_id"),
-        )
-        if latest_graph:
-            hydrated["active_graph_id"] = latest_graph["graph_id"]
-            if self.chat_storage:
-                self.chat_storage.update_session(
-                    session_id=hydrated["session_id"],
-                    active_graph_id=latest_graph["graph_id"],
-                )
-        return hydrated
-
-    @staticmethod
-    def _call_compatible(method: Any, /, **kwargs: Any) -> Any:
-        signature = inspect.signature(method)
-        if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()):
-            return method(**kwargs)
-        compatible_kwargs = {
-            key: value for key, value in kwargs.items() if key in signature.parameters
-        }
-        return method(**compatible_kwargs)
+        return self._session_graph_store.hydrate_session_graph(session)
 
     def _resolve_session_graph_target(
         self,
@@ -106,29 +86,10 @@ class RequirementAgentChatService:
         session: dict[str, Any],
         project_id: str | None,
     ) -> dict[str, str | None]:
-        graph_id = session.get("active_graph_id")
-        if graph_id:
-            graph = self.execution_graph_service.get_execution_graph(graph_id)
-            if graph:
-                if graph.get("status") == "suspended":
-                    return {"graph_id": graph_id, "prev_graph_id": None}
-                return {"graph_id": None, "prev_graph_id": graph_id}
-
-        latest_graph = self.execution_graph_service.get_latest_runtime_graph_by_session(
-            session.get("session_id") or "",
+        return self._session_graph_store.resolve_session_graph_target(
+            session=session,
             project_id=project_id,
         )
-        if not latest_graph:
-            return {"graph_id": None, "prev_graph_id": None}
-
-        if self.chat_storage:
-            self.chat_storage.update_session(
-                session_id=session["session_id"],
-                active_graph_id=latest_graph["graph_id"],
-            )
-        if latest_graph.get("status") == "suspended":
-            return {"graph_id": latest_graph["graph_id"], "prev_graph_id": None}
-        return {"graph_id": None, "prev_graph_id": latest_graph["graph_id"]}
 
     def create_or_get_session(
         self,
@@ -137,32 +98,12 @@ class RequirementAgentChatService:
         prompt_payload_format: str | None = None,
         context_mode: str | None = None,
     ) -> dict[str, Any]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-        session = self._call_compatible(
-            self.chat_storage.get_or_create_session,
+        return self._session_graph_store.create_or_get_session(
             user_id=user_id,
             project_id=project_id,
-            agent_type=self.AGENT_TYPE,
+            prompt_payload_format=prompt_payload_format,
+            context_mode=context_mode,
         )
-        if prompt_payload_format:
-            normalized_format = normalize_prompt_payload_format(prompt_payload_format)
-            if session.get("prompt_payload_format") != normalized_format:
-                self._call_compatible(
-                    self.chat_storage.update_session,
-                    session_id=session["session_id"],
-                    prompt_payload_format=normalized_format,
-                )
-                session["prompt_payload_format"] = normalized_format
-        if context_mode and context_mode in ("full", "incremental", "scratchpad"):
-            if session.get("context_mode") != context_mode:
-                self._call_compatible(
-                    self.chat_storage.update_session,
-                    session_id=session["session_id"],
-                    context_mode=context_mode,
-                )
-                session["context_mode"] = context_mode
-        return self._hydrate_session_graph(session)
 
     def create_session(
         self,
@@ -173,20 +114,13 @@ class RequirementAgentChatService:
         prompt_payload_format: str | None = None,
         context_mode: str | None = None,
     ) -> dict[str, Any]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-        normalized_format = normalize_prompt_payload_format(prompt_payload_format)
-        normalized_context_mode = context_mode if context_mode in ("full", "incremental", "scratchpad") else "full"
-        session = self._call_compatible(
-            self.chat_storage.create_session,
+        return self._session_graph_store.create_session(
             user_id=user_id,
             project_id=project_id,
             title=title,
-            prompt_payload_format=normalized_format,
-            context_mode=normalized_context_mode,
-            agent_type=self.AGENT_TYPE,
+            prompt_payload_format=prompt_payload_format,
+            context_mode=context_mode,
         )
-        return self._hydrate_session_graph(session)
 
     def update_session(
         self,
@@ -197,26 +131,13 @@ class RequirementAgentChatService:
         prompt_payload_format: str | None = None,
         context_mode: str | None = None,
     ) -> dict[str, Any]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-        self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
-        normalized_format = None
-        if prompt_payload_format is not None:
-            normalized_format = normalize_prompt_payload_format(prompt_payload_format)
-        normalized_context_mode = None
-        if context_mode is not None:
-            normalized_context_mode = context_mode if context_mode in ("full", "incremental", "scratchpad") else "full"
-        update_kwargs: dict[str, Any] = {
-            "session_id": session_id,
-            "title": title,
-        }
-        if prompt_payload_format is not None:
-            update_kwargs["prompt_payload_format"] = normalized_format
-        if context_mode is not None:
-            update_kwargs["context_mode"] = normalized_context_mode
-        self._call_compatible(self.chat_storage.update_session, **update_kwargs)
-        current = self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
-        return self._hydrate_session_graph(current)
+        return self._session_graph_store.update_session(
+            session_id=session_id,
+            user_id=user_id,
+            title=title,
+            prompt_payload_format=prompt_payload_format,
+            context_mode=context_mode,
+        )
 
     def list_sessions(
         self,
@@ -225,59 +146,15 @@ class RequirementAgentChatService:
         project_id: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-        sessions = self._call_compatible(
-            self.chat_storage.list_sessions,
+        return self._session_graph_store.list_sessions(
             user_id=user_id,
             project_id=project_id,
             limit=limit,
-            agent_type=self.AGENT_TYPE,
         )
-        return [self._hydrate_session_graph(session) for session in sessions]
 
     @staticmethod
     def _sort_session_graphs_as_chain(graphs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if len(graphs) <= 1:
-            return list(graphs)
-
-        by_id = {graph["graph_id"]: graph for graph in graphs if graph.get("graph_id")}
-        children_by_prev: dict[str | None, list[dict[str, Any]]] = {}
-        for graph in graphs:
-            meta = graph.get("meta_json") or {}
-            prev_graph_id = meta.get("prev_graph_id")
-            if prev_graph_id not in by_id:
-                prev_graph_id = None
-            children_by_prev.setdefault(prev_graph_id, []).append(graph)
-
-        def _graph_sort_key(item: dict[str, Any]) -> tuple[str, str]:
-            return (
-                str(item.get("created_at") or ""),
-                str(item.get("graph_id") or ""),
-            )
-
-        for siblings in children_by_prev.values():
-            siblings.sort(key=_graph_sort_key)
-
-        ordered: list[dict[str, Any]] = []
-        visited: set[str] = set()
-
-        def _walk(graph: dict[str, Any]) -> None:
-            graph_id = graph.get("graph_id")
-            if not graph_id or graph_id in visited:
-                return
-            visited.add(graph_id)
-            ordered.append(graph)
-            for child in children_by_prev.get(graph_id, []):
-                _walk(child)
-
-        for root in children_by_prev.get(None, []):
-            _walk(root)
-
-        for graph in sorted(graphs, key=_graph_sort_key):
-            _walk(graph)
-
-        return ordered
+        return AgentSessionGraphStore.sort_session_graphs_as_chain(graphs)
 
     def list_session_graph_chain(
         self,
@@ -285,60 +162,31 @@ class RequirementAgentChatService:
         session_id: str,
         user_id: str,
     ) -> dict[str, Any]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-
-        session = self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
-        hydrated_session = self._hydrate_session_graph(session)
-        graphs = self.execution_graph_service.list_runtime_graphs_by_session(
+        return self._session_graph_store.list_session_graph_chain(
             session_id=session_id,
-            project_id=hydrated_session.get("project_id"),
+            user_id=user_id,
         )
-        ordered_graphs = self._sort_session_graphs_as_chain(graphs)
-        chain = [
-            self.execution_graph_service.get_graph_detail(graph["graph_id"])
-            for graph in ordered_graphs
-        ]
-        return {
-            "session_id": session_id,
-            "active_graph_id": hydrated_session.get("active_graph_id"),
-            "graphs": chain,
-        }
 
     def delete_session(self, *, session_id: str, user_id: str) -> bool:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-
-        session = self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
-        session_graphs = self.execution_graph_service.list_runtime_graphs_by_session(
+        return self._session_graph_store.delete_session(
             session_id=session_id,
-            project_id=session.get("project_id"),
+            user_id=user_id,
         )
 
-        deleted = self.chat_storage.delete_session(session_id)
-        if not deleted:
-            return False
-
-        for graph in session_graphs:
-            try:
-                self.execution_graph_service.delete_execution_graph(
-                    graph["graph_id"],
-                    updated_by=user_id,
-                )
-            except Exception:
-                continue
-        return True
-
-    def list_messages(self, *, session_id: str, user_id: str, limit: int = 100) -> list[dict[str, Any]]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-        return self.chat_storage.list_messages(session_id=session_id, user_id=user_id, limit=limit)
+    def list_messages(
+        self, *, session_id: str, user_id: str, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        return self._session_graph_store.list_messages(
+            session_id=session_id,
+            user_id=user_id,
+            limit=limit,
+        )
 
     def get_graph_detail(self, graph_id: str) -> dict[str, Any]:
-        return self.execution_graph_service.get_graph_detail(graph_id)
+        return self._session_graph_store.get_graph_detail(graph_id)
 
     def get_graph(self, graph_id: str) -> dict[str, Any] | None:
-        return self.execution_graph_service.get_execution_graph(graph_id)
+        return self._session_graph_store.get_graph(graph_id)
 
     def _get_actor_manager(self):
         return self.actor_runtime.get_actor_manager()
@@ -349,11 +197,19 @@ class RequirementAgentChatService:
     def _run_actor_coro(self, coro):
         return self.actor_runtime.run_actor_coro(coro)
 
+    def _graph_ai_proxy_client(self, *, model: str, use_thinking_mode: bool) -> Any:
+        with_defaults = getattr(self.ai_proxy, "with_defaults", None)
+        if callable(with_defaults):
+            return with_defaults(model=model, thinking_enabled=use_thinking_mode)
+        return self.ai_proxy
+
     def _stream_llm_reply(
         self,
         *,
         prompt: str,
         system_prompt: str,
+        model: str = "deepseek-v4-pro",
+        use_thinking_mode: bool = True,
         max_new_tokens: int = 1200,
     ) -> Generator[dict[str, Any], None, str]:
         response = requests.post(
@@ -361,8 +217,9 @@ class RequirementAgentChatService:
             json={
                 "prompt": prompt,
                 "system_prompt": system_prompt,
+                "model": model,
                 "max_new_tokens": max_new_tokens,
-                "use_thinking_mode": True,
+                "use_thinking_mode": use_thinking_mode,
                 "use_async_client": False,
             },
             stream=True,
@@ -391,7 +248,9 @@ class RequirementAgentChatService:
     def _actor_query(self, actor_manager, requirement_id: str) -> dict[str, Any]:
         return self.actor_runtime.actor_query(actor_manager, requirement_id)
 
-    def _actor_write(self, actor_manager, requirement_id: str, command: dict[str, Any]) -> dict[str, Any]:
+    def _actor_write(
+        self, actor_manager, requirement_id: str, command: dict[str, Any]
+    ) -> dict[str, Any]:
         return self.actor_runtime.actor_write(actor_manager, requirement_id, command)
 
     def _build_tool_loop_system_prompt(self) -> str:
@@ -458,10 +317,11 @@ class RequirementAgentChatService:
         session_id: str,
         prompt_payload_format: str,
         context_mode: str,
+        ai_proxy_client: Any | None = None,
         max_tool_call_rounds: int | None = None,
     ) -> Generator[dict[str, Any], None, dict[str, Any]]:
         runner = RequirementAgentToolLoopRunner(
-            ai_proxy_client=self.ai_proxy,
+            ai_proxy_client=ai_proxy_client or self.ai_proxy,
             tools=self.tools,
             execution_graph_service=self.execution_graph_service,
             actor_manager_getter=self._get_actor_manager,
@@ -469,16 +329,24 @@ class RequirementAgentChatService:
             max_tool_call_rounds=max_tool_call_rounds or self.MAX_TOOL_CALL_ROUNDS,
             experience_orchestrator=ExperienceOrchestrator(),
         )
-        return runner.run(
+        executor = GraphExecutor(experience_orchestrator=ExperienceOrchestrator())
+        result = yield from executor.execute_agent_tool_loop(
+            agent_runner=runner,
+            graph_service=self.execution_graph_service,
             recorder=recorder,
-            user_id=user_id,
+            actor=user_id,
             user_message=user_message,
-            project_id=project_id,
-            requirement_id=requirement_id,
-            session_id=session_id,
-            prompt_payload_format=prompt_payload_format,
-            context_mode=context_mode,
+            runner_kwargs={
+                "project_id": project_id,
+                "requirement_id": requirement_id,
+                "session_id": session_id,
+                "prompt_payload_format": prompt_payload_format,
+                "context_mode": context_mode,
+            },
         )
+        if result.status == "failed":
+            raise RuntimeError(result.error or "GraphExecutor 执行失败")
+        return (result.metadata or {}).get("payload") or {}
 
     def run_inline_tool_loop(
         self,
@@ -588,6 +456,8 @@ class RequirementAgentChatService:
         project_id: str,
         user_message: str,
         requirement_id: str | None = None,
+        model: str = "deepseek-v4-pro",
+        use_thinking_mode: bool = True,
     ) -> Generator[dict[str, Any], None, None]:
         if not self.chat_storage:
             raise RuntimeError("AI chat storage not initialized")
@@ -603,7 +473,11 @@ class RequirementAgentChatService:
             user_id=user_id,
             role="user",
             content=user_message,
-            metadata={"requirement_id": requirement_id},
+            metadata={
+                "requirement_id": requirement_id,
+                "model": model,
+                "use_thinking_mode": use_thinking_mode,
+            },
             is_read=True,
         )
         self.chat_storage.update_session(session_id=session_id)
@@ -680,6 +554,10 @@ class RequirementAgentChatService:
                 session_id=session_id,
                 prompt_payload_format=prompt_payload_format,
                 context_mode=context_mode,
+                ai_proxy_client=self._graph_ai_proxy_client(
+                    model=model,
+                    use_thinking_mode=use_thinking_mode,
+                ),
             )
             while True:
                 try:
@@ -734,6 +612,8 @@ class RequirementAgentChatService:
                 stream = self._stream_llm_reply(
                     prompt=final_prompt,
                     system_prompt=final_system_prompt,
+                    model=model,
+                    use_thinking_mode=use_thinking_mode,
                 )
                 while True:
                     try:

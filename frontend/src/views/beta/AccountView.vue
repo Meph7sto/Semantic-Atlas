@@ -15,7 +15,7 @@
 
           <div class="account-content">
             <!-- 左侧：用户信息卡片 -->
-            <div class="avatar-card card">
+            <div class="avatar-card card sa-card">
               <div class="avatar-area">
                 <div class="avatar-wrap">
                   <img
@@ -61,7 +61,7 @@
             <div class="forms-col">
 
               <!-- 基本信息 -->
-              <section class="card form-card">
+              <section class="card form-card sa-card">
                 <div class="card-header">
                   <UserIcon class="card-header-icon" />
                   <h2 class="card-title">基本信息</h2>
@@ -72,7 +72,7 @@
                   <input
                     v-model="profileForm.display_name"
                     type="text"
-                    class="form-input"
+                    class="form-input sa-input"
                     placeholder="输入显示名称"
                     maxlength="50"
                   />
@@ -84,7 +84,7 @@
                   <input
                     v-model="profileForm.avatar_url"
                     type="url"
-                    class="form-input"
+                    class="form-input sa-input"
                     placeholder="https://example.com/avatar.jpg"
                   />
                   <span class="form-hint">填入图片地址作为头像，不填则显示名称首字母</span>
@@ -105,7 +105,7 @@
                   <input
                     :value="profile.username"
                     type="text"
-                    class="form-input readonly"
+                    class="form-input readonly sa-input"
                     readonly
                   />
                   <span class="form-hint">用户名不可修改</span>
@@ -116,7 +116,7 @@
                   <input
                     :value="roleLabel"
                     type="text"
-                    class="form-input readonly"
+                    class="form-input readonly sa-input"
                     readonly
                   />
                   <span class="form-hint">角色由管理员分配，不可自行修改</span>
@@ -138,7 +138,7 @@
               </section>
 
               <!-- 修改密码 -->
-              <section class="card form-card">
+              <section class="card form-card sa-card">
                 <div class="card-header">
                   <LockIcon class="card-header-icon" />
                   <h2 class="card-title">修改密码</h2>
@@ -150,7 +150,7 @@
                     <input
                       v-model="pwdForm.old_password"
                       :type="showOld ? 'text' : 'password'"
-                      class="form-input"
+                      class="form-input sa-input"
                       placeholder="输入当前密码"
                       autocomplete="current-password"
                     />
@@ -167,7 +167,7 @@
                     <input
                       v-model="pwdForm.new_password"
                       :type="showNew ? 'text' : 'password'"
-                      class="form-input"
+                      class="form-input sa-input"
                       placeholder="至少 6 位"
                       autocomplete="new-password"
                     />
@@ -188,7 +188,7 @@
                     <input
                       v-model="pwdForm.confirm_password"
                       :type="showConfirm ? 'text' : 'password'"
-                      class="form-input"
+                      class="form-input sa-input"
                       :class="{ error: pwdMismatch }"
                       placeholder="再次输入新密码"
                       autocomplete="new-password"
@@ -219,7 +219,7 @@
             </div>
 
               <!-- 我的文件入口 -->
-              <section class="card form-card my-files-entry" @click="goToMyFiles">
+              <section class="card form-card my-files-entry sa-card" @click="goToMyFiles">
                 <div class="card-header">
                   <FolderOpenIcon class="card-header-icon" />
                   <h2 class="card-title">我的文件</h2>

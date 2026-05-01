@@ -66,14 +66,24 @@ export const requirementClassificationAgentChatApi = {
     return resp.data
   },
 
-  async streamMessage({ sessionId, projectId, requirementId, message }) {
+  async streamMessage({
+    sessionId,
+    projectId,
+    requirementId,
+    message,
+    model = 'deepseek-v4-pro',
+    useThinkingMode = true
+  }) {
     const response = await fetch(`/api/v2/requirement-classification-agent/sessions/${encodeURIComponent(sessionId)}/messages/stream`, {
       method: 'POST',
       headers: buildAuthHeaders(),
       body: JSON.stringify({
         project_id: projectId,
         requirement_id: requirementId || null,
-        message
+        message,
+        model,
+        use_thinking_mode: useThinkingMode,
+        execution_mode: 'graph'
       })
     })
 

@@ -17,9 +17,9 @@ def test_policy_resolver_uses_target_specific_defaults():
     resolver = ExperiencePolicyResolver()
 
     decision_policy = resolver.resolve("session_controller_decision")
-    classic_policy = resolver.resolve(
+    tool_loop_policy = resolver.resolve(
         ExperienceTarget(
-            target_id="conflict_detection_classic",
+            target_id="conflict_detection_tool_loop",
             container_key="conflict_detection",
             prompt_builder_kind="",
             node_type="llm",
@@ -28,4 +28,4 @@ def test_policy_resolver_uses_target_specific_defaults():
 
     assert decision_policy.retrieval_threshold >= 0.82
     assert decision_policy.allow_shared_patterns is False
-    assert classic_policy.compiler_mode == "classic"
+    assert tool_loop_policy.compiler_mode == "agent_tool_loop"

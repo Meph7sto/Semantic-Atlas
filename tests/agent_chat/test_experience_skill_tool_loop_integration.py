@@ -19,9 +19,9 @@ from backend_business.services.agent.agents.conflict_detection_agent.tool_loop_r
 from backend_business.services.agent.experience import SkillLoader, SkillRetriever
 
 
-_SEED_CLASSIC_SKILL = """---
-skill_id: exp_conflict_detection_classic_seed_20260418_001
-experience_target: conflict_detection_classic
+_SEED_TOOL_LOOP_SKILL = """---
+skill_id: exp_conflict_detection_tool_loop_seed_20260418_001
+experience_target: conflict_detection_tool_loop
 container_key: conflict_detection
 prompt_builder_kind: ""
 node_type: llm
@@ -124,15 +124,15 @@ def _drain_with_result(gen):
 
 
 def _seed_root(root: Path) -> None:
-    target_dir = root / "conflict_detection_classic"
+    target_dir = root / "conflict_detection_tool_loop"
     (target_dir / "archive").mkdir(parents=True, exist_ok=True)
-    (target_dir / "current.md").write_text(_SEED_CLASSIC_SKILL, encoding="utf-8")
+    (target_dir / "current.md").write_text(_SEED_TOOL_LOOP_SKILL, encoding="utf-8")
     (root / "_registry.yaml").write_text(
         "version: 1\n"
         "targets:\n"
-        "  conflict_detection_classic:\n"
-        "    skill_id: exp_conflict_detection_classic_seed_20260418_001\n"
-        "    current_skill_path: conflict_detection_classic/current.md\n"
+        "  conflict_detection_tool_loop:\n"
+        "    skill_id: exp_conflict_detection_tool_loop_seed_20260418_001\n"
+        "    current_skill_path: conflict_detection_tool_loop/current.md\n"
         "    iteration: 1\n"
         "    invocation_count: 0\n"
         "    injection_miss_count: 0\n",
@@ -140,7 +140,7 @@ def _seed_root(root: Path) -> None:
     )
 
 
-def test_conflict_detection_tool_loop_injects_classic_skill(tmp_path: Path):
+def test_conflict_detection_tool_loop_injects_tool_loop_skill(tmp_path: Path):
     root = tmp_path / ".agent_skills"
     _seed_root(root)
     ai_proxy = _FakeAIProxy()
@@ -171,6 +171,6 @@ def test_conflict_detection_tool_loop_injects_classic_skill(tmp_path: Path):
     assert "## 已命中的经验技能" in ai_proxy.system_prompts[0]
     assert any(
         item["meta_patch"].get("injected_skill_id")
-        == "exp_conflict_detection_classic_seed_20260418_001"
+        == "exp_conflict_detection_tool_loop_seed_20260418_001"
         for item in graph_service.meta_patches
     )

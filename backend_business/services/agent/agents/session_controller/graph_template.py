@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from backend_business.services.agent.runtime.agent_registry import (
+    BUILTIN_AGENT_REGISTRY,
+    AgentRegistry,
+)
 
 _TEMPLATE_KIND = "session_controller_graph_executor_phase2"
 _TEMPLATE_NAME = "Session Controller GraphExecutor Template"
-_TEMPLATE_VERSION = 3
+_TEMPLATE_VERSION = 4
 
 
 def ensure_session_controller_template(
@@ -15,8 +19,10 @@ def ensure_session_controller_template(
     execution_graph_service: Any,
     project_id: str,
     actor: str,
+    agent_registry: AgentRegistry | None = None,
 ) -> str:
     """Ensure the built-in SessionController topology template exists."""
+    registry = agent_registry or BUILTIN_AGENT_REGISTRY
     existing_templates = execution_graph_service.list_execution_graphs(project_id=project_id)
     for graph in existing_templates:
         meta = graph.get("meta_json") or {}
@@ -49,33 +55,26 @@ def ensure_session_controller_template(
         created_by=actor,
     )
     container_id = container["container_id"]
-    requirement_container = execution_graph_service.create_container(
-        graph_id=graph_id,
-        container_key="requirement_agent",
-        label="Requirement Agent",
-        role_type="agent",
-        config_json={"system_template_kind": _TEMPLATE_KIND},
-        order_index=1,
-        created_by=actor,
-    )
-    conflict_container = execution_graph_service.create_container(
-        graph_id=graph_id,
-        container_key="conflict_detection",
-        label="Conflict Detection Agent",
-        role_type="agent",
-        config_json={"system_template_kind": _TEMPLATE_KIND},
-        order_index=2,
-        created_by=actor,
-    )
-    classification_container = execution_graph_service.create_container(
-        graph_id=graph_id,
-        container_key="requirement_classification_agent",
-        label="Requirement Classification Agent",
-        role_type="agent",
-        config_json={"system_template_kind": _TEMPLATE_KIND},
-        order_index=3,
-        created_by=actor,
-    )
+    delegated_containers: dict[str, dict[str, Any]] = {}
+    for order_index, definition in enumerate(
+        registry.selectable_definitions(),
+        start=1,
+    ):
+        delegated_containers[definition.container_key] = execution_graph_service.create_container(
+            graph_id=graph_id,
+            container_key=definition.container_key,
+            label=definition.label,
+            role_type=definition.role_type,
+            config_json={
+                "system_template_kind": _TEMPLATE_KIND,
+                "agent_type": definition.agent_type,
+            },
+            order_index=order_index,
+            created_by=actor,
+        )
+    requirement_container = delegated_containers["requirement_agent"]
+    conflict_container = delegated_containers["conflict_detection"]
+    classification_container = delegated_containers["requirement_classification_agent"]
 
     intake_node = execution_graph_service.create_node(
         graph_id=graph_id,

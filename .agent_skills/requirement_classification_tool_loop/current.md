@@ -1,6 +1,6 @@
 ---
-skill_id: exp_requirement_classification_classic_seed_20260418_001
-experience_target: requirement_classification_classic
+skill_id: exp_requirement_classification_tool_loop_seed_20260418_001
+experience_target: requirement_classification_tool_loop
 container_key: requirement_classification_agent
 prompt_builder_kind: ""
 node_type: llm

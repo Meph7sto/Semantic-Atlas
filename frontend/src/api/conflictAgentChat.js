@@ -66,13 +66,21 @@ export const conflictAgentChatApi = {
     return resp.data
   },
 
-  async streamMessage({ sessionId, projectId, message }) {
+  async streamMessage({
+    sessionId,
+    projectId,
+    message,
+    model = 'deepseek-v4-pro',
+    useThinkingMode = true
+  }) {
     const response = await fetch(`/api/v2/conflict-agent-chat/sessions/${encodeURIComponent(sessionId)}/messages/stream`, {
       method: 'POST',
       headers: buildAuthHeaders(),
       body: JSON.stringify({
         project_id: projectId,
         message,
+        model,
+        use_thinking_mode: useThinkingMode,
         execution_mode: 'graph'
       })
     })

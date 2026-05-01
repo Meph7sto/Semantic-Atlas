@@ -24,9 +24,9 @@
 
 补充边界：
 
-- 子 Agent 自身仍可能保留 standalone classic tool-loop 能力，属于 legacy 兼容范围，不是 SessionController 主链路
-- `*_classic` experience target 仍可存在，用于旧子 Agent 经验注入测试和兼容场景
-- 后续清理目标是逐步删除 SessionController 之外不再被直接入口使用的 classic 能力
+- 子 Agent 的 alpha 单独测试页面仍可存在，但只作为测试/诊断入口
+- 单 Agent 测试入口也必须进入 graph/runtime，不保留 standalone classic 执行链路
+- experience target 使用 `*_tool_loop`，不再保留 `*_classic` 目标
 
 ## 3. 背景与问题
 

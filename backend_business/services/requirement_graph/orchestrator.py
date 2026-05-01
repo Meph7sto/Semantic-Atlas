@@ -701,12 +701,20 @@ class RequirementGraphService:
         }
 
         try:
+            project_requirements = self._load_project_requirements(project_id, limit)
             top_requirements = self._load_l123_requirements(session_id, limit)
             l4_requirements = self._load_l4_requirements(session_id, limit)
             l4_links = self._load_l4_requirement_links(session_id)
-            trace_stats, conflict_stats, classification_stats = self._build_discover_base_graph(
+            (
+                trace_stats,
+                conflict_stats,
+                classification_stats,
+                canonical_node_by_source_req_id,
+            ) = self._build_discover_base_graph(
                 builder,
+                project_id=project_id,
                 session_id=session_id,
+                project_requirements=project_requirements,
                 top_requirements=top_requirements,
                 l4_requirements=l4_requirements,
                 l4_links=l4_links,
@@ -715,7 +723,7 @@ class RequirementGraphService:
                 builder,
                 project_id=project_id,
                 session_id=session_id,
-                source_requirement_count=len(top_requirements) + len(l4_requirements),
+                source_requirement_count=len(project_requirements),
                 trace_stats=trace_stats,
                 conflict_stats=conflict_stats,
                 classification_stats=classification_stats,
@@ -743,9 +751,28 @@ class RequirementGraphService:
 
             for index, top in enumerate(top_requirements, start=1):
                 top_req_id = self._clean(top.get("req_id"))
+                top_node_id = canonical_node_by_source_req_id.get(top_req_id or "")
                 linked_low_ids = list(dict.fromkeys(links_by_top.get(top_req_id, [])))
-                lows = [l4_by_req_id[req_id] for req_id in linked_low_ids if req_id in l4_by_req_id]
+                lows = [
+                    l4_by_req_id[req_id]
+                    for req_id in linked_low_ids
+                    if req_id in l4_by_req_id
+                    and canonical_node_by_source_req_id.get(req_id) in builder.nodes
+                ]
                 package_id = f"top-{index}:{top_req_id}"
+                if not top_node_id or top_node_id not in builder.nodes:
+                    progress["completed_packages"] += 1
+                    progress["skipped_packages"] += 1
+                    relation_review_stats["skipped_package_count"] = progress["skipped_packages"]
+                    yield "package_skipped", {
+                        "run_id": run_id,
+                        "package_id": package_id,
+                        "top_req_id": top_req_id,
+                        "reason": "no_manage_requirement",
+                        "l4_count": len(linked_low_ids),
+                    }
+                    yield "discover_progress", dict(progress)
+                    continue
                 if not lows:
                     progress["completed_packages"] += 1
                     progress["skipped_packages"] += 1
@@ -761,25 +788,40 @@ class RequirementGraphService:
                     continue
                 known_refines = [
                     {
-                        "source": _req_node_id(top_req_id),
-                        "target": _req_node_id(low.get("req_id")),
+                        "source": top_node_id,
+                        "target": canonical_node_by_source_req_id.get(self._clean(low.get("req_id")) or ""),
                         "type": "REFINES",
                     }
                     for low in lows
+                    if canonical_node_by_source_req_id.get(self._clean(low.get("req_id")) or "")
                 ]
+                top_node = builder.nodes[top_node_id]
+                canonical_l4_requirements = []
+                for low in lows:
+                    low_req_id = self._clean(low.get("req_id")) or ""
+                    low_node_id = canonical_node_by_source_req_id.get(low_req_id)
+                    if not low_node_id or low_node_id not in builder.nodes:
+                        continue
+                    low_node = builder.nodes[low_node_id]
+                    low_properties = low_node.get("properties") or {}
+                    canonical_l4_requirements.append(
+                        {
+                            **low,
+                            "req_id": low_properties.get("req_id") or low_req_id,
+                            "text": low_node.get("label") or low_properties.get("description") or low.get("text"),
+                            "node_id": low_node_id,
+                        }
+                    )
                 package = coordinator.build_package(
                     package_id=package_id,
                     top_requirement={
                         **top,
-                        "node_id": _req_node_id(top_req_id),
+                        "req_id": top_node["properties"].get("req_id") or top_req_id,
+                        "level": top_node["properties"].get("source_level") or top.get("level"),
+                        "text": top_node.get("label") or top.get("text"),
+                        "node_id": top_node_id,
                     },
-                    l4_requirements=[
-                        {
-                            **low,
-                            "node_id": _req_node_id(low.get("req_id")),
-                        }
-                        for low in lows
-                    ],
+                    l4_requirements=canonical_l4_requirements,
                     known_refines=known_refines,
                 )
                 if len(lows) > 80:
@@ -846,7 +888,7 @@ class RequirementGraphService:
                 builder,
                 project_id=project_id,
                 session_id=session_id,
-                source_requirement_count=len(top_requirements) + len(l4_requirements),
+                source_requirement_count=len(project_requirements),
                 trace_stats=trace_stats,
                 conflict_stats=conflict_stats,
                 classification_stats=classification_stats,
@@ -982,19 +1024,24 @@ class RequirementGraphService:
         session_id = self._clean(snapshot.get("session_id")) or self._resolve_project_session(project_id)
         builder = _GraphBuilder(limit=max(50, min(2000, int(limit or 600))))
         project_requirements = self._load_project_requirements(project_id, builder.limit)
+        canonical_node_by_requirement_ref: Dict[str, str] = {}
 
         for req in project_requirements:
+            req_id = self._clean(req.get("req_id"))
+            if not req_id:
+                continue
             normalized_level = _normalize_source_level(
                 req.get("source_level"),
                 req.get("requirement_type"),
             )
+            node_id = _req_node_id(req_id)
             builder.add_node(
-                _req_node_id(req.get("req_id")),
+                node_id,
                 kind="requirement",
                 label=req.get("title"),
                 group=normalized_level,
                 properties={
-                    "req_id": req.get("req_id"),
+                    "req_id": req_id,
                     "project_id": req.get("project_id"),
                     "title": req.get("title"),
                     "description": req.get("description"),
@@ -1014,11 +1061,35 @@ class RequirementGraphService:
                     "updated_by": req.get("updated_by"),
                 },
             )
+            canonical_node_by_requirement_ref[req_id] = node_id
+            canonical_node_by_requirement_ref[node_id] = node_id
+            source_req_id = self._clean(req.get("source_req_id"))
+            if source_req_id:
+                canonical_node_by_requirement_ref[source_req_id] = node_id
+                canonical_node_by_requirement_ref[_req_node_id(source_req_id)] = node_id
 
-        for edge in snapshot.get("edges") or []:
+        snapshot_edges = snapshot.get("edges") or []
+
+        def resolve_snapshot_node(node_id: Any, req_id: Any) -> Optional[str]:
+            raw_node_id = self._clean(node_id)
+            raw_req_id = self._clean(req_id)
+            candidates = [
+                raw_node_id,
+                raw_req_id,
+                raw_node_id.removeprefix("req:") if raw_node_id else "",
+            ]
+            for candidate in candidates:
+                if not candidate:
+                    continue
+                canonical = canonical_node_by_requirement_ref.get(candidate)
+                if canonical in builder.nodes:
+                    return canonical
+            return None
+
+        for edge in snapshot_edges:
             edge_type = str(edge.get("relation_type") or "").strip()
-            source = self._clean(edge.get("source_node_id"))
-            target = self._clean(edge.get("target_node_id"))
+            source = resolve_snapshot_node(edge.get("source_node_id"), edge.get("source_req_id"))
+            target = resolve_snapshot_node(edge.get("target_node_id"), edge.get("target_req_id"))
             if not source or not target or not edge_type:
                 continue
             properties = dict(edge.get("properties") or {})
@@ -1099,36 +1170,74 @@ class RequirementGraphService:
         self,
         builder: _GraphBuilder,
         *,
+        project_id: Optional[str],
         session_id: Optional[str],
+        project_requirements: List[Dict[str, Any]],
         top_requirements: List[Dict[str, Any]],
         l4_requirements: List[Dict[str, Any]],
         l4_links: List[Dict[str, Any]],
-    ) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    ) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, str]]:
         text_index: Dict[str, List[str]] = defaultdict(list)
-        for req in top_requirements:
+        canonical_node_by_source_req_id: Dict[str, str] = {}
+
+        for req in project_requirements:
             req_id = self._clean(req.get("req_id"))
-            level = self._clean(req.get("level")) or "UNKNOWN_LEVEL"
+            if not req_id:
+                continue
             node_id = _req_node_id(req_id)
+            normalized_level = _normalize_source_level(
+                req.get("source_level"),
+                req.get("requirement_type"),
+            )
             builder.add_node(
                 node_id,
                 kind="requirement",
-                label=req.get("text") or req_id,
-                group=level,
+                label=req.get("title"),
+                group=normalized_level,
                 properties={
                     "req_id": req_id,
-                    "session_id": req.get("session_id"),
-                    "title": req.get("text"),
-                    "description": req.get("text"),
-                    "content": req.get("text"),
-                    "source_level": level,
-                    "level": level,
-                    "fingerprint": req.get("fingerprint"),
-                    "anchor_span_id": req.get("anchor_span_id"),
-                    "r": req.get("r"),
-                    "source": "requirements_l123",
+                    "project_id": req.get("project_id") or project_id,
+                    "title": req.get("title"),
+                    "description": req.get("description"),
+                    "content": req.get("description"),
+                    "type": req.get("requirement_type"),
+                    "status": req.get("status"),
+                    "priority": req.get("priority"),
+                    "tags": _as_list(req.get("tags")),
+                    "assignee": req.get("assignee"),
+                    "parent_id": req.get("parent_id"),
+                    "source_req_id": req.get("source_req_id"),
+                    "source_level": normalized_level,
+                    "level": normalized_level,
+                    "custom_fields": req.get("custom_fields") if isinstance(req.get("custom_fields"), dict) else None,
+                    "source": "manage_requirements",
+                    "created_by": req.get("created_by"),
+                    "updated_by": req.get("updated_by"),
                 },
             )
-            _index_text(text_index, node_id, req_id, req.get("text"))
+            if req_id:
+                canonical_node_by_source_req_id[req_id] = node_id
+            source_req_id = self._clean(req.get("source_req_id"))
+            if source_req_id:
+                canonical_node_by_source_req_id[source_req_id] = node_id
+            _index_text(
+                text_index,
+                node_id,
+                req_id,
+                source_req_id,
+                req.get("title"),
+                req.get("description"),
+                " ".join(
+                    part
+                    for part in [
+                        str(req.get("title") or "").strip(),
+                        str(req.get("description") or "").strip(),
+                    ]
+                    if part
+                ),
+            )
+
+        self._apply_project_edges(builder, project_requirements)
 
         source_top_ids_by_l4: Dict[str, List[str]] = defaultdict(list)
         for link in l4_links:
@@ -1137,48 +1246,25 @@ class RequirementGraphService:
             if req_id and top_req_id:
                 source_top_ids_by_l4[req_id].append(top_req_id)
 
+        for req in top_requirements:
+            req_id = self._clean(req.get("req_id"))
+            node_id = canonical_node_by_source_req_id.get(req_id or "")
+            if not node_id:
+                continue
+            _index_text(text_index, node_id, req_id, req.get("text"))
+
         for req in l4_requirements:
             req_id = self._clean(req.get("req_id"))
-            node_id = _req_node_id(req_id)
-            source_top_ids = list(dict.fromkeys(source_top_ids_by_l4.get(req_id, [])))
-            if not source_top_ids and self._clean(req.get("source_top_id")):
-                source_top_ids = [self._clean(req.get("source_top_id"))]
-            builder.add_node(
-                node_id,
-                kind="requirement",
-                label=req.get("text") or req_id,
-                group="L4",
-                properties={
-                    "req_id": req_id,
-                    "session_id": req.get("session_id"),
-                    "title": req.get("text"),
-                    "description": req.get("text"),
-                    "content": req.get("text"),
-                    "component": req.get("component"),
-                    "acceptance_criteria": _as_list(req.get("acceptance_criteria")),
-                    "test_method": req.get("test_method"),
-                    "interfaces": _as_list(req.get("interfaces")),
-                    "data_contracts": _as_list(req.get("data_contracts")),
-                    "error_handling": _as_list(req.get("error_handling")),
-                    "nfr": _as_list(req.get("nfr")),
-                    "open_questions": _as_list(req.get("open_questions")),
-                    "evidence_ids": _as_list(req.get("evidence_ids")),
-                    "confidence": req.get("confidence"),
-                    "source_top_id": req.get("source_top_id"),
-                    "source_top_ids": source_top_ids,
-                    "source_level": "L4",
-                    "level": "L4",
-                    "source": "low_level_requirements",
-                    "meta": req.get("meta") if isinstance(req.get("meta"), dict) else None,
-                },
-            )
+            node_id = canonical_node_by_source_req_id.get(req_id or "")
+            if not node_id:
+                continue
             _index_text(text_index, node_id, req_id, req.get("text"), req.get("source_top_text"))
 
         for link in l4_links:
             top_req_id = self._clean(link.get("top_req_id"))
             low_req_id = self._clean(link.get("req_id"))
-            source = _req_node_id(top_req_id)
-            target = _req_node_id(low_req_id)
+            source = canonical_node_by_source_req_id.get(top_req_id or "")
+            target = canonical_node_by_source_req_id.get(low_req_id or "")
             if source not in builder.nodes or target not in builder.nodes:
                 continue
             builder.add_edge(
@@ -1197,7 +1283,7 @@ class RequirementGraphService:
         trace_stats = self._apply_trace_edges(builder, session_id, text_index)
         conflict_stats = self._apply_conflict_edges(builder, session_id, text_index)
         classification_stats = self._apply_classification(builder, session_id, text_index)
-        return trace_stats, conflict_stats, classification_stats
+        return trace_stats, conflict_stats, classification_stats, canonical_node_by_source_req_id
 
     def _build_discover_graph_payload(
         self,

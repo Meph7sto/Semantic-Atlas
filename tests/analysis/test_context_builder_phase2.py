@@ -99,6 +99,7 @@ class TestContextBuilderPhase2(unittest.TestCase):
                 llm,
                 llm_model,
                 use_streaming_llm,
+                use_thinking_mode,
                 tau,
                 top_k,
                 max_edges_per_window,

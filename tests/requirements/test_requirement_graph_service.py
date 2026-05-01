@@ -1190,6 +1190,73 @@ def test_get_snapshot_graph_rehydrates_saved_requirement_edges():
     assert graph["meta"]["relation_snapshot"]["is_active"] is False
 
 
+def test_get_snapshot_graph_maps_legacy_discovery_snapshot_edges_to_manage_requirements():
+    db = _FakeDB(
+        [
+            _make_requirement(
+                "M-LOW-1",
+                title="调用订单接口",
+                source_level="L4",
+                source_req_id="LOW-1",
+            ),
+            _make_requirement(
+                "M-LOW-2",
+                title="订单接口返回支付状态",
+                source_level="L4",
+                source_req_id="LOW-2",
+            ),
+        ],
+    )
+    db.snapshot_details["snap-discovery-1"] = {
+        "snapshot_id": "snap-discovery-1",
+        "project_id": "P-1",
+        "session_id": "S-1",
+        "relation_mode": "llm",
+        "created_at": "2026-04-20T06:00:00+00:00",
+        "invalidated_at": None,
+        "is_active": True,
+        "edge_count": 1,
+        "edges": [
+            {
+                "source_node_id": "req:LOW-1",
+                "target_node_id": "req:LOW-2",
+                "source_req_id": "LOW-1",
+                "target_req_id": "LOW-2",
+                "relation_type": "DEPENDS_ON",
+                "source_kind": "llm",
+                "source_detail": "llm_discovery_tool",
+                "weight": 0.86,
+                "confidence": 0.86,
+                "reason": "第一个底层需求依赖第二个底层需求提供的接口",
+                "evidence": ["接口依赖"],
+                "model": "deepseek-v4-pro",
+                "review_action": "add",
+                "review_package_id": "top-1:TOP-1",
+                "properties": {
+                    "source_kind": "llm",
+                    "source_detail": "llm_discovery_tool",
+                    "confidence": 0.86,
+                    "reason": "第一个底层需求依赖第二个底层需求提供的接口",
+                    "evidence": ["接口依赖"],
+                    "model": "deepseek-v4-pro",
+                    "review_action": "add",
+                    "review_package_id": "top-1:TOP-1",
+                },
+                "created_at": "2026-04-20T06:00:00+00:00",
+            }
+        ],
+    }
+    service = RequirementGraphService(db, ai_client=None)
+
+    graph = service.get_snapshot_graph("snap-discovery-1", limit=900)
+
+    assert {node["id"] for node in graph["nodes"]} == {"req:M-LOW-1", "req:M-LOW-2"}
+    assert graph["edges"][0]["source"] == "req:M-LOW-1"
+    assert graph["edges"][0]["target"] == "req:M-LOW-2"
+    assert graph["stats"]["edge_count"] == 1
+    assert graph["stats"]["supplemental_edge_count"] == 1
+
+
 def test_list_snapshot_history_returns_filtered_snapshots_in_desc_order():
     requirements = [_make_requirement("A", title="订单侧支付编排", source_level="L3")]
     db = _FakeDB(requirements)
@@ -2386,7 +2453,31 @@ async def test_discover_relation_stream_groups_by_top_requirement_and_saves_fina
             }
 
     db = _FakeDB(
-        [],
+        [
+            _make_requirement("M-TOP-1", title="支付能力", source_level="L2", source_req_id="TOP-1"),
+            _make_requirement("M-TOP-2", title="审计能力", source_level="L3", source_req_id="TOP-2"),
+            _make_requirement(
+                "M-LOW-1",
+                title="调用订单接口",
+                source_level="L4",
+                source_req_id="LOW-1",
+                parent_id="M-TOP-1",
+            ),
+            _make_requirement(
+                "M-LOW-2",
+                title="订单接口返回支付状态",
+                source_level="L4",
+                source_req_id="LOW-2",
+                parent_id="M-TOP-1",
+            ),
+            _make_requirement(
+                "M-LOW-3",
+                title="记录审计日志",
+                source_level="L4",
+                source_req_id="LOW-3",
+                parent_id="M-TOP-2",
+            ),
+        ],
         l123_requirements=[
             _make_l123("TOP-1", text="支付能力", level="L2"),
             _make_l123("TOP-2", text="审计能力", level="L3"),
@@ -2421,15 +2512,24 @@ async def test_discover_relation_stream_groups_by_top_requirement_and_saves_fina
     assert event_names.index("base_graph") < event_names.index("relation_decision")
     assert event_names[-1] == "done"
     assert len(fake_ai.packages) == 2
-    assert {package["top_requirement"]["id"] for package in fake_ai.packages} == {"req:TOP-1", "req:TOP-2"}
+    assert {package["top_requirement"]["id"] for package in fake_ai.packages} == {"req:M-TOP-1", "req:M-TOP-2"}
 
     base_graph = events[0][1]["graph"]
+    assert {node["id"] for node in base_graph["nodes"]} == {
+        "req:M-TOP-1",
+        "req:M-TOP-2",
+        "req:M-LOW-1",
+        "req:M-LOW-2",
+        "req:M-LOW-3",
+    }
     base_edge_keys = {(edge["source"], edge["target"], edge["type"]) for edge in base_graph["edges"]}
-    assert ("req:TOP-1", "req:LOW-1", "REFINES") in base_edge_keys
+    assert ("req:M-TOP-1", "req:M-LOW-1", "REFINES") in base_edge_keys
 
     decisions = [payload for event, payload in events if event == "relation_decision"]
     assert decisions
     assert all(payload["action"] == "add" for payload in decisions)
+    assert decisions[0]["edge"]["source"] == "req:M-LOW-1"
+    assert decisions[0]["edge"]["target"] == "req:M-LOW-2"
     assert decisions[0]["edge"]["properties"]["source_detail"] == "llm_discovery_tool"
 
     final_snapshot = db.saved_relation_snapshots[-1]
@@ -2456,15 +2556,15 @@ async def test_discover_relation_stream_filters_invalid_tool_relations():
                             "arguments": {
                                 "relations": [
                                     {
-                                        "source": "req:TOP-1",
-                                        "target": "req:LOW-1",
+                                        "source": "req:M-TOP-1",
+                                        "target": "req:M-LOW-1",
                                         "type": "REFINES",
                                         "confidence": 0.9,
                                         "reason": "禁止结构边",
                                         "evidence": ["bad"],
                                     },
                                     {
-                                        "source": "req:LOW-1",
+                                        "source": "req:M-LOW-1",
                                         "target": "req:OUTSIDE",
                                         "type": "DEPENDS_ON",
                                         "confidence": 0.9,
@@ -2472,16 +2572,16 @@ async def test_discover_relation_stream_filters_invalid_tool_relations():
                                         "evidence": ["bad"],
                                     },
                                     {
-                                        "source": "req:LOW-1",
-                                        "target": "req:LOW-1",
+                                        "source": "req:M-LOW-1",
+                                        "target": "req:M-LOW-1",
                                         "type": "DEPENDS_ON",
                                         "confidence": 0.9,
                                         "reason": "自环",
                                         "evidence": ["bad"],
                                     },
                                     {
-                                        "source": "req:LOW-1",
-                                        "target": "req:LOW-2",
+                                        "source": "req:M-LOW-1",
+                                        "target": "req:M-LOW-2",
                                         "type": "BLOCKS",
                                         "confidence": 0.9,
                                         "reason": "非法类型",
@@ -2495,7 +2595,23 @@ async def test_discover_relation_stream_filters_invalid_tool_relations():
             }
 
     db = _FakeDB(
-        [],
+        [
+            _make_requirement("M-TOP-1", title="支付能力", source_level="L2", source_req_id="TOP-1"),
+            _make_requirement(
+                "M-LOW-1",
+                title="调用订单接口",
+                source_level="L4",
+                source_req_id="LOW-1",
+                parent_id="M-TOP-1",
+            ),
+            _make_requirement(
+                "M-LOW-2",
+                title="订单接口返回支付状态",
+                source_level="L4",
+                source_req_id="LOW-2",
+                parent_id="M-TOP-1",
+            ),
+        ],
         l123_requirements=[_make_l123("TOP-1", text="支付能力", level="L2")],
         l4_requirements=[
             _make_l4("LOW-1", text="调用订单接口"),
@@ -2532,9 +2648,22 @@ async def test_discover_relation_stream_skips_oversized_top_package():
             raise AssertionError("oversized packages should not call DeepSeek")
 
     lows = [_make_l4(f"LOW-{index}", text=f"需求 {index}") for index in range(81)]
+    requirements = [
+        _make_requirement("M-TOP-1", title="支付能力", source_level="L2", source_req_id="TOP-1"),
+        *[
+            _make_requirement(
+                f"M-LOW-{index}",
+                title=f"需求 {index}",
+                source_level="L4",
+                source_req_id=f"LOW-{index}",
+                parent_id="M-TOP-1",
+            )
+            for index in range(81)
+        ],
+    ]
     links = [_make_l4_link("TOP-1", low["req_id"]) for low in lows]
     db = _FakeDB(
-        [],
+        requirements,
         l123_requirements=[_make_l123("TOP-1", text="支付能力", level="L2")],
         l4_requirements=lows,
         l4_links=links,

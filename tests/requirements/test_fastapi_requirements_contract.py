@@ -31,6 +31,7 @@ class _StubAIProxy:
         overlap: int = 500,
         clean_model: str = "deepseek-v4-pro",
         extract_model: str = "deepseek-v4-pro",
+        use_thinking_mode: bool = True,
     ):
         self.extract_calls.append(
             {
@@ -39,6 +40,7 @@ class _StubAIProxy:
                 "overlap": overlap,
                 "clean_model": clean_model,
                 "extract_model": extract_model,
+                "use_thinking_mode": use_thinking_mode,
             }
         )
         return {"items": [{"text": text}], "count": 1}

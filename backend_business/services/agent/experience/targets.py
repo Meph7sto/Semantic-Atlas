@@ -10,11 +10,11 @@ from backend_business.services.agent.execution.topology_instantiator import (
     RuntimeSubgraph,
 )
 
-_CLASSIC_TARGET_BY_KEY: dict[str, str] = {
-    "requirement_agent": "requirement_agent_classic",
-    "conflict_detection": "conflict_detection_classic",
-    "requirement_classification_agent": "requirement_classification_classic",
-    "requirement_classification": "requirement_classification_classic",
+_TOOL_LOOP_TARGET_BY_KEY: dict[str, str] = {
+    "requirement_agent": "requirement_agent_tool_loop",
+    "conflict_detection": "conflict_detection_tool_loop",
+    "requirement_classification_agent": "requirement_classification_tool_loop",
+    "requirement_classification": "requirement_classification_tool_loop",
 }
 
 _CANONICAL_CONTAINER_BY_KEY: dict[str, str] = {
@@ -110,13 +110,13 @@ def _resolve_target_id(
     if prompt_builder_kind.startswith("session_controller_"):
         return prompt_builder_kind
 
-    classic_lookup_keys = [
+    tool_loop_lookup_keys = [
         container_key,
         agent_type,
     ]
-    for lookup_key in classic_lookup_keys:
-        if lookup_key in _CLASSIC_TARGET_BY_KEY:
-            return _CLASSIC_TARGET_BY_KEY[lookup_key]
+    for lookup_key in tool_loop_lookup_keys:
+        if lookup_key in _TOOL_LOOP_TARGET_BY_KEY:
+            return _TOOL_LOOP_TARGET_BY_KEY[lookup_key]
 
     if prompt_builder_kind and container_key:
         return f"{container_key}_{prompt_builder_kind}"

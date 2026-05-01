@@ -1,26 +1,26 @@
 <template>
   <div class="asr-page">
-    <header class="asr-header card">
+    <header class="asr-header card sa-card">
       <div>
         <h1>语音转写</h1>
         <p>上传音视频文件，远端推理后返回模型原始输出。</p>
       </div>
-      <button class="btn ghost" @click="loadSessions">刷新列表</button>
+      <button class="btn ghost sa-button sa-button--secondary" @click="loadSessions">刷新列表</button>
     </header>
 
-    <section class="asr-upload card">
+    <section class="asr-upload card sa-card">
       <input
         type="file"
         accept=".wav,.mp3,.m4a,.mp4,audio/*,video/mp4"
         @change="onSelectFile"
       />
-      <button class="btn primary" :disabled="!selectedFile || uploading" @click="createSession">
+      <button class="btn primary sa-button sa-button--primary" :disabled="!selectedFile || uploading" @click="createSession">
         {{ uploading ? "上传中..." : "开始转写" }}
       </button>
       <span class="asr-hint">支持 wav/mp3/m4a/mp4</span>
     </section>
 
-    <section class="asr-list card">
+    <section class="asr-list card sa-card">
       <div class="asr-toolbar">
         <h2>会话列表</h2>
       </div>
@@ -75,7 +75,7 @@
           >
             下载 raw_out
           </button>
-          <button class="btn ghost" @click="closeDetail">关闭</button>
+          <button class="btn ghost sa-button sa-button--secondary" @click="closeDetail">关闭</button>
         </div>
       </div>
 

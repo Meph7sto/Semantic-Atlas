@@ -11,8 +11,8 @@
                 {{ activeTab === 'users' ? '管理系统中的所有用户及其权限' : '审核注册申请并分配身份权限' }}
               </p>
             </div>
-            <button v-if="activeTab === 'users'" class="btn btn-primary" @click="showCreateModal = true">新建用户</button>
-            <button v-else class="btn btn-ghost" :disabled="registrationsLoading" @click="refreshRegistrations">刷新申请</button>
+            <button v-if="activeTab === 'users'" class="btn btn-primary sa-button sa-button--primary" @click="showCreateModal = true">新建用户</button>
+            <button v-else class="btn btn-ghost sa-button sa-button--secondary" :disabled="registrationsLoading" @click="refreshRegistrations">刷新申请</button>
           </div>
 
           <div class="tab-switcher">
@@ -25,23 +25,23 @@
 
           <template v-if="activeTab === 'users'">
             <div class="filter-bar">
-              <select v-model="filterRole" class="filter-input" @change="loadUsers">
+              <select v-model="filterRole" class="filter-input sa-input" @change="loadUsers">
                 <option value="">全部角色</option>
                 <option value="super_admin">高级管理员</option>
                 <option value="admin">管理员</option>
                 <option value="member">项目成员</option>
                 <option value="viewer">访客</option>
               </select>
-              <select v-model="filterExternal" class="filter-input" @change="loadUsers">
+              <select v-model="filterExternal" class="filter-input sa-input" @change="loadUsers">
                 <option value="">全部身份</option>
                 <option value="CLIENT">甲方客户</option>
                 <option value="CONTRACTOR">外包成员</option>
                 <option value="none">内部人员</option>
               </select>
-              <input v-model="filterKeyword" type="text" class="filter-input keyword" placeholder="搜索用户名或显示名称" @input="debouncedSearch" />
+              <input v-model="filterKeyword" type="text" class="filter-input keyword sa-input" placeholder="搜索用户名或显示名称" @input="debouncedSearch" />
             </div>
 
-            <div class="card">
+            <div class="card sa-card">
               <div v-if="loading" class="state">加载中...</div>
               <div v-else-if="users.length === 0" class="state">暂无用户数据</div>
               <table v-else class="table">
@@ -63,10 +63,10 @@
                     <td>{{ user.is_active ? '正常' : '已禁用' }}</td>
                     <td>{{ formatDate(user.created_at) }}</td>
                     <td class="ops">
-                      <button class="link-btn" :disabled="!canManageUser(user)" @click="openScopeModal(user)">范围权限</button>
-                      <button class="link-btn" :disabled="!canManageUser(user)" @click="editUser(user)">编辑</button>
-                      <button class="link-btn" :disabled="!canManageUser(user)" @click="toggleUserStatus(user)">{{ user.is_active ? '禁用' : '启用' }}</button>
-                      <button class="link-btn" :disabled="!canManageUser(user)" @click="resetPassword(user)">重置密码</button>
+                      <button class="link-btn sa-button sa-button--secondary" :disabled="!canManageUser(user)" @click="openScopeModal(user)">范围权限</button>
+                      <button class="link-btn sa-button sa-button--secondary" :disabled="!canManageUser(user)" @click="editUser(user)">编辑</button>
+                      <button class="link-btn sa-button sa-button--secondary" :disabled="!canManageUser(user)" @click="toggleUserStatus(user)">{{ user.is_active ? '禁用' : '启用' }}</button>
+                      <button class="link-btn sa-button sa-button--secondary" :disabled="!canManageUser(user)" @click="resetPassword(user)">重置密码</button>
                     </td>
                   </tr>
                 </tbody>
@@ -76,14 +76,14 @@
 
           <template v-else>
             <div class="filter-bar">
-              <select v-model="registrationStatusFilter" class="filter-input" @change="loadRegistrations">
+              <select v-model="registrationStatusFilter" class="filter-input sa-input" @change="loadRegistrations">
                 <option value="pending">待审批</option>
                 <option value="approved">已通过</option>
                 <option value="rejected">已拒绝</option>
               </select>
             </div>
 
-            <div class="card">
+            <div class="card sa-card">
               <div v-if="registrationsLoading" class="state">加载中...</div>
               <div v-else-if="registrations.length === 0" class="state">暂无注册申请</div>
               <table v-else class="table">
@@ -102,8 +102,8 @@
                     <td>{{ formatDate(registration.created_at) }}</td>
                     <td class="ops">
                       <template v-if="registration.registration_status === 'pending'">
-                        <button class="link-btn ok" @click="openApproveModal(registration)">通过</button>
-                        <button class="link-btn danger" @click="openRejectModal(registration)">拒绝</button>
+                        <button class="link-btn ok sa-button sa-button--primary" @click="openApproveModal(registration)">通过</button>
+                        <button class="link-btn danger sa-button sa-button--danger-secondary" @click="openRejectModal(registration)">拒绝</button>
                       </template>
                       <span v-else>已处理</span>
                     </td>
@@ -117,33 +117,33 @@
     </div>
 
     <div v-if="showCreateModal || editingUser" class="modal-overlay" @click.self="closeModal">
-      <div class="modal-card">
+      <div class="modal-card sa-card">
         <div class="modal-header">
           <h2>{{ editingUser ? '编辑用户' : '新建用户' }}</h2>
-          <button class="link-btn" @click="closeModal">关闭</button>
+          <button class="link-btn sa-button sa-button--secondary" @click="closeModal">关闭</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
             <label>用户名 *</label>
-            <input v-model="userForm.username" type="text" class="filter-input" :readonly="!!editingUser" />
+            <input v-model="userForm.username" type="text" class="filter-input sa-input" :readonly="!!editingUser" />
           </div>
           <div class="form-group">
             <label>显示名称 *</label>
-            <input v-model="userForm.display_name" type="text" class="filter-input" />
+            <input v-model="userForm.display_name" type="text" class="filter-input sa-input" />
           </div>
           <div v-if="!editingUser" class="form-group">
             <label>密码 *</label>
-            <input v-model="userForm.password" type="password" class="filter-input" />
+            <input v-model="userForm.password" type="password" class="filter-input sa-input" />
           </div>
           <div class="form-group">
             <label>系统角色 *</label>
-            <select v-model="userForm.role" class="filter-input">
+            <select v-model="userForm.role" class="filter-input sa-input">
               <option v-for="r in manageableRoleOptions" :key="r.value" :value="r.value">{{ r.label }}</option>
             </select>
           </div>
           <div class="form-group">
             <label>外部身份</label>
-            <select v-model="userForm.external_type" class="filter-input">
+            <select v-model="userForm.external_type" class="filter-input sa-input">
               <option value="">内部人员</option>
               <option value="CLIENT">甲方客户</option>
               <option value="CONTRACTOR">外包成员</option>
@@ -154,29 +154,29 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-ghost" @click="closeModal">取消</button>
-          <button class="btn btn-primary" :disabled="saving" @click="saveUser">{{ saving ? '保存中...' : '保存' }}</button>
+          <button class="btn btn-ghost sa-button sa-button--secondary" @click="closeModal">取消</button>
+          <button class="btn btn-primary sa-button sa-button--primary" :disabled="saving" @click="saveUser">{{ saving ? '保存中...' : '保存' }}</button>
         </div>
       </div>
     </div>
 
     <div v-if="showApproveModal && selectedRegistration" class="modal-overlay" @click.self="closeApproveModal">
-      <div class="modal-card">
+      <div class="modal-card sa-card">
         <div class="modal-header">
           <h2>通过注册申请</h2>
-          <button class="link-btn" @click="closeApproveModal">关闭</button>
+          <button class="link-btn sa-button sa-button--secondary" @click="closeApproveModal">关闭</button>
         </div>
         <div class="modal-body">
           <p>用户：{{ selectedRegistration.display_name || selectedRegistration.username }}</p>
           <div class="form-group">
             <label>系统角色 *</label>
-            <select v-model="approvalForm.role" class="filter-input">
+            <select v-model="approvalForm.role" class="filter-input sa-input">
               <option v-for="r in manageableRoleOptions" :key="r.value" :value="r.value">{{ r.label }}</option>
             </select>
           </div>
           <div class="form-group">
             <label>外部身份</label>
-            <select v-model="approvalForm.external_type" class="filter-input">
+            <select v-model="approvalForm.external_type" class="filter-input sa-input">
               <option value="">内部人员</option>
               <option value="CLIENT">甲方客户</option>
               <option value="CONTRACTOR">外包成员</option>
@@ -184,37 +184,37 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-ghost" :disabled="registrationSaving" @click="closeApproveModal">取消</button>
-          <button class="btn btn-primary" :disabled="registrationSaving" @click="submitApproval">{{ registrationSaving ? '处理中...' : '确认通过' }}</button>
+          <button class="btn btn-ghost sa-button sa-button--secondary" :disabled="registrationSaving" @click="closeApproveModal">取消</button>
+          <button class="btn btn-primary sa-button sa-button--primary" :disabled="registrationSaving" @click="submitApproval">{{ registrationSaving ? '处理中...' : '确认通过' }}</button>
         </div>
       </div>
     </div>
 
     <div v-if="showRejectModal && selectedRegistration" class="modal-overlay" @click.self="closeRejectModal">
-      <div class="modal-card">
+      <div class="modal-card sa-card">
         <div class="modal-header">
           <h2>拒绝注册申请</h2>
-          <button class="link-btn" @click="closeRejectModal">关闭</button>
+          <button class="link-btn sa-button sa-button--secondary" @click="closeRejectModal">关闭</button>
         </div>
         <div class="modal-body">
           <p>用户：{{ selectedRegistration.display_name || selectedRegistration.username }}</p>
           <div class="form-group">
             <label>拒绝原因 *</label>
-            <textarea v-model="rejectForm.reason" class="filter-input" rows="4" maxlength="500"></textarea>
+            <textarea v-model="rejectForm.reason" class="filter-input sa-input" rows="4" maxlength="500"></textarea>
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-ghost" :disabled="registrationSaving" @click="closeRejectModal">取消</button>
-          <button class="btn btn-danger" :disabled="registrationSaving" @click="submitRejection">{{ registrationSaving ? '处理中...' : '确认拒绝' }}</button>
+          <button class="btn btn-ghost sa-button sa-button--secondary" :disabled="registrationSaving" @click="closeRejectModal">取消</button>
+          <button class="btn btn-danger sa-button sa-button--danger" :disabled="registrationSaving" @click="submitRejection">{{ registrationSaving ? '处理中...' : '确认拒绝' }}</button>
         </div>
       </div>
     </div>
 
     <div v-if="showScopeModal && selectedScopeUser" class="modal-overlay" @click.self="closeScopeModal">
-      <div class="modal-card scope-modal">
+      <div class="modal-card scope-modal sa-card">
         <div class="modal-header">
           <h2>范围权限配置 · {{ selectedScopeUser.display_name || selectedScopeUser.username }}</h2>
-          <button class="link-btn" @click="closeScopeModal">关闭</button>
+          <button class="link-btn sa-button sa-button--secondary" @click="closeScopeModal">关闭</button>
         </div>
         <div class="modal-body">
           <div v-if="scopeLoading" class="state">加载中...</div>
@@ -263,8 +263,8 @@
           </template>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-ghost" :disabled="scopeSaving" @click="closeScopeModal">取消</button>
-          <button class="btn btn-primary" :disabled="scopeSaving || scopeLoading" @click="saveUserScopes">{{ scopeSaving ? '保存中...' : '保存配置' }}</button>
+          <button class="btn btn-ghost sa-button sa-button--secondary" :disabled="scopeSaving" @click="closeScopeModal">取消</button>
+          <button class="btn btn-primary sa-button sa-button--primary" :disabled="scopeSaving || scopeLoading" @click="saveUserScopes">{{ scopeSaving ? '保存中...' : '保存配置' }}</button>
         </div>
       </div>
     </div>
@@ -736,4 +736,3 @@ onMounted(async () => {
 .scope-table input[type='checkbox']{transform:scale(1.05)}
 @media (max-width: 768px){.user-manage-page{padding:16px}.modal-card{width:100%;max-width:none;height:100%;border-radius:0}}
 </style>
-

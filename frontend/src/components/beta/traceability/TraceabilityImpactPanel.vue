@@ -3,12 +3,12 @@
     <div class="impact-toolbar">
       <label class="impact-filter">
         <span>比较基准</span>
-        <select v-model="compareTo" class="select-clean">
+        <select v-model="compareTo" class="select-clean sa-input">
           <option value="baseline">当前基线</option>
           <option value="base">分支起点</option>
         </select>
       </label>
-      <button type="button" class="action-btn brown" :disabled="triggering" @click="$emit('trigger', compareTo)">
+      <button type="button" class="action-btn brown sa-button sa-button--primary" :disabled="triggering" @click="$emit('trigger', compareTo)">
         {{ triggering ? '分析中…' : '重新计算影响分析' }}
       </button>
     </div>
