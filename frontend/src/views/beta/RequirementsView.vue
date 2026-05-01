@@ -2,11 +2,11 @@
   <div class="ref-app">
     <div class="app-layout">
       <Sidebar
-        :roleType="roleType"
-        :roleLabel="roleLabel"
+        :role-type="roleType"
+        :role-label="roleLabel"
         :timestamp="timestamp"
-        :notificationCount="notificationCount"
-        :activePage="activePage"
+        :notification-count="notificationCount"
+        :active-page="activePage"
         @navigate="handleNavigate"
         @exit="handleExit"
       />
@@ -16,14 +16,23 @@
           <div class="nav-left">
             <span class="nav-title">项目管理 · 需求列表</span>
           </div>
-          <div class="nav-center" style="gap: 8px; background: rgba(47, 143, 137, 0.06); padding: 6px 16px; border-radius: 4px; border: 1px solid rgba(47, 143, 137, 0.15);">
+          <div
+            class="nav-center"
+            style="
+              gap: 8px;
+              background: rgba(47, 143, 137, 0.06);
+              padding: 6px 16px;
+              border-radius: 4px;
+              border: 1px solid rgba(47, 143, 137, 0.15);
+            "
+          >
             <div class="session-indicator">
               <Briefcase class="w-3 h-3" />
               <span class="session-label">项目:</span>
               <select
                 v-model="selectedProjectId"
                 class="session-input"
-                style="width: min(220px, 20vw); padding: 3px 6px;"
+                style="width: min(220px, 20vw); padding: 3px 6px"
               >
                 <option value="">未选择</option>
                 <option v-for="p in projects" :key="p.project_id" :value="p.project_id">
@@ -59,8 +68,8 @@
             <button
               type="button"
               class="action-btn secondary"
-              @click="csvFileInputRef.click()"
               :disabled="!selectedProjectId || isImporting"
+              @click="csvFileInputRef.click()"
             >
               <Upload class="w-4 h-4" />
               {{ isImporting ? '导入中...' : '导入需求' }}
@@ -68,23 +77,28 @@
             <button
               type="button"
               class="action-btn secondary"
-              @click="exportRequirements"
               :disabled="!selectedProjectId || isExporting"
+              @click="exportRequirements"
             >
               <Download class="w-4 h-4" />
               {{ isExporting ? '导出中...' : '导出需求' }}
             </button>
             <button
+              v-if="hasPermission('req:create')"
               type="button"
               class="action-btn primary"
-              @click="openAddRequirementModal"
               :disabled="!selectedProjectId"
-              v-if="hasPermission('req:create')"
+              @click="openAddRequirementModal"
             >
               <Plus class="w-4 h-4" />
               新增需求
             </button>
-            <button type="button" class="action-btn brown" @click="refreshData" :disabled="isLoading">
+            <button
+              type="button"
+              class="action-btn brown"
+              :disabled="isLoading"
+              @click="refreshData"
+            >
               <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': isLoading }" />
               {{ isLoading ? '加载中' : '刷新' }}
             </button>
@@ -92,7 +106,11 @@
         </section>
 
         <!-- 新增需求弹窗 -->
-        <div v-if="showAddRequirementModal" class="modal-overlay" @click.self="closeAddRequirementModal">
+        <div
+          v-if="showAddRequirementModal"
+          class="modal-overlay"
+          @click.self="closeAddRequirementModal"
+        >
           <div class="modal-container">
             <div class="modal-header">
               <h3>新增需求</h3>
@@ -172,7 +190,11 @@
                 <label class="form-label">父需求（可选）</label>
                 <select v-model="newRequirement.parent_id" class="form-select">
                   <option value="">无</option>
-                  <option v-for="req in parentRequirementOptions" :key="req.req_id" :value="req.req_id">
+                  <option
+                    v-for="req in parentRequirementOptions"
+                    :key="req.req_id"
+                    :value="req.req_id"
+                  >
                     {{ req.title || req.text || req.statement || req.req_id }}
                   </option>
                 </select>
@@ -191,7 +213,11 @@
 
               <!-- 操作按钮 -->
               <div class="modal-footer">
-                <button type="button" class="action-btn secondary" @click="closeAddRequirementModal">
+                <button
+                  type="button"
+                  class="action-btn secondary"
+                  @click="closeAddRequirementModal"
+                >
                   取消
                 </button>
                 <button type="submit" class="action-btn primary" :disabled="isSubmitting">
@@ -204,7 +230,11 @@
         </div>
 
         <!-- 编辑需求弹窗 -->
-        <div v-if="showEditRequirementModal" class="modal-overlay" @click.self="closeEditRequirementModal">
+        <div
+          v-if="showEditRequirementModal"
+          class="modal-overlay"
+          @click.self="closeEditRequirementModal"
+        >
           <div class="modal-container">
             <div class="modal-header">
               <h3>编辑需求</h3>
@@ -271,7 +301,11 @@
 
               <!-- 操作按钮 -->
               <div class="modal-footer">
-                <button type="button" class="action-btn secondary" @click="closeEditRequirementModal">
+                <button
+                  type="button"
+                  class="action-btn secondary"
+                  @click="closeEditRequirementModal"
+                >
                   取消
                 </button>
                 <button type="submit" class="action-btn primary" :disabled="isEditSubmitting">
@@ -299,15 +333,15 @@
               <span class="tab-count">{{ getCountByLevel(tab.key) }}</span>
             </button>
           </div>
-          
+
           <!-- 右侧: 视图切换 -->
           <div class="view-switcher">
             <button
               type="button"
               class="view-btn"
               :class="{ active: activeView === 'tree' }"
-              @click="activeView = 'tree'"
               title="树状视图"
+              @click="activeView = 'tree'"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 3v18M3 9l9-6 9 6M3 15l9 6 9-6" />
@@ -317,8 +351,8 @@
               type="button"
               class="view-btn"
               :class="{ active: activeView === 'table' }"
-              @click="activeView = 'table'"
               title="表格视图"
+              @click="activeView = 'table'"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -331,8 +365,8 @@
               type="button"
               class="view-btn"
               :class="{ active: activeView === 'card' }"
-              @click="activeView = 'card'"
               title="卡片视图"
+              @click="activeView = 'card'"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="3" y="3" width="7" height="7" rx="1" />
@@ -363,9 +397,9 @@
             <p class="empty-hint">
               {{ !selectedProjectId ? '请先选择一个项目' : '当前项目下还没有导入或创建需求' }}
             </p>
-            <button 
+            <button
               v-if="!selectedProjectId"
-              type="button" 
+              type="button"
               class="action-btn brown mt-4"
               @click="router.push({ name: 'beta-project' })"
             >
@@ -375,17 +409,23 @@
 
           <!-- 树状视图 -->
           <div v-else-if="activeView === 'tree'" class="tree-view-container">
-            <RequirementTree 
-              :tree-data="filteredTreeData" 
+            <RequirementTree
+              :tree-data="filteredTreeData"
               @hover="handleNodeHover"
               @click-node="handleNodeClick"
             />
             <!-- 需求详情 -->
             <div v-if="requirementDetail" class="hover-detail-panel">
-              <div class="detail-title">{{ requirementDetail.title || requirementDetail.text || requirementDetail.statement }}</div>
+              <div class="detail-title">
+                {{
+                  requirementDetail.title || requirementDetail.text || requirementDetail.statement
+                }}
+              </div>
               <div class="detail-row">
                 <span class="detail-label">类型:</span>
-                <span class="detail-value">{{ getTypeLabel(requirementDetail.requirement_type) }}</span>
+                <span class="detail-value">{{
+                  getTypeLabel(requirementDetail.requirement_type)
+                }}</span>
               </div>
               <div class="detail-row">
                 <span class="detail-label">状态:</span>
@@ -401,7 +441,12 @@
               </div>
               <div class="detail-row">
                 <span class="detail-label">未解决:</span>
-                <span class="detail-value" :class="requirementDetailUnresolvedDefects.length ? 'text-red-600' : 'text-emerald-600'">
+                <span
+                  class="detail-value"
+                  :class="
+                    requirementDetailUnresolvedDefects.length ? 'text-red-600' : 'text-emerald-600'
+                  "
+                >
                   {{ requirementDetailUnresolvedDefects.length }}
                 </span>
               </div>
@@ -413,7 +458,8 @@
                 >
                   <div class="text-[11px] font-medium text-zinc-800">{{ item.title }}</div>
                   <div class="mt-1 text-[11px] text-zinc-500">
-                    {{ item.status || '-' }} / {{ item.severity || '-' }} / {{ item.current_assignee || '未指派' }}
+                    {{ item.status || '-' }} / {{ item.severity || '-' }} /
+                    {{ item.current_assignee || '未指派' }}
                   </div>
                 </div>
               </div>
@@ -444,7 +490,10 @@
                 >
                   <Filter class="w-4 h-4" />
                   设置展示列
-                  <ChevronDown class="w-4 h-4 transition-transform" :class="showColumnSelector ? 'rotate-180' : ''" />
+                  <ChevronDown
+                    class="w-4 h-4 transition-transform"
+                    :class="showColumnSelector ? 'rotate-180' : ''"
+                  />
                 </button>
                 <div v-if="showColumnSelector" class="column-selector">
                   <div
@@ -453,7 +502,10 @@
                     class="column-selector-item"
                     @click="toggleColumn(col.key)"
                   >
-                    <div class="column-selector-check" :class="tableVisibleColumns.includes(col.key) ? 'checked' : ''">
+                    <div
+                      class="column-selector-check"
+                      :class="tableVisibleColumns.includes(col.key) ? 'checked' : ''"
+                    >
                       <CheckCircle2 v-if="tableVisibleColumns.includes(col.key)" class="w-3 h-3" />
                     </div>
                     <span>{{ col.label }}</span>
@@ -468,7 +520,9 @@
                 <thead>
                   <tr>
                     <th
-                      v-for="col in availableTableColumns.filter(c => tableVisibleColumns.includes(c.key))"
+                      v-for="col in availableTableColumns.filter(c =>
+                        tableVisibleColumns.includes(c.key)
+                      )"
                       :key="col.key"
                       :class="col.width"
                       @click="toggleSort(col.key)"
@@ -476,8 +530,18 @@
                       <div class="th-content">
                         {{ col.label }}
                         <div class="sort-icons">
-                          <ChevronUp class="w-3 h-3" :class="tableSortKey === col.key && tableSortOrder === 'asc' ? 'active' : ''" />
-                          <ChevronDown class="w-3 h-3" :class="tableSortKey === col.key && tableSortOrder === 'desc' ? 'active' : ''" />
+                          <ChevronUp
+                            class="w-3 h-3"
+                            :class="
+                              tableSortKey === col.key && tableSortOrder === 'asc' ? 'active' : ''
+                            "
+                          />
+                          <ChevronDown
+                            class="w-3 h-3"
+                            :class="
+                              tableSortKey === col.key && tableSortOrder === 'desc' ? 'active' : ''
+                            "
+                          />
                         </div>
                       </div>
                     </th>
@@ -485,26 +549,39 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="req in tableRequirements" :key="req.id || req.req_id" class="cursor-pointer" @click="openRequirementDetail(req)">
+                  <tr
+                    v-for="req in tableRequirements"
+                    :key="req.id || req.req_id"
+                    class="cursor-pointer"
+                    @click="openRequirementDetail(req)"
+                  >
                     <td v-if="tableVisibleColumns.includes('name')">
                       <p class="cell-title">{{ req.title || req.text || req.statement }}</p>
                     </td>
                     <td v-if="tableVisibleColumns.includes('type')">
-                      <span class="cell-type" :class="req.level === 'L4' ? 'type-low' : 'type-high'">
+                      <span
+                        class="cell-type"
+                        :class="req.level === 'L4' ? 'type-low' : 'type-high'"
+                      >
                         {{ req.level === 'L4' ? '底层需求' : '顶层需求' }}
                       </span>
                     </td>
                     <td v-if="tableVisibleColumns.includes('level')">
-                      <span class="cell-level" :class="getLevelBadgeClass(req.level || req.category)">
+                      <span
+                        class="cell-level"
+                        :class="getLevelBadgeClass(req.level || req.category)"
+                      >
                         {{ req.level || req.category || '-' }}
                       </span>
                     </td>
                     <td v-if="tableVisibleColumns.includes('status')">
                       <select
                         :value="req.status"
-                        @change="updateRequirementStatus(req.id || req.req_id, $event.target.value, $event)"
                         class="cell-status"
                         :class="getStatusColorClass(req.status, 'bg')"
+                        @change="
+                          updateRequirementStatus(req.id || req.req_id, $event.target.value, $event)
+                        "
                       >
                         <option v-for="s in requirementStatuses" :key="s.id" :value="s.id">
                           {{ s.name }}
@@ -512,7 +589,11 @@
                       </select>
                     </td>
                     <td v-if="tableVisibleColumns.includes('confidence')">
-                      <span v-if="req.confidence" class="cell-confidence" :class="getConfidenceClass(req.confidence)">
+                      <span
+                        v-if="req.confidence"
+                        class="cell-confidence"
+                        :class="getConfidenceClass(req.confidence)"
+                      >
                         {{ (req.confidence * 100).toFixed(0) }}%
                       </span>
                       <span v-else class="cell-muted">-</span>
@@ -547,17 +628,28 @@
               </table>
             </div>
 
-            <div class="table-footer">
-              共 {{ tableRequirements.length }} 条
-            </div>
+            <div class="table-footer">共 {{ tableRequirements.length }} 条</div>
 
-            <div v-if="requirementDetail" class="mx-4 mb-4 rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+            <div
+              v-if="requirementDetail"
+              class="mx-4 mb-4 rounded-2xl border border-zinc-200 bg-zinc-50 p-4"
+            >
               <div class="flex items-start justify-between gap-4">
                 <div>
-                  <div class="text-sm font-semibold text-zinc-900">{{ requirementDetail.title || requirementDetail.text || requirementDetail.statement }}</div>
+                  <div class="text-sm font-semibold text-zinc-900">
+                    {{
+                      requirementDetail.title ||
+                      requirementDetail.text ||
+                      requirementDetail.statement
+                    }}
+                  </div>
                   <div class="mt-2 flex flex-wrap gap-3 text-xs text-zinc-600">
                     <span>类型：{{ getTypeLabel(requirementDetail.requirement_type) }}</span>
-                    <span>层级：{{ requirementDetail.level || requirementDetail.category || '-' }}</span>
+                    <span
+                      >层级：{{
+                        requirementDetail.level || requirementDetail.category || '-'
+                      }}</span
+                    >
                     <span>状态：{{ getStatusName(requirementDetail.status) }}</span>
                     <span>优先级：{{ requirementDetail.priority || '-' }}</span>
                   </div>
@@ -567,8 +659,16 @@
                 </button>
               </div>
               <div class="mt-3 flex gap-4 text-xs">
-                <span class="text-zinc-600">总缺陷：<strong class="text-zinc-900">{{ requirementDetailDefects.length }}</strong></span>
-                <span :class="requirementDetailUnresolvedDefects.length ? 'text-red-600' : 'text-emerald-600'">
+                <span class="text-zinc-600"
+                  >总缺陷：<strong class="text-zinc-900">{{
+                    requirementDetailDefects.length
+                  }}</strong></span
+                >
+                <span
+                  :class="
+                    requirementDetailUnresolvedDefects.length ? 'text-red-600' : 'text-emerald-600'
+                  "
+                >
                   未解决：<strong>{{ requirementDetailUnresolvedDefects.length }}</strong>
                 </span>
               </div>
@@ -580,7 +680,8 @@
                 >
                   <div class="text-sm font-medium text-zinc-800">{{ item.title }}</div>
                   <div class="mt-1 text-xs text-zinc-500">
-                    {{ item.status || '-' }} / {{ item.severity || '-' }} / {{ item.priority || '-' }} / {{ item.current_assignee || '未指派' }}
+                    {{ item.status || '-' }} / {{ item.severity || '-' }} /
+                    {{ item.priority || '-' }} / {{ item.current_assignee || '未指派' }}
                   </div>
                 </div>
               </div>
@@ -614,23 +715,37 @@
                   @change="onDragChange($event, 'backlog')"
                 >
                   <template #item="{ element }">
-                    <div class="kanban-card" :class="element.level === 'L4' ? 'card-l4' : 'card-high'">
+                    <div
+                      class="kanban-card"
+                      :class="element.level === 'L4' ? 'card-l4' : 'card-high'"
+                    >
                       <div class="card-drag-handle">
                         <GripVertical class="grip-icon" />
                       </div>
                       <div class="card-content">
                         <div class="card-tags">
-                          <span class="card-type-tag" :class="element.level === 'L4' ? 'type-low' : 'type-high'">
+                          <span
+                            class="card-type-tag"
+                            :class="element.level === 'L4' ? 'type-low' : 'type-high'"
+                          >
                             {{ element.level === 'L4' ? '底层需求' : '顶层需求' }}
                           </span>
                           <span class="card-level-tag" :class="getLevelBadgeClass(element.level)">
                             {{ element.level }}
                           </span>
                         </div>
-                        <p class="card-statement">{{ element.statement || element.text || element.title }}</p>
+                        <p class="card-statement">
+                          {{ element.statement || element.text || element.title }}
+                        </p>
                         <div class="card-meta">
-                          <span class="card-id">"{{ (element.req_id || element.id || '').slice(0, 18) }}...</span>
-                          <span v-if="element.confidence" class="card-confidence" :class="getConfidenceClass(element.confidence)">
+                          <span class="card-id"
+                            >"{{ (element.req_id || element.id || '').slice(0, 18) }}...</span
+                          >
+                          <span
+                            v-if="element.confidence"
+                            class="card-confidence"
+                            :class="getConfidenceClass(element.confidence)"
+                          >
                             {{ (element.confidence * 100).toFixed(0) }}%
                           </span>
                         </div>
@@ -650,7 +765,9 @@
                     <Clock class="column-status-icon" />
                     <h3>进行中</h3>
                   </div>
-                  <span class="column-badge progress-badge">{{ inProgressRequirements.length }}</span>
+                  <span class="column-badge progress-badge">{{
+                    inProgressRequirements.length
+                  }}</span>
                 </div>
                 <draggable
                   v-model="inProgressRequirements"
@@ -664,23 +781,37 @@
                   @change="onDragChange($event, 'in_progress')"
                 >
                   <template #item="{ element }">
-                    <div class="kanban-card" :class="element.level === 'L4' ? 'card-l4' : 'card-high'">
+                    <div
+                      class="kanban-card"
+                      :class="element.level === 'L4' ? 'card-l4' : 'card-high'"
+                    >
                       <div class="card-drag-handle">
                         <GripVertical class="grip-icon" />
                       </div>
                       <div class="card-content">
                         <div class="card-tags">
-                          <span class="card-type-tag" :class="element.level === 'L4' ? 'type-low' : 'type-high'">
+                          <span
+                            class="card-type-tag"
+                            :class="element.level === 'L4' ? 'type-low' : 'type-high'"
+                          >
                             {{ element.level === 'L4' ? '底层需求' : '顶层需求' }}
                           </span>
                           <span class="card-level-tag" :class="getLevelBadgeClass(element.level)">
                             {{ element.level }}
                           </span>
                         </div>
-                        <p class="card-statement">{{ element.statement || element.text || element.title }}</p>
+                        <p class="card-statement">
+                          {{ element.statement || element.text || element.title }}
+                        </p>
                         <div class="card-meta">
-                          <span class="card-id">"{{ (element.req_id || element.id || '').slice(0, 18) }}...</span>
-                          <span v-if="element.confidence" class="card-confidence" :class="getConfidenceClass(element.confidence)">
+                          <span class="card-id"
+                            >"{{ (element.req_id || element.id || '').slice(0, 18) }}...</span
+                          >
+                          <span
+                            v-if="element.confidence"
+                            class="card-confidence"
+                            :class="getConfidenceClass(element.confidence)"
+                          >
                             {{ (element.confidence * 100).toFixed(0) }}%
                           </span>
                         </div>
@@ -700,7 +831,9 @@
                     <CheckCircle class="column-status-icon" />
                     <h3>已完成</h3>
                   </div>
-                  <span class="column-badge completed-badge">{{ completedRequirements.length }}</span>
+                  <span class="column-badge completed-badge">{{
+                    completedRequirements.length
+                  }}</span>
                 </div>
                 <draggable
                   v-model="completedRequirements"
@@ -714,23 +847,37 @@
                   @change="onDragChange($event, 'completed')"
                 >
                   <template #item="{ element }">
-                    <div class="kanban-card" :class="element.level === 'L4' ? 'card-l4' : 'card-high'">
+                    <div
+                      class="kanban-card"
+                      :class="element.level === 'L4' ? 'card-l4' : 'card-high'"
+                    >
                       <div class="card-drag-handle">
                         <GripVertical class="grip-icon" />
                       </div>
                       <div class="card-content">
                         <div class="card-tags">
-                          <span class="card-type-tag" :class="element.level === 'L4' ? 'type-low' : 'type-high'">
+                          <span
+                            class="card-type-tag"
+                            :class="element.level === 'L4' ? 'type-low' : 'type-high'"
+                          >
                             {{ element.level === 'L4' ? '底层需求' : '顶层需求' }}
                           </span>
                           <span class="card-level-tag" :class="getLevelBadgeClass(element.level)">
                             {{ element.level }}
                           </span>
                         </div>
-                        <p class="card-statement">{{ element.statement || element.text || element.title }}</p>
+                        <p class="card-statement">
+                          {{ element.statement || element.text || element.title }}
+                        </p>
                         <div class="card-meta">
-                          <span class="card-id">"{{ (element.req_id || element.id || '').slice(0, 18) }}...</span>
-                          <span v-if="element.confidence" class="card-confidence" :class="getConfidenceClass(element.confidence)">
+                          <span class="card-id"
+                            >"{{ (element.req_id || element.id || '').slice(0, 18) }}...</span
+                          >
+                          <span
+                            v-if="element.confidence"
+                            class="card-confidence"
+                            :class="getConfidenceClass(element.confidence)"
+                          >
                             {{ (element.confidence * 100).toFixed(0) }}%
                           </span>
                         </div>
@@ -751,23 +898,42 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
-import { useAuthStore } from "@/stores/auth.js";
-import draggable from "vuedraggable";
-import Sidebar from "../../components/beta/Sidebar.vue";
-import RequirementTree from "../../components/charts/RequirementTree.vue";
-import { manageApi } from "@/api/project";
-import { Loader2, FileText, RefreshCw, Briefcase, Users, Layout, Layers, Circle, Clock, CheckCircle, GripVertical, Search, Filter, ChevronDown, ChevronUp, CheckCircle2, Plus, X, Pencil, Download, Upload } from "lucide-vue-next";
-import { useBetaNavigation, useBetaSidebarProps } from "@/composables/useBetaNavigation";
-import { useAlphaDefects } from "@/composables/useAlphaDefects";
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { useAuthStore } from '@/stores/auth.js';
+import draggable from 'vuedraggable';
+import Sidebar from '../../components/beta/Sidebar.vue';
+import RequirementTree from '../../components/charts/RequirementTree.vue';
+import { manageApi } from '@/api/project';
+import {
+  Loader2,
+  FileText,
+  RefreshCw,
+  Briefcase,
+  Circle,
+  Clock,
+  CheckCircle,
+  GripVertical,
+  Search,
+  Filter,
+  ChevronDown,
+  ChevronUp,
+  CheckCircle2,
+  Plus,
+  X,
+  Pencil,
+  Download,
+  Upload
+} from 'lucide-vue-next';
+import { useBetaNavigation, useBetaSidebarProps } from '@/composables/useBetaNavigation';
+import { useAlphaDefects } from '@/composables/useAlphaDefects';
 
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
 
 // 侧边栏状态
-const { activePage, handleNavigate, handleExit } = useBetaNavigation("requirements-overview");
+const { activePage, handleNavigate, handleExit } = useBetaNavigation('requirements-overview');
 const { roleType, roleLabel, timestamp, notificationCount } = useBetaSidebarProps();
 
 function hasPermission(permission) {
@@ -798,7 +964,7 @@ const {
   defectsByRequirementId,
   unresolvedForRequirement,
   reload: reloadDefects,
-  error: defectsError,
+  error: defectsError
 } = useAlphaDefects(selectedProjectId);
 
 const selectedRequirement = ref(null);
@@ -878,7 +1044,7 @@ async function submitNewRequirement() {
       description: newRequirement.value.description.trim(),
       requirement_type: newRequirement.value.requirement_type,
       status: newRequirement.value.status,
-      priority: normalizePriority(newRequirement.value.priority, 'medium'),
+      priority: normalizePriority(newRequirement.value.priority, 'medium')
     };
 
     if (newRequirement.value.requirement_type === 'top_level') {
@@ -892,16 +1058,18 @@ async function submitNewRequirement() {
       payload.parent_id = newRequirement.value.parent_id;
     }
     if (newRequirement.value.tags.trim()) {
-      payload.tags = newRequirement.value.tags.split(',').map(t => t.trim()).filter(Boolean);
+      payload.tags = newRequirement.value.tags
+        .split(',')
+        .map(t => t.trim())
+        .filter(Boolean);
     }
 
     await manageApi.createRequirement(selectedProjectId.value, payload);
-    
+
     // 关闭弹窗并刷新数据
     closeAddRequirementModal();
     await loadRequirements();
     await loadManageRequirementMap();
-    
   } catch (err) {
     console.error('新增需求失败:', err);
     alert('新增需求失败: ' + (err.message || '未知错误'));
@@ -937,13 +1105,14 @@ async function openEditRequirementModal(req) {
 
   editRequirementId.value = reqId;
   const sourceKey = req.req_id || req.id;
-  const mappedPriority = managePriorityMap.value.get(sourceKey) || managePriorityMap.value.get(reqId);
+  const mappedPriority =
+    managePriorityMap.value.get(sourceKey) || managePriorityMap.value.get(reqId);
   editRequirement.value = {
     title: req.title || req.text || req.statement || '',
     description: req.description || '',
     priority: normalizePriority(mappedPriority ?? req.priority, 'medium'),
     status: req.status || 'draft',
-    tags: Array.isArray(req.tags) ? req.tags.join(', ') : (req.tags || '')
+    tags: Array.isArray(req.tags) ? req.tags.join(', ') : req.tags || ''
   };
   showEditRequirementModal.value = true;
 }
@@ -967,8 +1136,14 @@ async function submitEditRequirement() {
 
   isEditSubmitting.value = true;
   try {
-    if (editRequirement.value.status === 'completed' || editRequirement.value.status === 'confirmed') {
-      const target = findRequirementById(editRequirementId.value) || { req_id: editRequirementId.value, id: editRequirementId.value };
+    if (
+      editRequirement.value.status === 'completed' ||
+      editRequirement.value.status === 'confirmed'
+    ) {
+      const target = findRequirementById(editRequirementId.value) || {
+        req_id: editRequirementId.value,
+        id: editRequirementId.value
+      };
       if (!canMarkAsCompleted(target)) {
         alert('该需求仍有关联未解决缺陷，不能标记为已确认/已完成');
         return;
@@ -979,11 +1154,14 @@ async function submitEditRequirement() {
       title: editRequirement.value.title.trim(),
       description: editRequirement.value.description.trim(),
       priority: normalizePriority(editRequirement.value.priority, 'medium'),
-      status: editRequirement.value.status,
+      status: editRequirement.value.status
     };
 
     if (editRequirement.value.tags.trim()) {
-      payload.tags = editRequirement.value.tags.split(',').map(t => t.trim()).filter(Boolean);
+      payload.tags = editRequirement.value.tags
+        .split(',')
+        .map(t => t.trim())
+        .filter(Boolean);
     } else {
       payload.tags = [];
     }
@@ -993,7 +1171,6 @@ async function submitEditRequirement() {
     closeEditRequirementModal();
     await loadRequirements();
     await loadManageRequirementMap();
-
   } catch (err) {
     console.error('编辑需求失败:', err);
     alert('编辑需求失败: ' + (err.message || '未知错误'));
@@ -1038,14 +1215,6 @@ function checkSessionMismatch() {
   sessionMismatch.value = sessionId.value !== projectSessionId.value;
 }
 
-function useProjectSession() {
-  if (projectSessionId.value) {
-    sessionIdDraft.value = projectSessionId.value;
-    sessionId.value = projectSessionId.value;
-    sessionMismatch.value = false;
-  }
-}
-
 // 需求状态定义
 const requirementStatuses = [
   { id: 'draft', name: '待处理', color: 'zinc' },
@@ -1053,13 +1222,7 @@ const requirementStatuses = [
   { id: 'confirmed', name: '已确认', color: 'sky' },
   { id: 'in_progress', name: '进行中', color: 'blue' },
   { id: 'completed', name: '已完成', color: 'emerald' },
-  { id: 'archived', name: '已归档', color: 'slate' },
-];
-
-const kanbanBuckets = [
-  { id: 'backlog', name: '待处理' },
-  { id: 'in_progress', name: '进行中' },
-  { id: 'completed', name: '已完成' },
+  { id: 'archived', name: '已归档', color: 'slate' }
 ];
 
 // 需求状态管理（卡片拖拽视图）
@@ -1095,12 +1258,37 @@ function getStatusColorClass(statusId, variant = 'bg') {
   const status = requirementStatuses.find(s => s.id === statusId);
   const color = status?.color || 'zinc';
   const colorMap = {
-    zinc: { bg: 'bg-zinc-100', text: 'text-zinc-700', border: 'border-zinc-200', dot: 'bg-zinc-400' },
-    amber: { bg: 'bg-amber-100', text: 'text-amber-700', border: 'border-amber-200', dot: 'bg-amber-500' },
+    zinc: {
+      bg: 'bg-zinc-100',
+      text: 'text-zinc-700',
+      border: 'border-zinc-200',
+      dot: 'bg-zinc-400'
+    },
+    amber: {
+      bg: 'bg-amber-100',
+      text: 'text-amber-700',
+      border: 'border-amber-200',
+      dot: 'bg-amber-500'
+    },
     sky: { bg: 'bg-sky-100', text: 'text-sky-700', border: 'border-sky-200', dot: 'bg-sky-500' },
-    blue: { bg: 'bg-blue-100', text: 'text-blue-700', border: 'border-blue-200', dot: 'bg-blue-500' },
-    emerald: { bg: 'bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-200', dot: 'bg-emerald-500' },
-    slate: { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-200', dot: 'bg-slate-500' },
+    blue: {
+      bg: 'bg-blue-100',
+      text: 'text-blue-700',
+      border: 'border-blue-200',
+      dot: 'bg-blue-500'
+    },
+    emerald: {
+      bg: 'bg-emerald-100',
+      text: 'text-emerald-700',
+      border: 'border-emerald-200',
+      dot: 'bg-emerald-500'
+    },
+    slate: {
+      bg: 'bg-slate-100',
+      text: 'text-slate-700',
+      border: 'border-slate-200',
+      dot: 'bg-slate-500'
+    }
   };
   return colorMap[color]?.[variant] || colorMap.zinc[variant];
 }
@@ -1128,24 +1316,14 @@ function mapKanbanBucketToManage(bucket, currentStatus) {
     }
     return 'in_progress';
   }
-  if (currentStatus === 'completed' || currentStatus === 'archived' || currentStatus === 'confirmed') {
+  if (
+    currentStatus === 'completed' ||
+    currentStatus === 'archived' ||
+    currentStatus === 'confirmed'
+  ) {
     return 'under_review';
   }
   return 'draft';
-}
-
-async function ensureProjectId() {
-  if (selectedProjectId.value) return;
-  try {
-    const data = await manageApi.listProjects();
-    const projects = data?.projects || [];
-    if (projects.length === 1) {
-      selectedProjectId.value = projects[0].project_id;
-      localStorage.setItem('lastProjectId', selectedProjectId.value);
-    }
-  } catch (err) {
-    console.warn('加载项目列表失败，无法同步状态到数据库', err);
-  }
 }
 
 async function loadManageRequirementMap() {
@@ -1157,7 +1335,7 @@ async function loadManageRequirementMap() {
     const statusMap = new Map();
     const priorityMap = new Map();
 
-    reqs.forEach((req) => {
+    reqs.forEach(req => {
       if (req.req_id) {
         idMap.set(req.req_id, req.req_id);
         statusMap.set(req.req_id, req.status);
@@ -1173,7 +1351,6 @@ async function loadManageRequirementMap() {
     manageReqIdMap.value = idMap;
     manageStatusMap.value = statusMap;
     managePriorityMap.value = priorityMap;
-
   } catch (err) {
     console.warn('加载管理需求映射失败，状态同步将不可用', err);
   }
@@ -1188,13 +1365,6 @@ const hoveredNode = ref(null);
 const sessionId = ref(localStorage.getItem('lastSessionId') || '');
 const sessionIdDraft = ref(sessionId.value);
 
-function commitSessionId() {
-  const next = String(sessionIdDraft.value || '').trim();
-  sessionIdDraft.value = next;
-  if (next === sessionId.value) return;
-  sessionId.value = next;
-}
-
 function syncProjectFromStorage() {
   const pid = localStorage.getItem('lastProjectId') || '';
   if (pid && pid !== selectedProjectId.value) {
@@ -1205,7 +1375,11 @@ function syncProjectFromStorage() {
 function syncProjectFromLocation() {
   try {
     const url = new URL(window.location.href);
-    const pid = (url.searchParams.get('project_id') || url.searchParams.get('projectId') || '').trim();
+    const pid = (
+      url.searchParams.get('project_id') ||
+      url.searchParams.get('projectId') ||
+      ''
+    ).trim();
     if (pid && pid !== selectedProjectId.value) {
       selectedProjectId.value = pid;
       localStorage.setItem('lastProjectId', pid);
@@ -1214,12 +1388,6 @@ function syncProjectFromLocation() {
   } catch (_) {
     // ignore
   }
-}
-
-function clearSessionId() {
-  sessionIdDraft.value = '';
-  if (sessionId.value) sessionId.value = '';
-  localStorage.removeItem('lastSessionId');
 }
 
 // 监听 session-changed 事件（来自需求分析界面）
@@ -1242,12 +1410,14 @@ function handleAnalysisCompleted(event) {
 }
 
 // 监听项目切换
-watch(selectedProjectId, async (val) => {
+watch(selectedProjectId, async val => {
   if (val) {
     localStorage.setItem('lastProjectId', val);
     try {
       await reloadDefects();
-    } catch (_) {}
+    } catch (err) {
+      console.warn('刷新缺陷列表失败', err);
+    }
     window.dispatchEvent(new CustomEvent('project-changed', { detail: { projectId: val } }));
     try {
       await authStore.loadProjectContext(val);
@@ -1269,13 +1439,15 @@ watch(selectedProjectId, async (val) => {
     selectedRequirement.value = null;
     try {
       await reloadDefects();
-    } catch (_) {}
+    } catch (err) {
+      console.warn('刷新缺陷列表失败', err);
+    }
     window.dispatchEvent(new CustomEvent('project-changed', { detail: { projectId: '' } }));
   }
 });
 
 // 监听 sessionId 变化
-watch(sessionId, (newVal) => {
+watch(sessionId, newVal => {
   if (newVal !== sessionIdDraft.value) {
     sessionIdDraft.value = newVal;
   }
@@ -1299,12 +1471,12 @@ const levelTabs = [
   { key: 'L1', label: 'L1' },
   { key: 'L2', label: 'L2' },
   { key: 'L3', label: 'L3' },
-  { key: 'L4', label: 'L4' },
+  { key: 'L4', label: 'L4' }
 ];
 
 // 计算属性：按层级筛选的需求（包含状态信息）
 const filteredRequirements = computed(() => {
-  let all = [
+  const all = [
     ...highLevelRequirements.value.map(r => {
       const id = r.req_id || r.id;
       return {
@@ -1312,7 +1484,7 @@ const filteredRequirements = computed(() => {
         id,
         level: normalizeLevel(r.level || r.category),
         statement: r.text || r.statement || r.title || '',
-        status: requirementStatusMap.value[id] || r.status || 'draft',
+        status: requirementStatusMap.value[id] || r.status || 'draft'
       };
     }),
     ...lowLevelRequirements.value.map(r => {
@@ -1322,11 +1494,11 @@ const filteredRequirements = computed(() => {
         id,
         level: 'L4',
         statement: r.text || r.statement || r.shall_statement || '',
-        status: requirementStatusMap.value[id] || r.status || 'draft',
+        status: requirementStatusMap.value[id] || r.status || 'draft'
       };
-    }),
+    })
   ];
-  
+
   if (activeLevel.value === 'all') {
     return all;
   }
@@ -1340,15 +1512,16 @@ const tableRequirements = computed(() => {
   // 搜索筛选
   if (tableSearchQuery.value.trim()) {
     const query = tableSearchQuery.value.toLowerCase();
-    result = result.filter(r =>
-      (r.statement || r.text || r.title || '').toLowerCase().includes(query) ||
-      (r.level || r.category || '').toLowerCase().includes(query) ||
-      (getStatusName(r.status) || '').toLowerCase().includes(query)
+    result = result.filter(
+      r =>
+        (r.statement || r.text || r.title || '').toLowerCase().includes(query) ||
+        (r.level || r.category || '').toLowerCase().includes(query) ||
+        (getStatusName(r.status) || '').toLowerCase().includes(query)
     );
   }
 
   // 排序
-  const levelOrder = { 'L1': 1, 'L2': 2, 'L3': 3, 'L4': 4 };
+  const levelOrder = { L1: 1, L2: 2, L3: 3, L4: 4 };
   result.sort((a, b) => {
     let aVal = a[tableSortKey.value] || '';
     let bVal = b[tableSortKey.value] || '';
@@ -1379,34 +1552,11 @@ const filteredTreeData = computed(() => {
   return filterTreeByLevel(requirementTree.value, activeLevel.value);
 });
 
-// 卡片视图的列配置
-const cardColumns = computed(() => {
-  const l1Items = highLevelRequirements.value.filter(r => normalizeLevel(r.level || r.category) === 'L1');
-  const l2Items = highLevelRequirements.value.filter(r => normalizeLevel(r.level || r.category) === 'L2');
-  const l3Items = highLevelRequirements.value.filter(r => normalizeLevel(r.level || r.category) === 'L3');
-  const l4Items = lowLevelRequirements.value;
-
-  if (activeLevel.value !== 'all') {
-    const levelMap = {
-      L1: [{ id: 'L1', title: 'L1 业务需求', items: l1Items, icon: Briefcase, headerClass: 'header-l1', iconClass: 'icon-l1', badgeClass: 'badge-l1' }],
-      L2: [{ id: 'L2', title: 'L2 利益相关者需求', items: l2Items, icon: Users, headerClass: 'header-l2', iconClass: 'icon-l2', badgeClass: 'badge-l2' }],
-      L3: [{ id: 'L3', title: 'L3 系统需求', items: l3Items, icon: Layout, headerClass: 'header-l3', iconClass: 'icon-l3', badgeClass: 'badge-l3' }],
-      L4: [{ id: 'L4', title: 'L4 底层需求', items: l4Items, icon: Layers, headerClass: 'header-l4', iconClass: 'icon-l4', badgeClass: 'badge-l4' }],
-    };
-    return levelMap[activeLevel.value] || [];
-  }
-
-  return [
-    { id: 'L1', title: 'L1 业务需求', items: l1Items, icon: Briefcase, headerClass: 'header-l1', iconClass: 'icon-l1', badgeClass: 'badge-l1' },
-    { id: 'L2', title: 'L2 利益相关者需求', items: l2Items, icon: Users, headerClass: 'header-l2', iconClass: 'icon-l2', badgeClass: 'badge-l2' },
-    { id: 'L3', title: 'L3 系统需求', items: l3Items, icon: Layout, headerClass: 'header-l3', iconClass: 'icon-l3', badgeClass: 'badge-l3' },
-    { id: 'L4', title: 'L4 底层需求', items: l4Items, icon: Layers, headerClass: 'header-l4', iconClass: 'icon-l4', badgeClass: 'badge-l4' },
-  ];
-});
-
 // 辅助函数
 function normalizeLevel(raw) {
-  const text = String(raw || '').trim().toUpperCase();
+  const text = String(raw || '')
+    .trim()
+    .toUpperCase();
   if (!text) return 'L1';
   if (text === '1' || text === 'L1' || text.includes('L1')) return 'L1';
   if (text === '2' || text === 'L2' || text.includes('L2')) return 'L2';
@@ -1423,16 +1573,18 @@ function normalizePriority(raw, fallback = 'medium') {
 
 function filterTreeByLevel(nodes, level) {
   if (!nodes || nodes.length === 0) return [];
-  return nodes.map(node => {
-    const req = node.requirement || {};
-    const nodeLevel = normalizeLevel(req.requirement_type || req.level || req.category);
-    const children = filterTreeByLevel(node.children || [], level);
-    
-    if (nodeLevel === level || children.length > 0) {
-      return { ...node, children };
-    }
-    return null;
-  }).filter(n => n !== null);
+  return nodes
+    .map(node => {
+      const req = node.requirement || {};
+      const nodeLevel = normalizeLevel(req.requirement_type || req.level || req.category);
+      const children = filterTreeByLevel(node.children || [], level);
+
+      if (nodeLevel === level || children.length > 0) {
+        return { ...node, children };
+      }
+      return null;
+    })
+    .filter(n => n !== null);
 }
 
 function getCountByLevel(level) {
@@ -1442,33 +1594,17 @@ function getCountByLevel(level) {
   if (level === 'L4') {
     return lowLevelRequirements.value.length;
   }
-  return highLevelRequirements.value.filter(r => normalizeLevel(r.level || r.category) === level).length;
+  return highLevelRequirements.value.filter(r => normalizeLevel(r.level || r.category) === level)
+    .length;
 }
 
 function getTypeLabel(type) {
   const labels = {
-    'top_level': '顶层需求',
-    'low_level': '底层需求',
-    'task': '任务'
+    top_level: '顶层需求',
+    low_level: '底层需求',
+    task: '任务'
   };
   return labels[type] || type || '-';
-}
-
-function getLevelClass(level) {
-  const classes = {
-    'L1': 'level-l1',
-    'L2': 'level-l2',
-    'L3': 'level-l3',
-    'L4': 'level-l4',
-  };
-  return classes[level] || '';
-}
-
-function getStatusClass(status) {
-  if (!status || status === 'draft') return 'status-pending';
-  if (status === 'completed' || status === 'archived') return 'status-completed';
-  if (status === 'in_progress' || status === 'under_review' || status === 'confirmed') return 'status-active';
-  return 'status-pending';
 }
 
 function getConfidenceClass(conf) {
@@ -1585,16 +1721,18 @@ function getRequirementKeyCandidates(item) {
     item?.id,
     item?.source_req_id,
     item?.source_top_id,
-    manageId,
+    manageId
   ].filter(Boolean);
 }
 
 function findRequirementById(reqId) {
   const all = [...highLevelRequirements.value, ...lowLevelRequirements.value];
-  return all.find((item) => {
-    const candidates = getRequirementKeyCandidates(item);
-    return candidates.includes(reqId);
-  }) || null;
+  return (
+    all.find(item => {
+      const candidates = getRequirementKeyCandidates(item);
+      return candidates.includes(reqId);
+    }) || null
+  );
 }
 
 function unresolvedDefectsForRequirement(item) {
@@ -1610,9 +1748,9 @@ function allDefectsForRequirement(item) {
   const candidates = getRequirementKeyCandidates(item);
   const result = [];
   const seen = new Set();
-  candidates.forEach((key) => {
+  candidates.forEach(key => {
     const list = defectsByRequirementId.value.get(key) || [];
-    list.forEach((d) => {
+    list.forEach(d => {
       if (seen.has(d.defect_id)) return;
       seen.add(d.defect_id);
       result.push(d);
@@ -1633,16 +1771,6 @@ const requirementDetailUnresolvedDefects = computed(() => {
   return unresolvedDefectsForRequirement(requirementDetail.value);
 });
 
-const hoveredNodeDefects = computed(() => {
-  if (!hoveredNode.value) return [];
-  return allDefectsForRequirement(hoveredNode.value);
-});
-
-const hoveredNodeUnresolvedDefects = computed(() => {
-  if (!hoveredNode.value) return [];
-  return unresolvedDefectsForRequirement(hoveredNode.value);
-});
-
 function canMarkAsCompleted(item) {
   return unresolvedDefectsForRequirement(item).length === 0;
 }
@@ -1660,8 +1788,8 @@ function gotoDefectsWithRequirement() {
       requirement_id: reqId,
       focus_requirement_id: reqId,
       requirement_title: reqTitle,
-      return_route: String(route.name || 'beta-requirements-overview'),
-    },
+      return_route: String(route.name || 'beta-requirements-overview')
+    }
   });
 }
 
@@ -1693,9 +1821,13 @@ async function persistStatusToDb(item, targetStatus) {
 }
 
 // 监听需求变化，同步状态列表
-watch([filteredRequirements, requirementStatusMap], () => {
-  syncRequirementLists();
-}, { deep: true, immediate: true });
+watch(
+  [filteredRequirements, requirementStatusMap],
+  () => {
+    syncRequirementLists();
+  },
+  { deep: true, immediate: true }
+);
 
 // 事件处理
 function handleNodeHover(req) {
@@ -1706,10 +1838,6 @@ function handleNodeClick(req) {
   selectedRequirement.value = req;
 }
 
-function viewDetail(req) {
-  selectedRequirement.value = req;
-}
-
 function openRequirementDetail(req) {
   selectedRequirement.value = req;
 }
@@ -1717,18 +1845,14 @@ function openRequirementDetail(req) {
 function gotoRequirementsWorkbench() {
   const req = selectedRequirement.value;
   const reqId = String(
-    req?.req_id ||
-    req?.id ||
-    route.query.focus_requirement_id ||
-    route.query.requirement_id ||
-    '',
+    req?.req_id || req?.id || route.query.focus_requirement_id || route.query.requirement_id || ''
   ).trim();
   router.push({
     name: 'beta-requirements',
     query: {
       project_id: selectedProjectId.value || String(route.query.project_id || ''),
-      ...(reqId ? { focus_requirement_id: reqId } : {}),
-    },
+      ...(reqId ? { focus_requirement_id: reqId } : {})
+    }
   });
 }
 
@@ -1776,7 +1900,6 @@ async function exportRequirements() {
     // 创建blob并下载
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     triggerDownload(blob, filename);
-
   } catch (err) {
     console.error('导出需求失败:', err);
     alert('导出需求失败: ' + (err.message || '未知错误'));
@@ -1800,47 +1923,58 @@ function triggerDownload(blob, filename) {
 // 将需求数据转换为CSV格式
 function requirementsToCsv(requirements) {
   // 定义CSV表头
-  const headers = ['需求ID', '需求标题', '需求描述', '需求类型', '层级', '优先级', '状态', '父需求ID', '标签', '创建时间'];
+  const headers = [
+    '需求ID',
+    '需求标题',
+    '需求描述',
+    '需求类型',
+    '层级',
+    '优先级',
+    '状态',
+    '父需求ID',
+    '标签',
+    '创建时间'
+  ];
 
   // 映射需求类型到中文标签
   const typeMap = {
-    'top_level': '顶层需求',
-    'low_level': '底层需求',
-    'task': '任务'
+    top_level: '顶层需求',
+    low_level: '底层需求',
+    task: '任务'
   };
 
   // 映射层级
   const levelMap = {
-    'L1': 'L1 - 业务需求',
-    'L2': 'L2 - 利益相关者需求',
-    'L3': 'L3 - 系统需求',
-    'L4': 'L4 - 底层需求'
+    L1: 'L1 - 业务需求',
+    L2: 'L2 - 利益相关者需求',
+    L3: 'L3 - 系统需求',
+    L4: 'L4 - 底层需求'
   };
 
   // 映射状态
   const statusMap = {
-    'draft': '草稿',
-    'under_review': '审核中',
-    'confirmed': '已确认',
-    'in_progress': '进行中',
-    'completed': '已完成'
+    draft: '草稿',
+    under_review: '审核中',
+    confirmed: '已确认',
+    in_progress: '进行中',
+    completed: '已完成'
   };
 
   // 映射优先级
   const priorityMap = {
-    'high': '高',
-    'medium': '中',
-    'low': '低'
+    high: '高',
+    medium: '中',
+    low: '低'
   };
 
   // 层级排序权重 - 按 L1→L2→L3→L4 顺序排列
   const levelWeight = {
-    'L1': 1,
-    'L2': 2,
-    'L3': 3,
-    'L4': 4,
-    'L5': 5,
-    '': 99  // 其他层级放最后
+    L1: 1,
+    L2: 2,
+    L3: 3,
+    L4: 4,
+    L5: 5,
+    '': 99 // 其他层级放最后
   };
 
   // 按 L1→L2→L3→L4 排序，同层级内按 order_index 排序
@@ -1869,32 +2003,35 @@ function requirementsToCsv(requirements) {
   const rows = requirements.map(req => {
     const levelCode = resolveRequirementLevelForCsv(req);
     return [
-    req.req_id || '',
-    escapeCsvField(req.title || req.text || req.statement || ''),
-    escapeCsvField(req.description || ''),
-    typeMap[req.requirement_type] || req.requirement_type || '',
-    levelMap[levelCode] || levelCode || '',
-    priorityMap[req.priority] || req.priority || '',
-    statusMap[req.status] || req.status || '',
-    req.parent_id || '',
-    escapeCsvField(Array.isArray(req.tags) ? req.tags.join('; ') : (req.tags || '')),
-    req.created_at || ''
+      req.req_id || '',
+      escapeCsvField(req.title || req.text || req.statement || ''),
+      escapeCsvField(req.description || ''),
+      typeMap[req.requirement_type] || req.requirement_type || '',
+      levelMap[levelCode] || levelCode || '',
+      priorityMap[req.priority] || req.priority || '',
+      statusMap[req.status] || req.status || '',
+      req.parent_id || '',
+      escapeCsvField(Array.isArray(req.tags) ? req.tags.join('; ') : req.tags || ''),
+      req.created_at || ''
     ];
   });
 
   // 合并表头和行
-  const csvContent = [headers, ...rows]
-    .map(row => row.join(','))
-    .join('\n');
+  const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
 
   // 添加BOM以支持Excel UTF-8
   return '\uFEFF' + csvContent;
 }
 
 function resolveRequirementLevelForCsv(req) {
-  const raw = ([req?.source_level, req?.level, req?.category]
-    .map(v => String(v || '').trim().toUpperCase())
-    .find(Boolean)) || '';
+  const raw =
+    [req?.source_level, req?.level, req?.category]
+      .map(v =>
+        String(v || '')
+          .trim()
+          .toUpperCase()
+      )
+      .find(Boolean) || '';
 
   if (raw === 'L1' || raw === 'L2' || raw === 'L3' || raw === 'L4' || raw === 'L5') {
     return raw;
@@ -1977,7 +2114,9 @@ async function handleCsvFileSelect(event) {
     const headers = parseCsvLine(lines[0]);
     // 预期表头顺序: 需求ID,需求标题,需求描述,需求类型,层级,优先级,状态,父需求ID,标签,创建时间
     const colIndex = {};
-    headers.forEach((h, i) => { colIndex[h.trim()] = i; });
+    headers.forEach((h, i) => {
+      colIndex[h.trim()] = i;
+    });
 
     const expectedHeaders = ['需求ID', '需求标题', '需求类型'];
     const missing = expectedHeaders.filter(h => colIndex[h] === undefined);
@@ -1987,9 +2126,15 @@ async function handleCsvFileSelect(event) {
     }
 
     // 反向映射
-    const typeReverseMap = { '顶层需求': 'top_level', '底层需求': 'low_level', '任务': 'task' };
-    const priorityReverseMap = { '高': 'high', '中': 'medium', '低': 'low' };
-    const statusReverseMap = { '草稿': 'draft', '审核中': 'under_review', '已确认': 'confirmed', '进行中': 'in_progress', '已完成': 'completed' };
+    const typeReverseMap = { 顶层需求: 'top_level', 底层需求: 'low_level', 任务: 'task' };
+    const priorityReverseMap = { 高: 'high', 中: 'medium', 低: 'low' };
+    const statusReverseMap = {
+      草稿: 'draft',
+      审核中: 'under_review',
+      已确认: 'confirmed',
+      进行中: 'in_progress',
+      已完成: 'completed'
+    };
 
     // 解析所有行
     const rows = lines.slice(1).map(line => parseCsvLine(line));
@@ -2025,12 +2170,18 @@ async function handleCsvFileSelect(event) {
 
       const oldParentId = (row[colIndex['父需求ID']] || '').trim();
       // 优先使用映射后的父需求ID，若映射不存在则直接用原ID（可能已存在于项目中）
-      const parent_id = idMap[oldParentId] || (oldParentId || undefined);
+      const parent_id = idMap[oldParentId] || oldParentId || undefined;
 
       const tagsRaw = (row[colIndex['标签']] || '').trim();
-      const tags = tagsRaw ? tagsRaw.split(';').map(t => t.trim()).filter(Boolean) : undefined;
+      const tags = tagsRaw
+        ? tagsRaw
+            .split(';')
+            .map(t => t.trim())
+            .filter(Boolean)
+        : undefined;
 
-      const description = colIndex['需求描述'] !== undefined ? (row[colIndex['需求描述']] || '').trim() : '';
+      const description =
+        colIndex['需求描述'] !== undefined ? (row[colIndex['需求描述']] || '').trim() : '';
 
       const payload = {
         title,
@@ -2040,7 +2191,7 @@ async function handleCsvFileSelect(event) {
         ...(priority && { priority }),
         ...(source_level && { source_level }),
         ...(parent_id && { parent_id }),
-        ...(tags && tags.length > 0 && { tags }),
+        ...(tags && tags.length > 0 && { tags })
       };
 
       try {
@@ -2079,49 +2230,49 @@ async function loadRequirements() {
     traceRelations.value = [];
     return;
   }
-  
+
   isLoading.value = true;
   try {
     const data = await manageApi.listRequirements(selectedProjectId.value);
     const reqs = data?.requirements || [];
 
-    const toLevel = (req) => {
+    const toLevel = req => {
       const sourceLevel = normalizeLevel(req.source_level || req.level || req.category);
-      if (sourceLevel === "L1" || sourceLevel === "L2" || sourceLevel === "L3") {
+      if (sourceLevel === 'L1' || sourceLevel === 'L2' || sourceLevel === 'L3') {
         return sourceLevel;
       }
-      if (req.requirement_type === "low_level" || sourceLevel === "L4") return "L4";
-      if (req.requirement_type === "task") return "L4";
-      return "L3";
+      if (req.requirement_type === 'low_level' || sourceLevel === 'L4') return 'L4';
+      if (req.requirement_type === 'task') return 'L4';
+      return 'L3';
     };
 
     highLevelRequirements.value = reqs
-      .filter((r) => r.requirement_type !== "low_level")
-      .map((r) => ({
+      .filter(r => r.requirement_type !== 'low_level')
+      .map(r => ({
         ...r,
         id: r.req_id,
-        text: r.title || r.description || "",
-        statement: r.description || r.title || "",
+        text: r.title || r.description || '',
+        statement: r.description || r.title || '',
         priority: normalizePriority(r.priority, null),
         level: toLevel(r),
-        category: toLevel(r),
+        category: toLevel(r)
       }));
 
     lowLevelRequirements.value = reqs
-      .filter((r) => r.requirement_type === "low_level")
-      .map((r) => ({
+      .filter(r => r.requirement_type === 'low_level')
+      .map(r => ({
         ...r,
         id: r.req_id,
-        text: r.title || r.description || "",
-        statement: r.description || r.title || "",
-        shall_statement: r.title || "",
+        text: r.title || r.description || '',
+        statement: r.description || r.title || '',
+        shall_statement: r.title || '',
         source_top_id: r.parent_id || null,
         priority: normalizePriority(r.priority, null),
-        level: "L4",
+        level: 'L4'
       }));
 
     traceRelations.value = [];
-    
+
     // 构建树形结构（包含追溯关系）
     requirementTree.value = buildTreeWithRelations(
       highLevelRequirements.value,
@@ -2132,7 +2283,6 @@ async function loadRequirements() {
     // 同步 manage_requirements 状态映射
     await loadManageRequirementMap();
     focusRequirementFromRoute();
-    
   } catch (err) {
     console.error('加载需求失败:', err);
   } finally {
@@ -2144,7 +2294,7 @@ async function loadRequirements() {
 function buildTreeWithRelations(highReqs, lowReqs, relations) {
   // 创建所有需求的映射 (用于查找父节点)
   const allReqMap = new Map();
-  
+
   // 处理高层需求
   highReqs.forEach((req, idx) => {
     const id = req.req_id || req.id || `high_${idx}`;
@@ -2158,12 +2308,12 @@ function buildTreeWithRelations(highReqs, lowReqs, relations) {
       children: []
     });
   });
-  
+
   // 处理低层需求 - 使用 parent_id 或 source_top_id 建立关系
   lowReqs.forEach((req, idx) => {
     const id = req.req_id || req.id || `low_${idx}`;
     const parentId = req.parent_id || req.source_top_id || null;
-    
+
     allReqMap.set(id, {
       id,
       name: req.text || req.statement || req.shall_statement || `L4 需求 ${idx + 1}`,
@@ -2174,22 +2324,22 @@ function buildTreeWithRelations(highReqs, lowReqs, relations) {
       children: []
     });
   });
-  
+
   // 如果有追溯关系，补充 parent_id 关系
   if (relations && relations.length > 0) {
     relations.forEach(rel => {
       if (!rel.has_relation) return;
-      
+
       const lowIdx = rel.low_level_index;
       const highIdx = rel.high_level_index;
-      
+
       if (lowIdx !== undefined && highIdx !== undefined) {
         const lowReq = lowReqs[lowIdx];
         const highReq = highReqs[highIdx];
         if (lowReq && highReq) {
           const lowId = lowReq.req_id || lowReq.id;
           const highId = highReq.req_id || highReq.id;
-          
+
           const lowNode = allReqMap.get(lowId);
           // 只在没有 parent_id 时使用追溯关系
           if (lowNode && !lowNode.parent_id) {
@@ -2199,11 +2349,11 @@ function buildTreeWithRelations(highReqs, lowReqs, relations) {
       }
     });
   }
-  
+
   // 构建父子关系树
   const roots = [];
   const linkedIds = new Set();
-  
+
   allReqMap.forEach((node, id) => {
     const parentId = node.parent_id;
     if (parentId && allReqMap.has(parentId)) {
@@ -2212,28 +2362,27 @@ function buildTreeWithRelations(highReqs, lowReqs, relations) {
       linkedIds.add(id);
     }
   });
-  
+
   // 收集根节点（没有父节点或父节点不存在的）
   allReqMap.forEach((node, id) => {
     if (!linkedIds.has(id)) {
       roots.push(node);
     }
   });
-  
+
   // 按层级排序根节点 (L1 > L2 > L3 > L4)
-  const levelOrder = { 'L1': 1, 'L2': 2, 'L3': 3, 'L4': 4 };
+  const levelOrder = { L1: 1, L2: 2, L3: 3, L4: 4 };
   roots.sort((a, b) => (levelOrder[a.level] || 5) - (levelOrder[b.level] || 5));
-  
+
   // 递归排序子节点
-  const sortChildren = (node) => {
+  const sortChildren = node => {
     node.children.sort((a, b) => (levelOrder[a.level] || 5) - (levelOrder[b.level] || 5));
     node.children.forEach(sortChildren);
   };
   roots.forEach(sortChildren);
-  
+
   return roots;
 }
-
 
 onMounted(async () => {
   // 监听来自需求分析界面的事件
@@ -2263,7 +2412,9 @@ onMounted(async () => {
   // 初始加载
   try {
     await reloadDefects();
-  } catch (_) {}
+  } catch (err) {
+    console.warn('刷新缺陷列表失败', err);
+  }
   loadRequirements();
 });
 
@@ -2355,7 +2506,7 @@ onUnmounted(() => {
 .level-tab {
   padding: 6px 12px;
   font-size: 13px;
-  font-family: "BodyWithTimesDigits", "Noto Sans SC", sans-serif;
+  font-family: 'BodyWithTimesDigits', 'Noto Sans SC', sans-serif;
   background: transparent;
   border: none;
   color: rgba(28, 40, 52, 0.7);
@@ -2823,22 +2974,53 @@ onUnmounted(() => {
 }
 
 /* 待处理列 */
-.backlog-column { background: rgba(250, 250, 250, 0.95); }
-.backlog-header { background: rgba(244, 244, 245, 0.9); }
-.backlog-header .column-status-icon { color: #71717a; }
-.backlog-badge { background: rgba(113, 113, 122, 0.15); color: #52525b; }
+.backlog-column {
+  background: rgba(250, 250, 250, 0.95);
+}
+.backlog-header {
+  background: rgba(244, 244, 245, 0.9);
+}
+.backlog-header .column-status-icon {
+  color: #71717a;
+}
+.backlog-badge {
+  background: rgba(113, 113, 122, 0.15);
+  color: #52525b;
+}
 
 /* 进行中列 */
-.progress-column { background: rgba(239, 246, 255, 0.5); border-color: rgba(59, 130, 246, 0.2); }
-.progress-header { background: rgba(219, 234, 254, 0.6); border-color: rgba(59, 130, 246, 0.2); }
-.progress-header .column-status-icon { color: #2563eb; }
-.progress-badge { background: rgba(59, 130, 246, 0.15); color: #1d4ed8; }
+.progress-column {
+  background: rgba(239, 246, 255, 0.5);
+  border-color: rgba(59, 130, 246, 0.2);
+}
+.progress-header {
+  background: rgba(219, 234, 254, 0.6);
+  border-color: rgba(59, 130, 246, 0.2);
+}
+.progress-header .column-status-icon {
+  color: #2563eb;
+}
+.progress-badge {
+  background: rgba(59, 130, 246, 0.15);
+  color: #1d4ed8;
+}
 
 /* 已完成列 */
-.completed-column { background: rgba(236, 253, 245, 0.5); border-color: rgba(16, 185, 129, 0.2); }
-.completed-header { background: rgba(209, 250, 229, 0.6); border-color: rgba(16, 185, 129, 0.2); }
-.completed-header .column-status-icon { color: #059669; }
-.completed-badge { background: rgba(16, 185, 129, 0.15); color: #047857; }
+.completed-column {
+  background: rgba(236, 253, 245, 0.5);
+  border-color: rgba(16, 185, 129, 0.2);
+}
+.completed-header {
+  background: rgba(209, 250, 229, 0.6);
+  border-color: rgba(16, 185, 129, 0.2);
+}
+.completed-header .column-status-icon {
+  color: #059669;
+}
+.completed-badge {
+  background: rgba(16, 185, 129, 0.15);
+  color: #047857;
+}
 
 .kanban-column-content {
   flex: 1;
@@ -2992,9 +3174,21 @@ onUnmounted(() => {
 }
 
 /* 置信度颜色 */
-.conf-high { background: rgba(34, 197, 94, 0.1); color: #15803d; border-color: rgba(34, 197, 94, 0.3); }
-.conf-medium { background: rgba(234, 179, 8, 0.1); color: #a16207; border-color: rgba(234, 179, 8, 0.3); }
-.conf-low { background: rgba(239, 68, 68, 0.1); color: #b91c1c; border-color: rgba(239, 68, 68, 0.3); }
+.conf-high {
+  background: rgba(34, 197, 94, 0.1);
+  color: #15803d;
+  border-color: rgba(34, 197, 94, 0.3);
+}
+.conf-medium {
+  background: rgba(234, 179, 8, 0.1);
+  color: #a16207;
+  border-color: rgba(234, 179, 8, 0.3);
+}
+.conf-low {
+  background: rgba(239, 68, 68, 0.1);
+  color: #b91c1c;
+  border-color: rgba(239, 68, 68, 0.3);
+}
 
 /* 自定义滚动条 */
 .kanban-column-content::-webkit-scrollbar {
@@ -3111,7 +3305,9 @@ onUnmounted(() => {
   border: 1px solid rgba(28, 40, 52, 0.2);
   background: #fff;
   color: var(--ink-950);
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
 }
 
 .form-input:focus,

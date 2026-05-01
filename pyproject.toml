@@ -1,2 +1,54 @@
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+extend-exclude = '''
+/(
+  \.git
+  | \.venv
+  | __pycache__
+  | data
+  | frontend
+)/
+'''
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["backend_business", "backend_inference", "tests"]
+exclude = [
+  ".git",
+  ".venv",
+  "__pycache__",
+  "data",
+  "frontend",
+]
+
+[tool.ruff.lint]
+select = [
+  "B",
+  "C4",
+  "E",
+  "F",
+  "I",
+  "PIE",
+  "RUF",
+  "SIM",
+  "UP",
+]
+ignore = [
+  # Keep line-length warnings out of the first gate; Black still formats new code.
+  "E501",
+]
+fixable = ["ALL"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+  # Tests can intentionally use broader setup and assertion patterns.
+  "B011",
+]
