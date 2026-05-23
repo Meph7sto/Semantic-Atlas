@@ -131,17 +131,6 @@
 
       <button
         type="button"
-        class="ghost rail-account-link sa-button sa-button--secondary"
-        :class="{ active: props.activePage === 'leaderboard' }"
-        :title="isCollapsed ? '排行榜' : ''"
-        @click="handleNavigateItem('leaderboard')"
-      >
-        <Trophy class="rail-action-icon" />
-        <span v-if="!isCollapsed">排行榜</span>
-      </button>
-
-      <button
-        type="button"
         class="ghost rail-exit sa-button sa-button--secondary"
         @click="handleLogout"
         :title="isCollapsed ? '退出登录' : ''"
@@ -185,7 +174,6 @@ import {
   CheckSquare,
   Settings,
   Users,
-  Trophy,
 } from 'lucide-vue-next';
 
 const router = useRouter();
@@ -526,7 +514,6 @@ const getIconColor = (key) => {
     tracking: "#5d6b76",
     reviews: "#a85424",
     reports: "#1b2730",
-    leaderboard: "#2f8f89",
     "requirements-collection": "#8b5cf6",
     "multimodal-ingestion": "#0f766e",
     "requirements-overview": "#2f8f89",

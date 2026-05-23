@@ -48,7 +48,6 @@ import ReviewView from '../views/beta/ReviewView.vue'
 import MyFilesView from '../views/beta/MyFilesView.vue'
 import TraceabilityView from '../views/beta/TraceabilityView.vue'
 import ReportView from '../views/beta/ReportView.vue'
-import LeaderboardView from '../views/beta/LeaderboardView.vue'
 
 // Guide view
 import GuideView from '../views/GuideView.vue'
@@ -209,20 +208,8 @@ const router = createRouter({
                     name: 'beta-reports',
                     component: ReportView,
                     meta: { requiresAuth: true }
-                },
-                {
-                    path: 'leaderboard',
-                    name: 'beta-leaderboard',
-                    component: LeaderboardView,
-                    meta: { requiresAuth: true }
                 }
             ]
-        },
-        {
-            path: '/leaderboard',
-            name: 'leaderboard',
-            component: LeaderboardView,
-            meta: { requiresAuth: true }
         },
         {
             path: '/main/topology-editor',

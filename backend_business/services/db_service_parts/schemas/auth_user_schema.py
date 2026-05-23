@@ -142,14 +142,6 @@ def init_auth_user_schema(cur):
         ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS avatar_url TEXT
         """
     )
-    cur.execute(
-        """
-        ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS email TEXT
-        """
-    )
-    cur.execute(
-        "CREATE INDEX IF NOT EXISTS idx_auth_users_email ON auth_users(email)"
-    )
 
     # ========================
     # Registration Approval Workflow: 注册审批流程字段

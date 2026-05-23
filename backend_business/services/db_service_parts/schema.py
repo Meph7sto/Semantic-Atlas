@@ -6,7 +6,6 @@ from .schemas.requirement_actor_schema import init_requirement_actor_schema
 from .schemas.requirement_schema import init_requirement_schema
 from .schemas.trace_schema import init_trace_schema
 from .schemas.transcription_schema import init_transcription_schema
-from .schemas.usage_schema import init_usage_schema
 
 
 def init_all_schemas(cur):
@@ -16,7 +15,6 @@ def init_all_schemas(cur):
     init_project_schema(cur)
     init_agent_chat_schema(cur)
     init_auth_user_schema(cur)
-    init_usage_schema(cur)
     init_execution_schema(cur)
     init_requirement_actor_schema(
         cur
