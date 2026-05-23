@@ -33,6 +33,8 @@ const ROUTE_NAME_TO_PAGE_KEY = Object.freeze({
   'beta-traceability': 'tracking',
   'beta-reviews': 'reviews',
   'beta-reports': 'reports',
+  'beta-leaderboard': 'leaderboard',
+  'leaderboard': 'leaderboard',
 })
 
 const PAGE_KEY_TO_ROUTE_NAME = Object.freeze({
@@ -52,6 +54,7 @@ const PAGE_KEY_TO_ROUTE_NAME = Object.freeze({
   'tracking': 'beta-traceability',
   'reviews': 'beta-reviews',
   'reports': 'beta-reports',
+  'leaderboard': 'leaderboard',
 })
 
 // ---- 角色映射 ----

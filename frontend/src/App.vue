@@ -13,7 +13,7 @@ const { setStyleVariant, styleVariant } = useStyleVariant()
 const route = useRoute()
 
 // Layout mode detection
-const isMainRoute = computed(() => route.path.startsWith('/beta'))
+const isMainRoute = computed(() => route.path.startsWith('/beta') || route.path === '/leaderboard')
 const isGuideRoute = computed(() => route.path.startsWith('/guide'))
 const isAlphaRoute = computed(() => !isMainRoute.value && !isGuideRoute.value)
 const showStyleSwitcher = computed(() => isMainRoute.value || isGuideRoute.value)

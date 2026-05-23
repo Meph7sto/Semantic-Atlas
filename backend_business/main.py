@@ -138,6 +138,7 @@ from backend_business.api.routers import (
     requirement_graph,
     requirements,
     session_controller_chat,
+    usage,
     vision,
 )
 
@@ -145,6 +146,7 @@ app.include_router(agent_chat.router)
 app.include_router(requirement_classification_agent_chat.router)
 app.include_router(conflict_agent_chat.router)
 app.include_router(session_controller_chat.router)
+app.include_router(usage.router)
 app.include_router(deduplication.router)
 app.include_router(auth.router)
 app.include_router(permission.router)

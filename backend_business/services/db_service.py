@@ -24,6 +24,7 @@ from backend_business.services.db_service_parts.review_assignments import Review
 from backend_business.services.db_service_parts.baselines import BaselinesMixin
 from backend_business.services.db_service_parts.change_requests import ChangeRequestsMixin
 from backend_business.services.db_service_parts.permissions import PermissionsMixin
+from backend_business.services.db_service_parts.usage import UsageMixin
 
 
 class DBService(
@@ -41,6 +42,7 @@ class DBService(
     BaselinesMixin,
     ChangeRequestsMixin,
     PermissionsMixin,
+    UsageMixin,
     DBServiceBase,
 ):
     """
