@@ -1,4 +1,9 @@
-import { api } from './request'
+import {
+  api,
+  extractErrorMessageFromPayload,
+  handleUnauthorized,
+  readErrorPayload,
+} from './request'
 
 const buildAuthHeaders = () => {
   const headers = {
@@ -88,7 +93,16 @@ export const agentChatApi = {
     })
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
+      const errorPayload = await readErrorPayload(response)
+
+      if (response.status === 401) {
+        handleUnauthorized()
+      }
+
+      throw new Error(
+        extractErrorMessageFromPayload(errorPayload) ||
+          `HTTP error! status: ${response.status}`,
+      )
     }
 
     return response.body

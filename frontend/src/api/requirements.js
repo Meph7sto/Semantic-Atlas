@@ -79,6 +79,29 @@ export const conflictApi = {
         return resp.data
     },
 
+    async analyze(requirements, {
+        saveToDb = false,
+        sessionId = null,
+        conflictConcurrency = 3,
+        maxCandidatesPerBucket = 20,
+        model = 'deepseek-v4-pro',
+        useThinkingMode = true,
+    } = {}) {
+        const payload = {
+            requirements,
+            save_to_db: saveToDb,
+            conflict_concurrency: conflictConcurrency,
+            max_candidates_per_bucket: maxCandidatesPerBucket,
+            model,
+            use_thinking_mode: useThinkingMode,
+        }
+        if (sessionId) {
+            payload.session_id = sessionId
+        }
+        const resp = await api.post('/conflict/analyze', payload)
+        return resp.data
+    },
+
     async getLatest(sessionId) {
         const resp = await api.get('/conflict/latest', {
             params: { session_id: sessionId },
@@ -155,6 +178,42 @@ export const analysisApi = {
         })
         if (resp.data?.success === false) {
             throw new Error(resp.data?.error || '加载追溯缓存失败')
+        }
+        return resp.data?.data ?? resp.data
+    },
+
+    async saveRun(payload) {
+        const resp = await api.post('/analysis/runs', payload)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '保存分析记录失败')
+        }
+        return resp.data?.data ?? resp.data
+    },
+
+    async listRuns(sessionId, limit = 20) {
+        const resp = await api.get('/analysis/runs', {
+            params: { session_id: sessionId, limit },
+        })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '加载分析记录失败')
+        }
+        return resp.data?.data ?? resp.data
+    },
+
+    async getLatestRun(sessionId) {
+        const resp = await api.get('/analysis/runs/latest', {
+            params: { session_id: sessionId },
+        })
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '加载最新分析记录失败')
+        }
+        return resp.data?.data ?? resp.data
+    },
+
+    async getRun(analysisRunId) {
+        const resp = await api.get(`/analysis/runs/${encodeURIComponent(analysisRunId)}`)
+        if (resp.data?.success === false) {
+            throw new Error(resp.data?.error || '加载分析记录详情失败')
         }
         return resp.data?.data ?? resp.data
     },

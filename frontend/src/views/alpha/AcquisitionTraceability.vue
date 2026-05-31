@@ -45,6 +45,7 @@ import {
   CheckCircle
 } from 'lucide-vue-next'
 import * as echarts from 'echarts'
+import { getClassificationLabelStyle } from '@/utils/classificationLabelStyle'
 
 // ========== 状态管理 ==========
 const currentStep = ref(1) // 1: 需求获取, 2: 追溯分析, 3: 冲突检测, 4: 需求分类
@@ -1259,35 +1260,20 @@ function getCategoryBorderColor(category) {
 }
 
 function getLabelClass(label) {
-  const styles = {
-    '功能性需求': 'bg-blue-50 text-blue-700',
-    '非功能性需求': 'bg-purple-50 text-purple-700'
-  }
-  return styles[label] || 'bg-zinc-50 text-zinc-700'
+  return getClassificationLabelStyle(label).pillClass
 }
 
 function getLabelDotClass(label) {
-  const styles = {
-    '功能性需求': 'bg-blue-500',
-    '非功能性需求': 'bg-purple-500'
-  }
-  return styles[label] || 'bg-zinc-500'
+  return getClassificationLabelStyle(label).dotClass
 }
 
 function getLabelHeaderClass(label) {
-  const styles = {
-    '功能性需求': 'bg-blue-50 border-blue-100',
-    '非功能性需求': 'bg-purple-50 border-purple-100'
-  }
-  return styles[label] || 'bg-zinc-50 border-zinc-100'
+  const style = getClassificationLabelStyle(label)
+  return `${style.headerClass} ${style.borderClass}`.trim()
 }
 
 function getLabelBadgeClass(label) {
-  const styles = {
-    '功能性需求': 'bg-blue-100 text-blue-700',
-    '非功能性需求': 'bg-purple-100 text-purple-700'
-  }
-  return styles[label] || 'bg-zinc-100 text-zinc-700'
+  return getClassificationLabelStyle(label).badgeClass
 }
 
 // ========== 生命周期 ==========

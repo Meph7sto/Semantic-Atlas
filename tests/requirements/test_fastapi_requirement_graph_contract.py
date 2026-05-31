@@ -11,6 +11,7 @@ class _StubRequirementGraphService:
     def __init__(self) -> None:
         self.calls = []
         self.latest_calls = []
+        self.latest_any_mode_calls = []
         self.history_calls = []
         self.snapshot_calls = []
         self.delete_calls = []
@@ -67,6 +68,21 @@ class _StubRequirementGraphService:
                 "relation_snapshot": {
                     "snapshot_id": "snap-latest",
                     "relation_mode": kwargs.get("relation_mode") or "llm",
+                },
+            },
+        }
+
+    def get_latest_snapshot_graph_any_mode(self, **kwargs):
+        self.latest_any_mode_calls.append(kwargs)
+        return {
+            "nodes": [],
+            "edges": [],
+            "stats": {},
+            "meta": {
+                "loaded_from_snapshot": True,
+                "relation_snapshot": {
+                    "snapshot_id": "snap-any-mode",
+                    "relation_mode": "llm",
                 },
             },
         }
@@ -278,6 +294,25 @@ async def test_get_requirement_graph_latest_contract_returns_snapshot_graph(fast
         "project_id": "P-1",
         "session_id": None,
         "relation_mode": "llm",
+        "limit": 900,
+    }
+
+
+async def test_get_requirement_graph_latest_contract_uses_any_mode_when_relation_mode_missing(fastapi_client):
+    client, stub_service = fastapi_client
+
+    response = await client.get(
+        "/api/v2/requirement-graph/latest",
+        params={"project_id": "P-1", "limit": 900},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["meta"]["relation_snapshot"]["snapshot_id"] == "snap-any-mode"
+    assert stub_service.latest_any_mode_calls[0] == {
+        "project_id": "P-1",
+        "session_id": None,
         "limit": 900,
     }
 

@@ -28,6 +28,8 @@
         <section class="analysis-container" data-animate style="--delay: 0.1s">
           <div class="analysis-layout">
             <AnalysisControlPanel
+              :activeTab="activeTab"
+              :activeAnalysisLabel="activeAnalysisLabel"
               :projects="projects"
               :isLoadingProjects="isLoadingProjects"
               :selectedProjectId="selectedProjectId"
@@ -36,6 +38,9 @@
               :contextRuns="contextRuns"
               :isLoadingRuns="isLoadingRuns"
               :contextRunId="contextRunId"
+              :analysisRuns="analysisRuns"
+              :isLoadingAnalysisRuns="isLoadingAnalysisRuns"
+              :selectedAnalysisRunId="selectedAnalysisRunId"
               :allHighLevelRequirements="allHighLevelRequirements"
               :lowLevelRequirements="lowLevelRequirements"
               :isAnalyzing="isAnalyzing"
@@ -49,12 +54,16 @@
               :classificationResult="classificationResult"
               :analysisNotice="analysisNotice"
               :analysisError="analysisError"
+              :conflictConcurrency="conflictConcurrency"
               @update:selectedProjectId="selectedProjectId = $event"
               @update:sessionId="sessionId = $event"
               @update:contextRunId="contextRunId = $event"
+              @update:selectedAnalysisRunId="selectedAnalysisRunId = $event"
+              @update:conflictConcurrency="conflictConcurrency = $event"
               @loadProjects="loadProjects"
               @loadContextRuns="loadContextRuns"
-              @runAnalysis="runFullAnalysis"
+              @loadAnalysisRuns="loadAnalysisRuns"
+              @runAnalysis="runActiveAnalysis"
             />
             <AnalysisResultPanel
               v-model:activeTab="activeTab"
@@ -74,7 +83,7 @@
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
+import { onMounted, watch } from 'vue'
 import Sidebar from '../../components/beta/Sidebar.vue'
 import AnalysisControlPanel from '../../components/beta/analysis/AnalysisControlPanel.vue'
 import AnalysisResultPanel from '../../components/beta/analysis/AnalysisResultPanel.vue'
@@ -98,9 +107,11 @@ const {
 const {
   isAnalyzing, analysisStep, analysisError, analysisNotice,
   traceResult, conflictResults, classificationResult,
-  activeTab, allHighLevelRequirements, canAnalyze, conflictStats, classificationGroups,
+  activeTab, activeAnalysisLabel, allHighLevelRequirements, canAnalyze, conflictStats, classificationGroups,
   analysisPercent, analysisStepText, progressColorClass,
-  runFullAnalysis, loadExistingResults,
+  analysisRuns, selectedAnalysisRunId, isLoadingAnalysisRuns,
+  conflictConcurrency,
+  runActiveAnalysis, loadExistingResults, loadAnalysisRuns, loadAnalysisRunDetail,
 } = useRequirementsAnalysis(sessionId, highLevelRequirements, lowLevelRequirements)
 
 onMounted(async () => {
@@ -112,9 +123,28 @@ onMounted(async () => {
     await Promise.all([
       loadContextRuns(),
       loadRequirements(),
+      loadAnalysisRuns(),
       loadExistingResults(),
     ])
   }
+})
+
+watch(sessionId, async (newSessionId) => {
+  if (!newSessionId?.trim()) return
+  selectedAnalysisRunId.value = ''
+  await Promise.all([
+    loadRequirements(),
+    loadAnalysisRuns(),
+    loadExistingResults(),
+  ])
+})
+
+watch(selectedAnalysisRunId, async (newRunId) => {
+  if (!newRunId) {
+    await loadExistingResults()
+    return
+  }
+  await loadAnalysisRunDetail(newRunId)
 })
 </script>
 

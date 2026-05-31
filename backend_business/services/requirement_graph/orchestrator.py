@@ -965,6 +965,35 @@ class RequirementGraphService:
             return None
         return self._build_graph_from_snapshot(snapshot, limit=limit)
 
+    def get_latest_snapshot_graph_any_mode(
+        self,
+        *,
+        project_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        limit: int = 600,
+    ) -> Optional[Dict[str, Any]]:
+        preferred_modes = ("llm", "local")
+        latest_snapshot_graph = None
+        latest_snapshot_created_at = ""
+        latest_snapshot_id = ""
+        for mode in preferred_modes:
+            graph = self.get_latest_snapshot_graph(
+                project_id=project_id,
+                session_id=session_id,
+                relation_mode=mode,
+                limit=limit,
+            )
+            if not graph:
+                continue
+            snapshot_meta = ((graph.get("meta") or {}).get("relation_snapshot") or {})
+            created_at = str(snapshot_meta.get("created_at") or "")
+            snapshot_id = str(snapshot_meta.get("snapshot_id") or "")
+            if (created_at, snapshot_id) >= (latest_snapshot_created_at, latest_snapshot_id):
+                latest_snapshot_graph = graph
+                latest_snapshot_created_at = created_at
+                latest_snapshot_id = snapshot_id
+        return latest_snapshot_graph
+
     def list_snapshot_history(
         self,
         *,

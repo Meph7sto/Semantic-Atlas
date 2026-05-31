@@ -1099,19 +1099,7 @@ if [[ "$do_inference" -eq 1 || "$do_business" -eq 1 ]]; then
   fi
 fi
 
-# 3.6) PostgreSQL smoke test (default when business enabled)
-if [[ "$do_business" -eq 1 ]]; then
-  TEST_SCRIPT="${BASE_DIR}/tests/fixtures/test_postgres.py"
-  if [[ -f "$TEST_SCRIPT" ]]; then
-    echo "[start] Running PostgreSQL smoke test..."
-    if ! "$PYTHON_EXE" "$TEST_SCRIPT"; then
-      echo "[start] PostgreSQL smoke test failed."
-      exit 1
-    fi
-  else
-    echo "[start] PostgreSQL test script not found; skipping smoke test."
-  fi
-fi
+# 3.6) The legacy PostgreSQL ad-hoc smoke test script was removed; rely on automated tests instead.
 
 # 4) 启动 FastAPI 推理服务
 if [[ "$do_inference" -eq 1 ]]; then

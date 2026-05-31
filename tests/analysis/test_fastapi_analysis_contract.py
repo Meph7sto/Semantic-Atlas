@@ -118,6 +118,7 @@ class _FakeConnection:
 class _FakeDBService:
     def __init__(self):
         self.upserted_spans: List[Dict[str, Any]] = []
+        self.saved_analysis_runs: List[Dict[str, Any]] = []
         self._state: Dict[str, Any] = {
             "context_runs": [
                 {
@@ -206,6 +207,52 @@ class _FakeDBService:
 
     def _connect(self):
         return _FakeConnection(self._state)
+
+    def save_requirements_analysis_run(
+        self,
+        session_id: str,
+        trace_result: Dict[str, Any],
+        conflict_result: Dict[str, Any],
+        classification_result: Dict[str, Any],
+        **kwargs,
+    ) -> str:
+        run = {
+            "analysis_run_id": f"run-{len(self.saved_analysis_runs) + 1}",
+            "session_id": session_id,
+            "trace_result": trace_result,
+            "conflict_result": conflict_result,
+            "classification_result": classification_result,
+            "created_at": "2026-03-01T00:00:00",
+            **kwargs,
+        }
+        self.saved_analysis_runs.insert(0, run)
+        return run["analysis_run_id"]
+
+    def list_requirements_analysis_runs(self, session_id: str, limit: int = 20):
+        return [
+            {
+                "analysis_run_id": run["analysis_run_id"],
+                "session_id": run["session_id"],
+                "project_id": run.get("project_id"),
+                "context_run_id": run.get("context_run_id"),
+                "meta": run.get("meta", {}),
+                "created_at": run["created_at"],
+            }
+            for run in self.saved_analysis_runs
+            if run["session_id"] == session_id
+        ][:limit]
+
+    def get_latest_requirements_analysis_run(self, session_id: str):
+        for run in self.saved_analysis_runs:
+            if run["session_id"] == session_id:
+                return run
+        return None
+
+    def get_requirements_analysis_run(self, analysis_run_id: str):
+        for run in self.saved_analysis_runs:
+            if run["analysis_run_id"] == analysis_run_id:
+                return run
+        return None
 
 
 class _FakeContextBuilder:
@@ -442,3 +489,38 @@ async def test_sample_transcript_success(fastapi_client):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
     assert response.text.strip() != ""
+
+
+async def test_requirements_analysis_run_crud_contract(fastapi_client):
+    client, fake_db = fastapi_client
+
+    payload = {
+        "session_id": "s-1",
+        "high_level_requirements": [{"req_id": "L1-1", "text": "top req"}],
+        "low_level_requirements": [{"req_id": "L4-1", "text": "low req"}],
+        "trace_result": {"relations": [{"high_req_id": "L1-1", "low_req_id": "L4-1"}]},
+        "conflict_result": {"items": [{"verdict": "confirmed"}], "summary": {"pairs_evaluated": 1}},
+        "classification_result": {"predictions": [{"predicted_label": "功能"}], "total": 1},
+        "meta": {"source": "requirements-analysis"},
+    }
+
+    save_response = await client.post("/api/v2/analysis/runs", json=payload)
+    assert save_response.status_code == 200
+    assert save_response.json()["success"] is True
+    assert save_response.json()["data"]["analysis_run_id"] == "run-1"
+    assert len(fake_db.saved_analysis_runs) == 1
+
+    list_response = await client.get("/api/v2/analysis/runs?session_id=s-1")
+    assert list_response.status_code == 200
+    assert list_response.json()["success"] is True
+    assert len(list_response.json()["data"]) == 1
+
+    latest_response = await client.get("/api/v2/analysis/runs/latest?session_id=s-1")
+    assert latest_response.status_code == 200
+    assert latest_response.json()["data"]["analysis_run_id"] == "run-1"
+
+    detail_response = await client.get("/api/v2/analysis/runs/run-1")
+    assert detail_response.status_code == 200
+    detail = detail_response.json()["data"]
+    assert detail["trace_result"]["relations"][0]["high_req_id"] == "L1-1"
+    assert detail["classification_result"]["total"] == 1

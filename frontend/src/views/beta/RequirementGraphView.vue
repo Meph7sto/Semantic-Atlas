@@ -932,6 +932,10 @@ function applyGraphPayload(graph, { reviewEdges = null } = {}) {
   refreshGraphStats()
   lastLocalReviewEdges.value = Array.isArray(reviewEdges) ? reviewEdges : extractLocalReviewEdges(graphData.value)
   selectedSnapshotId.value = graphData.value?.meta?.relation_snapshot?.snapshot_id || ''
+  const snapshotMeta = graphData.value?.meta?.relation_snapshot || {}
+  if (snapshotMeta.saved === false && snapshotMeta.error) {
+    graphError.value = `关系快照保存失败：${snapshotMeta.error}`
+  }
 }
 
 function normalizeGraphPayload(graph) {
@@ -1245,6 +1249,11 @@ async function loadLatestSnapshotGraph() {
     })
     await refreshSnapshotHistory()
     if (!resp?.data) {
+      const latestSnapshot = snapshotHistory.value[0]
+      if (latestSnapshot?.snapshot_id) {
+        await loadSnapshotGraph(latestSnapshot.snapshot_id)
+        return
+      }
       clearGraphState()
       return
     }
@@ -1253,6 +1262,17 @@ async function loadLatestSnapshotGraph() {
     renderGraph()
   } catch (err) {
     console.warn('加载最新需求图谱快照失败', err)
+    const history = await refreshSnapshotHistory()
+    const latestSnapshot = history[0]
+    if (latestSnapshot?.snapshot_id) {
+      try {
+        await loadSnapshotGraph(latestSnapshot.snapshot_id)
+        graphError.value = ''
+        return
+      } catch (_) {
+        // ignore snapshot fallback error and surface original empty state below
+      }
+    }
     clearGraphState()
   } finally {
     isLoadingGraph.value = false
@@ -1467,6 +1487,9 @@ function handleRequirementGraphStreamEvent({ event, data }) {
   }
   if (event === 'snapshot_saved') {
     selectedSnapshotId.value = data?.snapshot?.snapshot_id || selectedSnapshotId.value
+    if (data?.snapshot?.saved === false && data?.snapshot?.error) {
+      graphError.value = `关系快照保存失败：${data.snapshot.error}`
+    }
     return
   }
   if (event === 'done') {
@@ -2317,7 +2340,7 @@ watch(selectedProjectId, async (value) => {
   clearGraphState()
 })
 
-watch(sessionId, (value, oldValue) => {
+watch(sessionId, async (value, oldValue) => {
   if (value) {
     localStorage.setItem('lastSessionId', value)
   } else {
@@ -2326,6 +2349,9 @@ watch(sessionId, (value, oldValue) => {
   if (value !== oldValue) {
     clearSnapshotHistoryState()
     clearGraphState()
+    if (value) {
+      await loadLatestSnapshotGraph()
+    }
   }
 })
 
@@ -2372,6 +2398,8 @@ onMounted(async () => {
   await loadProjects()
   if (selectedProjectId.value) {
     await syncProjectSession()
+  }
+  if (selectedProjectId.value || sessionId.value) {
     await loadLatestSnapshotGraph()
   }
 })

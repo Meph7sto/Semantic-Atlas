@@ -177,6 +177,57 @@ def init_requirement_schema(cur):
     )
 
     # ========================
+    # Requirements Analysis Runs Table
+    # ========================
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS requirements_analysis_runs (
+            analysis_run_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            project_id TEXT,
+            context_run_id TEXT,
+            high_level_requirements JSONB NOT NULL DEFAULT '[]'::jsonb,
+            low_level_requirements JSONB NOT NULL DEFAULT '[]'::jsonb,
+            trace_result JSONB NOT NULL DEFAULT '{}'::jsonb,
+            conflict_result JSONB NOT NULL DEFAULT '{}'::jsonb,
+            classification_result JSONB NOT NULL DEFAULT '{}'::jsonb,
+            meta_json JSONB,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    cur.execute(
+        "ALTER TABLE requirements_analysis_runs ADD COLUMN IF NOT EXISTS project_id TEXT"
+    )
+    cur.execute(
+        "ALTER TABLE requirements_analysis_runs ADD COLUMN IF NOT EXISTS context_run_id TEXT"
+    )
+    cur.execute(
+        "ALTER TABLE requirements_analysis_runs ADD COLUMN IF NOT EXISTS high_level_requirements JSONB NOT NULL DEFAULT '[]'::jsonb"
+    )
+    cur.execute(
+        "ALTER TABLE requirements_analysis_runs ADD COLUMN IF NOT EXISTS low_level_requirements JSONB NOT NULL DEFAULT '[]'::jsonb"
+    )
+    cur.execute(
+        "ALTER TABLE requirements_analysis_runs ADD COLUMN IF NOT EXISTS trace_result JSONB NOT NULL DEFAULT '{}'::jsonb"
+    )
+    cur.execute(
+        "ALTER TABLE requirements_analysis_runs ADD COLUMN IF NOT EXISTS conflict_result JSONB NOT NULL DEFAULT '{}'::jsonb"
+    )
+    cur.execute(
+        "ALTER TABLE requirements_analysis_runs ADD COLUMN IF NOT EXISTS classification_result JSONB NOT NULL DEFAULT '{}'::jsonb"
+    )
+    cur.execute(
+        "ALTER TABLE requirements_analysis_runs ADD COLUMN IF NOT EXISTS meta_json JSONB"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_requirements_analysis_runs_session ON requirements_analysis_runs(session_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_requirements_analysis_runs_created_at ON requirements_analysis_runs(created_at)"
+    )
+
+    # ========================
     # Requirement Graph Relations Snapshot Table
     # ========================
     cur.execute(

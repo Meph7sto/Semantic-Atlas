@@ -84,14 +84,23 @@ def get_latest_requirement_graph_snapshot(
     limit: int = Query(default=600, ge=50, le=2000),
 ):
     normalized_project_id, normalized_session_id = _normalize_graph_scope(project_id, session_id)
+    normalized_relation_mode = (relation_mode or "").strip().lower() or None
 
     try:
-        graph = _require_graph_service().get_latest_snapshot_graph(
-            project_id=normalized_project_id,
-            session_id=normalized_session_id,
-            relation_mode=(relation_mode or "").strip().lower() or None,
-            limit=limit,
-        )
+        service = _require_graph_service()
+        if normalized_relation_mode:
+            graph = service.get_latest_snapshot_graph(
+                project_id=normalized_project_id,
+                session_id=normalized_session_id,
+                relation_mode=normalized_relation_mode,
+                limit=limit,
+            )
+        else:
+            graph = service.get_latest_snapshot_graph_any_mode(
+                project_id=normalized_project_id,
+                session_id=normalized_session_id,
+                limit=limit,
+            )
         return {"success": True, "data": graph}
     except ErrorResponse:
         raise

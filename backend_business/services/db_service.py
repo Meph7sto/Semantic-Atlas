@@ -2,6 +2,9 @@ import os
 
 from backend_business.config import settings
 from backend_business.services.db_service_parts.auth import AuthMixin
+from backend_business.services.db_service_parts.analysis_runs import (
+    RequirementsAnalysisRunMixin,
+)
 from backend_business.services.db_service_parts.base import DBServiceBase
 from backend_business.services.db_service_parts.classification import (
     ClassificationAnalysisMixin,
@@ -27,6 +30,7 @@ from backend_business.services.db_service_parts.permissions import PermissionsMi
 
 
 class DBService(
+    RequirementsAnalysisRunMixin,
     TranscriptionSessionMixin,
     TraceAnalysisMixin,
     ConflictAnalysisMixin,

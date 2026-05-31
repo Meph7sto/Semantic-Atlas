@@ -121,6 +121,99 @@ def test_semantic_change_triggers_full_propagation_and_advisories():
     assert result["summary"]["direct_count"] == 6
 
 
+def test_frontend_drawer_contract_for_semantic_change_result():
+    service = RequirementChangeAnalysisService(_StubManageService(), _StubGraphService())
+
+    result = service.analyze_requirement_change(
+        project_id="P-1",
+        requirement_id="SRC",
+        changes={
+            "title": "新的源需求标题",
+            "description": "新的语义描述",
+            "tags": ["core", "audit", "changed"],
+            "priority": "high",
+            "status": "in_progress",
+        },
+    )
+
+    assert result["source_requirement"] == {
+        "requirement_id": "SRC",
+        "project_id": "P-1",
+        "title": "源需求",
+        "source_level": "L3",
+        "status": "confirmed",
+        "priority": "medium",
+        "tags": ["core", "audit"],
+    }
+    assert result["before"] == {
+        "title": "源需求",
+        "description": "原始描述",
+        "tags": ["core", "audit"],
+        "priority": "medium",
+        "status": "confirmed",
+    }
+    assert result["after"] == {
+        "title": "新的源需求标题",
+        "description": "新的语义描述",
+        "tags": ["core", "audit", "changed"],
+        "priority": "high",
+        "status": "in_progress",
+    }
+    assert result["changed_fields"] == [
+        "title",
+        "description",
+        "tags",
+        "priority",
+        "status",
+    ]
+    assert result["summary"] == {
+        "analysis_status": "completed",
+        "message": "已生成影响分析",
+        "impacted_count": 8,
+        "direct_count": 6,
+        "high_risk_count": 4,
+        "advisory_count": 1,
+    }
+
+    first_impact = result["impacted_requirements"][0]
+    assert set(first_impact) == {
+        "requirement_id",
+        "title",
+        "source_level",
+        "impact_level",
+        "min_distance",
+        "trigger_relations",
+        "short_reason",
+    }
+    assert first_impact["impact_level"] == "high"
+    assert isinstance(first_impact["trigger_relations"], list)
+    assert first_impact["short_reason"]
+
+    path_by_target = {
+        item["target_requirement_id"]: item for item in result["propagation_paths"]
+    }
+    child_path = path_by_target["CHILD"]
+    assert child_path["reason"]
+    assert child_path["path"] == [
+        {
+            "source": "SRC",
+            "target": "CHILD",
+            "type": "REFINES",
+            "source_kind": "structural",
+            "source_detail": "manage_requirements.parent_id",
+        }
+    ]
+    assert result["advisories"]["similar_candidates"] == [
+        {
+            "requirement_id": "SIMILAR",
+            "title": "相似需求",
+            "source_level": "L3",
+            "impact_level": "low",
+            "reason": "与变更源标签、模块或关键词相近，建议人工补充关注。",
+        }
+    ]
+
+
 def test_management_change_only_produces_one_hop_impacts():
     service = RequirementChangeAnalysisService(_StubManageService(), _StubGraphService())
 
@@ -166,6 +259,74 @@ def test_same_value_change_returns_no_effective_change():
 
     assert result["summary"]["analysis_status"] == "no_effective_change"
     assert result["impacted_requirements"] == []
+
+
+def test_no_relation_graph_returns_no_impact_but_frontend_shape_is_stable():
+    graph = {"nodes": [_node("SRC", "源需求", "L3")], "edges": [], "stats": {}}
+    service = RequirementChangeAnalysisService(
+        _StubManageService(),
+        _StubGraphService(graph=graph),
+    )
+
+    result = service.analyze_requirement_change(
+        project_id="P-1",
+        requirement_id="SRC",
+        changes={"description": "新的语义描述"},
+    )
+
+    assert result["summary"] == {
+        "analysis_status": "no_impact",
+        "message": "未发现直接影响范围",
+        "impacted_count": 0,
+        "direct_count": 0,
+        "high_risk_count": 0,
+        "advisory_count": 0,
+    }
+    assert result["changed_fields"] == ["description"]
+    assert result["impacted_requirements"] == []
+    assert result["propagation_paths"] == []
+    assert result["advisories"] == {"similar_candidates": []}
+
+
+def test_missing_source_node_in_graph_raises_not_found():
+    service = RequirementChangeAnalysisService(
+        _StubManageService(),
+        _StubGraphService(graph={"nodes": [_node("OTHER", "其他需求", "L3")], "edges": []}),
+    )
+
+    try:
+        service.analyze_requirement_change(
+            project_id="P-1",
+            requirement_id="SRC",
+            changes={"title": "新的源需求标题"},
+        )
+    except RequirementChangeAnalysisNotFoundError as exc:
+        assert str(exc) == "图谱中未找到对应需求"
+    else:
+        raise AssertionError("expected RequirementChangeAnalysisNotFoundError")
+
+
+def test_requirement_from_another_project_is_rejected_before_graph_build():
+    requirement = _make_requirement()
+    requirement["project_id"] = "P-2"
+    graph_service = _StubGraphService()
+    service = RequirementChangeAnalysisService(
+        _StubManageService(requirement=requirement),
+        graph_service,
+    )
+
+    try:
+        service.analyze_requirement_change(
+            project_id="P-1",
+            requirement_id="SRC",
+            changes={"title": "新的源需求标题"},
+        )
+    except ValueError as exc:
+        assert str(exc) == "需求不属于当前项目"
+    else:
+        raise AssertionError("expected ValueError")
+
+    assert graph_service.last_kwargs is None
 
 
 def test_missing_requirement_raises_not_found():

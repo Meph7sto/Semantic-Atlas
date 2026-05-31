@@ -127,9 +127,20 @@ class _FakeDB:
         snapshot["created_at"] = snapshot.get("created_at") or "2026-04-20T06:00:00+00:00"
         snapshot["invalidated_at"] = snapshot.get("invalidated_at")
         snapshot["is_active"] = snapshot.get("is_active", True)
+        for existing in self.snapshot_details.values():
+            if (
+                existing.get("is_active")
+                and existing.get("project_id") == snapshot.get("project_id")
+                and existing.get("session_id") == snapshot.get("session_id")
+                and existing.get("relation_mode") == snapshot.get("relation_mode")
+            ):
+                existing["is_active"] = False
+                existing["invalidated_at"] = snapshot["created_at"]
         self.saved_relation_snapshots.append(snapshot)
         self.snapshot_details[snapshot["snapshot_id"]] = {
             "snapshot_id": snapshot["snapshot_id"],
+            "run_id": snapshot.get("run_id"),
+            "snapshot_status": snapshot.get("snapshot_status") or "final",
             "project_id": snapshot.get("project_id"),
             "session_id": snapshot.get("session_id"),
             "relation_mode": snapshot.get("relation_mode"),
@@ -137,6 +148,7 @@ class _FakeDB:
             "invalidated_at": snapshot["invalidated_at"],
             "is_active": snapshot["is_active"],
             "edge_count": snapshot["edge_count"],
+            "progress_json": snapshot.get("progress_json"),
             "edges": [
                 {
                     "source_node_id": edge["source"],
@@ -161,8 +173,14 @@ class _FakeDB:
         }
         return {
             "snapshot_id": snapshot["snapshot_id"],
+            "run_id": snapshot.get("run_id"),
+            "snapshot_status": snapshot.get("snapshot_status") or "final",
             "relation_mode": snapshot.get("relation_mode"),
             "edge_count": snapshot["edge_count"],
+            "created_at": snapshot["created_at"],
+            "invalidated_at": snapshot["invalidated_at"],
+            "is_active": snapshot["is_active"],
+            "progress_json": snapshot.get("progress_json"),
         }
 
     def get_latest_requirement_graph_snapshot(self, *, project_id=None, session_id=None, relation_mode=None):
@@ -1290,6 +1308,154 @@ def test_list_snapshot_history_returns_filtered_snapshots_in_desc_order():
     assert history[0]["relation_mode"] == "llm"
     assert history[0]["is_active"] is True
     assert history[1]["invalidated_at"] == "2026-04-20T06:10:00+00:00"
+
+
+def test_get_latest_snapshot_graph_returns_latest_active_interrupted_snapshot():
+    requirements = [
+        _make_requirement("A", title="订单侧支付编排", source_level="L3"),
+        _make_requirement("B", title="支付核心服务", source_level="L4"),
+    ]
+    db = _FakeDB(requirements)
+    db.snapshot_details["snap-final"] = {
+        "snapshot_id": "snap-final",
+        "run_id": "run-1",
+        "snapshot_status": "final",
+        "project_id": "P-1",
+        "session_id": "S-1",
+        "relation_mode": "llm",
+        "created_at": "2026-04-20T06:00:00+00:00",
+        "invalidated_at": "2026-04-20T06:05:00+00:00",
+        "is_active": False,
+        "edge_count": 1,
+        "progress_json": {},
+        "edges": [
+            {
+                "source_node_id": "req:A",
+                "target_node_id": "req:B",
+                "source_req_id": "A",
+                "target_req_id": "B",
+                "relation_type": "DEPENDS_ON",
+                "source_kind": "llm",
+                "source_detail": "llm_tool_review",
+                "weight": 0.91,
+                "confidence": 0.91,
+                "reason": "final",
+                "evidence": [],
+                "model": "deepseek-v4-pro",
+                "review_action": "add",
+                "review_package_id": "pkg-final",
+                "properties": {
+                    "source_kind": "llm",
+                    "source_detail": "llm_tool_review",
+                    "confidence": 0.91,
+                    "reason": "final",
+                    "model": "deepseek-v4-pro",
+                    "review_action": "add",
+                    "review_package_id": "pkg-final",
+                },
+                "created_at": "2026-04-20T06:00:00+00:00",
+            }
+        ],
+    }
+    db.snapshot_details["snap-interrupted"] = {
+        "snapshot_id": "snap-interrupted",
+        "run_id": "run-2",
+        "snapshot_status": "interrupted",
+        "project_id": "P-1",
+        "session_id": "S-1",
+        "relation_mode": "llm",
+        "created_at": "2026-04-20T06:08:00+00:00",
+        "invalidated_at": None,
+        "is_active": True,
+        "edge_count": 1,
+        "progress_json": {"completed_pairs": 8, "total_pairs": 12},
+        "edges": [
+            {
+                "source_node_id": "req:A",
+                "target_node_id": "req:B",
+                "source_req_id": "A",
+                "target_req_id": "B",
+                "relation_type": "SIMILAR_TO",
+                "source_kind": "local_vector",
+                "source_detail": "local_vector.semantic_similarity",
+                "weight": 0.74,
+                "confidence": 0.74,
+                "reason": "partial",
+                "evidence": [],
+                "model": "local-model",
+                "review_action": None,
+                "review_package_id": None,
+                "properties": {
+                    "source_kind": "local_vector",
+                    "source_detail": "local_vector.semantic_similarity",
+                    "confidence": 0.74,
+                    "reason": "partial",
+                    "model": "local-model",
+                },
+                "created_at": "2026-04-20T06:08:00+00:00",
+            }
+        ],
+    }
+    service = RequirementGraphService(db, ai_client=None)
+
+    graph = service.get_latest_snapshot_graph(
+        project_id="P-1",
+        session_id="S-1",
+        relation_mode="llm",
+        limit=900,
+    )
+
+    assert graph is not None
+    assert graph["meta"]["relation_snapshot"]["snapshot_id"] == "snap-interrupted"
+    assert graph["meta"]["relation_snapshot"]["snapshot_status"] == "interrupted"
+    assert graph["meta"]["relation_snapshot"]["progress_json"] == {"completed_pairs": 8, "total_pairs": 12}
+
+
+def test_get_latest_snapshot_graph_any_mode_prefers_most_recent_snapshot():
+    requirements = [
+        _make_requirement("A", title="订单侧支付编排", source_level="L3"),
+        _make_requirement("B", title="支付核心服务", source_level="L4"),
+    ]
+    db = _FakeDB(requirements)
+    db.snapshot_details["snap-local"] = {
+        "snapshot_id": "snap-local",
+        "run_id": "run-local",
+        "snapshot_status": "final",
+        "project_id": "P-1",
+        "session_id": "S-1",
+        "relation_mode": "local",
+        "created_at": "2026-04-20T06:00:00+00:00",
+        "invalidated_at": None,
+        "is_active": True,
+        "edge_count": 1,
+        "progress_json": {},
+        "edges": [],
+    }
+    db.snapshot_details["snap-llm"] = {
+        "snapshot_id": "snap-llm",
+        "run_id": "run-llm",
+        "snapshot_status": "interrupted",
+        "project_id": "P-1",
+        "session_id": "S-1",
+        "relation_mode": "llm",
+        "created_at": "2026-04-20T06:10:00+00:00",
+        "invalidated_at": None,
+        "is_active": True,
+        "edge_count": 1,
+        "progress_json": {"completed_pairs": 2, "total_pairs": 5},
+        "edges": [],
+    }
+    service = RequirementGraphService(db, ai_client=None)
+
+    graph = service.get_latest_snapshot_graph_any_mode(
+        project_id="P-1",
+        session_id="S-1",
+        limit=900,
+    )
+
+    assert graph is not None
+    assert graph["meta"]["relation_snapshot"]["snapshot_id"] == "snap-llm"
+    assert graph["meta"]["relation_snapshot"]["relation_mode"] == "llm"
 
 
 def test_build_graph_local_relation_mode_generates_semantic_relation_candidates(monkeypatch):

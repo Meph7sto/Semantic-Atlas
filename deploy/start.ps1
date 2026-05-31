@@ -39,25 +39,10 @@ else {
 
 # .env 文件路径（用于保存/读取配置）
 $Script:EnvFile = Join-Path (Split-Path -Parent $PSScriptRoot) ".env"
-
-# 从 .env 文件加载配置到环境变量
-function Load-EnvFile {
-  if (Test-Path $Script:EnvFile) {
-    Write-Host "[start] Loading secrets from .env..." -ForegroundColor Cyan
-    Get-Content $Script:EnvFile | ForEach-Object {
-      if ($_ -match '^([^#][^=]+)=(.*)$') {
-        $name = $matches[1].Trim()
-        $value = $matches[2].Trim().Trim('"').Trim("'")
-        if (-not [Environment]::GetEnvironmentVariable($name)) {
-          [Environment]::SetEnvironmentVariable($name, $value, "Process")
-        }
-      }
-    }
-  }
-}
+. "$PSScriptRoot/start_env.ps1"
 
 # 加载 .env 文件（FRP 配置需要）
-Load-EnvFile
+Load-EnvFile -EnvFile $Script:EnvFile
 
 # 从环境变量读取已保存的 FRP 配置
 if (-not $FrpServerAddr -and $env:FRP_SERVER_ADDR) {
@@ -74,8 +59,7 @@ if ($FrpMode) {
     $FrpServerAddr = Read-Host "请输入 frp 服务器 IP 地址（留空则跳过）"
     if ($FrpServerAddr) {
       $env:FRP_SERVER_ADDR = $FrpServerAddr
-      if (-not (Select-String -Path $Script:EnvFile -Pattern "FRP_SERVER_ADDR=" -Quiet)) {
-        Add-Content -Path $Script:EnvFile -Value "FRP_SERVER_ADDR=`"$FrpServerAddr`""
+      if (Save-EnvValue -EnvFile $Script:EnvFile -Name "FRP_SERVER_ADDR" -Value $FrpServerAddr) {
         Write-Host "[start] FRP Server Address saved to .env" -ForegroundColor Green
       }
     }
@@ -84,8 +68,7 @@ if ($FrpMode) {
     $FrpToken = Read-Host "请输入 frp 服务器密码 (token)（留空则跳过）"
     if ($FrpToken) {
       $env:FRP_TOKEN = $FrpToken
-      if (-not (Select-String -Path $Script:EnvFile -Pattern "FRP_TOKEN=" -Quiet)) {
-        Add-Content -Path $Script:EnvFile -Value "FRP_TOKEN=`"$FrpToken`""
+      if (Save-EnvValue -EnvFile $Script:EnvFile -Name "FRP_TOKEN" -Value $FrpToken) {
         Write-Host "[start] FRP Token saved to .env" -ForegroundColor Green
       }
     }
@@ -186,8 +169,7 @@ if ($Provider -eq "chutes" -and -not $env:CHUTES_API_TOKEN) {
   $token = Read-Host "请输入 Chutes API Token（留空则跳过）"
   if ($token) {
     $env:CHUTES_API_TOKEN = $token
-    if (-not (Select-String -Path $Script:EnvFile -Pattern "CHUTES_API_TOKEN=" -Quiet)) {
-      Add-Content -Path $Script:EnvFile -Value "CHUTES_API_TOKEN=`"$token`""
+    if (Save-EnvValue -EnvFile $Script:EnvFile -Name "CHUTES_API_TOKEN" -Value $token) {
       Write-Host "[start] Chutes Token saved to .env" -ForegroundColor Green
     }
   }
@@ -198,8 +180,7 @@ if ($Provider -eq "deepseek" -and -not $env:DEEPSEEK_API_KEY) {
   $key = Read-Host "请输入 DeepSeek API Key（留空则跳过）"
   if ($key) {
     $env:DEEPSEEK_API_KEY = $key
-    if (-not (Select-String -Path $Script:EnvFile -Pattern "DEEPSEEK_API_KEY=" -Quiet)) {
-      Add-Content -Path $Script:EnvFile -Value "DEEPSEEK_API_KEY=`"$key`""
+    if (Save-EnvValue -EnvFile $Script:EnvFile -Name "DEEPSEEK_API_KEY" -Value $key) {
       Write-Host "[start] DeepSeek Key saved to .env" -ForegroundColor Green
     }
   }

@@ -18,6 +18,7 @@ from backend_business.api.routers.schemas.analysis_schemas import (
     BatchTraceRelationRequest,
     BuildContextRequest,
     IngestTranscriptRequest,
+    SaveRequirementsAnalysisRunRequest,
     TraceByMappingRequest,
     TraceRelationRequest,
     TriggerAnalysisRequest,
@@ -387,6 +388,58 @@ def get_latest_trace_batch(session_id: str = Query(...)):
 
     service = _require_db_service()
     data = service.get_latest_trace_batch(normalized_session_id)
+    return {"success": True, "data": data}
+
+
+@router.post("/analysis/runs")
+def save_requirements_analysis_run(req: SaveRequirementsAnalysisRunRequest):
+    service = _require_db_service()
+    analysis_run_id = service.save_requirements_analysis_run(
+        req.session_id,
+        req.trace_result,
+        req.conflict_result,
+        req.classification_result,
+        project_id=req.project_id,
+        context_run_id=req.context_run_id,
+        high_level_requirements=req.high_level_requirements,
+        low_level_requirements=req.low_level_requirements,
+        meta=req.meta,
+    )
+    return {"success": True, "data": {"analysis_run_id": analysis_run_id}}
+
+
+@router.get("/analysis/runs")
+def list_requirements_analysis_runs(
+    session_id: str = Query(..., min_length=1),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    service = _require_db_service()
+    normalized_session_id = session_id.strip()
+    if not normalized_session_id:
+        raise ErrorResponse("session_id 不能为空", 400)
+    rows = service.list_requirements_analysis_runs(normalized_session_id, limit=limit)
+    return {"success": True, "data": rows}
+
+
+@router.get("/analysis/runs/latest")
+def get_latest_requirements_analysis_run(session_id: str = Query(..., min_length=1)):
+    service = _require_db_service()
+    normalized_session_id = session_id.strip()
+    if not normalized_session_id:
+        raise ErrorResponse("session_id 不能为空", 400)
+    data = service.get_latest_requirements_analysis_run(normalized_session_id)
+    return {"success": True, "data": data}
+
+
+@router.get("/analysis/runs/{analysis_run_id}")
+def get_requirements_analysis_run(analysis_run_id: str):
+    service = _require_db_service()
+    normalized_analysis_run_id = (analysis_run_id or "").strip()
+    if not normalized_analysis_run_id:
+        raise ErrorResponse("analysis_run_id 不能为空", 400)
+    data = service.get_requirements_analysis_run(normalized_analysis_run_id)
+    if not data:
+        raise ErrorResponse("分析记录不存在", 404)
     return {"success": True, "data": data}
 
 

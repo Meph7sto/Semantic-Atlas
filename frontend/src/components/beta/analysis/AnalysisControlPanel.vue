@@ -73,6 +73,50 @@
       </select>
     </div>
 
+    <div class="control-section" v-if="sessionId">
+      <div class="control-header">
+        <label class="control-label">分析记录</label>
+        <button
+          type="button"
+          class="refresh-btn"
+          :disabled="isLoadingAnalysisRuns"
+          @click="$emit('loadAnalysisRuns')"
+        >
+          <RefreshCw class="w-3 h-3" :class="isLoadingAnalysisRuns ? 'animate-spin' : ''" />
+          刷新
+        </button>
+      </div>
+      <select
+        :value="selectedAnalysisRunId"
+        class="control-select"
+        @change="$emit('update:selectedAnalysisRunId', $event.target.value)"
+      >
+        <option value="">最新一次完整分析</option>
+        <option v-for="run in analysisRuns" :key="run.analysis_run_id" :value="run.analysis_run_id">
+          {{ run.created_at?.replace('T', ' ').slice(0, 19) || run.analysis_run_id.slice(0, 8) }}
+          · 追溯 {{ run.meta?.summary?.trace_relations_count || 0 }}
+          · 冲突 {{ run.meta?.summary?.confirmed_conflict_count || 0 }}
+          · 分类 {{ run.meta?.summary?.classification_total || 0 }}
+        </option>
+      </select>
+    </div>
+
+    <div v-if="activeTab === 'conflict'" class="control-section">
+      <label class="control-label">冲突检测并发数</label>
+      <select
+        :value="conflictConcurrency"
+        class="control-select"
+        @change="$emit('update:conflictConcurrency', Number($event.target.value))"
+      >
+        <option :value="1">1</option>
+        <option :value="2">2</option>
+        <option :value="3">3</option>
+        <option :value="4">4</option>
+        <option :value="6">6</option>
+        <option :value="8">8</option>
+      </select>
+    </div>
+
     <!-- 统计信息 -->
     <div class="stats-panel" v-if="allHighLevelRequirements.length > 0 || lowLevelRequirements.length > 0">
       <div class="stat-row">
@@ -83,17 +127,25 @@
         <span>底层需求</span>
         <span class="stat-value">{{ lowLevelRequirements.length }}</span>
       </div>
-      <div v-if="traceResult" class="stat-row">
+      <div v-if="activeTab === 'network' && traceResult" class="stat-row">
         <span>追溯关系</span>
         <span class="stat-value highlight">{{ traceResult.statistics?.relations_found || 0 }}</span>
       </div>
-      <div v-if="conflictStats" class="stat-row">
-        <span>冲突对数</span>
+      <div v-if="activeTab === 'conflict' && conflictStats" class="stat-row">
+        <span>确认冲突</span>
         <span class="stat-value" :class="conflictStats.conflicts > 0 ? 'danger' : 'success'">
           {{ conflictStats.conflicts }} / {{ conflictStats.total }}
         </span>
       </div>
-      <div v-if="classificationResult" class="stat-row">
+      <div v-if="activeTab === 'conflict' && conflictStats" class="stat-row">
+        <span>疑似冲突</span>
+        <span class="stat-value highlight">{{ conflictStats.suspected || 0 }}</span>
+      </div>
+      <div v-if="activeTab === 'conflict' && conflictStats" class="stat-row">
+        <span>实际并发</span>
+        <span class="stat-value">{{ conflictStats.appliedConcurrency || 0 }} / {{ conflictStats.requestedConcurrency || 0 }}</span>
+      </div>
+      <div v-if="activeTab === 'classification' && classificationResult" class="stat-row">
         <span>已分类</span>
         <span class="stat-value success">{{ classificationResult.total }}</span>
       </div>
@@ -108,11 +160,11 @@
     >
       <Loader2 v-if="isAnalyzing" class="btn-icon animate-spin" />
       <BarChart3 v-else class="btn-icon" />
-      <span>{{ isAnalyzing ? '分析中...' : '一键分析 (追溯→冲突→分类)' }}</span>
+      <span>{{ isAnalyzing ? '完整分析中...' : '一键分析并保存完整结果' }}</span>
     </button>
 
     <!-- 分析进度 -->
-    <div v-if="isAnalyzing || analysisStep === 4" class="progress-panel">
+    <div v-if="isAnalyzing || analysisStep === 5" class="progress-panel">
       <div class="progress-bar">
         <div
           class="progress-fill"
@@ -121,20 +173,32 @@
         ></div>
       </div>
       <div class="progress-steps">
-        <div class="step" :class="{ active: analysisStep >= 1, done: analysisStep > 1 }">
+        <div
+          class="step"
+          :class="{ active: analysisStep >= 1, done: analysisStep > 1 }"
+        >
           <span class="step-dot">{{ analysisStep > 1 ? '✓' : '1' }}</span>
           <span>L4生成</span>
         </div>
-        <div class="step" :class="{ active: analysisStep >= 2, done: analysisStep > 2 }">
+        <div
+          class="step"
+          :class="{ active: analysisStep >= 2, done: analysisStep > 2 }"
+        >
           <span class="step-dot">{{ analysisStep > 2 ? '✓' : '2' }}</span>
           <span>追溯</span>
         </div>
-        <div class="step" :class="{ active: analysisStep >= 3, done: analysisStep > 3 }">
-          <span class="step-dot">{{ analysisStep > 3 ? '✓' : '3' }}</span>
+        <div
+          class="step"
+          :class="{ active: analysisStep >= 3, done: analysisStep > 3 || analysisStep === 5 }"
+        >
+          <span class="step-dot">{{ analysisStep > 3 || analysisStep === 5 ? '✓' : '3' }}</span>
           <span>冲突</span>
         </div>
-        <div class="step" :class="{ active: analysisStep >= 4, done: analysisStep > 4 }">
-          <span class="step-dot">{{ analysisStep > 4 ? '✓' : '4' }}</span>
+        <div
+          class="step"
+          :class="{ active: analysisStep >= 4, done: analysisStep === 5 }"
+        >
+          <span class="step-dot">{{ analysisStep === 5 ? '✓' : '4' }}</span>
           <span>分类</span>
         </div>
       </div>
@@ -159,6 +223,8 @@
 import { RefreshCw, Loader2, BarChart3, AlertCircle, CheckCircle2 } from 'lucide-vue-next'
 
 defineProps({
+  activeTab: { type: String, default: 'network' },
+  activeAnalysisLabel: { type: String, default: '追溯' },
   projects: { type: Array, default: () => [] },
   isLoadingProjects: { type: Boolean, default: false },
   selectedProjectId: { type: String, default: '' },
@@ -167,6 +233,9 @@ defineProps({
   contextRuns: { type: Array, default: () => [] },
   isLoadingRuns: { type: Boolean, default: false },
   contextRunId: { type: String, default: '' },
+  analysisRuns: { type: Array, default: () => [] },
+  isLoadingAnalysisRuns: { type: Boolean, default: false },
+  selectedAnalysisRunId: { type: String, default: '' },
   allHighLevelRequirements: { type: Array, default: () => [] },
   lowLevelRequirements: { type: Array, default: () => [] },
   isAnalyzing: { type: Boolean, default: false },
@@ -180,14 +249,18 @@ defineProps({
   classificationResult: { type: Object, default: null },
   analysisNotice: { type: String, default: '' },
   analysisError: { type: String, default: null },
+  conflictConcurrency: { type: Number, default: 3 },
 })
 
 defineEmits([
   'update:selectedProjectId',
   'update:sessionId',
   'update:contextRunId',
+  'update:selectedAnalysisRunId',
+  'update:conflictConcurrency',
   'loadProjects',
   'loadContextRuns',
+  'loadAnalysisRuns',
   'runAnalysis',
 ])
 </script>

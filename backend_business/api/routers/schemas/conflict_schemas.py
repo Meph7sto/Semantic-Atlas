@@ -36,3 +36,30 @@ class ConflictCheckBatchRequest(BaseModel):
     use_thinking_mode: bool = True
     save_to_db: bool = False
     session_id: str | None = None
+
+
+class ConflictRequirementSnapshot(BaseModel):
+    """冲突分析使用的需求快照"""
+
+    requirement_id: NonEmptyStr
+    text: NonEmptyStr
+    level: str = "L1"
+    parent_id: str | None = None
+    source_top_id: str | None = None
+    title: str | None = None
+    component: str | None = None
+    module: str | None = None
+    status: str | None = None
+    priority: str | None = None
+
+
+class ConflictAnalyzeRequest(BaseModel):
+    """批量冲突分析请求"""
+
+    requirements: list[ConflictRequirementSnapshot] = Field(min_length=2)
+    model: str = "deepseek-v4-pro"
+    use_thinking_mode: bool = True
+    save_to_db: bool = False
+    session_id: str | None = None
+    conflict_concurrency: int = Field(default=3, ge=1, le=8)
+    max_candidates_per_bucket: int = Field(default=20, ge=1, le=50)

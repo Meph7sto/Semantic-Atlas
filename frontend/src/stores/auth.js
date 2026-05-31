@@ -9,6 +9,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { authApi } from '@/api/auth'
+import { AUTH_CLEARED_EVENT, clearAuthStorage } from '@/api/request'
 
 export const useAuthStore = defineStore('auth', () => {
   // ========================
@@ -18,6 +19,13 @@ export const useAuthStore = defineStore('auth', () => {
   const token = ref(localStorage.getItem('token'))
   const sessionValidated = ref(false)
   const projectContexts = ref(new Map()) // projectId -> context
+
+  function applyLoggedOutState() {
+    token.value = null
+    user.value = null
+    sessionValidated.value = false
+    clearAllProjectContexts()
+  }
 
   // ========================
   // 计算属性
@@ -226,20 +234,11 @@ export const useAuthStore = defineStore('auth', () => {
   async function logout() {
     try {
       await authApi.logout()
-    } catch (e) {
+    } catch (_e) {
       // ignore
     } finally {
-      // 清除状态
-      token.value = null
-      user.value = null
-      sessionValidated.value = false
-      clearAllProjectContexts()
-
-      // 清除 localStorage
-      localStorage.removeItem('token')
-      localStorage.removeItem('user')
-      localStorage.removeItem('actor')
-      localStorage.removeItem('role')
+      applyLoggedOutState()
+      clearAuthStorage()
     }
   }
 
@@ -276,8 +275,8 @@ export const useAuthStore = defineStore('auth', () => {
         token.value = savedToken
         user.value = JSON.parse(savedUser)
         sessionValidated.value = false
-      } catch (e) {
-        console.error('Failed to parse saved user:', e)
+      } catch (_e) {
+        console.error('Failed to parse saved user:', _e)
         logout()
       }
       return
@@ -307,6 +306,13 @@ export const useAuthStore = defineStore('auth', () => {
   function updateUser(userData) {
     user.value = { ...user.value, ...userData }
     localStorage.setItem('user', JSON.stringify(user.value))
+  }
+
+  if (typeof window !== 'undefined' && !window.__semanticAtlasAuthClearedListenerBound) {
+    window.addEventListener(AUTH_CLEARED_EVENT, () => {
+      applyLoggedOutState()
+    })
+    window.__semanticAtlasAuthClearedListenerBound = true
   }
 
   return {
@@ -345,6 +351,6 @@ export const useAuthStore = defineStore('auth', () => {
     ensureValidSession,
     init,
     updateUser,
+    applyLoggedOutState,
   }
 })
-

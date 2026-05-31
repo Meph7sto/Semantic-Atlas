@@ -594,12 +594,9 @@ const roleCaption = computed(() => {
 });
 
 // 处理退出登录
-const handleLogout = () => {
+const handleLogout = async () => {
   try {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    localStorage.removeItem('actor');
-    localStorage.removeItem('role');
+    await authStore.logout();
   } catch (e) {
     console.error('Failed to clear auth data:', e);
   }

@@ -51,6 +51,7 @@
 
 <script setup>
 import { Tags, BarChart3 } from 'lucide-vue-next'
+import { getClassificationLabelStyle } from '@/utils/classificationLabelStyle'
 
 defineProps({
   classificationResult: { type: Object, default: null },
@@ -58,23 +59,19 @@ defineProps({
 })
 
 function getLabelClass(label) {
-  const styles = { '功能性需求': 'func', '非功能性需求': 'nonfunc' }
-  return styles[label] || ''
+  return getClassificationLabelStyle(label).summaryClass
 }
 
 function getLabelDotClass(label) {
-  const styles = { '功能性需求': 'dot-func', '非功能性需求': 'dot-nonfunc' }
-  return styles[label] || 'dot-default'
+  return getClassificationLabelStyle(label).dotClass
 }
 
 function getLabelHeaderClass(label) {
-  const styles = { '功能性需求': 'header-func', '非功能性需求': 'header-nonfunc' }
-  return styles[label] || ''
+  return getClassificationLabelStyle(label).headerClass
 }
 
 function getLabelBadgeClass(label) {
-  const styles = { '功能性需求': 'badge-func', '非功能性需求': 'badge-nonfunc' }
-  return styles[label] || ''
+  return getClassificationLabelStyle(label).badgeClass
 }
 </script>
 
@@ -121,8 +118,14 @@ function getLabelBadgeClass(label) {
   font-size: 12px;
 }
 
-.summary-item.func { color: #3b82f6; }
-.summary-item.nonfunc { color: #8b5cf6; }
+.summary-item.tone-sky { color: #0369a1; }
+.summary-item.tone-emerald { color: #047857; }
+.summary-item.tone-amber { color: #b45309; }
+.summary-item.tone-violet { color: #7c3aed; }
+.summary-item.tone-rose { color: #be185d; }
+.summary-item.tone-cyan { color: #0f766e; }
+.summary-item.tone-slate { color: #475569; }
+.summary-item.tone-lime { color: #4d7c0f; }
 
 .summary-icon {
   width: 14px;
@@ -144,9 +147,14 @@ function getLabelBadgeClass(label) {
   border-radius: 50%;
 }
 
-.dot-func { background: #3b82f6; }
-.dot-nonfunc { background: #8b5cf6; }
-.dot-default { background: #6b7280; }
+.dot-sky { background: #0ea5e9; }
+.dot-emerald { background: #10b981; }
+.dot-amber { background: #f59e0b; }
+.dot-violet { background: #8b5cf6; }
+.dot-rose { background: #f43f5e; }
+.dot-cyan { background: #06b6d4; }
+.dot-slate { background: #64748b; }
+.dot-lime { background: #84cc16; }
 
 .classification-groups {
   display: grid;
@@ -168,8 +176,14 @@ function getLabelBadgeClass(label) {
   border-bottom: 1px solid rgba(28, 40, 52, 0.08);
 }
 
-.header-func { background: rgba(59, 130, 246, 0.08); }
-.header-nonfunc { background: rgba(139, 92, 246, 0.08); }
+.header-sky { background: rgba(14, 165, 233, 0.1); }
+.header-emerald { background: rgba(16, 185, 129, 0.1); }
+.header-amber { background: rgba(245, 158, 11, 0.1); }
+.header-violet { background: rgba(139, 92, 246, 0.1); }
+.header-rose { background: rgba(244, 63, 94, 0.1); }
+.header-cyan { background: rgba(6, 182, 212, 0.1); }
+.header-slate { background: rgba(100, 116, 139, 0.1); }
+.header-lime { background: rgba(132, 204, 22, 0.1); }
 
 .group-title {
   font-size: 13px;
@@ -183,8 +197,14 @@ function getLabelBadgeClass(label) {
   font-weight: 600;
 }
 
-.badge-func { background: rgba(59, 130, 246, 0.15); color: #2563eb; }
-.badge-nonfunc { background: rgba(139, 92, 246, 0.15); color: #7c3aed; }
+.badge-sky { background: rgba(14, 165, 233, 0.16); color: #0369a1; }
+.badge-emerald { background: rgba(16, 185, 129, 0.16); color: #047857; }
+.badge-amber { background: rgba(245, 158, 11, 0.18); color: #b45309; }
+.badge-violet { background: rgba(139, 92, 246, 0.16); color: #7c3aed; }
+.badge-rose { background: rgba(244, 63, 94, 0.16); color: #be185d; }
+.badge-cyan { background: rgba(6, 182, 212, 0.16); color: #0f766e; }
+.badge-slate { background: rgba(100, 116, 139, 0.16); color: #475569; }
+.badge-lime { background: rgba(132, 204, 22, 0.18); color: #4d7c0f; }
 
 .group-items {
   max-height: 300px;

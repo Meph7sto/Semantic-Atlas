@@ -1,4 +1,9 @@
-import { api } from './request'
+import {
+  api,
+  extractErrorMessageFromPayload,
+  handleUnauthorized,
+  readErrorPayload,
+} from './request'
 
 const buildAuthHeaders = () => {
   const headers = {
@@ -90,19 +95,16 @@ export const sessionControllerChatApi = {
     })
 
     if (!response.ok) {
-      let detail = ''
-      try {
-        const errorPayload = await response.json()
-        const responseDetail = errorPayload?.detail
-        if (typeof responseDetail === 'string') {
-          detail = responseDetail
-        } else if (Array.isArray(responseDetail) && responseDetail.length) {
-          detail = responseDetail.map((item) => item?.msg || JSON.stringify(item)).join('; ')
-        }
-      } catch (_err) {
-        detail = ''
+      const errorPayload = await readErrorPayload(response)
+
+      if (response.status === 401) {
+        handleUnauthorized()
       }
-      throw new Error(detail || `HTTP error! status: ${response.status}`)
+
+      throw new Error(
+        extractErrorMessageFromPayload(errorPayload) ||
+          `HTTP error! status: ${response.status}`,
+      )
     }
 
     return response.body

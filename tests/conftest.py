@@ -79,6 +79,39 @@ def _install_psycopg2_stub() -> None:
 _install_psycopg2_stub()
 
 
+def _install_aiohttp_stub() -> None:
+    try:
+        import aiohttp  # noqa: F401
+        return
+    except ModuleNotFoundError:
+        pass
+
+    aiohttp = types.ModuleType("aiohttp")
+
+    class ClientTimeout:  # pragma: no cover
+        def __init__(self, *args: Any, **kwargs: Any):
+            self.args = args
+            self.kwargs = kwargs
+
+    class ClientSession:  # pragma: no cover
+        def __init__(self, *args: Any, **kwargs: Any):
+            self.args = args
+            self.kwargs = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    aiohttp.ClientTimeout = ClientTimeout  # type: ignore[attr-defined]
+    aiohttp.ClientSession = ClientSession  # type: ignore[attr-defined]
+    sys.modules["aiohttp"] = aiohttp
+
+
+_install_aiohttp_stub()
+
+
 def _transformers_import_ok() -> bool:
     try:
         import transformers  # noqa: F401
@@ -115,39 +148,16 @@ def pytest_ignore_collect(collection_path, config):  # type: ignore[no-untyped-d
         basename = getattr(collection_path, "name")
     basename = str(basename)
 
-    # Some tests require optional modules that may not exist in this checkout.
-    optional_modules_by_test = {
-        "test_api_provider.py": ["core.config"],
-        "test_asr_service_decode_helpers.py": ["backend_inference_ASR"],
-        "test_fastapi_asr_asr_contract.py": ["backend_inference_ASR"],
-        "test_fastapi_asr_contract.py": ["backend_inference.routers.asr"],
-    }
-    if basename in optional_modules_by_test:
-        import importlib
-
-        for module_name in optional_modules_by_test[basename]:
-            try:
-                importlib.import_module(module_name)
-            except (ImportError, ModuleNotFoundError):
-                return True
-
     # These tests pull in backend_inference local HF engine (now in tests/inference/).
     if basename in {
         "test_tool_calls.py",
         "test_async_engine.py",
-        "test_api_provider.py",
         "test_conflict.py",
         "test_traceability.py",
         "test_deepseek_thinking_tools.py",  # Also requires transformers
-        "test_asr_service_decode_helpers.py",  # Requires backend_inference_ASR
     }:
         if not _HAS_TRANSFORMERS:
             return True
-
-    # Also skip the ad-hoc postgres script test when psycopg2 isn't available.
-    # This is now in tests/fixtures/test_postgres.py
-    if basename == "test_postgres.py":
-        return True
 
     return False
 

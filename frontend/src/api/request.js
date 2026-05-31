@@ -1,10 +1,16 @@
 import axios from 'axios'
 
-function clearAuthStorage() {
+export const AUTH_CLEARED_EVENT = 'semantic-atlas:auth-cleared'
+
+export function clearAuthStorage() {
     localStorage.removeItem('token')
     localStorage.removeItem('user')
     localStorage.removeItem('actor')
     localStorage.removeItem('role')
+
+    if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(AUTH_CLEARED_EVENT))
+    }
 }
 
 function buildUnauthorizedRedirectTarget() {
@@ -21,6 +27,46 @@ function buildUnauthorizedRedirectTarget() {
     }
 
     return `/beta/login?${query}`
+}
+
+export function handleUnauthorized({ redirect = true } = {}) {
+    clearAuthStorage()
+
+    if (!redirect) {
+        return
+    }
+
+    const target = buildUnauthorizedRedirectTarget()
+    if (target) {
+        window.location.assign(target)
+    }
+}
+
+export function extractErrorMessage(detail) {
+    if (typeof detail === 'string' && detail.trim()) {
+        return detail
+    }
+
+    if (Array.isArray(detail) && detail.length > 0) {
+        return detail.map((item) => item?.msg || JSON.stringify(item)).join('; ')
+    }
+
+    return ''
+}
+
+export function extractErrorMessageFromPayload(payload) {
+    return (
+        extractErrorMessage(payload?.detail) ||
+        (typeof payload?.error === 'string' && payload.error.trim() ? payload.error : '')
+    )
+}
+
+export async function readErrorPayload(response) {
+    try {
+        return await response.json()
+    } catch {
+        return null
+    }
 }
 
 // 约定：
@@ -44,20 +90,12 @@ api.interceptors.response.use(
     (err) => {
         // 处理 401 未授权错误，清除本地存储的认证信息
         if (err.response?.status === 401) {
-            clearAuthStorage()
-
-            if (err.config?.skipAuthRedirect !== true) {
-                const target = buildUnauthorizedRedirectTarget()
-                if (target) {
-                    window.location.assign(target)
-                }
-            }
+            handleUnauthorized({ redirect: err.config?.skipAuthRedirect !== true })
         }
         const detail = err.response?.data?.detail
-        if (typeof detail === 'string' && detail.trim()) {
-            err.message = detail
-        } else if (Array.isArray(detail) && detail.length > 0) {
-            err.message = detail.map((item) => item?.msg || JSON.stringify(item)).join('; ')
+        const message = extractErrorMessage(detail)
+        if (message) {
+            err.message = message
         }
         return Promise.reject(err)
     }

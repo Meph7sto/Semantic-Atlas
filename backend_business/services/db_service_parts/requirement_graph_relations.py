@@ -53,15 +53,14 @@ class RequirementGraphRelationsMixin:
 
         with self._connect() as conn:
             with conn.cursor() as cur:
-                if normalized_snapshot_status == "final":
-                    cur.execute(
-                        f"""
-                        UPDATE requirement_graph_relations
-                        SET is_active = FALSE, invalidated_at = %s
-                        WHERE {where_sql} AND snapshot_status = 'final'
-                        """,
-                        (now, *where_params),
-                    )
+                cur.execute(
+                    f"""
+                    UPDATE requirement_graph_relations
+                    SET is_active = FALSE, invalidated_at = %s
+                    WHERE {where_sql}
+                    """,
+                    (now, *where_params),
+                )
                 for edge in normalized_edges:
                     cur.execute(
                         """
@@ -143,27 +142,13 @@ class RequirementGraphRelationsMixin:
                            is_active, created_at::text AS created_at,
                            invalidated_at::text AS invalidated_at
                     FROM requirement_graph_relations
-                    WHERE {where_sql} AND snapshot_status = 'final'
+                    WHERE {where_sql}
                     ORDER BY id DESC
                     LIMIT 1
                     """,
                     where_params,
                 )
                 row = cur.fetchone()
-                if not row:
-                    cur.execute(
-                        f"""
-                        SELECT snapshot_id, run_id, snapshot_status, project_id, session_id, relation_mode,
-                               is_active, created_at::text AS created_at,
-                               invalidated_at::text AS invalidated_at
-                        FROM requirement_graph_relations
-                        WHERE {where_sql} AND snapshot_status = 'running'
-                        ORDER BY id DESC
-                        LIMIT 1
-                        """,
-                        where_params,
-                    )
-                    row = cur.fetchone()
                 if not row:
                     return None
         return self.get_requirement_graph_snapshot_by_id(row["snapshot_id"])

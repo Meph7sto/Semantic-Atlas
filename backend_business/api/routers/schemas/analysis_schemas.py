@@ -2,7 +2,7 @@
 Analysis API Pydantic 请求模型
 """
 
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -131,6 +131,34 @@ class TriggerAnalysisRequest(BaseModel):
     )
     @classmethod
     def normalize_optional_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = value.strip()
+        return text or None
+
+
+class SaveRequirementsAnalysisRunRequest(BaseModel):
+    session_id: str = Field(min_length=1)
+    project_id: Optional[str] = None
+    context_run_id: Optional[str] = None
+    high_level_requirements: list[Dict[str, Any]] = Field(default_factory=list)
+    low_level_requirements: list[Dict[str, Any]] = Field(default_factory=list)
+    trace_result: Dict[str, Any] = Field(default_factory=dict)
+    conflict_result: Dict[str, Any] = Field(default_factory=dict)
+    classification_result: Dict[str, Any] = Field(default_factory=dict)
+    meta: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("session_id")
+    @classmethod
+    def validate_session_id(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("session_id 不能为空")
+        return text
+
+    @field_validator("project_id", "context_run_id")
+    @classmethod
+    def normalize_optional_ids(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
         text = value.strip()

@@ -3,15 +3,19 @@
 对应历史蓝图: conflict_bp (url_prefix="/api/v2/conflict")
 """
 
+import asyncio
+
 from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 
 from backend_business.api.http.errors import ErrorResponse
 from backend_business.api.routers.schemas.conflict_schemas import (
+    ConflictAnalyzeRequest,
     ConflictCheckBatchRequest,
     ConflictCheckRequest,
 )
 from backend_business.services.ai_proxy import ai_proxy
+from backend_business.services.conflict_analysis_service import ConflictAnalysisService
 from backend_business.services.db_service import db_service
 
 router = APIRouter(prefix="/api/v2/conflict", tags=["conflict"])
@@ -22,6 +26,9 @@ def _normalize_session_id(session_id: str | None) -> str | None:
         return None
     normalized = session_id.strip()
     return normalized or None
+
+
+conflict_analysis_service = ConflictAnalysisService(ai_proxy)
 
 
 @router.post("/check")
@@ -141,6 +148,58 @@ def check_conflict_batch(req: ConflictCheckBatchRequest):
             "data": results,
             "record_ids": record_ids,
             "total": len(results),
+        }
+    except ErrorResponse:
+        raise
+    except Exception as exc:
+        raise ErrorResponse(str(exc), 500)
+
+
+@router.post("/analyze")
+def analyze_conflicts(req: ConflictAnalyzeRequest):
+    """
+    正确的同级需求冲突检测入口。
+
+    - 不依赖 trace relation
+    - 先按同级/同父需求分桶生成候选对
+    - 再并发执行语义裁决
+    """
+    session_id = _normalize_session_id(req.session_id)
+
+    try:
+        result = asyncio.run(
+            conflict_analysis_service.analyze(
+                req.requirements,
+                model=req.model,
+                use_thinking_mode=req.use_thinking_mode,
+                conflict_concurrency=req.conflict_concurrency,
+                max_candidates_per_bucket=req.max_candidates_per_bucket,
+            )
+        )
+
+        record_ids = []
+        if req.save_to_db and result.get("conflicts"):
+            if db_service is None:
+                raise ErrorResponse("数据库服务未初始化", 500)
+            conflicts_to_save = [
+                {
+                    "requirement_a": item.get("requirement_a_text", ""),
+                    "requirement_b": item.get("requirement_b_text", ""),
+                    "is_conflict": bool(item.get("is_conflict", False)),
+                    "raw_response": item.get("raw_response", ""),
+                    "data": item,
+                }
+                for item in result["conflicts"]
+            ]
+            record_ids = db_service.save_conflict_batch(
+                session_id=session_id,
+                conflicts=conflicts_to_save,
+            )
+
+        return {
+            "success": True,
+            "data": result,
+            "record_ids": record_ids,
         }
     except ErrorResponse:
         raise
