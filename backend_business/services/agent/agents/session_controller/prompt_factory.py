@@ -7,13 +7,14 @@ from typing import Any
 from backend_business.services.agent.execution.prompt_interface import (
     PromptBuilderProtocol,
 )
+from backend_business.services.agent.runtime.agent_registry import (
+    BUILTIN_AGENT_REGISTRY,
+    AgentRegistry,
+)
 
 from .graph_prompt_builders import (
-    SessionControllerClassificationDelegatePromptBuilder,
-    SessionControllerConflictDelegatePromptBuilder,
     SessionControllerDecisionGraphPromptBuilder,
     SessionControllerReplyGraphPromptBuilder,
-    SessionControllerRequirementDelegatePromptBuilder,
 )
 
 
@@ -23,6 +24,7 @@ def create_session_controller_prompt_builder(
     subgraph: Any,
     scratchpad: Any,
     context: dict[str, Any],
+    agent_registry: AgentRegistry | None = None,
 ) -> PromptBuilderProtocol | None:
     """Resolve SessionController-specific graph prompt builders.
 
@@ -30,16 +32,19 @@ def create_session_controller_prompt_builder(
     to import or understand SessionController prompt-builder names.
     """
     _ = subgraph, scratchpad, context
+    registry = agent_registry or BUILTIN_AGENT_REGISTRY
     if prompt_builder_kind == "session_controller_decision":
-        return SessionControllerDecisionGraphPromptBuilder()
+        return SessionControllerDecisionGraphPromptBuilder(agent_registry=registry)
     if prompt_builder_kind == "session_controller_final_reply":
         return SessionControllerReplyGraphPromptBuilder(reply_kind="final")
     if prompt_builder_kind == "session_controller_suspend_reply":
         return SessionControllerReplyGraphPromptBuilder(reply_kind="suspend")
-    if prompt_builder_kind == "session_controller_requirement_delegate":
-        return SessionControllerRequirementDelegatePromptBuilder()
-    if prompt_builder_kind == "session_controller_conflict_delegate":
-        return SessionControllerConflictDelegatePromptBuilder()
-    if prompt_builder_kind == "session_controller_classification_delegate":
-        return SessionControllerClassificationDelegatePromptBuilder()
+    for definition in registry.delegated_definitions():
+        delegation = definition.delegation
+        if (
+            delegation is not None
+            and delegation.prompt_builder_kind == prompt_builder_kind
+            and definition.delegated_prompt_builder_factory is not None
+        ):
+            return definition.delegated_prompt_builder_factory()
     return None

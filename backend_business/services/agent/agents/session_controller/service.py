@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Generator
+from functools import partial
 from typing import Any
 
 from backend_business.config import settings
@@ -23,6 +24,9 @@ from backend_business.services.agent.runtime.agent_registry import (
     SESSION_CONTROLLER_DEFINITION,
     AgentRegistry,
 )
+from backend_business.services.agent.runtime.agent_execution_service import (
+    AgentExecutionService,
+)
 from backend_business.services.agent.runtime.binding_bootstrap import ensure_runtime_bindings
 from backend_business.services.agent.runtime.session_graph_store import AgentSessionGraphStore
 from backend_business.services.agent.runtime.scratchpad import Scratchpad
@@ -40,24 +44,9 @@ from .tools import SessionControllerTools
 
 logger = logging.getLogger(__name__)
 
-_NORMAL_CONVERSATION_TOOL_TO_MODE = {
-    "invoke_requirement_agent": SessionControllerDecisionMode.DELEGATE_REQUIREMENT,
-    "invoke_conflict_detection": SessionControllerDecisionMode.DELEGATE_CONFLICT,
-    "invoke_requirement_classification_agent": SessionControllerDecisionMode.DELEGATE_CLASSIFICATION,
-    "list_requirements": SessionControllerDecisionMode.BROWSE,
-    "search_requirements": SessionControllerDecisionMode.BROWSE,
-}
-
-_NORMAL_CONVERSATION_TOOL_TO_AGENT = {
-    "invoke_requirement_agent": "requirement_agent",
-    "invoke_conflict_detection": "conflict_detection",
-    "invoke_requirement_classification_agent": "requirement_classification_agent",
-}
-
-
 class SessionControllerService:
-    MAX_TOOL_CALL_ROUNDS = 8
-    AGENT_TYPE = "session_controller"
+    MAX_TOOL_CALL_ROUNDS = SESSION_CONTROLLER_DEFINITION.max_tool_call_rounds
+    AGENT_TYPE = SESSION_CONTROLLER_DEFINITION.agent_type
 
     def __init__(
         self,
@@ -78,9 +67,26 @@ class SessionControllerService:
             settings.POSTGRES_DSN
         )
         self.ai_proxy = ai_proxy_client or ai_proxy
-        self.prompt_builder = prompt_builder or SessionControllerPromptBuilder()
         self.tools = tools
-        self.agent_registry = agent_registry or BUILTIN_AGENT_REGISTRY
+        self.agent_registry = (
+            agent_registry
+            or getattr(tools, "agent_registry", None)
+            or BUILTIN_AGENT_REGISTRY
+        )
+        self.prompt_builder = prompt_builder or SessionControllerPromptBuilder(
+            agent_registry=self.agent_registry
+        )
+        self._normal_conversation_tool_to_mode = {
+            "list_requirements": SessionControllerDecisionMode.BROWSE,
+            "search_requirements": SessionControllerDecisionMode.BROWSE,
+            **{
+                tool_name: SessionControllerDecisionMode(mode)
+                for tool_name, mode in self.agent_registry.delegation_tool_to_mode().items()
+            },
+        }
+        self._normal_conversation_tool_to_agent = (
+            self.agent_registry.delegation_tool_to_agent()
+        )
         self._session_graph_store = AgentSessionGraphStore(
             chat_storage=chat_storage,
             execution_graph_service=self.execution_graph_service,
@@ -88,6 +94,11 @@ class SessionControllerService:
             context_mode_normalizer=lambda value: value or "full",
             create_or_get_prompt_update_policy="never",
             create_or_get_context_update_policy="never",
+        )
+        self._execution_service = AgentExecutionService(
+            definition=SESSION_CONTROLLER_DEFINITION,
+            chat_storage=chat_storage,
+            session_graph_store=self._session_graph_store,
         )
 
     def _resolve_execution_mode(self, execution_mode: str | None) -> str:
@@ -147,6 +158,7 @@ class SessionControllerService:
         *,
         graph_id: str,
         prev_graph_id: str | None,
+        task: str,
         updated_by: str,
     ) -> None:
         if not prev_graph_id:
@@ -160,24 +172,21 @@ class SessionControllerService:
 
         previous_graph = self.execution_graph_service.get_execution_graph(prev_graph_id)
         previous_meta = (previous_graph.get("meta_json") or {}) if previous_graph else {}
-        inherited_snapshot = scratchpad_service.load(prev_graph_id).snapshot_all()
         inherited_requirement_id = previous_meta.get("resolved_requirement_id")
-        if not inherited_snapshot and not inherited_requirement_id:
-            return
-
-        meta_patch: dict[str, Any] = {}
-        if inherited_snapshot:
-            scratchpad_service.save_snapshot(
-                graph_id,
-                inherited_snapshot,
-                updated_by=updated_by,
-            )
+        scratchpad_service.inherit_relevant_snapshot(
+            graph_id,
+            previous_graph_id=prev_graph_id,
+            task="\n".join(
+                str(part)
+                for part in (inherited_requirement_id, task)
+                if part
+            ),
+            updated_by=updated_by,
+        )
         if inherited_requirement_id:
-            meta_patch["resolved_requirement_id"] = inherited_requirement_id
-        if meta_patch:
             self.execution_graph_service.patch_graph_meta(
                 graph_id,
-                meta_patch,
+                {"resolved_requirement_id": inherited_requirement_id},
                 updated_by=updated_by,
             )
 
@@ -275,9 +284,27 @@ class SessionControllerService:
             },
             source_subgraph=f"session_turn_{turn_index}",
             readonly=True,
+            importance=0.95,
+            task_refs=[
+                str(item)
+                for item in (
+                    context.get("resolved_requirement_id"),
+                    *(context.get("dispatched_agents") or []),
+                )
+                if item
+            ],
         )
         context["_scratchpad"] = scratchpad
-        context["_scratchpad_prompt_text"] = scratchpad.format_for_prompt()
+        compilation = scratchpad.compile_for_prompt(
+            task="\n".join(
+                str(part)
+                for part in (context.get("resolved_requirement_id"), user_message)
+                if part
+            ),
+            observation_key=f"session_turn:{turn_index}",
+        )
+        context["_scratchpad_prompt_text"] = compilation.text
+        context["_scratchpad_compilation"] = compilation.to_metrics()
         scratchpad_service = ScratchpadService(
             execution_graph_service=self.execution_graph_service,
         )
@@ -401,6 +428,19 @@ class SessionControllerService:
     def get_graph(self, graph_id: str) -> dict[str, Any] | None:
         return self._session_graph_store.get_graph(graph_id)
 
+    def persist_user_message(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        content: str,
+    ) -> dict[str, Any]:
+        return self._execution_service.persist_user(
+            session_id=session_id,
+            user_id=user_id,
+            content=content,
+        )
+
     @staticmethod
     def _resolve_structured_assistant_reply(
         loop_result: SessionControllerLoopResult,
@@ -437,10 +477,10 @@ class SessionControllerService:
         raw_mode = str(normalized.get("mode") or "").strip().lower()
         if raw_mode == "clarification":
             raw_mode = SessionControllerDecisionMode.CLARIFY.value
-        mode = next(
-            (item for item in SessionControllerDecisionMode if item.value == raw_mode),
-            SessionControllerDecisionMode.ERROR,
-        )
+        try:
+            mode = SessionControllerDecisionMode(raw_mode)
+        except ValueError:
+            mode = SessionControllerDecisionMode.ERROR
         raw_suspend_reason = str(normalized.get("suspend_reason") or "").strip().lower()
         suspend_reason = next(
             (item for item in SuspendReason if item.value == raw_suspend_reason),
@@ -523,9 +563,11 @@ class SessionControllerService:
             source_subgraphs={
                 "sg_controller_intake",
                 "sg_controller_resume_intake",
-                "sg_invoke_requirement_agent",
-                "sg_invoke_conflict_detection",
-                "sg_invoke_requirement_classification_agent",
+                *(
+                    f"sg_{definition.delegation.tool_name}"
+                    for definition in self.agent_registry.delegated_definitions()
+                    if definition.delegation is not None
+                ),
             },
         )
         try:
@@ -556,8 +598,8 @@ class SessionControllerService:
             context.setdefault("last_approval_result", loop_result.approval_result)
         return loop_result, context, assistant_reply
 
-    @staticmethod
     def _load_normal_conversation_graph_mode_state(
+        self,
         *,
         result: Any,
     ) -> tuple[SessionControllerLoopResult, dict[str, Any], str]:
@@ -582,11 +624,11 @@ class SessionControllerService:
         last_tool_result = (
             last_tool_entry.get("result") if isinstance(last_tool_entry.get("result"), dict) else {}
         )
-        mode = _NORMAL_CONVERSATION_TOOL_TO_MODE.get(
+        mode = self._normal_conversation_tool_to_mode.get(
             last_tool_name,
             SessionControllerDecisionMode.DIRECT_REPLY,
         )
-        delegated_agent = _NORMAL_CONVERSATION_TOOL_TO_AGENT.get(last_tool_name)
+        delegated_agent = self._normal_conversation_tool_to_agent.get(last_tool_name)
         approval_pending = bool(last_tool_result.get("approval_pending"))
         approval_result = (
             context.get("last_approval_result")
@@ -760,31 +802,20 @@ class SessionControllerService:
         skip_user_message_creation: bool = False,
     ) -> Generator[dict[str, Any], None, None]:
         self._ensure_execution_mode_enabled("graph")
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-
-        session = self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
-        if not skip_user_message_creation:
-            user_record = self.chat_storage.create_message(
-                session_id=session_id,
-                user_id=user_id,
-                role="user",
-                content=user_message,
-                metadata={},
-                is_read=True,
-            )
-            self.chat_storage.update_session(session_id=session_id)
-            yield {"event": "user_message", "data": user_record}
-
-        graph_target = self._resolve_session_graph_target(session=session, project_id=project_id)
-        recorder = SessionControllerGraphRecorder(
-            execution_graph_service=self.execution_graph_service,
-            project_id=project_id,
-            user_id=user_id,
+        turn = self._execution_service.begin_turn(
             session_id=session_id,
+            user_id=user_id,
+            project_id=project_id,
             user_message=user_message,
-            graph_id=graph_target["graph_id"],
-            prev_graph_id=graph_target["prev_graph_id"],
+            create_user_message=not skip_user_message_creation,
+        )
+        if turn.user_record is not None:
+            yield {"event": "user_message", "data": turn.user_record}
+
+        recorder = self._execution_service.create_recorder(
+            turn=turn,
+            recorder_factory=SessionControllerGraphRecorder,
+            execution_graph_service=self.execution_graph_service,
             task_context={
                 "delegated_max_tool_call_rounds": delegated_max_tool_call_rounds,
                 "delegated_prompt_payload_format": "markdown",
@@ -794,19 +825,20 @@ class SessionControllerService:
         )
         self._inherit_session_scratchpad(
             graph_id=recorder.graph_id,
-            prev_graph_id=graph_target["prev_graph_id"],
+            prev_graph_id=turn.graph_target["prev_graph_id"],
+            task=user_message,
             updated_by=user_id,
-        )
-        self.chat_storage.update_session(
-            session_id=session_id,
-            active_graph_id=recorder.graph_id,
         )
         self._ensure_graph_runtime_bindings()
         yield {"event": "graph", "data": {"graph_id": recorder.graph_id}}
 
         executor = GraphExecutor(
             experience_orchestrator=ExperienceOrchestrator(),
-            prompt_builder_factory=create_session_controller_prompt_builder,
+            prompt_builder_factory=partial(
+                create_session_controller_prompt_builder,
+                agent_registry=self.agent_registry,
+            ),
+            agent_registry=self.agent_registry,
         )
         assistant_content = ""
         loop_result = SessionControllerLoopResult(mode=SessionControllerDecisionMode.ERROR)
@@ -874,13 +906,7 @@ class SessionControllerService:
                     runtime_container_role_type="agent",
                 )
 
-            while True:
-                try:
-                    event = next(gen)
-                except StopIteration as stop:
-                    result = stop.value
-                    break
-                yield event
+            result = yield from self._execution_service.stream_generator(gen)
 
             if (
                 isinstance(getattr(result, "metadata", None), dict)
@@ -949,10 +975,8 @@ class SessionControllerService:
                 updated_by=user_id,
             )
 
-            assistant_message = self.chat_storage.create_message(
-                session_id=session_id,
-                user_id=user_id,
-                role="assistant",
+            assistant_message = self._execution_service.persist_assistant(
+                turn=turn,
                 content=assistant_content,
                 metadata={
                     "graph_id": recorder.graph_id,
@@ -985,13 +1009,11 @@ class SessionControllerService:
                 status="failed",
                 updated_by=user_id,
             )
-            error_message = self.chat_storage.create_message(
-                session_id=session_id,
-                user_id=user_id,
-                role="assistant",
-                content=error_text,
-                metadata={"error": True, "graph_id": recorder.graph_id, "execution_mode": "graph"},
-                is_read=False,
+            error_message = self._execution_service.persist_error(
+                turn=turn,
+                graph_id=recorder.graph_id,
+                error=error_text,
+                metadata={"execution_mode": "graph"},
             )
             yield {
                 "event": "error",
@@ -1031,21 +1053,11 @@ class SessionControllerService:
 
 def _make_session_controller_service() -> SessionControllerService:
     """Deferred factory to avoid circular imports at module load time."""
-    from backend_business.services.agent.agents.conflict_detection_agent import (
-        conflict_detection_agent_service,
-    )
-    from backend_business.services.agent.agents.requirement_agent import (
-        requirement_agent_chat_service,
-    )
-    from backend_business.services.agent.agents.requirement_classification_agent import (
-        requirement_classification_agent_service,
-    )
-
+    agent_services = BUILTIN_AGENT_REGISTRY.build_application_services()
     tools = SessionControllerTools(
         requirements_service=RequirementsManageService(settings.POSTGRES_DSN),
-        requirement_agent_service=requirement_agent_chat_service,
-        conflict_agent_service=conflict_detection_agent_service,
-        requirement_classification_agent_service=requirement_classification_agent_service,
+        agent_registry=BUILTIN_AGENT_REGISTRY,
+        agent_services=agent_services,
     )
     return SessionControllerService(
         chat_storage=ai_chat_service,

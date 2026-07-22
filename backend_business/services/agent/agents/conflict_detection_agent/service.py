@@ -16,6 +16,9 @@ from backend_business.services.agent.execution.graph_executor import (
 from backend_business.services.agent.execution_graph_service import ExecutionGraphService
 from backend_business.services.agent.experience import ExperienceOrchestrator
 from backend_business.services.agent.runtime.agent_registry import BUILTIN_AGENT_REGISTRY
+from backend_business.services.agent.runtime.agent_execution_service import (
+    AgentExecutionService,
+)
 from backend_business.services.agent.runtime.binding_bootstrap import (
     ensure_runtime_bindings,
 )
@@ -34,8 +37,8 @@ logger = logging.getLogger(__name__)
 
 
 class ConflictDetectionAgentService:
-    MAX_TOOL_CALL_ROUNDS = 6
-    AGENT_TYPE = "conflict_detection_agent"
+    MAX_TOOL_CALL_ROUNDS = STANDALONE_CONFLICT_DETECTION_AGENT_DEFINITION.max_tool_call_rounds
+    AGENT_TYPE = STANDALONE_CONFLICT_DETECTION_AGENT_DEFINITION.agent_type
 
     def __init__(
         self,
@@ -66,6 +69,11 @@ class ConflictDetectionAgentService:
             agent_type=self.AGENT_TYPE,
             create_or_get_prompt_update_policy="truthy",
             create_or_get_context_update_policy="allowed",
+        )
+        self._execution_service = AgentExecutionService(
+            definition=STANDALONE_CONFLICT_DETECTION_AGENT_DEFINITION,
+            chat_storage=chat_storage,
+            session_graph_store=self._session_graph_store,
         )
 
     def _ensure_graph_runtime_bindings(self) -> None:
@@ -370,46 +378,25 @@ class ConflictDetectionAgentService:
         use_thinking_mode: bool = True,
     ) -> Generator[dict[str, Any], None, None]:
         """Drive the execution-graph engine (GraphExecutor internal judge)."""
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-
-        session = self.chat_storage._ensure_session_access(
+        turn = self._execution_service.begin_turn(
             session_id=session_id,
             user_id=user_id,
-        )
-        user_record = self.chat_storage.create_message(
-            session_id=session_id,
-            user_id=user_id,
-            role="user",
-            content=user_message,
-            metadata={
+            project_id=project_id,
+            user_message=user_message,
+            user_metadata={
                 "model": model,
                 "use_thinking_mode": use_thinking_mode,
             },
-            is_read=True,
         )
-        self.chat_storage.update_session(session_id=session_id)
-        yield {"event": "user_message", "data": user_record}
+        yield {"event": "user_message", "data": turn.user_record}
 
         candidate_templates = self._load_candidate_templates(project_id)
 
         # --- GraphExecutor pipeline ------------------------------------------
-        graph_target = self._resolve_session_graph_target(
-            session=session,
-            project_id=project_id,
-        )
-        recorder = ConflictDetectionGraphRecorder(
+        recorder = self._execution_service.create_recorder(
+            turn=turn,
+            recorder_factory=ConflictDetectionGraphRecorder,
             execution_graph_service=self.execution_graph_service,
-            project_id=project_id,
-            user_id=user_id,
-            session_id=session_id,
-            user_message=user_message,
-            graph_id=graph_target["graph_id"],
-            prev_graph_id=graph_target["prev_graph_id"],
-        )
-        self.chat_storage.update_session(
-            session_id=session_id,
-            active_graph_id=recorder.graph_id,
         )
         self._ensure_graph_runtime_bindings()
         yield {"event": "graph", "data": {"graph_id": recorder.graph_id}}
@@ -418,6 +405,7 @@ class ConflictDetectionAgentService:
             experience_orchestrator=ExperienceOrchestrator(),
         )
         assistant_content = ""
+        assistant_message: dict[str, Any] | None = None
 
         try:
             gen = executor.execute(
@@ -437,13 +425,9 @@ class ConflictDetectionAgentService:
                 runtime_container_label="Conflict Detection Agent",
                 runtime_container_role_type="agent",
             )
-            result: ExecutionResult | None = None
-            try:
-                while True:
-                    event = next(gen)
-                    yield event
-            except StopIteration as stop:
-                result = stop.value
+            result: ExecutionResult | None = yield from self._execution_service.stream_generator(
+                gen
+            )
 
             if result is None:
                 result = ExecutionResult(
@@ -467,22 +451,25 @@ class ConflictDetectionAgentService:
                     "reply_text": assistant_content,
                 },
             }
+            assistant_message = self._execution_service.persist_assistant(
+                turn=turn,
+                content=assistant_content,
+                metadata={"graph_id": recorder.graph_id, "execution_mode": "graph"},
+            )
         except Exception as exc:
             logger.error("stream_graph_executor_reply 异常: %s", exc, exc_info=True)
             assistant_content = f"执行图模式执行失败: {exc}"
+            assistant_message = self._execution_service.persist_error(
+                turn=turn,
+                graph_id=recorder.graph_id,
+                error=assistant_content,
+                metadata={"execution_mode": "graph"},
+            )
             yield {
                 "event": "error",
                 "data": {"error": assistant_content, "graph_id": recorder.graph_id},
             }
 
-        assistant_message = self.chat_storage.create_message(
-            session_id=session_id,
-            user_id=user_id,
-            role="assistant",
-            content=assistant_content,
-            metadata={"graph_id": recorder.graph_id, "execution_mode": "graph"},
-            is_read=False,
-        )
         yield {"event": "assistant_message", "data": assistant_message}
 
     def _stream_irrelevant_reply(

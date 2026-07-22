@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
+from backend_business.services.agent.runtime.tool_scheduling import (
+    ToolExecutionMetadata,
+)
 from backend_business.services.requirements_manage_service import RequirementsManageService
 
 
@@ -149,6 +152,36 @@ class ConflictDetectionTools:
                 },
             },
         ]
+
+    @staticmethod
+    def get_tool_execution_metadata(
+        tool_name: str,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> ToolExecutionMetadata:
+        project_id = str(context.get("project_id") or "unknown").strip()
+        resource_key = f"project:{project_id}"
+        requirement_id = str(arguments.get("requirement_id") or "").strip()
+        if requirement_id:
+            resource_key = f"requirement:{project_id}:{requirement_id}"
+        elif tool_name == "check_conflict":
+            requirement_ids = sorted(
+                str(arguments.get(key) or "").strip()
+                for key in ("requirement_id_a", "requirement_id_b")
+            )
+            resource_key = f"conflict:{project_id}:{':'.join(requirement_ids)}"
+        if tool_name in {
+            "list_requirements",
+            "get_requirement_detail",
+            "check_conflict",
+        }:
+            return ToolExecutionMetadata(
+                read_only=True,
+                idempotent=True,
+                resource_key=resource_key,
+                concurrency_group="requirements",
+            )
+        return ToolExecutionMetadata()
 
     def execute(
         self,

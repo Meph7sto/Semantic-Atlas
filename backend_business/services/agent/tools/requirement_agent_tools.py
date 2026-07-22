@@ -6,6 +6,9 @@ import json
 import logging
 from typing import Any, Callable
 
+from backend_business.services.agent.runtime.tool_scheduling import (
+    ToolExecutionMetadata,
+)
 from backend_business.services.requirements_manage_service import (
     RequirementsManageService,
     normalize_priority,
@@ -119,6 +122,40 @@ def _summarize_requirement_record(item: dict[str, Any] | None) -> dict[str, Any]
     }
 
 
+def _format_requirement_for_traceability(summary: dict[str, Any]) -> str:
+    """Build stable source text for the traceability service from stored data."""
+
+    requirement_id = str(summary.get("requirement_id") or "").strip()
+    sections = [f"需求 ID: {requirement_id}"] if requirement_id else []
+    for label, field_name in (
+        ("标题", "title"),
+        ("描述", "description"),
+        ("优先级", "priority"),
+    ):
+        value = str(summary.get(field_name) or "").strip()
+        if value:
+            sections.append(f"{label}: {value}")
+
+    acceptance_criteria = summary.get("acceptance_criteria")
+    if isinstance(acceptance_criteria, (list, tuple, set)):
+        criteria = [
+            str(item).strip()
+            for item in acceptance_criteria
+            if str(item or "").strip()
+        ]
+        if criteria:
+            sections.append("验收标准:\n" + "\n".join(f"- {item}" for item in criteria))
+    elif isinstance(acceptance_criteria, dict):
+        sections.append(
+            "验收标准: " + json.dumps(acceptance_criteria, ensure_ascii=False)
+        )
+    else:
+        criteria_text = str(acceptance_criteria or "").strip()
+        if criteria_text:
+            sections.append(f"验收标准: {criteria_text}")
+    return "\n".join(sections)
+
+
 def _format_approval_creation_error(exc: Exception) -> str:
     message = str(exc).strip() or "未知错误"
     return f"无法发起需求修改审批：{message}"
@@ -134,11 +171,15 @@ class RequirementAgentTools:
         actor_query_fn: Callable[[Any, str], dict[str, Any]],
         actor_write_fn: Callable[[Any, str, dict[str, Any]], dict[str, Any]],
         approval_service: RequirementChangeApprovalService,
+        ai_proxy_client: Any = None,
+        actor_manager_getter: Callable[[], Any] | None = None,
     ) -> None:
         self.requirements_service = requirements_service
         self._actor_query_fn = actor_query_fn
         self._actor_write_fn = actor_write_fn
         self._approval_service = approval_service
+        self._ai_proxy_client = ai_proxy_client
+        self._actor_manager_getter = actor_manager_getter
 
     @staticmethod
     def get_tools_list() -> list[dict[str, Any]]:
@@ -249,7 +290,92 @@ class RequirementAgentTools:
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "trace_requirement_relation",
+                    "description": (
+                        "分析当前项目中一条顶层需求与一条底层需求之间的追溯关系。"
+                        "传入 ID 的顺序决定顶层与底层，工具会读取真实需求内容后再分析。"
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "high_level_requirement_id": {
+                                "type": "string",
+                                "description": "顶层需求 ID",
+                            },
+                            "low_level_requirement_id": {
+                                "type": "string",
+                                "description": "底层需求 ID",
+                            },
+                        },
+                        "required": [
+                            "high_level_requirement_id",
+                            "low_level_requirement_id",
+                        ],
+                        "additionalProperties": False,
+                    },
+                },
+            },
         ]
+
+    @staticmethod
+    def get_tool_execution_metadata(
+        tool_name: str,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> ToolExecutionMetadata:
+        project_id = str(context.get("project_id") or "unknown").strip()
+        requirement_id = str(arguments.get("requirement_id") or "").strip()
+        resource_key = (
+            f"requirement:{project_id}:{requirement_id}"
+            if requirement_id
+            else f"project:{project_id}"
+        )
+        if tool_name == "trace_requirement_relation":
+            high_requirement_id = str(
+                arguments.get("high_level_requirement_id") or ""
+            ).strip()
+            low_requirement_id = str(
+                arguments.get("low_level_requirement_id") or ""
+            ).strip()
+            trace_pair = ":".join(
+                sorted(
+                    requirement_id
+                    for requirement_id in (high_requirement_id, low_requirement_id)
+                    if requirement_id
+                )
+            )
+            return ToolExecutionMetadata(
+                read_only=True,
+                idempotent=True,
+                resource_key=(
+                    f"traceability:{project_id}:{trace_pair}"
+                    if trace_pair
+                    else f"traceability:{project_id}"
+                ),
+                concurrency_group="traceability",
+            )
+        if tool_name in {
+            "list_requirements",
+            "search_requirements",
+            "get_requirement_state",
+        }:
+            return ToolExecutionMetadata(
+                read_only=True,
+                idempotent=True,
+                resource_key=resource_key,
+                concurrency_group="requirements",
+            )
+        if tool_name == "update_requirement_content":
+            return ToolExecutionMetadata(
+                read_only=False,
+                idempotent=False,
+                resource_key=resource_key,
+                concurrency_group="requirements",
+            )
+        return ToolExecutionMetadata()
 
     def execute(
         self,
@@ -266,6 +392,8 @@ class RequirementAgentTools:
             return self._execute_get_requirement_state(parsed_arguments, context)
         if tool_name == "update_requirement_content":
             return self._execute_update_requirement_content(parsed_arguments, context)
+        if tool_name == "trace_requirement_relation":
+            return self._execute_trace_requirement_relation(parsed_arguments, context)
         raise ValueError(f"未知工具: {tool_name}")
 
     @staticmethod
@@ -391,6 +519,9 @@ class RequirementAgentTools:
             requirement_id=requirement_id,
         )
         actor_manager = context.get("actor_manager")
+        if actor_manager is None and self._actor_manager_getter is not None:
+            actor_manager = self._actor_manager_getter()
+            context["actor_manager"] = actor_manager
         state_result = self._actor_query_fn(actor_manager, requirement_id)
         if state_result.get("status") != "success":
             raise ValueError("读取需求状态失败")
@@ -450,6 +581,66 @@ class RequirementAgentTools:
         }
         context["approval_pending"] = True
         context["last_approval_result"] = result
+        return result
+
+    def _execute_trace_requirement_relation(
+        self,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        high_requirement_id = _normalize_requirement_id(
+            arguments.get("high_level_requirement_id")
+        )
+        low_requirement_id = _normalize_requirement_id(
+            arguments.get("low_level_requirement_id")
+        )
+        if high_requirement_id == low_requirement_id:
+            raise ValueError("顶层需求和底层需求不能是同一条需求")
+
+        project_id = str(context.get("project_id") or "").strip()
+        if not project_id:
+            raise ValueError("缺少 project_id，无法执行需求追溯")
+        high_requirement = self._resolve_project_requirement(
+            project_id=project_id,
+            requirement_id=high_requirement_id,
+        )
+        low_requirement = self._resolve_project_requirement(
+            project_id=project_id,
+            requirement_id=low_requirement_id,
+        )
+        high_summary = _summarize_requirement_record(high_requirement)
+        high_summary["requirement_id"] = (
+            high_summary.get("requirement_id") or high_requirement_id
+        )
+        low_summary = _summarize_requirement_record(low_requirement)
+        low_summary["requirement_id"] = (
+            low_summary.get("requirement_id") or low_requirement_id
+        )
+
+        trace_relation = getattr(self._ai_proxy_client, "trace_relation", None)
+        if not callable(trace_relation):
+            raise RuntimeError("需求追溯服务不可用")
+        try:
+            relation = trace_relation(
+                _format_requirement_for_traceability(high_summary),
+                _format_requirement_for_traceability(low_summary),
+            )
+        except Exception as exc:
+            message = str(exc).strip() or "未知错误"
+            raise RuntimeError(f"需求追溯分析失败：{message}") from exc
+        if not isinstance(relation, dict):
+            raise ValueError("需求追溯服务返回格式无效")
+
+        result = {
+            "high_level_requirement": high_summary,
+            "low_level_requirement": low_summary,
+            "relation": relation,
+        }
+        resolved_ids = context.setdefault("resolved_requirement_ids", set())
+        resolved_ids.update({high_requirement_id, low_requirement_id})
+        context["high_level_requirement_id"] = high_requirement_id
+        context["low_level_requirement_id"] = low_requirement_id
+        context["traceability_result"] = result
         return result
 
     @staticmethod

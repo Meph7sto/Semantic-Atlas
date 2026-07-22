@@ -16,6 +16,10 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 
+class StaleActorLeaseError(RuntimeError):
+    """Raised when an expired actor owner attempts to append an event."""
+
+
 class EventStore:
     """事件存储服务 - 仅追加写"""
 
@@ -25,6 +29,68 @@ class EventStore:
     def _connect(self) -> psycopg2.extensions.connection:
         """创建数据库连接"""
         return psycopg2.connect(self.dsn)
+
+    def get_actor_fencing_token(self, requirement_id: str) -> int:
+        """Return the durable fencing floor for a requirement."""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT fencing_token
+                    FROM requirement_actor_fences
+                    WHERE requirement_id = %s
+                    """,
+                    (requirement_id,),
+                )
+                row = cur.fetchone()
+                return int(row[0]) if row is not None else 0
+
+    def claim_actor_fence(self, requirement_id: str, fencing_token: int) -> int:
+        """Install a strictly newer actor fence before state replay begins."""
+        token = int(fencing_token)
+        if token < 1:
+            raise ValueError("fencing_token must be positive")
+
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO requirement_actor_fences
+                        (requirement_id, fencing_token, updated_at)
+                    VALUES (%s, %s, NOW())
+                    ON CONFLICT (requirement_id) DO UPDATE SET
+                        fencing_token = EXCLUDED.fencing_token,
+                        updated_at = NOW()
+                    WHERE requirement_actor_fences.fencing_token < EXCLUDED.fencing_token
+                    RETURNING fencing_token
+                    """,
+                    (requirement_id, token),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    raise StaleActorLeaseError(
+                        f"actor fence was not newer for {requirement_id}: "
+                        f"fencing_token={token}"
+                    )
+                conn.commit()
+                return int(row[0])
+
+    @staticmethod
+    def _assert_actor_fence(cur, requirement_id: str, fencing_token: int) -> None:
+        cur.execute(
+            """
+            UPDATE requirement_actor_fences
+            SET updated_at = NOW()
+            WHERE requirement_id = %s AND fencing_token = %s
+            RETURNING fencing_token
+            """,
+            (requirement_id, int(fencing_token)),
+        )
+        if cur.fetchone() is None:
+            raise StaleActorLeaseError(
+                f"stale actor lease for {requirement_id}: "
+                f"fencing_token={fencing_token}"
+            )
 
     def append_event(self, event: Dict) -> tuple[str, int]:
         """
@@ -43,6 +109,7 @@ class EventStore:
         """
         requirement_id = event["requirement_id"]
         event_type = event["event_type"]
+        fencing_token = event.get("fencing_token")
 
         # 验证事件类型
         valid_types = {
@@ -59,6 +126,9 @@ class EventStore:
 
         with self._connect() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                if fencing_token is not None:
+                    self._assert_actor_fence(cur, requirement_id, int(fencing_token))
+
                 # 获取下一个序列号
                 cur.execute("""
                     SELECT COALESCE(MAX(event_sequence), 0) + 1 AS next_sequence
@@ -143,8 +213,15 @@ class EventStore:
                 row = cur.fetchone()
                 return dict(row) if row else None
 
-    def save_snapshot(self, requirement_id: str, version: int, state_data: Dict,
-                   reason: str = "manual") -> str:
+    def save_snapshot(
+        self,
+        requirement_id: str,
+        version: int,
+        state_data: Dict,
+        reason: str = "manual",
+        *,
+        fencing_token: int | None = None,
+    ) -> str:
         """
         保存快照
 
@@ -159,6 +236,8 @@ class EventStore:
         """
         with self._connect() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                if fencing_token is not None:
+                    self._assert_actor_fence(cur, requirement_id, fencing_token)
                 snapshot_id = f"{requirement_id}_snapshot_{version}"
 
                 # 获取从上一个快照以来的事件数（近似值）

@@ -27,6 +27,15 @@ class _FakeRequirementsService:
                 "deleted": False,
                 "title": "登录性能",
                 "description": "系统在 3 秒内完成登录",
+                "acceptance_criteria": ["3 秒内展示首页"],
+            },
+            "r-2": {
+                "req_id": "r-2",
+                "project_id": "p-1",
+                "deleted": False,
+                "title": "登录页实现",
+                "description": "提供用户名密码登录和首页跳转",
+                "acceptance_criteria": ["登录成功后进入首页"],
             }
         }
         self.list_calls = []
@@ -126,6 +135,25 @@ class _FailingApprovalService:
         raise RuntimeError(self.message)
 
 
+class _FakeTraceabilityProxy:
+    def __init__(self):
+        self.calls = []
+
+    def trace_relation(self, high, low, max_new_tokens=800):
+        self.calls.append(
+            {
+                "high": high,
+                "low": low,
+                "max_new_tokens": max_new_tokens,
+            }
+        )
+        return {
+            "has_relation": True,
+            "relation_type": "realizes",
+            "reason": "低层需求实现了顶层登录性能目标。",
+        }
+
+
 def test_get_tools_list_contains_expected_schemas():
     tools = RequirementAgentTools.get_tools_list()
     tool_names = [tool["function"]["name"] for tool in tools]
@@ -135,6 +163,7 @@ def test_get_tools_list_contains_expected_schemas():
         "list_requirements",
         "get_requirement_state",
         "update_requirement_content",
+        "trace_requirement_relation",
     ]
 
     search_schema = tools[0]["function"]["parameters"]
@@ -152,6 +181,13 @@ def test_get_tools_list_contains_expected_schemas():
         "priority",
         "notes",
     }
+
+    trace_schema = tools[4]["function"]["parameters"]
+    assert trace_schema["required"] == [
+        "high_level_requirement_id",
+        "low_level_requirement_id",
+    ]
+    assert trace_schema["additionalProperties"] is False
 
 
 def test_execute_list_requirements_returns_window_summary():
@@ -223,6 +259,34 @@ def test_execute_get_requirement_state_reads_actor():
     assert result["version"] == 4
     assert result["acceptance_criteria"] == ["3 秒内展示首页"]
     assert context["resolved_requirement_id"] == "r-1"
+
+
+def test_execute_get_requirement_state_can_obtain_shared_actor_manager():
+    service = _FakeRequirementsService()
+    actor_manager = object()
+    received_actor_managers = []
+    tools = RequirementAgentTools(
+        requirements_service=service,
+        actor_query_fn=lambda resolved_actor_manager, requirement_id: (
+            received_actor_managers.append(resolved_actor_manager)
+            or {
+                "status": "success",
+                "state": {
+                    "requirement_id": requirement_id,
+                    "content": {"title": "登录性能"},
+                },
+            }
+        ),
+        actor_write_fn=lambda _actor_manager, _requirement_id, _command: {},
+        approval_service=_FakeApprovalService(),
+        actor_manager_getter=lambda: actor_manager,
+    )
+    context = {"project_id": "p-1", "resolved_requirement_ids": set()}
+
+    tools.execute("get_requirement_state", {"requirement_id": "r-1"}, context)
+
+    assert received_actor_managers == [actor_manager]
+    assert context["actor_manager"] is actor_manager
 
 
 def test_execute_update_requirement_content_creates_approval_and_returns_summary():
@@ -333,3 +397,78 @@ def test_execute_update_requirement_content_keeps_approval_pending_when_state_re
     assert result["title"] == "登录性能"
     assert result["priority"] is None
     assert context["approval_pending"] is True
+
+
+def test_execute_trace_requirement_relation_uses_real_project_requirements():
+    service = _FakeRequirementsService()
+    trace_proxy = _FakeTraceabilityProxy()
+    tools = RequirementAgentTools(
+        requirements_service=service,
+        actor_query_fn=lambda _actor_manager, _requirement_id: {},
+        actor_write_fn=lambda _actor_manager, _requirement_id, _command: {},
+        approval_service=_FakeApprovalService(),
+        ai_proxy_client=trace_proxy,
+    )
+    context = {"project_id": "p-1", "resolved_requirement_ids": set()}
+
+    result = tools.execute(
+        "trace_requirement_relation",
+        {
+            "high_level_requirement_id": "r-1",
+            "low_level_requirement_id": "r-2",
+        },
+        context,
+    )
+
+    assert result["high_level_requirement"]["requirement_id"] == "r-1"
+    assert result["low_level_requirement"]["requirement_id"] == "r-2"
+    assert result["relation"]["relation_type"] == "realizes"
+    assert "需求 ID: r-1" in trace_proxy.calls[0]["high"]
+    assert "系统在 3 秒内完成登录" in trace_proxy.calls[0]["high"]
+    assert "需求 ID: r-2" in trace_proxy.calls[0]["low"]
+    assert context["traceability_result"] == result
+    assert context["resolved_requirement_ids"] == {"r-1", "r-2"}
+
+    metadata = tools.get_tool_execution_metadata(
+        "trace_requirement_relation",
+        {
+            "high_level_requirement_id": "r-1",
+            "low_level_requirement_id": "r-2",
+        },
+        context,
+    )
+    assert metadata.read_only is True
+    assert metadata.idempotent is True
+    assert metadata.concurrency_group == "traceability"
+    assert metadata.resource_key == "traceability:p-1:r-1:r-2"
+
+
+def test_execute_trace_requirement_relation_rejects_invalid_pair_or_unavailable_service():
+    service = _FakeRequirementsService()
+    tools = RequirementAgentTools(
+        requirements_service=service,
+        actor_query_fn=lambda _actor_manager, _requirement_id: {},
+        actor_write_fn=lambda _actor_manager, _requirement_id, _command: {},
+        approval_service=_FakeApprovalService(),
+    )
+    context = {"project_id": "p-1", "resolved_requirement_ids": set()}
+
+    with pytest.raises(ValueError, match="不能是同一条需求"):
+        tools.execute(
+            "trace_requirement_relation",
+            {
+                "high_level_requirement_id": "r-1",
+                "low_level_requirement_id": "r-1",
+            },
+            context,
+        )
+
+    with pytest.raises(RuntimeError, match="需求追溯服务不可用"):
+        tools.execute(
+            "trace_requirement_relation",
+            {
+                "high_level_requirement_id": "r-1",
+                "low_level_requirement_id": "r-2",
+            },
+            context,
+        )

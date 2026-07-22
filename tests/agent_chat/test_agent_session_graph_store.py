@@ -12,9 +12,16 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 import pytest  # noqa: E402
-from backend_business.services.agent.runtime.agent_definition import AgentDefinition  # noqa: E402
+from backend_business.services.agent.agents.requirement_agent.definition import (  # noqa: E402
+    REQUIREMENT_AGENT_DEFINITION,
+)
+from backend_business.services.agent.runtime.agent_definition import (  # noqa: E402
+    AgentDefinition,
+    AgentDelegation,
+)
 from backend_business.services.agent.runtime.agent_registry import (  # noqa: E402
     SESSION_CONTROLLER_DEFINITION,
+    AgentRegistry,
     create_builtin_agent_registry,
 )
 from backend_business.services.agent.runtime.session_graph_store import (  # noqa: E402
@@ -228,6 +235,52 @@ def test_agent_registry_generates_selectable_containers_and_binding_specs():
     assert specs[1]["agent_type"] == "requirement_agent"
     assert specs[1]["capability_policy_json"]["scope"] == "delegated_requirement"
     assert specs[1]["quota_policy_json"]["max_rounds"] == 6
+
+
+def test_agent_catalog_uses_package_definition_as_single_source():
+    registry = create_builtin_agent_registry()
+
+    assert registry.require_by_container_key("requirement_agent") is REQUIREMENT_AGENT_DEFINITION
+
+
+def test_agent_catalog_drives_new_delegation_and_tool_factory_without_switches():
+    tools = _NamedTools(["custom_tool"])
+    definition = AgentDefinition(
+        agent_type="custom_agent",
+        container_key="custom_agent",
+        label="Custom Agent",
+        tool_executor_factory=lambda: tools,
+        delegation=AgentDelegation(
+            tool_name="invoke_custom_agent",
+            route_key="invoke_custom",
+            decision_mode="delegate_custom",
+            tool_description="Delegate custom work",
+            tool_parameters={
+                "type": "object",
+                "properties": {"task_description": {"type": "string"}},
+                "required": ["task_description"],
+            },
+            invoke_label="Invoke Custom Agent",
+            invoke_phase_label="Delegate custom agent",
+            invoke_task_prompt="Delegate the task.",
+            runtime_label="Custom Agent Runtime",
+            runtime_phase_label="Run custom agent",
+            runtime_task_prompt="Execute the delegated task.",
+            prompt_builder_kind="custom_delegate",
+            runtime_node_key="custom_agent_runtime",
+            result_contract="custom_agent",
+            call_edge_label="call_custom_agent",
+        ),
+    )
+    registry = AgentRegistry([definition])
+
+    assert registry.get_by_delegation_tool("invoke_custom_agent") is definition
+    assert registry.get_by_route_key("invoke_custom") is definition
+    assert registry.delegation_tool_to_agent() == {
+        "invoke_custom_agent": "custom_agent"
+    }
+    specs = registry.build_runtime_binding_specs()
+    assert specs[0]["capability_policy_json"]["tool_names"] == ["custom_tool"]
 
 
 def test_hydrate_session_graph_restores_latest_runtime_graph():

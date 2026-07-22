@@ -1,8 +1,18 @@
-"""Session controller agent chat package."""
+"""Session controller agent package with lazy runtime exports."""
 
-from .service import SessionControllerService, session_controller_service
+from __future__ import annotations
 
-__all__ = [
-    "SessionControllerService",
-    "session_controller_service",
-]
+from typing import Any
+
+__all__ = ["SessionControllerService", "session_controller_service"]
+
+
+def __getattr__(name: str) -> Any:
+    if name in __all__:
+        from .service import SessionControllerService, session_controller_service
+
+        return {
+            "SessionControllerService": SessionControllerService,
+            "session_controller_service": session_controller_service,
+        }[name]
+    raise AttributeError(name)

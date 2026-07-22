@@ -10,14 +10,19 @@ RequirementActor - 单条需求的生命周期管理
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Any
+from typing import Dict, Optional
 
-from backend_business.services.event_store.event_store import EventStore
 from backend_business.services.actor.actors.state_machine import (
-    RequirementStatus, RequirementStateMachine
+    RequirementStateMachine,
+    RequirementStatus,
 )
 from backend_business.services.actor.dev_trace import emit_actor_trace
+from backend_business.services.event_store.event_store import (
+    EventStore,
+    StaleActorLeaseError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +52,10 @@ class InfrastructureException(Exception):
     pass
 
 
+class ActorCommandDeadlineExceeded(InfrastructureException):
+    """A queued command reached the forwarding caller's deadline."""
+
+
 class RequirementActor:
     """单条需求的 Actor 实例"""
 
@@ -66,7 +75,13 @@ class RequirementActor:
         # 生命周期管理
         self.last_accessed = time.time()
         self.is_faulted = False
+        self.lease_invalidated = False
+        self.fencing_token: int | None = None
+        self.lease_validator: (
+            Callable[[str, int | None], Awaitable[bool]] | None
+        ) = None
         self._consumer_task: Optional[asyncio.Task] = None
+        self._active_future: asyncio.Future | None = None
 
     async def start(self):
         """启动 Actor 消费协程"""
@@ -91,10 +106,36 @@ class RequirementActor:
         logger.debug(f"Actor stopped: {self.requirement_id}")
         emit_actor_trace(self.requirement_id, "actor_stopped")
 
+    async def invalidate_lease(self, *, fencing_token: int) -> None:
+        """Stop accepting work immediately after losing the distributed lease."""
+        self.is_faulted = True
+        self.lease_invalidated = True
+        error = InfrastructureException(
+            f"Actor {self.requirement_id} 的租约已失效 (fencing_token={fencing_token})"
+        )
+        if self._active_future is not None and not self._active_future.done():
+            self._active_future.set_exception(error)
+        self._fail_queued_commands()
+        if self._consumer_task and not self._consumer_task.done():
+            self._consumer_task.cancel()
+            try:
+                await self._consumer_task
+            except asyncio.CancelledError:
+                pass
+        emit_actor_trace(
+            self.requirement_id,
+            "actor_lease_invalidated",
+            level="error",
+            fencing_token=fencing_token,
+        )
+
     async def activate(self):
         """激活 Actor - 从事件存储加载状态"""
         # 尝试从快照加载
-        latest_snapshot = self.event_store.get_latest_snapshot(self.requirement_id)
+        latest_snapshot = await asyncio.to_thread(
+            self.event_store.get_latest_snapshot,
+            self.requirement_id,
+        )
         from_version = 0
 
         if latest_snapshot:
@@ -117,13 +158,22 @@ class RequirementActor:
             logger.debug(f"No snapshot found for: {self.requirement_id}, replaying all events")
 
         # 重放快照之后的事件
-        events = self.event_store.replay_events(self.requirement_id, from_version)
+        events = await asyncio.to_thread(
+            self.event_store.replay_events,
+            self.requirement_id,
+            from_version,
+        )
         for event in events:
             self._apply_event(event)
 
         self.last_accessed = time.time()
 
-    async def send_command(self, command: Dict) -> Dict:
+    async def send_command(
+        self,
+        command: Dict,
+        *,
+        deadline_at: float | None = None,
+    ) -> Dict:
         """
         发送命令到 Actor
 
@@ -142,8 +192,25 @@ class RequirementActor:
             raise InfrastructureException(f"Actor {self.requirement_id} 已熔断")
 
         future = asyncio.get_running_loop().create_future()
-        await self.mailbox.put((command, future))
+        await self.mailbox.put((command, future, deadline_at))
         return await future
+
+    async def _validate_lease_before_command(self) -> None:
+        validator = self.lease_validator
+        if validator is None:
+            return
+        try:
+            is_valid = await validator(self.requirement_id, self.fencing_token)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            raise StaleActorLeaseError(
+                f"lease validation failed: {exc}"
+            ) from exc
+        if not is_valid:
+            raise StaleActorLeaseError(
+                f"lease no longer owned (fencing_token={self.fencing_token})"
+            )
 
     def _apply_event(self, event: Dict):
         """应用事件到状态"""
@@ -192,14 +259,17 @@ class RequirementActor:
         while True:
             if self.is_faulted:
                 self._fail_queued_commands()
+                if self.lease_invalidated:
+                    return
                 await asyncio.sleep(1)
                 continue
 
             try:
-                command, future = await asyncio.wait_for(
+                command, future, deadline_at = await asyncio.wait_for(
                     self.mailbox.get(),
                     timeout=5.0
                 )
+                self._active_future = future
                 self.last_accessed = time.time()
                 emit_actor_trace(
                     self.requirement_id,
@@ -213,6 +283,11 @@ class RequirementActor:
 
                 while not is_resolved and not self.is_faulted:
                     try:
+                        await self._validate_lease_before_command()
+                        if deadline_at is not None and time.time() >= deadline_at:
+                            raise ActorCommandDeadlineExceeded(
+                                f"Actor {self.requirement_id} 命令在信箱等待期间已超时"
+                            )
                         result = await self._handle_command(command)
                         if not future.done():
                             future.set_result(result)
@@ -228,6 +303,18 @@ class RequirementActor:
                         if self.state.version > 0 and self.state.version % self.SNAPSHOT_INTERVAL == 0:
                             await self._take_snapshot("scheduled")
 
+                    except ActorCommandDeadlineExceeded as e:
+                        if not future.done():
+                            future.set_exception(e)
+                        is_resolved = True
+                        emit_actor_trace(
+                            self.requirement_id,
+                            "command_deadline_expired",
+                            level="warning",
+                            command_type=command.get("type", "unknown"),
+                            deadline_at=deadline_at,
+                        )
+
                     except DomainException as e:
                         # 业务逻辑错误 - 不重试
                         if not future.done():
@@ -238,6 +325,25 @@ class RequirementActor:
                             "command_rejected",
                             level="warning",
                             command_type=command.get("type", "unknown"),
+                            error=str(e),
+                        )
+
+                    except StaleActorLeaseError as e:
+                        self.is_faulted = True
+                        self.lease_invalidated = True
+                        lease_error = InfrastructureException(
+                            f"Actor {self.requirement_id} 的持久化租约已失效: {e}"
+                        )
+                        if not future.done():
+                            future.set_exception(lease_error)
+                        self._fail_queued_commands()
+                        is_resolved = True
+                        emit_actor_trace(
+                            self.requirement_id,
+                            "actor_fence_rejected",
+                            level="error",
+                            command_type=command.get("type", "unknown"),
+                            fencing_token=self.fencing_token,
                             error=str(e),
                         )
 
@@ -286,6 +392,7 @@ class RequirementActor:
                             error=str(e),
                         )
 
+                self._active_future = None
                 self.mailbox.task_done()
 
             except asyncio.TimeoutError:
@@ -293,6 +400,13 @@ class RequirementActor:
                 continue
             except asyncio.CancelledError:
                 # 协程被取消，退出循环
+                if self._active_future is not None and not self._active_future.done():
+                    self._active_future.set_exception(
+                        InfrastructureException(
+                            f"Actor {self.requirement_id} 已停止，当前命令未完成"
+                        )
+                    )
+                self._active_future = None
                 break
             except Exception as e:
                 # 捕获所有异常，防止崩溃
@@ -310,7 +424,7 @@ class RequirementActor:
         """
         while True:
             try:
-                _command, queued_future = self.mailbox.get_nowait()
+                _command, queued_future, _deadline_at = self.mailbox.get_nowait()
             except asyncio.QueueEmpty:
                 break
 
@@ -344,6 +458,11 @@ class RequirementActor:
         else:
             raise DomainException(f"未知命令类型: {command_type}")
 
+    async def _append_event(self, event: Dict) -> tuple[str, int]:
+        if self.fencing_token is not None:
+            event["fencing_token"] = self.fencing_token
+        return await asyncio.to_thread(self.event_store.append_event, event)
+
     async def _handle_create_requirement(self, command: Dict) -> Dict:
         """处理创建需求命令"""
         if self.state.version > 0:
@@ -361,7 +480,7 @@ class RequirementActor:
             "metadata": command.get("metadata", {})
         }
 
-        event_id, sequence = self.event_store.append_event(event)
+        event_id, sequence = await self._append_event(event)
         event["event_id"] = event_id
         event["event_sequence"] = sequence
 
@@ -394,7 +513,7 @@ class RequirementActor:
         }
 
         # 追加事件
-        event_id, sequence = self.event_store.append_event(event)
+        event_id, sequence = await self._append_event(event)
         event["event_id"] = event_id
         event["event_sequence"] = sequence
 
@@ -434,7 +553,7 @@ class RequirementActor:
             "metadata": command.get("metadata", {})
         }
 
-        event_id, sequence = self.event_store.append_event(event)
+        event_id, sequence = await self._append_event(event)
         event["event_id"] = event_id
         event["event_sequence"] = sequence
 
@@ -462,7 +581,7 @@ class RequirementActor:
             "metadata": command.get("metadata", {})
         }
 
-        event_id, sequence = self.event_store.append_event(event)
+        event_id, sequence = await self._append_event(event)
         event["event_id"] = event_id
         event["event_sequence"] = sequence
 
@@ -512,11 +631,16 @@ class RequirementActor:
         }
 
         try:
-            snapshot_id = self.event_store.save_snapshot(
+            snapshot_kwargs = {}
+            if self.fencing_token is not None:
+                snapshot_kwargs["fencing_token"] = self.fencing_token
+            snapshot_id = await asyncio.to_thread(
+                self.event_store.save_snapshot,
                 self.requirement_id,
                 self.state.version,
                 state_data,
-                reason
+                reason,
+                **snapshot_kwargs,
             )
             logger.debug(f"Snapshot saved: {snapshot_id}, reason={reason}")
             emit_actor_trace(

@@ -8,6 +8,9 @@ from typing import Any, Callable
 import requests
 
 from backend_business.config import settings
+from backend_business.services.agent.runtime.tool_scheduling import (
+    ToolExecutionMetadata,
+)
 from backend_business.services.requirements_manage_service import RequirementsManageService
 
 
@@ -213,6 +216,33 @@ class RequirementClassificationTools:
                 },
             },
         ]
+
+    @staticmethod
+    def get_tool_execution_metadata(
+        tool_name: str,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> ToolExecutionMetadata:
+        project_id = str(context.get("project_id") or "unknown").strip()
+        requirement_id = str(arguments.get("requirement_id") or "").strip()
+        resource_key = (
+            f"requirement:{project_id}:{requirement_id}"
+            if requirement_id
+            else f"project:{project_id}"
+        )
+        if tool_name in {
+            "list_requirements",
+            "search_requirements",
+            "get_requirement_detail",
+            "classify_requirement",
+        }:
+            return ToolExecutionMetadata(
+                read_only=True,
+                idempotent=True,
+                resource_key=resource_key,
+                concurrency_group="requirements",
+            )
+        return ToolExecutionMetadata()
 
     def execute(
         self,

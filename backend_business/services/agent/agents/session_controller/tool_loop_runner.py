@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Generator
 from json import JSONDecodeError
 from typing import Any
 
 from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner
 from backend_business.services.agent.execution_graph_service import ExecutionGraphService
-from backend_business.services.agent.runtime.scratchpad import Scratchpad
+from backend_business.services.agent.runtime.agent_registry import BUILTIN_AGENT_REGISTRY
 from backend_business.services.agent.runtime.scratchpad_service import ScratchpadService
 
 from .contracts import (
@@ -20,19 +21,6 @@ from .prompt_builder import SessionControllerPromptBuilder, infer_routing_hint
 from .runtime_graph_recorder import SessionControllerGraphRecorder
 from .tools import SessionControllerTools
 
-_TOOL_TO_MODE = {
-    "invoke_requirement_agent": SessionControllerDecisionMode.DELEGATE_REQUIREMENT,
-    "invoke_conflict_detection": SessionControllerDecisionMode.DELEGATE_CONFLICT,
-    "invoke_requirement_classification_agent": SessionControllerDecisionMode.DELEGATE_CLASSIFICATION,
-    "list_requirements": SessionControllerDecisionMode.BROWSE,
-    "search_requirements": SessionControllerDecisionMode.BROWSE,
-}
-
-_TOOL_TO_AGENT = {
-    "invoke_requirement_agent": "requirement_agent",
-    "invoke_conflict_detection": "conflict_detection",
-    "invoke_requirement_classification_agent": "requirement_classification_agent",
-}
 class SessionControllerToolLoopRunner:
     def __init__(
         self,
@@ -50,6 +38,16 @@ class SessionControllerToolLoopRunner:
         self._prompt_builder = prompt_builder
         self._max_tool_call_rounds = max_tool_call_rounds
         self._delegated_max_tool_call_rounds = delegated_max_tool_call_rounds
+        agent_registry = getattr(tools, "agent_registry", BUILTIN_AGENT_REGISTRY)
+        self._tool_to_mode = {
+            "list_requirements": SessionControllerDecisionMode.BROWSE,
+            "search_requirements": SessionControllerDecisionMode.BROWSE,
+            **{
+                tool_name: SessionControllerDecisionMode(mode)
+                for tool_name, mode in agent_registry.delegation_tool_to_mode().items()
+            },
+        }
+        self._tool_to_agent = agent_registry.delegation_tool_to_agent()
 
     def run(
         self,
@@ -66,6 +64,14 @@ class SessionControllerToolLoopRunner:
         graph = self._execution_graph_service.get_execution_graph(recorder.graph_id)
         meta = (graph.get("meta_json") or {}) if graph else {}
         resolved_requirement_id = meta.get("resolved_requirement_id")
+        compilation = scratchpad.compile_for_prompt(
+            task="\n".join(
+                str(part)
+                for part in (resolved_requirement_id, user_message)
+                if part
+            ),
+            observation_key="tool_loop:conductor",
+        )
         context: dict[str, Any] = {
             "project_id": project_id,
             "user_id": user_id,
@@ -82,7 +88,8 @@ class SessionControllerToolLoopRunner:
             "delegated_context_mode": "full",
             "delegated_max_tool_call_rounds": self._delegated_max_tool_call_rounds,
             "_scratchpad": scratchpad,
-            "_scratchpad_prompt_text": scratchpad.format_for_prompt(),
+            "_scratchpad_prompt_text": compilation.text,
+            "_scratchpad_compilation": compilation.to_metrics(),
             "_graph_recorder": recorder,
         }
         runner = ToolLoopRunner(
@@ -224,8 +231,11 @@ class SessionControllerToolLoopRunner:
         last_tool_entry = tool_results[-1] if tool_results else {}
         last_tool_name = str(last_tool_entry.get("tool_name") or "").strip()
         last_tool_result = last_tool_entry.get("result") or {}
-        mode = _TOOL_TO_MODE.get(last_tool_name, SessionControllerDecisionMode.DIRECT_REPLY)
-        delegated_agent = _TOOL_TO_AGENT.get(last_tool_name)
+        mode = self._tool_to_mode.get(
+            last_tool_name,
+            SessionControllerDecisionMode.DIRECT_REPLY,
+        )
+        delegated_agent = self._tool_to_agent.get(last_tool_name)
         approval_pending = bool(
             isinstance(last_tool_result, dict) and last_tool_result.get("approval_pending")
         )
@@ -292,10 +302,10 @@ class SessionControllerToolLoopRunner:
         text = str(raw_mode or "").strip().lower()
         if text == "clarification":
             text = SessionControllerDecisionMode.CLARIFY.value
-        for mode in SessionControllerDecisionMode:
-            if mode.value == text:
-                return mode
-        return fallback
+        try:
+            return SessionControllerDecisionMode(text)
+        except ValueError:
+            return fallback
 
     @staticmethod
     def _normalize_suspend_reason(raw_reason: Any) -> SuspendReason | None:
@@ -305,16 +315,13 @@ class SessionControllerToolLoopRunner:
                 return reason
         return None
 
-    @staticmethod
     def _infer_delegated_agent_from_mode(
+        self,
         mode: SessionControllerDecisionMode,
     ) -> str | None:
-        if mode == SessionControllerDecisionMode.DELEGATE_REQUIREMENT:
-            return "requirement_agent"
-        if mode == SessionControllerDecisionMode.DELEGATE_CONFLICT:
-            return "conflict_detection"
-        if mode == SessionControllerDecisionMode.DELEGATE_CLASSIFICATION:
-            return "requirement_classification_agent"
+        for tool_name, mapped_mode in self._tool_to_mode.items():
+            if mapped_mode == mode and tool_name in self._tool_to_agent:
+                return self._tool_to_agent[tool_name]
         return None
 
     @staticmethod

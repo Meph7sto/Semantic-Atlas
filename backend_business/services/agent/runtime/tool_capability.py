@@ -5,6 +5,8 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
+from .tool_scheduling import ToolExecutionMetadata
+
 
 class ToolCapabilityError(PermissionError):
     """Raised when a runtime attempts to call a tool outside its capability policy."""
@@ -71,6 +73,22 @@ class ToolCapabilityExecutor:
         if callable(execute_streaming):
             return execute_streaming(tool_name, arguments, context)
         return self._tool_executor.execute(tool_name, arguments, context)
+
+    def get_tool_execution_metadata(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> ToolExecutionMetadata:
+        """Preserve the wrapped executor's scheduling contract."""
+        resolver = getattr(
+            self._tool_executor,
+            "get_tool_execution_metadata",
+            None,
+        )
+        if not callable(resolver):
+            return ToolExecutionMetadata()
+        return ToolExecutionMetadata.coerce(resolver(tool_name, arguments, context))
 
     def _ensure_tool_allowed(
         self,

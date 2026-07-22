@@ -18,9 +18,22 @@ if ROOT_DIR not in sys.path:
 from backend_business.services.agent.agents.session_controller.service import (  # noqa: E402
     SessionControllerService,
 )
+from backend_business.services.agent.agents.session_controller.graph_template import (  # noqa: E402
+    ensure_session_controller_template,
+)
 from backend_business.services.agent.agents.session_controller.tools import (  # noqa: E402
     SessionControllerTools,
 )
+from backend_business.services.agent.runtime.agent_definition import (  # noqa: E402
+    AgentDefinition,
+    AgentDelegation,
+)
+from backend_business.services.agent.runtime.agent_registry import (  # noqa: E402
+    BUILTIN_AGENT_REGISTRY,
+    AgentRegistry,
+)
+
+
 def _extract_candidate_template_id(system_prompt: str) -> str:
     match = re.search(r"\[([^\]]+)\]", system_prompt)
     if not match:
@@ -293,6 +306,74 @@ class StrictFakeGraphService(FakeGraphService):
             role_type=role_type,
             **kwargs,
         )
+
+
+def test_session_controller_template_is_regenerated_when_catalog_changes():
+    graph_service = FakeGraphService()
+    original_graph_id = ensure_session_controller_template(
+        execution_graph_service=graph_service,
+        project_id="project-1",
+        actor="user-1",
+        agent_registry=BUILTIN_AGENT_REGISTRY,
+    )
+    assert (
+        ensure_session_controller_template(
+            execution_graph_service=graph_service,
+            project_id="project-1",
+            actor="user-1",
+            agent_registry=BUILTIN_AGENT_REGISTRY,
+        )
+        == original_graph_id
+    )
+
+    custom_definition = AgentDefinition(
+        agent_type="custom_agent",
+        container_key="custom_agent",
+        label="Custom Agent",
+        delegation=AgentDelegation(
+            tool_name="invoke_custom_agent",
+            route_key="invoke_custom",
+            decision_mode="delegate_custom",
+            tool_description="Delegate custom work",
+            tool_parameters={
+                "type": "object",
+                "properties": {"task_description": {"type": "string"}},
+                "required": ["task_description"],
+            },
+            invoke_label="Invoke Custom Agent",
+            invoke_phase_label="Delegate custom agent",
+            invoke_task_prompt="Delegate the custom task.",
+            runtime_label="Custom Agent Runtime",
+            runtime_phase_label="Run custom agent",
+            runtime_task_prompt="Execute the custom task.",
+            prompt_builder_kind="custom_delegate",
+            runtime_node_key="custom_agent_runtime",
+            result_contract="custom_result",
+            call_edge_label="call_custom_agent",
+        ),
+    )
+    extended_registry = AgentRegistry(
+        [*BUILTIN_AGENT_REGISTRY.all_definitions(), custom_definition]
+    )
+
+    extended_graph_id = ensure_session_controller_template(
+        execution_graph_service=graph_service,
+        project_id="project-1",
+        actor="user-1",
+        agent_registry=extended_registry,
+    )
+
+    assert extended_graph_id != original_graph_id
+    assert any(
+        container["graph_id"] == extended_graph_id
+        and container["container_key"] == "custom_agent"
+        for container in graph_service.containers.values()
+    )
+    assert any(
+        node["graph_id"] == extended_graph_id
+        and node["node_key"] == "custom_agent_runtime"
+        for node in graph_service.nodes.values()
+    )
 
 
 class DelegatingGraphAIProxy:
@@ -902,6 +983,7 @@ def test_ensure_graph_runtime_bindings_persists_explicit_tool_allowlists():
     requirement_agent_service = FakeRequirementAgentService()
     conflict_agent_service = FakeConflictAgentService()
     classification_agent_service = FakeConflictAgentService()
+    traceability_agent_service = FakeConflictAgentService()
     requirement_agent_service.tools = _NamedTools(
         [
             "search_requirements",
@@ -921,11 +1003,20 @@ def test_ensure_graph_runtime_bindings_persists_explicit_tool_allowlists():
             "classify_requirement",
         ]
     )
+    traceability_agent_service.tools = _NamedTools(
+        [
+            "search_requirements",
+            "list_requirements",
+            "get_requirement_state",
+            "trace_requirement_relation",
+        ]
+    )
     tools = SessionControllerTools(
         requirements_service=FakeRequirementsService(),
         requirement_agent_service=requirement_agent_service,
         conflict_agent_service=conflict_agent_service,
         requirement_classification_agent_service=classification_agent_service,
+        agent_services={"traceability_agent": traceability_agent_service},
     )
     service = SessionControllerService(
         chat_storage=FakeChatStorage(),
@@ -953,6 +1044,9 @@ def test_ensure_graph_runtime_bindings_persists_explicit_tool_allowlists():
             "default",
         )
     ]
+    traceability_binding = graph_service.runtime_bindings[
+        ("traceability_agent", "traceability_agent", "default")
+    ]
 
     assert set(conductor_binding["capability_policy_json"]["tool_names"]) == {
         "list_requirements",
@@ -960,6 +1054,7 @@ def test_ensure_graph_runtime_bindings_persists_explicit_tool_allowlists():
         "invoke_requirement_agent",
         "invoke_conflict_detection",
         "invoke_requirement_classification_agent",
+        "invoke_traceability_agent",
     }
     assert set(requirement_binding["capability_policy_json"]["tool_names"]) == {
         "search_requirements",
@@ -977,6 +1072,12 @@ def test_ensure_graph_runtime_bindings_persists_explicit_tool_allowlists():
         "search_requirements",
         "get_requirement_detail",
         "classify_requirement",
+    }
+    assert set(traceability_binding["capability_policy_json"]["tool_names"]) == {
+        "search_requirements",
+        "list_requirements",
+        "get_requirement_state",
+        "trace_requirement_relation",
     }
 
 

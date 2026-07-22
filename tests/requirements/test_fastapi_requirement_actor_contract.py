@@ -188,6 +188,7 @@ async def test_update_content_accepts_nested_payload_and_sets_source(monkeypatch
         response = await client.post(
             "/api/v2/requirement-actor/command/update-content",
             params={"requirement_id": "r-1"},
+            headers={"Idempotency-Key": "update-r-1-v2"},
             json={"updates": {"title": "next"}, "metadata": {"from": "ui"}},
         )
 
@@ -198,6 +199,7 @@ async def test_update_content_accepts_nested_payload_and_sets_source(monkeypatch
     assert sent["updates"] == {"title": "next"}
     assert sent["metadata"] == {"from": "ui"}
     assert sent["source"] == "u-1"
+    assert sent["idempotency_key"] == "update-r-1-v2"
 
 
 async def test_update_content_accepts_legacy_payload(monkeypatch):
@@ -303,4 +305,3 @@ async def test_internals_stats_route_returns_actor_stats(monkeypatch):
     assert response.status_code == 200
     assert response.json()["total_actors"] == 2
     assert response.json()["mailbox_sizes"]["r-1"] == 3
-

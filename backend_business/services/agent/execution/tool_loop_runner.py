@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import inspect
 import json
 import logging
@@ -13,6 +14,9 @@ from typing import Any, Protocol
 
 from backend_business.services.agent.runtime.context import ContextEntry
 from backend_business.services.agent.runtime.scratchpad import Scratchpad
+from backend_business.services.agent.runtime.tool_scheduling import (
+    ToolExecutionMetadata,
+)
 
 from .prompt_interface import PromptBuilderProtocol
 
@@ -24,19 +28,18 @@ class ToolExecutorProtocol(Protocol):
     def get_tools_list(
         self,
         context: dict[str, Any] | None = None,
-    ) -> list[dict[str, Any]]:
-        ...
+    ) -> list[dict[str, Any]]: ...
 
-    def execute(self, tool_name: str, arguments: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def execute(
+        self, tool_name: str, arguments: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]: ...
 
     def execute_streaming(
         self,
         tool_name: str,
         arguments: dict[str, Any],
         context: dict[str, Any],
-    ) -> Generator[dict[str, Any], None, dict[str, Any]]:
-        ...
+    ) -> Generator[dict[str, Any], None, dict[str, Any]]: ...
 
 
 def _coerce_tool_arguments(raw_arguments: Any) -> dict[str, Any]:
@@ -85,13 +88,31 @@ class ToolCallEvent:
 
 
 @dataclass(frozen=True)
+class _ContextUpdate:
+    before_exists: bool
+    before_value: Any
+    after_exists: bool
+    after_value: Any
+    replaced_paths: frozenset[tuple[Any, ...]] = frozenset()
+
+
+@dataclass(frozen=True)
 class _ToolExecutionOutcome:
     tool_name: str
     tool_call_id: str
     arguments: dict[str, Any]
     result: dict[str, Any]
-    context_updates: dict[str, Any]
+    context_updates: dict[str, _ContextUpdate]
     phase_completion: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class _ScheduledToolCall:
+    index: int
+    tool_name: str
+    tool_call_id: str
+    arguments: dict[str, Any]
+    metadata: ToolExecutionMetadata
 
 
 class CompletePhaseSignal(Exception):
@@ -145,8 +166,24 @@ _SCRATCHPAD_WRITE_TOOL_DEF: dict[str, Any] = {
                     "type": "string",
                     "description": "要写入 Scratchpad 的内容",
                 },
+                "importance": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "该记忆对后续任务的重要度，0 到 1；不确定时可省略",
+                },
+                "task_refs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 16,
+                    "description": (
+                        "与该记忆直接相关的 requirement_id、任务或主题标识。"
+                        "仅真正跨任务适用的不变量可使用 global-invariant"
+                    ),
+                },
             },
             "required": ["entry_type", "content"],
+            "additionalProperties": False,
         },
     },
 }
@@ -180,8 +217,7 @@ _COMPLETE_PHASE_TOOL_DEF: dict[str, Any] = {
                 "expand_topology": {
                     "type": "boolean",
                     "description": (
-                        "仅 judge 入口节点使用。"
-                        "true 表示需要展开拓扑图，false 表示走直接对话路径。"
+                        "仅 judge 入口节点使用。true 表示需要展开拓扑图，false 表示走直接对话路径。"
                     ),
                 },
                 "target_template_graph_id": {
@@ -226,6 +262,7 @@ class ToolLoopRunner:
         graph_meta_patch_builder: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         scratchpad: Scratchpad | None = None,
         enable_complete_phase: bool = False,
+        max_concurrent_tool_calls_per_round: int = 4,
     ) -> None:
         self.ai_proxy = ai_proxy_client
         self.tool_executor = tool_executor
@@ -234,13 +271,20 @@ class ToolLoopRunner:
         self.stage_container_key = stage_container_key
         self.stage_node_type = stage_node_type
         self.stage_role_type = stage_role_type
-        self.stage_node_key_builder = stage_node_key_builder or (lambda round_index: f"tool_loop_round_{round_index}")
-        self.stage_label_builder = stage_label_builder or (lambda round_index: f"Tool Loop Round {round_index}")
+        self.stage_node_key_builder = stage_node_key_builder or (
+            lambda round_index: f"tool_loop_round_{round_index}"
+        )
+        self.stage_label_builder = stage_label_builder or (
+            lambda round_index: f"Tool Loop Round {round_index}"
+        )
         self.actor_manager_getter = actor_manager_getter
         self.graph_meta_patcher = graph_meta_patcher
         self.graph_meta_patch_builder = graph_meta_patch_builder
         self.scratchpad = scratchpad
         self.enable_complete_phase = enable_complete_phase
+        if max_concurrent_tool_calls_per_round < 1:
+            raise ValueError("max_concurrent_tool_calls_per_round must be positive")
+        self.max_concurrent_tool_calls_per_round = max_concurrent_tool_calls_per_round
 
     def _execute_tool_with_streaming_support(
         self,
@@ -281,7 +325,9 @@ class ToolLoopRunner:
         return get_tools_list()
 
     @staticmethod
-    def _build_stage_event_payload(recorder: Any, node_key: str, *, status: str, **extra: Any) -> dict[str, Any]:
+    def _build_stage_event_payload(
+        recorder: Any, node_key: str, *, status: str, **extra: Any
+    ) -> dict[str, Any]:
         builder = getattr(recorder, "build_stage_event_data", None)
         if callable(builder):
             return builder(node_key, status=status, **extra)
@@ -325,18 +371,124 @@ class ToolLoopRunner:
         except Exception:
             return left is right
 
+    @staticmethod
+    def _copy_context_value(value: Any) -> Any:
+        try:
+            return copy.deepcopy(value)
+        except Exception:
+            return value
+
+    @staticmethod
+    def _capture_context_references(
+        context: dict[str, Any],
+    ) -> dict[str, dict[tuple[Any, ...], Any]]:
+        """Remember mutable object identities before a tool runs.
+
+        Value diffs alone cannot distinguish an in-place append from assigning
+        a replacement collection with similar contents. Keeping the original
+        object references lets the deterministic merge honor explicit
+        replacements while still combining independent in-place mutations.
+        """
+
+        captured: dict[str, dict[tuple[Any, ...], Any]] = {}
+
+        def capture_value(
+            value: Any,
+            *,
+            path: tuple[Any, ...],
+            references: dict[tuple[Any, ...], Any],
+            visited: set[int],
+        ) -> None:
+            if not isinstance(value, (dict, list, set)):
+                return
+            references[path] = value
+            value_id = id(value)
+            if value_id in visited:
+                return
+            visited.add(value_id)
+            if isinstance(value, dict):
+                for child_key, child_value in value.items():
+                    capture_value(
+                        child_value,
+                        path=(*path, child_key),
+                        references=references,
+                        visited=visited,
+                    )
+
+        for key, value in context.items():
+            if key == "tool_results" or str(key).startswith("_"):
+                continue
+            references: dict[tuple[Any, ...], Any] = {}
+            capture_value(
+                value,
+                path=(),
+                references=references,
+                visited=set(),
+            )
+            if references:
+                captured[key] = references
+        return captured
+
+    @staticmethod
+    def _resolve_context_value_path(
+        value: Any,
+        path: tuple[Any, ...],
+    ) -> tuple[bool, Any]:
+        current = value
+        for component in path:
+            if not isinstance(current, dict) or component not in current:
+                return False, None
+            current = current[component]
+        return True, current
+
     def _extract_context_updates(
         self,
         *,
         before: dict[str, Any],
         after: dict[str, Any],
-    ) -> dict[str, Any]:
-        updates: dict[str, Any] = {}
-        for key, value in after.items():
+        original_context_references: dict[
+            str,
+            dict[tuple[Any, ...], Any],
+        ]
+        | None = None,
+    ) -> dict[str, _ContextUpdate]:
+        updates: dict[str, _ContextUpdate] = {}
+        ordered_keys = [
+            *after.keys(),
+            *(key for key in before if key not in after),
+        ]
+        for key in ordered_keys:
             if key == "tool_results" or str(key).startswith("_"):
                 continue
-            if not self._context_values_equal(before.get(key), value):
-                updates[key] = value
+            before_exists = key in before
+            after_exists = key in after
+            before_value = before.get(key)
+            after_value = after.get(key)
+            if before_exists == after_exists and self._context_values_equal(
+                before_value, after_value
+            ):
+                continue
+
+            replaced_paths: set[tuple[Any, ...]] = set()
+            if after_exists and original_context_references is not None:
+                for path, original_value in original_context_references.get(
+                    key,
+                    {},
+                ).items():
+                    path_exists, current_value = self._resolve_context_value_path(
+                        after_value,
+                        path,
+                    )
+                    if path_exists and current_value is not original_value:
+                        replaced_paths.add(path)
+
+            updates[key] = _ContextUpdate(
+                before_exists=before_exists,
+                before_value=self._copy_context_value(before_value),
+                after_exists=after_exists,
+                after_value=self._copy_context_value(after_value),
+                replaced_paths=frozenset(replaced_paths),
+            )
         return updates
 
     @staticmethod
@@ -348,15 +500,148 @@ class ToolLoopRunner:
         Parallel tool calls within the same round all read from the same
         pre-dispatch snapshot. They do not observe each other's writes.
         """
-        snapshot = dict(context)
-        if "tool_results" in context:
-            snapshot["tool_results"] = list(context.get("tool_results") or [])
+        snapshot: dict[str, Any] = {}
+        for key, value in context.items():
+            if str(key).startswith("_"):
+                snapshot[key] = value
+                continue
+            try:
+                snapshot[key] = copy.deepcopy(value)
+            except Exception:
+                snapshot[key] = value
         return snapshot
+
+    def _resolve_tool_execution_metadata(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> ToolExecutionMetadata:
+        if tool_name == "scratchpad_write" and self.scratchpad is not None:
+            subgraph = str(context.get("_current_subgraph") or "default").strip()
+            return ToolExecutionMetadata(
+                read_only=False,
+                idempotent=False,
+                resource_key=f"{self.stage_container_key}:{subgraph}",
+                concurrency_group="scratchpad",
+            )
+        if tool_name == "complete_phase" and self.enable_complete_phase:
+            return ToolExecutionMetadata(
+                read_only=False,
+                idempotent=False,
+                resource_key=self.stage_container_key,
+                concurrency_group="phase-control",
+            )
+
+        resolver = getattr(
+            self.tool_executor,
+            "get_tool_execution_metadata",
+            None,
+        )
+        if not callable(resolver):
+            return ToolExecutionMetadata()
+        try:
+            resolved = resolver(tool_name, arguments, context)
+        except Exception:
+            logger.warning(
+                "Tool execution metadata resolution failed; using conservative defaults: tool=%s",
+                tool_name,
+                exc_info=True,
+            )
+            return ToolExecutionMetadata()
+        return ToolExecutionMetadata.coerce(resolved)
+
+    @staticmethod
+    def _tool_calls_conflict(
+        left: _ScheduledToolCall,
+        right: _ScheduledToolCall,
+    ) -> bool:
+        if left.metadata.read_only and right.metadata.read_only:
+            return False
+
+        left_resource = left.metadata.resource_key
+        right_resource = right.metadata.resource_key
+        if left_resource is not None and right_resource is not None:
+            return left_resource == right_resource
+
+        # A write without a resource key is a global barrier. This conservative
+        # fallback prevents undeclared side effects from bypassing declared
+        # groups and resources.
+        return True
+
+    @classmethod
+    def _can_start_tool_call(
+        cls,
+        candidate: _ScheduledToolCall,
+        *,
+        active_calls: list[_ScheduledToolCall],
+        earlier_pending_calls: list[_ScheduledToolCall],
+    ) -> bool:
+        return not any(
+            cls._tool_calls_conflict(candidate, other)
+            for other in [*active_calls, *earlier_pending_calls]
+        )
+
+    @classmethod
+    def _merge_context_value(
+        cls,
+        *,
+        base: Any,
+        existing: Any,
+        update: Any,
+        replaced_paths: frozenset[tuple[Any, ...]],
+        path: tuple[Any, ...] = (),
+    ) -> Any:
+        if path in replaced_paths or cls._context_values_equal(existing, base):
+            return cls._copy_context_value(update)
+
+        if isinstance(base, dict) and isinstance(existing, dict) and isinstance(update, dict):
+            if not update:
+                return {}
+            merged = cls._copy_context_value(existing)
+            for key in base:
+                if key not in update:
+                    merged.pop(key, None)
+            for key, value in update.items():
+                child_path = (*path, key)
+                if key not in base:
+                    merged[key] = cls._copy_context_value(value)
+                elif not cls._context_values_equal(base[key], value):
+                    if key not in merged:
+                        merged[key] = cls._copy_context_value(value)
+                    else:
+                        merged[key] = cls._merge_context_value(
+                            base=base[key],
+                            existing=merged[key],
+                            update=value,
+                            replaced_paths=replaced_paths,
+                            path=child_path,
+                        )
+            return merged
+
+        if isinstance(base, list) and isinstance(existing, list) and isinstance(update, list):
+            if not update:
+                return []
+            base_length = len(base)
+            if len(update) >= base_length and cls._context_values_equal(update[:base_length], base):
+                merged = cls._copy_context_value(existing)
+                merged.extend(cls._copy_context_value(update[base_length:]))
+                return merged
+            return cls._copy_context_value(update)
+
+        if isinstance(base, set) and isinstance(existing, set) and isinstance(update, set):
+            if not update:
+                return set()
+            return (set(existing) - (set(base) - set(update))) | (set(update) - set(base))
+
+        return cls._copy_context_value(update)
 
     @staticmethod
     def _merge_parallel_tool_outcomes(
         *,
         normalized_context: dict[str, Any],
+        public_context: dict[str, Any],
         outcomes: list[_ToolExecutionOutcome],
     ) -> None:
         """Deterministically merge same-round tool outcomes back into context.
@@ -364,11 +649,28 @@ class ToolLoopRunner:
         Merge semantics:
         - Each tool call sees only the round-start snapshot.
         - Same-round tool calls are isolated from each other's writes.
-        - Context updates replay in original tool index order.
+        - Accepted context updates replay in original tool index order into
+          both the runner state and the caller-visible public context.
         - ``tool_results`` are appended in that same deterministic order.
         """
         for outcome in outcomes:
-            normalized_context.update(outcome.context_updates)
+            for key, update in outcome.context_updates.items():
+                if not update.after_exists:
+                    normalized_context.pop(key, None)
+                    public_context.pop(key, None)
+                    continue
+                if not update.before_exists or key not in normalized_context:
+                    normalized_context[key] = ToolLoopRunner._copy_context_value(
+                        update.after_value,
+                    )
+                else:
+                    normalized_context[key] = ToolLoopRunner._merge_context_value(
+                        base=update.before_value,
+                        existing=normalized_context[key],
+                        update=update.after_value,
+                        replaced_paths=update.replaced_paths,
+                    )
+                public_context[key] = copy.deepcopy(normalized_context[key])
             normalized_context.setdefault("tool_results", []).append(
                 {
                     "tool_name": outcome.tool_name,
@@ -391,11 +693,7 @@ class ToolLoopRunner:
     ) -> dict[str, Any]:
         raw_target_container_keys = arguments.get("target_container_keys")
         target_container_keys = (
-            tuple(
-                str(item).strip()
-                for item in raw_target_container_keys
-                if str(item).strip()
-            )
+            tuple(str(item).strip() for item in raw_target_container_keys if str(item).strip())
             if isinstance(raw_target_container_keys, list)
             else ()
         )
@@ -406,6 +704,32 @@ class ToolLoopRunner:
             "target_template_graph_id": arguments.get("target_template_graph_id"),
             "target_container_keys": target_container_keys,
         }
+
+    @staticmethod
+    def _resolve_scratchpad_task_refs(
+        *,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> list[str]:
+        explicit_refs = arguments.get("task_refs")
+        if isinstance(explicit_refs, str) and explicit_refs.strip():
+            return [explicit_refs.strip()]
+        if isinstance(explicit_refs, (list, tuple)):
+            normalized_refs = [
+                str(value).strip() for value in explicit_refs if str(value or "").strip()
+            ]
+            if normalized_refs:
+                return normalized_refs
+        return [
+            str(value).strip()
+            for value in (
+                context.get("resolved_requirement_id"),
+                context.get("selected_requirement_id"),
+                context.get("requirement_id"),
+                context.get("_current_subgraph"),
+            )
+            if str(value or "").strip()
+        ]
 
     def _execute_tool_batch(
         self,
@@ -420,12 +744,27 @@ class ToolLoopRunner:
         round_context_snapshot = self._clone_parallel_context_snapshot(
             normalized_context,
         )
+        scheduled_calls: list[_ScheduledToolCall] = []
 
         for tool_index, tool_call in enumerate(tool_calls, start=1):
             function_payload = tool_call.get("function") or {}
             tool_name = function_payload.get("name") or ""
             arguments = _coerce_tool_arguments(function_payload.get("arguments"))
             tool_call_id = tool_call.get("id") or f"{node_key}-tool-{tool_index}"
+            metadata = self._resolve_tool_execution_metadata(
+                tool_name=tool_name,
+                arguments=arguments,
+                context=round_context_snapshot,
+            )
+            scheduled_calls.append(
+                _ScheduledToolCall(
+                    index=tool_index - 1,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    arguments=arguments,
+                    metadata=metadata,
+                )
+            )
 
             yield {
                 "event": "tool_call",
@@ -438,41 +777,96 @@ class ToolLoopRunner:
                 },
             }
 
+        outcomes: dict[int, _ToolExecutionOutcome] = {}
+        pending_calls = list(scheduled_calls)
+        active_calls: dict[int, _ScheduledToolCall] = {}
+        cancellation_error: RuntimeError | None = None
+
+        def start_worker(call: _ScheduledToolCall) -> None:
             tool_context = self._clone_parallel_context_snapshot(
                 round_context_snapshot,
             )
-
             worker = threading.Thread(
                 target=self._run_tool_worker,
                 args=(
                     result_queue,
-                    tool_index - 1,
-                    tool_name,
-                    tool_call_id,
-                    arguments,
+                    call.index,
+                    call.tool_name,
+                    call.tool_call_id,
+                    call.arguments,
                     round_context_snapshot,
                     tool_context,
                 ),
-                name=f"tool-loop-{tool_index}",
+                name=f"tool-loop-{call.index + 1}",
                 daemon=True,
             )
-            worker.start()
+            active_calls[call.index] = call
             worker_threads.append(worker)
+            worker.start()
 
-        outcomes: dict[int, _ToolExecutionOutcome] = {}
-        completed_workers = 0
+        while pending_calls or active_calls:
+            if cancellation_error is None:
+                try:
+                    self._raise_if_cancellation_requested(round_context_snapshot)
+                except RuntimeError as exc:
+                    cancellation_error = exc
+                    pending_calls.clear()
+            while (
+                cancellation_error is None
+                and pending_calls
+                and len(active_calls) < self.max_concurrent_tool_calls_per_round
+            ):
+                try:
+                    self._raise_if_cancellation_requested(round_context_snapshot)
+                except RuntimeError as exc:
+                    cancellation_error = exc
+                    pending_calls.clear()
+                    break
+                selected_position: int | None = None
+                for position, candidate in enumerate(pending_calls):
+                    if self._can_start_tool_call(
+                        candidate,
+                        active_calls=list(active_calls.values()),
+                        earlier_pending_calls=pending_calls[:position],
+                    ):
+                        selected_position = position
+                        break
+                if selected_position is None:
+                    break
+                start_worker(pending_calls.pop(selected_position))
 
-        while completed_workers < len(worker_threads):
-            item_type, index, payload = result_queue.get()
+            if not active_calls:
+                if cancellation_error is not None:
+                    break
+                # The first pending call cannot conflict with an earlier call,
+                # so this is only a defensive deadlock escape.
+                start_worker(pending_calls.pop(0))
+
+            try:
+                item_type, index, payload = result_queue.get(timeout=0.05)
+            except queue.Empty:
+                continue
             if item_type == "event":
-                yield payload
+                if cancellation_error is None:
+                    call = active_calls.get(index)
+                    if isinstance(payload, dict) and call is not None:
+                        payload = dict(payload)
+                        data = dict(payload.get("data") or {})
+                        data.setdefault("tool_call_index", index)
+                        data.setdefault("tool_call_id", call.tool_call_id)
+                        data.setdefault("tool", call.tool_name)
+                        payload["data"] = data
+                    yield payload
                 continue
             if item_type == "result":
-                completed_workers += 1
                 outcomes[index] = payload
+                active_calls.pop(index, None)
 
         for worker in worker_threads:
             worker.join()
+
+        if cancellation_error is not None:
+            raise cancellation_error
 
         return [outcomes[index] for index in sorted(outcomes)]
 
@@ -486,6 +880,9 @@ class ToolLoopRunner:
         base_context: dict[str, Any],
         tool_context: dict[str, Any],
     ) -> None:
+        original_context_references = self._capture_context_references(
+            tool_context,
+        )
         try:
             phase_completion: dict[str, Any] | None = None
             if tool_name == "complete_phase" and self.enable_complete_phase:
@@ -497,6 +894,11 @@ class ToolLoopRunner:
                     content=arguments.get("content", ""),
                     source_subgraph=tool_context.get("_current_subgraph"),
                     readonly=(arguments.get("entry_type") == "tool_excerpt"),
+                    importance=arguments.get("importance"),
+                    task_refs=self._resolve_scratchpad_task_refs(
+                        arguments=arguments,
+                        context=tool_context,
+                    ),
                 )
                 tool_result = {"ok": True, "message": "已写入 Scratchpad"}
             else:
@@ -527,12 +929,13 @@ class ToolLoopRunner:
                         context_updates=self._extract_context_updates(
                             before=base_context,
                             after=tool_context,
+                            original_context_references=original_context_references,
                         ),
                         phase_completion=phase_completion,
                     ),
                 )
             )
-        except Exception as exc:
+        except BaseException as exc:
             result_queue.put(
                 (
                     "result",
@@ -542,12 +945,13 @@ class ToolLoopRunner:
                         tool_call_id=tool_call_id,
                         arguments=arguments,
                         result={
-                            "error": str(exc),
+                            "error": str(exc) or type(exc).__name__,
                             "is_error": True,
                         },
                         context_updates=self._extract_context_updates(
                             before=base_context,
                             after=tool_context,
+                            original_context_references=original_context_references,
                         ),
                         phase_completion=None,
                     ),
@@ -630,15 +1034,13 @@ class ToolLoopRunner:
             if self.scratchpad is not None:
                 # Inject scratchpad_write tool when scratchpad mode is active
                 if not any(
-                    (t.get("function") or {}).get("name") == "scratchpad_write"
-                    for t in tools_list
+                    (t.get("function") or {}).get("name") == "scratchpad_write" for t in tools_list
                 ):
                     tools_list = [*tools_list, _SCRATCHPAD_WRITE_TOOL_DEF]
             if self.enable_complete_phase:
                 # Inject complete_phase tool for explicit phase completion signals
                 if not any(
-                    (t.get("function") or {}).get("name") == "complete_phase"
-                    for t in tools_list
+                    (t.get("function") or {}).get("name") == "complete_phase" for t in tools_list
                 ):
                     tools_list = [*tools_list, _COMPLETE_PHASE_TOOL_DEF]
 
@@ -700,8 +1102,12 @@ class ToolLoopRunner:
                                     value={
                                         "conclusion": outcome.phase_completion["conclusion"],
                                         "route_key": outcome.phase_completion["route_key"],
-                                        "expand_topology": outcome.phase_completion["expand_topology"],
-                                        "target_template_graph_id": outcome.phase_completion["target_template_graph_id"],
+                                        "expand_topology": outcome.phase_completion[
+                                            "expand_topology"
+                                        ],
+                                        "target_template_graph_id": outcome.phase_completion[
+                                            "target_template_graph_id"
+                                        ],
                                         "target_container_keys": list(
                                             outcome.phase_completion["target_container_keys"]
                                         ),
@@ -713,6 +1119,7 @@ class ToolLoopRunner:
 
                     self._merge_parallel_tool_outcomes(
                         normalized_context=normalized_context,
+                        public_context=context,
                         outcomes=[outcome],
                     )
                     if execution_context is not None:
@@ -755,7 +1162,9 @@ class ToolLoopRunner:
                     output_summary["phase_completed"] = True
                     output_summary["route_key"] = phase_completion["route_key"]
                     output_summary["expand_topology"] = phase_completion["expand_topology"]
-                    output_summary["target_template_graph_id"] = phase_completion["target_template_graph_id"]
+                    output_summary["target_template_graph_id"] = phase_completion[
+                        "target_template_graph_id"
+                    ]
                     output_summary["target_container_keys"] = list(
                         phase_completion["target_container_keys"]
                     )

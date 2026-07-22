@@ -117,6 +117,7 @@ class RequirementAgentToolLoopRunner(BaseAgentToolLoopRunner):
         # 根据上下文模式决定注入 LLM 的历史节点上下文
         scratchpad: Scratchpad | None = None
         scratchpad_prompt_text = ""
+        scratchpad_compilation: dict[str, Any] | None = None
 
         if context_mode == "scratchpad":
             # Scratchpad 蒸馏模式：不传递全量历史，从 graph meta 恢复 Scratchpad
@@ -124,7 +125,16 @@ class RequirementAgentToolLoopRunner(BaseAgentToolLoopRunner):
             scratchpad = ScratchpadService(
                 execution_graph_service=self._execution_graph_service,
             ).load(recorder.graph_id, container_key=self._stage_container_key)
-            scratchpad_prompt_text = scratchpad.format_for_prompt()
+            compilation = scratchpad.compile_for_prompt(
+                task="\n".join(
+                    str(part)
+                    for part in (requirement_id, user_message)
+                    if part
+                ),
+                observation_key=f"tool_loop:{self._stage_container_key}",
+            )
+            scratchpad_prompt_text = compilation.text
+            scratchpad_compilation = compilation.to_metrics()
         elif context_mode == "incremental":
             # 增量模式：仅保留架构和文件上下文，不传递具体执行结果
             effective_historical_context = []
@@ -148,6 +158,7 @@ class RequirementAgentToolLoopRunner(BaseAgentToolLoopRunner):
             "clarification_required": False,
             "approval_pending": False,
             "_scratchpad_prompt_text": scratchpad_prompt_text,
+            "_scratchpad_compilation": scratchpad_compilation,
         }
         return AgentToolLoopSetup(
             context=context,

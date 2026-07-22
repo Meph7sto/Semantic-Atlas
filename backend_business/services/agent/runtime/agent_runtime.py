@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator
-from dataclasses import dataclass, field
 import inspect
+import queue
 import threading
 import uuid
+from collections.abc import Callable, Generator
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from .state_contract import RUN_STATE_SOURCE_OF_TRUTH
@@ -67,18 +68,93 @@ class RuntimeBinding:
     memory_policy: dict[str, Any] = field(default_factory=dict)
 
 
+_STREAM_CLOSED = object()
+
+
+class RunSupervisor:
+    """Coordinates one local worker's event stream and cooperative shutdown.
+
+    Python worker threads cannot be stopped safely. A timeout or cancellation
+    therefore signals ``cancel_event`` and keeps the worker supervised, with its
+    quota lease held, until a supervisor thread has joined it. Calls that require
+    hard termination must run in a process-isolated or remote runtime rather than
+    relying on the local thread runtime.
+    """
+
+    def __init__(self) -> None:
+        self.cancel_event = threading.Event()
+        self.worker_exited_event = threading.Event()
+        self.completion_event = threading.Event()
+        self._lock = threading.RLock()
+        self._events: list[dict[str, Any]] = []
+        self._subscribers: set[queue.Queue[Any]] = set()
+        self._result: AgentRunResult | None = None
+        self._closed = False
+
+    def publish(self, event: dict[str, Any]) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._events.append(event)
+            subscribers = tuple(self._subscribers)
+        for subscriber in subscribers:
+            subscriber.put(event)
+
+    def stream(self) -> Generator[dict[str, Any], None, None]:
+        event_queue: queue.Queue[Any] = queue.Queue()
+        with self._lock:
+            history = tuple(self._events)
+            closed = self._closed
+            if not closed:
+                self._subscribers.add(event_queue)
+
+        try:
+            yield from history
+            if closed:
+                return
+            while True:
+                event = event_queue.get()
+                if event is _STREAM_CLOSED:
+                    return
+                yield event
+        finally:
+            with self._lock:
+                self._subscribers.discard(event_queue)
+
+    @property
+    def result(self) -> AgentRunResult | None:
+        with self._lock:
+            return self._result
+
+    def close(self, result: AgentRunResult) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._result = result
+            self._closed = True
+            subscribers = tuple(self._subscribers)
+            self._subscribers.clear()
+        self.completion_event.set()
+        for subscriber in subscribers:
+            subscriber.put(_STREAM_CLOSED)
+
+
 @dataclass
 class _InMemoryRunState:
     request: RunRequest
-    events: list[dict[str, Any]] = field(default_factory=list)
     result: AgentRunResult | None = None
     executed: bool = False
     running: bool = False
-    cancelled: bool = False
+    lifecycle_status: str = "queued"
+    termination_request: AgentRunResult | None = None
     worker_thread: threading.Thread | None = None
+    supervisor_thread: threading.Thread | None = None
+    worker_result: AgentRunResult | None = None
+    worker_error: BaseException | None = None
+    worker_finished: bool = False
     policy_lease: _RuntimePolicyLease | None = None  # type: ignore[name-defined]
-    cancel_event: threading.Event = field(default_factory=threading.Event)
-    completion_event: threading.Event = field(default_factory=threading.Event)
+    timeout_timer: threading.Timer | None = None
+    supervisor: RunSupervisor = field(default_factory=RunSupervisor)
     lock: threading.RLock = field(default_factory=threading.RLock)
 
 
@@ -238,16 +314,21 @@ class LocalAgentRuntime:
 
     def stream(self, agent_run_id: str) -> Generator[dict[str, Any], None, None]:
         state = self._get_state(agent_run_id)
-        self._ensure_executed(agent_run_id, state)
-        for event in state.events:
-            yield event
+        with state.lock:
+            run_supervisor = state.supervisor
+        self._ensure_started(agent_run_id, state)
+        yield from run_supervisor.stream()
 
     def await_result(self, agent_run_id: str) -> AgentRunResult:
         state = self._get_state(agent_run_id)
-        self._ensure_executed(agent_run_id, state)
-        if state.result is None:
+        with state.lock:
+            run_supervisor = state.supervisor
+        self._ensure_started(agent_run_id, state)
+        run_supervisor.completion_event.wait()
+        result = run_supervisor.result
+        if result is None:
             raise RuntimeError(f"agent_run {agent_run_id} 缺少执行结果")
-        return state.result
+        return result
 
     def resume(self, agent_run_id: str, user_input: Any) -> AgentRunResult:
         state = self._get_state(agent_run_id)
@@ -255,38 +336,64 @@ class LocalAgentRuntime:
         resume_runner = payload.get("resume_runner")
         if not callable(resume_runner):
             raise RuntimeError(f"agent_run {agent_run_id} 不支持 resume")
+
+        while True:
+            with state.lock:
+                if state.running or (
+                    state.worker_thread is not None and state.worker_thread.is_alive()
+                ):
+                    raise RuntimeError(f"agent_run {agent_run_id} 仍在执行，无法 resume")
+                supervisor_thread = state.supervisor_thread
+            if supervisor_thread is None or not supervisor_thread.is_alive():
+                break
+            if supervisor_thread is threading.current_thread():
+                raise RuntimeError(f"agent_run {agent_run_id} 无法从 supervisor 线程 resume")
+            supervisor_thread.join()
+
         with state.lock:
-            state.events = []
+            if (
+                state.running
+                or (
+                    state.worker_thread is not None
+                    and state.worker_thread.is_alive()
+                )
+                or (
+                    state.supervisor_thread is not None
+                    and state.supervisor_thread.is_alive()
+                )
+            ):
+                raise RuntimeError(f"agent_run {agent_run_id} 仍在执行，无法 resume")
+            if state.timeout_timer is not None:
+                state.timeout_timer.cancel()
             state.result = None
             state.executed = False
             state.running = False
+            state.lifecycle_status = "queued"
+            state.termination_request = None
             payload["runner"] = lambda: resume_runner(user_input)
-            state.cancelled = False
             state.worker_thread = None
+            state.supervisor_thread = None
+            state.worker_result = None
+            state.worker_error = None
+            state.worker_finished = False
             self._release_policy_lease(agent_run_id, state)
-            state.cancel_event = threading.Event()
-            state.completion_event = threading.Event()
-        self._ensure_executed(agent_run_id, state)
+            state.timeout_timer = None
+            state.supervisor = RunSupervisor()
+        self._ensure_started(agent_run_id, state)
         return self.await_result(agent_run_id)
 
     def cancel(self, agent_run_id: str) -> None:
         state = self._get_state(agent_run_id)
-        with state.lock:
-            terminal = self._mark_terminal_state_locked(
-                state,
+        self._request_termination(
+            agent_run_id=agent_run_id,
+            state=state,
+            lifecycle_status="cancelling",
+            result=AgentRunResult(
                 status="cancelled",
                 error_code="cancelled",
                 error_message="agent run cancelled",
-            )
-        if terminal:
-            self._release_policy_lease(agent_run_id, state)
-            self._persist_update(
-                agent_run_id,
-                status="cancelled",
-                error_code="cancelled",
-                error_message="agent run cancelled",
-                completed=True,
-            )
+            ),
+        )
 
     def _get_state(self, agent_run_id: str) -> _InMemoryRunState:
         with self._lock:
@@ -295,110 +402,271 @@ class LocalAgentRuntime:
             raise KeyError(f"未知 agent_run_id: {agent_run_id}")
         return state
 
-    def _ensure_executed(self, agent_run_id: str, state: _InMemoryRunState) -> None:
-        worker_thread: threading.Thread | None = None
-        timeout_seconds: float | None = None
+    def _ensure_started(self, agent_run_id: str, state: _InMemoryRunState) -> None:
+        synchronous_supervision: threading.Thread | None = None
         with state.lock:
-            if state.executed:
+            if state.executed or state.running:
                 return
-            if state.cancelled:
+            if state.termination_request is not None:
                 return
-            worker_thread = state.worker_thread
-            if worker_thread is None:
-                try:
-                    state.policy_lease = self._policy_coordinator.acquire(
-                        agent_run_id,
-                        state.request,
-                    )
-                except RuntimePolicyError as exc:
-                    self._mark_failed_before_start(
-                        agent_run_id=agent_run_id,
-                        state=state,
-                        error_code=exc.code,
-                        error_message=str(exc),
-                    )
-                    return
-                self._bind_runtime_context(state, agent_run_id)
+            try:
                 runner = self._resolve_runner(state.request.input_payload)
+            except Exception as exc:
+                self._mark_failed_before_start(
+                    agent_run_id=agent_run_id,
+                    state=state,
+                    error_code=getattr(exc, "code", exc.__class__.__name__),
+                    error_message=str(exc),
+                )
+                return
+            try:
+                state.policy_lease = self._policy_coordinator.acquire(
+                    agent_run_id,
+                    state.request,
+                )
+            except RuntimePolicyError as exc:
+                self._mark_failed_before_start(
+                    agent_run_id=agent_run_id,
+                    state=state,
+                    error_code=exc.code,
+                    error_message=str(exc),
+                )
+                return
+
+            worker_thread: threading.Thread | None = None
+            supervisor_thread: threading.Thread | None = None
+            try:
+                self._bind_runtime_context(state, agent_run_id)
                 state.running = True
+                state.lifecycle_status = "running"
                 worker_thread = threading.Thread(
                     target=self._execute_worker,
-                    args=(agent_run_id, state, runner),
+                    args=(state, runner),
                     name=f"agent-run-{agent_run_id[:8]}",
                     daemon=True,
                 )
+                supervisor_thread = threading.Thread(
+                    target=self._supervise_worker,
+                    args=(agent_run_id, state, worker_thread),
+                    name=f"run-supervisor-{agent_run_id[:8]}",
+                    daemon=True,
+                )
                 state.worker_thread = worker_thread
+                state.supervisor_thread = supervisor_thread
+                timeout_seconds = self._resolve_timeout_seconds(state.request)
+                if timeout_seconds is not None:
+                    run_supervisor = state.supervisor
+                    state.timeout_timer = threading.Timer(
+                        timeout_seconds,
+                        self._request_timeout,
+                        args=(agent_run_id, state, run_supervisor),
+                    )
+                    state.timeout_timer.daemon = True
                 self._persist_update(agent_run_id, status="running", started=True)
                 worker_thread.start()
-            timeout_seconds = self._resolve_timeout_seconds(state.request)
+                supervisor_thread.start()
+                if state.timeout_timer is not None:
+                    state.timeout_timer.start()
+            except Exception as exc:
+                error_code = getattr(exc, "code", exc.__class__.__name__)
+                error_message = str(exc)
+                if worker_thread is None or not self._thread_was_started(worker_thread):
+                    self._mark_failed_before_start(
+                        agent_run_id=agent_run_id,
+                        state=state,
+                        error_code=error_code,
+                        error_message=error_message,
+                    )
+                    return
 
-        completed = (
-            state.completion_event.wait(timeout_seconds)
-            if timeout_seconds is not None
-            else state.completion_event.wait()
-        )
-        if completed:
-            return
+                failure_result = AgentRunResult(
+                    status="failed",
+                    error_code=error_code,
+                    error_message=error_message,
+                )
+                state.termination_request = failure_result
+                state.lifecycle_status = "failing"
+                state.supervisor.cancel_event.set()
+                if state.timeout_timer is not None:
+                    state.timeout_timer.cancel()
+                    state.timeout_timer = None
 
-        with state.lock:
-            timed_out = self._mark_terminal_state_locked(
-                state,
-                status="timed_out",
-                error_code="timed_out",
-                error_message="agent run timed out",
-            )
-        if timed_out:
-            self._release_policy_lease(agent_run_id, state)
-            self._persist_update(
+                if supervisor_thread is None or not self._thread_was_started(
+                    supervisor_thread
+                ):
+                    recovery_thread = threading.Thread(
+                        target=self._supervise_worker,
+                        args=(agent_run_id, state, worker_thread),
+                        name=f"run-supervisor-recovery-{agent_run_id[:8]}",
+                        daemon=True,
+                    )
+                    state.supervisor_thread = recovery_thread
+                    try:
+                        recovery_thread.start()
+                    except Exception:
+                        if not self._thread_was_started(recovery_thread):
+                            state.supervisor_thread = None
+                            synchronous_supervision = worker_thread
+
+        if synchronous_supervision is not None:
+            self._supervise_worker(
                 agent_run_id,
-                status="timed_out",
-                error_code="timed_out",
-                error_message="agent run timed out",
-                completed=True,
+                state,
+                synchronous_supervision,
             )
 
     def _execute_worker(
         self,
-        agent_run_id: str,
         state: _InMemoryRunState,
         runner: Callable[[], Any],
     ) -> None:
+        result: AgentRunResult | None = None
+        error: BaseException | None = None
         try:
-            events, result = self._run_runner(runner)
-            self._validate_result_memory_contract(state.request, result)
-        except Exception as exc:
-            with state.lock:
-                if state.executed:
-                    return
-                state.events = []
-                state.result = AgentRunResult(
-                    status="failed",
-                    error_code=getattr(exc, "code", exc.__class__.__name__),
-                    error_message=str(exc),
-                )
-                state.executed = True
-                state.running = False
-                state.completion_event.set()
-            self._release_policy_lease(agent_run_id, state)
-            self._persist_update(
-                agent_run_id,
-                status="failed",
-                error_code=getattr(exc, "code", exc.__class__.__name__),
-                error_message=str(exc),
-                completed=True,
+            result = self._run_runner(
+                runner,
+                publish_event=state.supervisor.publish,
             )
-            return
+            self._validate_result_memory_contract(state.request, result)
+        except BaseException as exc:
+            error = exc
+        with state.lock:
+            state.worker_finished = True
+            if state.timeout_timer is not None:
+                state.timeout_timer.cancel()
+                state.timeout_timer = None
+            state.worker_result = result
+            state.worker_error = error
 
+    def _supervise_worker(
+        self,
+        agent_run_id: str,
+        state: _InMemoryRunState,
+        worker_thread: threading.Thread,
+    ) -> None:
+        worker_thread.join()
+        with state.lock:
+            run_supervisor = state.supervisor
+            result = state.worker_result
+            error = state.worker_error
+        run_supervisor.worker_exited_event.set()
+        self._finalize_worker_exit(
+            agent_run_id=agent_run_id,
+            state=state,
+            run_supervisor=run_supervisor,
+            result=result,
+            error=error,
+        )
+
+    def _finalize_worker_exit(
+        self,
+        *,
+        agent_run_id: str,
+        state: _InMemoryRunState,
+        run_supervisor: RunSupervisor,
+        result: AgentRunResult | None,
+        error: BaseException | None,
+    ) -> None:
         with state.lock:
             if state.executed:
                 return
-            state.events = events
-            state.result = result
+            if state.timeout_timer is not None:
+                state.timeout_timer.cancel()
+                state.timeout_timer = None
+
+            final_result = state.termination_request
+            if final_result is None and error is not None:
+                final_result = AgentRunResult(
+                    status="failed",
+                    error_code=getattr(error, "code", error.__class__.__name__),
+                    error_message=str(error),
+                )
+            if final_result is None:
+                final_result = result or AgentRunResult(status="succeeded")
+
+            state.worker_result = None
+            state.worker_error = None
+            state.result = final_result
             state.executed = True
             state.running = False
-            state.completion_event.set()
+            state.lifecycle_status = final_result.status
+
         self._release_policy_lease(agent_run_id, state)
-        self._persist_result(agent_run_id, result)
+        try:
+            self._persist_result(agent_run_id, final_result)
+        finally:
+            run_supervisor.close(final_result)
+
+    def _request_timeout(
+        self,
+        agent_run_id: str,
+        state: _InMemoryRunState,
+        run_supervisor: RunSupervisor,
+    ) -> None:
+        self._request_termination(
+            agent_run_id=agent_run_id,
+            state=state,
+            expected_supervisor=run_supervisor,
+            lifecycle_status="timing_out",
+            result=AgentRunResult(
+                status="timed_out",
+                error_code="timed_out",
+                error_message="agent run timed out",
+            ),
+        )
+
+    def _request_termination(
+        self,
+        *,
+        agent_run_id: str,
+        state: _InMemoryRunState,
+        expected_supervisor: RunSupervisor | None = None,
+        lifecycle_status: str,
+        result: AgentRunResult,
+    ) -> bool:
+        terminal_without_worker = False
+        with state.lock:
+            if (
+                expected_supervisor is not None
+                and state.supervisor is not expected_supervisor
+            ):
+                return False
+            if (
+                state.executed
+                or state.worker_finished
+                or state.termination_request is not None
+            ):
+                return False
+            run_supervisor = state.supervisor
+            state.termination_request = result
+            state.lifecycle_status = lifecycle_status
+            run_supervisor.cancel_event.set()
+            if state.worker_thread is not None:
+                try:
+                    self._persist_update(
+                        agent_run_id,
+                        status=lifecycle_status,
+                    )
+                except Exception:
+                    # Cancellation remains effective when the lifecycle journal
+                    # is temporarily unavailable. The terminal write is retried
+                    # after the worker exits.
+                    pass
+            else:
+                state.result = result
+                state.executed = True
+                state.running = False
+                state.lifecycle_status = result.status
+                run_supervisor.worker_exited_event.set()
+                terminal_without_worker = True
+
+        if terminal_without_worker:
+            self._release_policy_lease(agent_run_id, state)
+            try:
+                self._persist_result(agent_run_id, result)
+            finally:
+                run_supervisor.close(result)
+        return True
 
     def _mark_failed_before_start(
         self,
@@ -408,23 +676,48 @@ class LocalAgentRuntime:
         error_code: str,
         error_message: str,
     ) -> None:
-        with state.lock:
-            state.events = []
-            state.result = AgentRunResult(
-                status="failed",
-                error_code=error_code,
-                error_message=error_message,
-            )
-            state.executed = True
-            state.running = False
-            state.completion_event.set()
-        self._persist_update(
-            agent_run_id,
+        failure_result = AgentRunResult(
             status="failed",
             error_code=error_code,
             error_message=error_message,
-            completed=True,
         )
+        with state.lock:
+            run_supervisor = state.supervisor
+            if state.timeout_timer is not None:
+                state.timeout_timer.cancel()
+            state.timeout_timer = None
+            state.worker_thread = None
+            state.supervisor_thread = None
+            state.worker_result = None
+            state.worker_error = None
+            state.worker_finished = False
+            state.termination_request = None
+            state.result = failure_result
+            state.executed = True
+            state.running = False
+            state.lifecycle_status = "failed"
+            run_supervisor.worker_exited_event.set()
+        self._release_policy_lease(agent_run_id, state)
+        try:
+            self._persist_update(
+                agent_run_id,
+                status="failed",
+                error_code=error_code,
+                error_message=error_message,
+                completed=True,
+            )
+        except Exception:
+            # Persistence may be the startup failure itself. The in-memory run
+            # must still become observable and release its quota lease.
+            pass
+        finally:
+            run_supervisor.close(failure_result)
+
+    @staticmethod
+    def _thread_was_started(thread: threading.Thread) -> bool:
+        """Return true even when a started thread has already exited."""
+
+        return thread.ident is not None
 
     def _release_policy_lease(
         self,
@@ -448,7 +741,7 @@ class LocalAgentRuntime:
         )
         runtime_context = payload.get("runtime_context")
         if isinstance(runtime_context, dict):
-            runtime_context["_runtime_cancel_event"] = state.cancel_event
+            runtime_context["_runtime_cancel_event"] = state.supervisor.cancel_event
             runtime_context["_agent_run_ref"] = {
                 "run_id": agent_run_id,
                 "runtime_id": self.runtime_id,
@@ -475,16 +768,17 @@ class LocalAgentRuntime:
     @staticmethod
     def _run_runner(
         runner: Callable[[], Any],
-    ) -> tuple[list[dict[str, Any]], AgentRunResult]:
+        *,
+        publish_event: Callable[[dict[str, Any]], None],
+    ) -> AgentRunResult:
         execution = runner()
         if inspect.isgenerator(execution):
-            events: list[dict[str, Any]] = []
             try:
                 while True:
-                    events.append(next(execution))
+                    publish_event(next(execution))
             except StopIteration as stop:
-                return events, LocalAgentRuntime._normalize_result(stop.value)
-        return [], LocalAgentRuntime._normalize_result(execution)
+                return LocalAgentRuntime._normalize_result(stop.value)
+        return LocalAgentRuntime._normalize_result(execution)
 
     @staticmethod
     def _normalize_result(value: Any) -> AgentRunResult:
@@ -517,28 +811,6 @@ class LocalAgentRuntime:
                     f"does not match scope '{request.memory_scope_ref}'"
                 ),
             )
-
-    @staticmethod
-    def _mark_terminal_state_locked(
-        state: _InMemoryRunState,
-        *,
-        status: str,
-        error_code: str,
-        error_message: str,
-    ) -> bool:
-        if state.executed:
-            return False
-        state.cancelled = status == "cancelled"
-        state.cancel_event.set()
-        state.result = AgentRunResult(
-            status=status,
-            error_code=error_code,
-            error_message=error_message,
-        )
-        state.executed = True
-        state.running = False
-        state.completion_event.set()
-        return True
 
     def _persist_create(self, run_id: str, request: RunRequest) -> None:
         if self._service is None or not hasattr(self._service, "create_agent_run"):

@@ -17,6 +17,10 @@ from backend_business.services.agent.agents.requirement_agent.prompt_builder imp
 from backend_business.services.agent.agents.requirement_classification_agent.prompt_builder import (
     RequirementClassificationPromptBuilder,
 )
+from backend_business.services.agent.runtime.agent_registry import (
+    BUILTIN_AGENT_REGISTRY,
+    AgentRegistry,
+)
 
 from .prompt_builder import SessionControllerPromptBuilder
 
@@ -31,11 +35,18 @@ def _append_extra_system_context(base_prompt: str, context: dict[str, Any]) -> s
 class SessionControllerDecisionGraphPromptBuilder:
     """Decision-stage prompt builder for the GraphExecutor migration path."""
 
-    def __init__(self) -> None:
-        self._base = SessionControllerPromptBuilder()
+    def __init__(self, *, agent_registry: AgentRegistry | None = None) -> None:
+        self._agent_registry = agent_registry or BUILTIN_AGENT_REGISTRY
+        self._base = SessionControllerPromptBuilder(agent_registry=self._agent_registry)
 
     def build_system_prompt(self, *, context: dict[str, Any]) -> str:
         base_prompt = self._base.build_system_prompt(context=context)
+        route_rules = "\n".join(
+            f"- 调用 `{definition.delegation.tool_name}` 后准备执行原生 invoke 时，"
+            f"把 `route_key` 设为 `{definition.delegation.route_key}`。"
+            for definition in self._agent_registry.delegated_definitions()
+            if definition.delegation is not None
+        )
         return _append_extra_system_context(
             (
             f"{base_prompt}\n\n"
@@ -43,16 +54,11 @@ class SessionControllerDecisionGraphPromptBuilder:
             "本阶段结束时不要直接输出 JSON 文本作为 assistant 回复。\n"
             "当你确认本阶段已完成时，必须调用 complete_phase，并按以下规则填写参数：\n"
             "1. `conclusion` 必须是一个 JSON 对象字符串，字段协议与 Session Controller 结构化结果一致。\n"
-            "2. 如果你刚刚调用了 `invoke_requirement_agent` 并准备让运行时执行原生 invoke，"
-            "把 `route_key` 设为 `invoke_requirement`。\n"
-            "3. 如果你刚刚调用了 `invoke_conflict_detection` 并准备让运行时执行原生 invoke，"
-            "把 `route_key` 设为 `invoke_conflict`。\n"
-            "4. 如果你刚刚调用了 `invoke_requirement_classification_agent` 并准备让运行时执行原生 invoke，"
-            "把 `route_key` 设为 `invoke_classification`。\n"
-            "5. 如果该 JSON 的 `should_suspend` 为 true，则把 `route_key` 设为 `suspend`。\n"
-            "6. 如果该 JSON 的 `should_suspend` 为 false 且不需要 invoke，则把 `route_key` 设为 `reply`。\n"
-            "7. 不要输出 Markdown、代码块或额外解释；结束阶段只能通过 complete_phase。\n"
-            "8. `context` 字段可选；如本轮已有可复用的中间上下文（例如 write_result、approval_result），可放入其中。"
+            f"2. 委托工具的路由规则如下：\n{route_rules}\n"
+            "3. 如果该 JSON 的 `should_suspend` 为 true，则把 `route_key` 设为 `suspend`。\n"
+            "4. 如果该 JSON 的 `should_suspend` 为 false 且不需要 invoke，则把 `route_key` 设为 `reply`。\n"
+            "5. 不要输出 Markdown、代码块或额外解释；结束阶段只能通过 complete_phase。\n"
+            "6. `context` 字段可选；如本轮已有可复用的中间上下文（例如 write_result、approval_result），可放入其中。"
             ),
             context,
         )

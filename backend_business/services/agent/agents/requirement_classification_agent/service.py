@@ -11,12 +11,16 @@ from backend_business.config import settings
 from backend_business.services.agent.execution.graph_executor import GraphExecutor
 from backend_business.services.agent.execution_graph_service import ExecutionGraphService
 from backend_business.services.agent.experience import ExperienceOrchestrator
+from backend_business.services.agent.runtime.agent_execution_service import (
+    AgentExecutionService,
+)
 from backend_business.services.agent.runtime.session_graph_store import AgentSessionGraphStore
 from backend_business.services.agent.tools import RequirementClassificationTools
 from backend_business.services.ai_chat_service import AiChatService, ai_chat_service
 from backend_business.services.ai_proxy import ai_proxy
 from backend_business.services.requirements_manage_service import RequirementsManageService
 
+from .definition import REQUIREMENT_CLASSIFICATION_AGENT_DEFINITION
 from .prompt_builder import RequirementClassificationPromptBuilder
 from .runtime_graph_recorder import RequirementClassificationGraphRecorder
 from .tool_loop_runner import (
@@ -26,8 +30,8 @@ from .tool_loop_runner import (
 
 
 class RequirementClassificationAgentService:
-    MAX_TOOL_CALL_ROUNDS = 6
-    AGENT_TYPE = "requirement_classification_agent"
+    MAX_TOOL_CALL_ROUNDS = REQUIREMENT_CLASSIFICATION_AGENT_DEFINITION.max_tool_call_rounds
+    AGENT_TYPE = REQUIREMENT_CLASSIFICATION_AGENT_DEFINITION.agent_type
 
     def __init__(
         self,
@@ -58,6 +62,11 @@ class RequirementClassificationAgentService:
             agent_type=self.AGENT_TYPE,
             context_mode_normalizer=lambda value: value or "full",
             create_or_get_updates_unchanged=True,
+        )
+        self._execution_service = AgentExecutionService(
+            definition=REQUIREMENT_CLASSIFICATION_AGENT_DEFINITION,
+            chat_storage=chat_storage,
+            session_graph_store=self._session_graph_store,
         )
 
     def _hydrate_session_graph(self, session: dict[str, Any]) -> dict[str, Any]:
@@ -349,39 +358,24 @@ class RequirementClassificationAgentService:
         model: str = "deepseek-v4-pro",
         use_thinking_mode: bool = True,
     ) -> Generator[dict[str, Any], None, None]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-
-        session = self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
-        user_record = self.chat_storage.create_message(
+        turn = self._execution_service.begin_turn(
             session_id=session_id,
             user_id=user_id,
-            role="user",
-            content=user_message,
-            metadata={
+            project_id=project_id,
+            user_message=user_message,
+            user_metadata={
                 "requirement_id": requirement_id,
                 "model": model,
                 "use_thinking_mode": use_thinking_mode,
             },
-            is_read=True,
         )
-        self.chat_storage.update_session(session_id=session_id)
-        yield {"event": "user_message", "data": user_record}
+        yield {"event": "user_message", "data": turn.user_record}
 
-        graph_target = self._resolve_session_graph_target(session=session, project_id=project_id)
-        recorder = RequirementClassificationGraphRecorder(
+        recorder = self._execution_service.create_recorder(
+            turn=turn,
+            recorder_factory=RequirementClassificationGraphRecorder,
             execution_graph_service=self.execution_graph_service,
-            project_id=project_id,
-            user_id=user_id,
             requirement_id=requirement_id,
-            session_id=session_id,
-            user_message=user_message,
-            graph_id=graph_target["graph_id"],
-            prev_graph_id=graph_target["prev_graph_id"],
-        )
-        self.chat_storage.update_session(
-            session_id=session_id,
-            active_graph_id=recorder.graph_id,
         )
         self.execution_graph_service.patch_graph_meta(
             recorder.graph_id,
@@ -443,16 +437,10 @@ class RequirementClassificationAgentService:
                     use_thinking_mode=use_thinking_mode,
                 ),
             )
-            context: dict[str, Any] = {}
-            while True:
-                try:
-                    event = next(tool_loop)
-                except StopIteration as stop:
-                    loop_result = stop.value or {}
-                    tool_loop_reply = loop_result.get("tool_loop_reply") or ""
-                    context = loop_result.get("context") or {}
-                    break
-                yield event
+            loop_result = yield from self._execution_service.stream_generator(tool_loop)
+            loop_result = loop_result or {}
+            tool_loop_reply = loop_result.get("tool_loop_reply") or ""
+            context: dict[str, Any] = loop_result.get("context") or {}
 
             resolved_requirement_id, classification_result = extract_latest_classification_result(
                 context
@@ -545,10 +533,8 @@ class RequirementClassificationAgentService:
                     meta_patch=meta_patch,
                 )
 
-            assistant_message = self.chat_storage.create_message(
-                session_id=session_id,
-                user_id=user_id,
-                role="assistant",
+            assistant_message = self._execution_service.persist_assistant(
+                turn=turn,
                 content=assistant_content,
                 metadata={
                     "graph_id": recorder.graph_id,
@@ -580,9 +566,18 @@ class RequirementClassificationAgentService:
                 )
             except Exception:
                 pass
+            error_message = self._execution_service.persist_error(
+                turn=turn,
+                graph_id=recorder.graph_id,
+                error=error_text,
+            )
             yield {
                 "event": "error",
-                "data": {"error": error_text, "graph_id": recorder.graph_id},
+                "data": {
+                    "error": error_text,
+                    "message": error_message,
+                    "graph_id": recorder.graph_id,
+                },
             }
 
 

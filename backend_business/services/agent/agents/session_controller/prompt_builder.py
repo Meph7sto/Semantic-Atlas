@@ -3,10 +3,39 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from backend_business.services.agent.runtime.agent_registry import AgentRegistry
 
 
-def infer_routing_hint(user_message: str) -> dict[str, str] | None:
+_BASE_DECISION_MODES = ("direct_reply", "clarify", "browse")
+_TERMINAL_DECISION_MODES = ("approval_pending", "error")
+
+
+def _unique_values(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(value for value in values if value))
+
+
+def _resolve_agent_registry(
+    agent_registry: AgentRegistry | None,
+) -> AgentRegistry:
+    if agent_registry is None:
+        # Keep this import lazy: the builtin catalog imports this module while
+        # assembling the SessionController definition.
+        from backend_business.services.agent.runtime.agent_registry import (
+            BUILTIN_AGENT_REGISTRY,
+        )
+
+        return BUILTIN_AGENT_REGISTRY
+    return agent_registry
+
+
+def infer_routing_hint(
+    user_message: str,
+    *,
+    agent_registry: AgentRegistry | None = None,
+) -> dict[str, str] | None:
     text = " ".join(str(user_message or "").strip().lower().split())
     if not text:
         return None
@@ -43,44 +72,89 @@ def infer_routing_hint(user_message: str) -> dict[str, str] | None:
         "这一条",
         "这个需求",
     )
-    explicit_conflict_request_keywords = (
-        "检测冲突",
-        "检查冲突",
-        "是否冲突",
-        "有没有冲突",
-        "冲突吗",
-        "conflict check",
-    )
-
     has_update_intent = any(keyword in text for keyword in update_keywords)
     touches_requirement_field = any(keyword in text for keyword in field_keywords)
     mentions_requirement_target = any(
         keyword in text for keyword in requirement_reference_keywords
     )
-    asks_conflict_check = any(
-        keyword in text for keyword in explicit_conflict_request_keywords
+    registry = _resolve_agent_registry(agent_registry)
+    delegated = [
+        definition.delegation
+        for definition in registry.delegated_definitions()
+        if definition.delegation is not None
+    ]
+    requirement_write_tool = next(
+        (
+            delegation.tool_name
+            for delegation in delegated
+            if delegation.accepts_requirement_id
+            and delegation.include_prompt_preferences
+        ),
+        None,
     )
-
-    if has_update_intent and (touches_requirement_field or mentions_requirement_target):
+    if (
+        requirement_write_tool
+        and has_update_intent
+        and (touches_requirement_field or mentions_requirement_target)
+    ):
         return {
-            "preferred_tool": "invoke_requirement_agent",
+            "preferred_tool": requirement_write_tool,
             "reason": (
                 "用户在修改需求属性。即使需求正文里出现“冲突检测”等业务术语，"
                 "这仍然是需求管理任务，不应路由到冲突检测 Agent。"
             ),
         }
 
-    if asks_conflict_check:
-        return {
-            "preferred_tool": "invoke_conflict_detection",
-            "reason": "用户明确要求执行需求冲突检测。",
-        }
+    for delegation in delegated:
+        matched_keyword = next(
+            (
+                keyword
+                for keyword in delegation.routing_keywords
+                if keyword.lower() in text
+            ),
+            None,
+        )
+        if matched_keyword:
+            return {
+                "preferred_tool": delegation.tool_name,
+                "reason": f"用户明确表达了“{matched_keyword}”意图。",
+            }
 
     return None
 
 
 class SessionControllerPromptBuilder:
+    def __init__(self, *, agent_registry: AgentRegistry | None = None) -> None:
+        self._agent_registry = _resolve_agent_registry(agent_registry)
+
     def build_system_prompt(self, *, context: dict[str, Any]) -> str:
+        delegated = [
+            (definition, definition.delegation)
+            for definition in self._agent_registry.delegated_definitions()
+            if definition.delegation is not None
+        ]
+        delegation_rules = "\n".join(
+            (
+                f"- `{delegation.tool_name}` -> "
+                f"mode=`{delegation.decision_mode}`, "
+                f"delegated_agent=`{definition.container_key}`："
+                f"{delegation.tool_description}"
+            )
+            for definition, delegation in delegated
+        ) or "- 当前没有可委托的子 Agent。"
+        delegated_modes = _unique_values(
+            [delegation.decision_mode for _, delegation in delegated]
+        )
+        decision_modes = _unique_values(
+            [*_BASE_DECISION_MODES, *delegated_modes, *_TERMINAL_DECISION_MODES]
+        )
+        delegated_agents = _unique_values(
+            [definition.container_key for definition, _ in delegated]
+        )
+        mode_protocol = "|".join(decision_modes)
+        delegated_agent_protocol = "|".join([*delegated_agents, "null"])
+        delegated_mode_protocol = " / ".join(delegated_modes) or "无"
+
         base_prompt = (
             "你是会话总控 Agent（Session Controller）。你是用户与需求工程平台唯一的交互入口。\n"
             "\n"
@@ -90,14 +164,14 @@ class SessionControllerPromptBuilder:
             "3. 结果汇报：基于工具返回结果，给出简洁中文回复。\n"
             "\n"
             "你不持有任何需求业务数据。\n"
-            "所有需求读写操作必须通过 invoke_requirement_agent 工具完成。\n"
-            "所有冲突检测必须通过 invoke_conflict_detection 工具完成。\n"
-            "所有需求分类必须通过 invoke_requirement_classification_agent 工具完成。\n"
+            "可委托的子 Agent、工具及结构化结果协议如下：\n"
+            f"{delegation_rules}\n"
             "list_requirements / search_requirements 仅用于探索性查询，不做任何写操作。\n"
             "如果用户是在修改需求属性（如优先级、标题、描述、验收标准、备注），"
-            "必须调用 invoke_requirement_agent。\n"
-            "即使该需求正文里包含“冲突检测”“接口”“算法”等业务术语，也不能因此改派到 invoke_conflict_detection。\n"
-            "只有当用户明确要求比较/检查两个或多个需求是否冲突时，才调用 invoke_conflict_detection。\n"
+            "必须选择工具描述中明确负责需求修改的委托工具。\n"
+            "即使该需求正文里包含其他 Agent 的领域术语，也不能仅凭这些术语改派任务。\n"
+            "用户明确要求判断多个需求是否矛盾或冲突时，选择冲突检测委托工具。\n"
+            "用户明确要求从顶层需求追溯到低层需求的细化、实现或支撑关系时，选择需求追溯委托工具。\n"
             "不清楚用户意图时，用最少问题澄清，不要猜测。\n"
             "\n"
             "输出规则非常严格：\n"
@@ -105,11 +179,11 @@ class SessionControllerPromptBuilder:
             "2. 如果你决定结束本轮，必须只输出一个 JSON 对象，不能输出 Markdown、代码块或额外解释。\n"
             "3. JSON 字段使用以下协议：\n"
             '{'
-            '"mode":"direct_reply|clarify|browse|delegate_requirement|delegate_conflict|delegate_classification|approval_pending|error",'
+            f'"mode":"{mode_protocol}",'
             '"tool_loop_reply":"面向系统的中间结论摘要",'
             '"assistant_reply_seed":"可选，给最终回复阶段使用的中文草稿",'
             '"clarification_question":"可选，仅 clarify 时提供",'
-            '"delegated_agent":"requirement_agent|conflict_detection|requirement_classification_agent|null",'
+            f'"delegated_agent":"{delegated_agent_protocol}",'
             '"resolved_requirement_id":"可选",'
             '"dispatched_agents":["可选"],'
             '"approval_pending":false,'
@@ -120,7 +194,7 @@ class SessionControllerPromptBuilder:
             "5. `approval_pending` 必须设置 approval_pending=true、should_suspend=true、suspend_reason=approval_pending。\n"
             "6. 子 Agent 工具返回后，你必须继续完成总控判断，并输出上述 JSON 对象。"
             "不要把工具返回直接当作最终结束信号。\n"
-            "7. 只有在已经实际委托子 Agent 且本轮结论来自该子 Agent 时，才使用 delegate_requirement / delegate_conflict / delegate_classification。\n"
+            f"7. 只有在已经实际委托子 Agent 且本轮结论来自该子 Agent 时，才使用 {delegated_mode_protocol}。\n"
             "8. `tool_loop_reply` 用于系统日志和后续最终回复阶段，必须简洁、准确。"
         )
         routing_hint = context.get("routing_hint") or {}

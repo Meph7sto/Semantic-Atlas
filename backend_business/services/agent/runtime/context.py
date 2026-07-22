@@ -7,8 +7,8 @@ Supports two-level context strategy:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 from typing import Any
 
 from .scratchpad import Scratchpad
@@ -77,7 +77,12 @@ class ExecutionContext:
 
     # ---- subgraph lifecycle ----
 
-    def begin_subgraph(self, subgraph_key: str) -> None:
+    def begin_subgraph(
+        self,
+        subgraph_key: str,
+        *,
+        task: str | None = None,
+    ) -> None:
         """Start a new subgraph stage.
 
         Starts a new local context scope and injects current Scratchpad
@@ -86,7 +91,10 @@ class ExecutionContext:
         self._current_subgraph = subgraph_key
         self._global_entries = []
         # Inject Scratchpad content as global entries for this subgraph
-        scratchpad_text = self._scratchpad.format_for_prompt()
+        scratchpad_text = self._scratchpad.format_for_prompt(
+            task=task,
+            observation_key=f"execution_context:{subgraph_key}",
+        )
         if scratchpad_text:
             self._global_entries.append(
                 ContextEntry(
@@ -102,7 +110,11 @@ class ExecutionContext:
         Auto-appends the subgraph's structured output to Scratchpad.
         """
         if output is not None:
-            self._scratchpad.append_stage_output(subgraph_key, output)
+            self._scratchpad.append_stage_output(
+                subgraph_key,
+                output,
+                task_refs=["flow-context"],
+            )
         if self._current_subgraph == subgraph_key:
             self._current_subgraph = None
 

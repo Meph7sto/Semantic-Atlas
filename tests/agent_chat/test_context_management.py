@@ -217,6 +217,19 @@ class TestExecutionContextSubgraph:
         assert len(ctx._global_entries) == 1
         assert "prior knowledge" in ctx._global_entries[0].value
 
+    def test_begin_subgraph_injects_only_task_relevant_scratchpad_entries(self):
+        pad = Scratchpad()
+        pad.write("note", "login authentication uses passkeys")
+        pad.write("note", "payment checkout uses card authorization")
+        ctx = ExecutionContext(scratchpad=pad)
+
+        ctx.begin_subgraph("sg_login", task="login authentication")
+
+        assert len(ctx._global_entries) == 1
+        snapshot = ctx._global_entries[0].value
+        assert "login authentication uses passkeys" in snapshot
+        assert "payment checkout uses card authorization" not in snapshot
+
 
 # ============================================================
 # ToolLoopRunner scratchpad integration
@@ -395,7 +408,12 @@ class TestToolLoopRunnerScratchpadIntegration:
 
         events, result = _run_to_completion(runner.run(
             recorder=recorder, user_id="u-1", user_message="hello",
-            context={"project_id": "p-1", "tool_results": []},
+            context={
+                "project_id": "p-1",
+                "tool_results": [],
+                "resolved_requirement_id": "REQ-9",
+                "_current_subgraph": "sg_login",
+            },
         ))
 
         # scratchpad_write was handled internally, not forwarded to tool_executor
@@ -403,6 +421,65 @@ class TestToolLoopRunnerScratchpadIntegration:
         assert len(pad) == 1
         assert pad.read()[0].content == "user wants login change"
         assert pad.read()[0].entry_type == "note"
+        assert pad.read()[0].task_refs == ("REQ-9", "sg_login")
+
+    def test_scratchpad_write_tool_persists_importance_and_task_refs(self):
+        from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner
+        from backend_business.services.agent.runtime.graph_recorder import RuntimeGraphRecorder, ContainerConfig
+
+        pad = Scratchpad()
+        graph_service = _FakeGraphService()
+        recorder = RuntimeGraphRecorder(
+            execution_graph_service=graph_service,
+            container_configs=[ContainerConfig("agent_main", "Agent Main", "agent")],
+            project_id="p-1", user_id="u-1", session_id="s-1", user_message="hello",
+        )
+        ai_proxy = _FakeAiProxy([
+            {
+                "content": "",
+                "tool_calls": [{
+                    "id": "tc-1",
+                    "type": "function",
+                    "function": {
+                        "name": "scratchpad_write",
+                        "arguments": (
+                            '{"entry_type":"note","content":"approval rule",'
+                            '"importance":0.97,"task_refs":["REQ-9","global-invariant"]}'
+                        ),
+                    },
+                }],
+                "finish_reason": "tool_calls",
+            },
+            {"content": "done", "tool_calls": [], "finish_reason": "stop"},
+        ])
+        runner = ToolLoopRunner(
+            ai_proxy_client=ai_proxy,
+            tool_executor=_FakeToolExecutor(),
+            prompt_builder=_FakePromptBuilder(),
+            stage_container_key="agent_main",
+            scratchpad=pad,
+        )
+
+        _run_to_completion(runner.run(
+            recorder=recorder,
+            user_id="u-1",
+            user_message="hello",
+            context={"project_id": "p-1", "tool_results": []},
+        ))
+
+        entry = pad.read()[0]
+        assert entry.importance == 0.97
+        assert entry.task_refs == ("REQ-9", "global-invariant")
+        scratchpad_tool = next(
+            tool
+            for tool in ai_proxy.calls[0]["tools"]
+            if tool.get("function", {}).get("name") == "scratchpad_write"
+        )
+        properties = scratchpad_tool["function"]["parameters"]["properties"]
+        assert properties["importance"]["minimum"] == 0
+        assert properties["importance"]["maximum"] == 1
+        assert properties["task_refs"]["maxItems"] == 16
+        assert scratchpad_tool["function"]["parameters"]["additionalProperties"] is False
 
     def test_no_scratchpad_backward_compatible(self):
         from backend_business.services.agent.execution.tool_loop_runner import ToolLoopRunner

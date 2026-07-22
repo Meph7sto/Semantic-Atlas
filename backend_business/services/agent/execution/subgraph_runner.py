@@ -9,18 +9,22 @@ This module defines:
 
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import inspect
 import json
 import queue
 import threading
 from typing import Any
 
 from backend_business.services.agent.runtime.context import ExecutionContext
+from backend_business.services.agent.runtime.agent_registry import (
+    BUILTIN_AGENT_REGISTRY,
+    AgentRegistry,
+)
 from backend_business.services.agent.runtime.scratchpad import Scratchpad
 from backend_business.services.agent.runtime.agent_runtime import (
-    AgentRunResult,
     AgentRuntimeRegistry,
     RunRequest,
 )
@@ -116,7 +120,14 @@ class SubgraphPromptBuilder:
         parts: list[str] = []
         if self._task_description:
             parts.append(f"## 当前阶段任务\n\n{self._task_description}")
-        pad_text = self._scratchpad.format_for_prompt()
+        pad_text = str(context.get("_scratchpad_prompt_text") or "")
+        if not pad_text:
+            pad_text = self._scratchpad.format_for_prompt(
+                task=self._task_description,
+                observation_key=(
+                    f"subgraph_prompt:{context.get('_current_subgraph') or 'unknown'}"
+                ),
+            )
         if pad_text:
             parts.append(f"\n\n{pad_text}")
         execution_context = context.get("_execution_context")
@@ -224,6 +235,7 @@ class SubgraphRunner:
         skill_registry: SkillRegistry | None = None,
         policies: ExperiencePolicyResolver | None = None,
         prompt_builder_factory: PromptBuilderFactory | None = None,
+        agent_registry: AgentRegistry | None = None,
     ) -> None:
         self._agent_runtime_registry = agent_runtime_registry
         self._experience_orchestrator = experience_orchestrator
@@ -232,6 +244,7 @@ class SubgraphRunner:
         self._skill_registry = skill_registry or SkillRegistry(self._experience_retriever.root_path)
         self._policies = policies or ExperiencePolicyResolver()
         self._prompt_builder_factory = prompt_builder_factory
+        self._agent_registry = agent_registry or BUILTIN_AGENT_REGISTRY
 
     # -- public API -----------------------------------------------------------
 
@@ -313,6 +326,7 @@ class SubgraphRunner:
         pad.append_stage_output(
             suspended_sg.subgraph_key,
             f"[用户输入] {user_input}",
+            task_refs=["flow-context"],
         )
 
         # Mark suspended handoff as completed
@@ -587,7 +601,10 @@ class SubgraphRunner:
         runtime_context: dict[str, Any] | None,
     ) -> Generator[dict[str, Any], None, str | None]:
         """Execute an llm subgraph via AgentRuntime."""
-        execution_context.begin_subgraph(sg.subgraph_key)
+        execution_context.begin_subgraph(
+            sg.subgraph_key,
+            task=sg.task_description,
+        )
         runtime_registry = self._resolve_agent_runtime_registry(graph_service)
         runtime_binding = runtime_registry.resolve(
             container_key=container.container_key,
@@ -707,6 +724,7 @@ class SubgraphRunner:
         )
         child_runtime_context = _build_invoke_runtime_context(
             invoke_request=invoke_request,
+            agent_registry=self._agent_registry,
         )
         resolved_graph_service = _resolve_graph_service(
             graph_service=graph_service,
@@ -794,10 +812,12 @@ class SubgraphRunner:
             invoke_subgraph=sg,
             invoke_request=invoke_request,
             target_result=target_payloads[0] if len(target_payloads) == 1 else target_payloads,
+            agent_registry=self._agent_registry,
         )
         pad.append_stage_output(
             sg.subgraph_key,
             json.dumps(controller_decision, ensure_ascii=False),
+            task_refs=["flow-context"],
         )
 
         tracker.transition(sg.subgraph_id, SubgraphStatus.COMPLETED)
@@ -1176,6 +1196,19 @@ class SubgraphRunner:
             user_message=user_message,
             runtime_context=runtime_context,
         )
+        definition = self._agent_registry.get_by_container_key(container.container_key)
+        if definition is not None and definition.context_builder is not None:
+            context_patch = _invoke_agent_extension(
+                definition.context_builder,
+                context=context,
+                container=container,
+                subgraph=sg,
+                user_message=user_message,
+            )
+            if context_patch is not None:
+                if not isinstance(context_patch, dict):
+                    raise TypeError("AgentDefinition.context_builder must return a mapping or None")
+                context.update(context_patch)
         self._inject_experience_skill_context(
             sg=sg,
             container=container,
@@ -1187,6 +1220,9 @@ class SubgraphRunner:
             pad=pad,
             context=context,
             prompt_builder_factory=self._prompt_builder_factory,
+            definition_prompt_builder_factory=(
+                definition.prompt_builder_factory if definition is not None else None
+            ),
         )
         resolved_graph_service = _resolve_graph_service(
             graph_service=graph_service,
@@ -1280,7 +1316,15 @@ class SubgraphRunner:
 
         return {
             "route_key": result.route_key if result else None,
-            "output": _build_subgraph_output(sg=sg, result=result),
+            "output": _build_subgraph_output(
+                sg=sg,
+                result=result,
+                definition=_resolve_subgraph_definition(
+                    self._agent_registry,
+                    sg,
+                ),
+                context=context,
+            ),
         }
 
     def _record_injection_feedback(
@@ -1375,7 +1419,16 @@ class SubgraphRunner:
         )
         if target is None:
             return
-        final_conclusion = _build_subgraph_output(sg=sg, result=result) if result else None
+        definition = _resolve_subgraph_definition(self._agent_registry, sg)
+        final_conclusion = (
+            _build_subgraph_output(
+                sg=sg,
+                result=result,
+                definition=definition,
+            )
+            if result
+            else None
+        )
         orchestrator.safe_process_outcome(
             target=target,
             graph_id=skeleton.graph_id,
@@ -1411,6 +1464,10 @@ class SubgraphRunner:
             )
             if container_executor is not None:
                 resolved_executor = container_executor
+        resolved_executor = self._agent_registry.resolve_tool_executor(
+            container_key=container.container_key,
+            fallback=resolved_executor,
+        )
 
         capability_policy = dict(runtime_binding.capability_policy or {})
         explicit_tool_names = {
@@ -1721,7 +1778,6 @@ def _build_subgraph_context(
     graph_id = getattr(recorder, "graph_id", "")
     if graph_id:
         context["graph_id"] = graph_id
-    context["_scratchpad_prompt_text"] = pad.format_for_prompt()
     config = sg.config_json or {}
     resolved_requirement_id = None
     service = getattr(recorder, "_service", None)
@@ -1745,6 +1801,16 @@ def _build_subgraph_context(
     if runtime_context:
         context.update(runtime_context)
     resolved_user_message = str(task_context_user_message or user_message or "").strip()
+    compilation = pad.compile_for_prompt(
+        task="\n".join(
+            part
+            for part in (str(sg.task_description or "").strip(), resolved_user_message)
+            if part
+        ),
+        observation_key=f"subgraph:{container.container_key}:{sg.subgraph_key}",
+    )
+    context["_scratchpad_prompt_text"] = compilation.text
+    context["_scratchpad_compilation"] = compilation.to_metrics()
     if resolved_user_message:
         context["_experience_user_message"] = resolved_user_message
     target = resolve_experience_target_from_subgraph(
@@ -1802,6 +1868,7 @@ def _resolve_prompt_builder(
     pad: Scratchpad,
     context: dict[str, Any],
     prompt_builder_factory: PromptBuilderFactory | None = None,
+    definition_prompt_builder_factory: Any = None,
 ) -> PromptBuilderProtocol:
     config = sg.config_json or {}
     prompt_builder_kind = str(config.get("prompt_builder") or "").strip()
@@ -1814,11 +1881,36 @@ def _resolve_prompt_builder(
         )
         if prompt_builder is not None:
             return prompt_builder
+    if callable(definition_prompt_builder_factory):
+        prompt_builder = definition_prompt_builder_factory()
+        required_methods = (
+            "build_system_prompt",
+            "build_user_message",
+            "build_round_input_summary",
+        )
+        if all(callable(getattr(prompt_builder, name, None)) for name in required_methods):
+            return prompt_builder
     return SubgraphPromptBuilder(
         task_description=sg.task_description,
         scratchpad=pad,
         extra_system_context=str(context.get("_extra_system_context") or ""),
     )
+
+
+def _invoke_agent_extension(extension: Any, **available: Any) -> Any:
+    """Call an AgentDefinition adapter with only the arguments it declares."""
+    signature = inspect.signature(extension)
+    if any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    ):
+        return extension(**available)
+    kwargs = {
+        name: available[name]
+        for name in signature.parameters
+        if name in available
+    }
+    return extension(**kwargs)
 
 
 def _should_enable_complete_phase(sg: RuntimeSubgraph) -> bool:
@@ -1841,49 +1933,54 @@ def _build_subgraph_output(
     *,
     sg: RuntimeSubgraph,
     result: ToolLoopResult | None,
+    definition: Any = None,
+    context: dict[str, Any] | None = None,
 ) -> Any:
     if result is None:
         return None
-    config = sg.config_json or {}
-    contract_kind = str(config.get("result_contract") or "").strip()
-    if contract_kind == "requirement_agent":
-        context = dict(result.context or {})
-        raw_mode = str(
-            context.get("mode")
-            or (
-                "approval_pending"
-                if context.get("approval_pending")
-                else "clarification"
-                if context.get("clarification_required")
-                else "chat"
+    if definition is not None and definition.result_postprocessor is not None:
+        adapted_result = _invoke_agent_extension(
+            definition.result_postprocessor,
+            result=result,
+            context=context or dict(result.context or {}),
+            subgraph=sg,
+        )
+        if not isinstance(adapted_result, Mapping):
+            raise TypeError(
+                "AgentDefinition.result_postprocessor must return a mapping"
             )
-        ).strip().lower()
-        return {
-            "status": "success",
-            "tool_loop_reply": result.tool_loop_reply,
-            "resolved_requirement_id": context.get("resolved_requirement_id"),
-            "write_result": context.get("last_write_result"),
-            "mode": raw_mode,
-            "clarification_required": raw_mode == "clarification",
-            "approval_pending": bool(context.get("approval_pending")),
-            "approval_result": context.get("last_approval_result"),
-        }
-    if contract_kind == "conflict_detection":
-        return {
-            "status": "success",
-            "tool_loop_reply": result.tool_loop_reply,
-        }
-    if contract_kind == "requirement_classification":
-        context = dict(result.context or {})
-        return {
-            "status": "success",
-            "tool_loop_reply": result.tool_loop_reply,
-            "resolved_requirement_id": context.get("resolved_requirement_id"),
-            "classification_result": context.get("classification_result"),
-        }
+        normalized_result = dict(adapted_result)
+        try:
+            json.dumps(normalized_result, ensure_ascii=False)
+        except (TypeError, ValueError) as exc:
+            raise TypeError(
+                "AgentDefinition.result_postprocessor must return a JSON-serializable mapping"
+            ) from exc
+        return normalized_result
     if result.conclusion is not None:
         return result.conclusion
     return result.tool_loop_reply
+
+
+def _resolve_subgraph_definition(
+    agent_registry: AgentRegistry,
+    sg: RuntimeSubgraph,
+):
+    config = sg.config_json or {}
+    agent_type = str(config.get("agent_type") or "").strip()
+    if agent_type:
+        definition = agent_registry.get_by_agent_type(agent_type)
+        if definition is not None:
+            return definition
+    container_key = str(config.get("delegate_agent") or "").strip()
+    if container_key:
+        definition = agent_registry.get_by_container_key(container_key)
+        if definition is not None:
+            return definition
+    result_contract = str(config.get("result_contract") or "").strip()
+    if result_contract:
+        return agent_registry.get_by_result_contract(result_contract)
+    return None
 
 
 def _find_latest_completed_subgraph_in_container(
@@ -1966,26 +2063,32 @@ def _resolve_invoke_request(
 def _build_invoke_runtime_context(
     *,
     invoke_request: dict[str, Any],
+    agent_registry: AgentRegistry | None = None,
 ) -> dict[str, Any]:
+    registry = agent_registry or BUILTIN_AGENT_REGISTRY
     delegated_agent = str(invoke_request.get("delegated_agent") or "").strip()
     requirement_id = str(invoke_request.get("requirement_id") or "").strip() or None
     context: dict[str, Any] = {
         "_native_invoke_enabled": False,
         "delegated_agent": delegated_agent,
     }
-    if delegated_agent == "requirement_agent":
-        context["selected_requirement_id"] = requirement_id
-        context["prompt_payload_format"] = invoke_request.get("prompt_payload_format") or "markdown"
-        context["historical_node_context"] = []
-        context["max_tool_call_rounds"] = invoke_request.get("max_tool_call_rounds")
-    elif delegated_agent == "requirement_classification_agent":
-        context["selected_requirement_id"] = requirement_id
-        context["selected_requirement_locked"] = bool(requirement_id)
-        context["max_tool_call_rounds"] = invoke_request.get("max_tool_call_rounds")
-    elif delegated_agent == "conflict_detection":
-        context["max_tool_call_rounds"] = invoke_request.get("max_tool_call_rounds")
+    for key in ("max_tool_call_rounds", "prompt_payload_format", "context_mode"):
+        if invoke_request.get(key) is not None:
+            context[key] = invoke_request.get(key)
     if requirement_id:
         context["resolved_requirement_id"] = requirement_id
+    definition = registry.get_by_container_key(delegated_agent)
+    if definition is not None and definition.context_builder is not None:
+        context_patch = _invoke_agent_extension(
+            definition.context_builder,
+            context=context,
+            invoke_request=invoke_request,
+            definition=definition,
+        )
+        if context_patch is not None:
+            if not isinstance(context_patch, dict):
+                raise TypeError("AgentDefinition.context_builder must return dict or None")
+            context.update(context_patch)
     return context
 
 
@@ -2005,6 +2108,7 @@ def _build_session_controller_invoke_decision(
     invoke_subgraph: RuntimeSubgraph,
     invoke_request: dict[str, Any],
     target_result: Any,
+    agent_registry: AgentRegistry,
 ) -> dict[str, Any]:
     delegated_agent = str(invoke_request.get("delegated_agent") or "").strip()
     if isinstance(target_result, list):
@@ -2066,11 +2170,13 @@ def _build_session_controller_invoke_decision(
                 "",
             ),
         }
+        delegated_result: Any = normalized_results
     else:
         result = target_result if isinstance(target_result, dict) else {
             "status": "success",
             "tool_loop_reply": str(target_result or "").strip(),
         }
+        delegated_result = dict(result)
     tool_loop_reply = str(result.get("tool_loop_reply") or result.get("reply") or "").strip()
     resolved_requirement_id = str(
         result.get("resolved_requirement_id")
@@ -2084,13 +2190,16 @@ def _build_session_controller_invoke_decision(
     approval_pending = bool(result.get("approval_pending"))
     should_suspend = False
     suspend_reason = None
-    mode = {
-        "requirement_agent": "delegate_requirement",
-        "conflict_detection": "delegate_conflict",
-        "requirement_classification_agent": "delegate_classification",
-    }.get(delegated_agent, "direct_reply")
+    definition = agent_registry.get_by_container_key(delegated_agent)
+    mode = (
+        definition.delegation.decision_mode
+        if definition is not None and definition.delegation is not None
+        else "direct_reply"
+    )
     clarification_question = None
-    context: dict[str, Any] = {}
+    context: dict[str, Any] = {"delegated_result": delegated_result}
+    if definition is not None and definition.delegation is not None:
+        context["delegated_result_contract"] = definition.delegation.result_contract
 
     if raw_mode == "clarify":
         mode = "clarify"

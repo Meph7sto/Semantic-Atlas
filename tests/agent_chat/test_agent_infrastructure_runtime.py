@@ -225,6 +225,19 @@ class _FakeToolExecutor:
             }
         ]
 
+    def get_tool_execution_metadata(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "read_only": True,
+            "idempotent": True,
+            "resource_key": str(arguments.get("resource") or tool_name),
+            "concurrency_group": "test-tools",
+        }
+
     def execute(self, tool_name: str, arguments: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         self.calls.append((tool_name, arguments, dict(context)))
         if not self._handlers:
@@ -243,6 +256,19 @@ class _BarrierToolExecutor:
                 "function": {"name": "dummy", "parameters": {"type": "object"}},
             }
         ]
+
+    def get_tool_execution_metadata(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "read_only": True,
+            "idempotent": True,
+            "resource_key": str(arguments.get("value") or tool_name),
+            "concurrency_group": "test-tools",
+        }
 
     def execute(self, tool_name: str, arguments: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         self._barrier.wait()
@@ -925,6 +951,108 @@ def test_local_agent_runtime_cancel_marks_run_cancelled_without_waiting_for_runn
     assert graph_service.agent_runs[run_id]["error_code"] == "cancelled"
 
 
+def test_local_agent_runtime_cancel_stops_tool_loop_before_next_round():
+    graph_service = _FakeExecutionGraphService()
+    recorder = RuntimeGraphRecorder(
+        execution_graph_service=graph_service,
+        container_configs=[ContainerConfig("agent_main", "Agent Main", "agent")],
+        project_id="p-1",
+        user_id="u-1",
+        session_id="s-1",
+        user_message="hello",
+    )
+    runtime = LocalAgentRuntime(
+        runtime_id="local::test",
+        execution_graph_service=graph_service,
+    )
+    runtime_context: dict[str, Any] = {
+        "project_id": "p-1",
+        "tool_results": [],
+    }
+    tool_started = threading.Event()
+    tool_release = threading.Event()
+
+    def _blocking_tool(*_args):
+        tool_started.set()
+        tool_release.wait(timeout=5.0)
+        return {"ok": True}
+
+    ai_proxy = _FakeAiProxy(
+        [
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "tc-1",
+                        "type": "function",
+                        "function": {"name": "dummy", "arguments": "{}"},
+                    }
+                ],
+                "finish_reason": "tool_calls",
+            },
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "tc-2",
+                        "type": "function",
+                        "function": {"name": "dummy", "arguments": "{}"},
+                    }
+                ],
+                "finish_reason": "tool_calls",
+            },
+        ]
+    )
+    tool_executor = _FakeToolExecutor(
+        [_blocking_tool, lambda *_args: {"unexpected": True}]
+    )
+    tool_loop = ToolLoopRunner(
+        ai_proxy_client=ai_proxy,
+        tool_executor=tool_executor,
+        prompt_builder=_FakePromptBuilder(),
+        max_tool_call_rounds=3,
+        stage_container_key="agent_main",
+    )
+
+    def _runner():
+        return (
+            yield from tool_loop.run(
+                recorder=recorder,
+                user_id="u-1",
+                user_message="hello",
+                context=runtime_context,
+            )
+        )
+
+    run_id = runtime.submit(
+        RunRequest(
+            graph_id=recorder.graph_id,
+            subgraph_id="sg-1",
+            container_key="agent_main",
+            agent_type="agent_main",
+            input_payload={
+                "runner": _runner,
+                "runtime_context": runtime_context,
+            },
+        )
+    )
+    stream_thread = threading.Thread(
+        target=lambda: list(runtime.stream(run_id)),
+        daemon=True,
+    )
+    stream_thread.start()
+    assert tool_started.wait(timeout=1.0) is True
+
+    runtime.cancel(run_id)
+    tool_release.set()
+    stream_thread.join(timeout=1.0)
+
+    assert stream_thread.is_alive() is False
+    assert runtime.await_result(run_id).status == "cancelled"
+    assert len(ai_proxy.calls) == 1
+    assert len(tool_executor.calls) == 1
+
+
 def test_agent_actor_runtime_supports_query_and_write():
     runtime = AgentActorRuntime(query_source="unit_test_source", loop_thread_name="unit-test-loop")
     actor_manager = _FakeActorManager()
@@ -958,3 +1086,41 @@ def test_requirement_agent_actor_runtime_uses_requirement_specific_query_source(
         )
     finally:
         _shutdown_actor_runtime(runtime)
+
+
+def test_agent_actor_runtime_instances_share_one_loop_across_caller_threads():
+    first_runtime = AgentActorRuntime(loop_thread_name="shared-actor-loop-a")
+    second_runtime = AgentActorRuntime(loop_thread_name="shared-actor-loop-b")
+    results: list[tuple[int, int]] = []
+    errors: list[BaseException] = []
+
+    def _capture_broker_context() -> tuple[int, int]:
+        return id(asyncio.get_running_loop()), threading.get_ident()
+
+    def _call_from_thread(runtime: AgentActorRuntime) -> None:
+        async def _run() -> None:
+            results.append(
+                await runtime.await_actor_call(_capture_broker_context)
+            )
+
+        try:
+            asyncio.run(_run())
+        except BaseException as exc:
+            errors.append(exc)
+
+    first_thread = threading.Thread(target=_call_from_thread, args=(first_runtime,))
+    second_thread = threading.Thread(target=_call_from_thread, args=(second_runtime,))
+    try:
+        first_thread.start()
+        second_thread.start()
+        first_thread.join(timeout=3.0)
+        second_thread.join(timeout=3.0)
+
+        assert first_thread.is_alive() is False
+        assert second_thread.is_alive() is False
+        assert errors == []
+        assert len(results) == 2
+        assert results[0] == results[1]
+        assert first_runtime.ensure_actor_loop() is second_runtime.ensure_actor_loop()
+    finally:
+        _shutdown_actor_runtime(first_runtime)

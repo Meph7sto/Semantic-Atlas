@@ -141,8 +141,18 @@ def test_execution_schema_agent_run_statuses_cover_runtime_lifecycle():
     )
     assert "queued" in agent_runs_sql
     assert "running" in agent_runs_sql
+    assert "cancelling" in agent_runs_sql
+    assert "timing_out" in agent_runs_sql
     assert "waiting_user" in agent_runs_sql
     assert "succeeded" in agent_runs_sql
     assert "failed" in agent_runs_sql
     assert "timed_out" in agent_runs_sql
     assert "cancelled" in agent_runs_sql
+
+    status_migration_sql = next(
+        statement
+        for statement in cursor.statements
+        if "ADD CONSTRAINT chk_agent_runs_status" in statement
+    )
+    assert "cancelling" in status_migration_sql
+    assert "timing_out" in status_migration_sql

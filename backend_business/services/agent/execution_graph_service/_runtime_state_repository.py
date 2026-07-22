@@ -19,6 +19,8 @@ from psycopg2.extras import RealDictCursor
 _ALLOWED_AGENT_RUN_STATUSES = {
     "queued",
     "running",
+    "cancelling",
+    "timing_out",
     "waiting_user",
     "succeeded",
     "failed",

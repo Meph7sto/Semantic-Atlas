@@ -12,6 +12,9 @@ from backend_business.config import settings
 from backend_business.services.agent.execution.graph_executor import GraphExecutor
 from backend_business.services.agent.execution_graph_service import ExecutionGraphService
 from backend_business.services.agent.experience import ExperienceOrchestrator
+from backend_business.services.agent.runtime.agent_execution_service import (
+    AgentExecutionService,
+)
 from backend_business.services.agent.runtime.session_graph_store import AgentSessionGraphStore
 from backend_business.services.agent.tools import RequirementAgentTools
 from backend_business.services.ai_chat_service import AiChatService, ai_chat_service
@@ -23,6 +26,7 @@ from backend_business.services.requirements_manage_service import RequirementsMa
 
 from .actor_runtime import RequirementAgentActorRuntime
 from .constants import DEFAULT_PROMPT_PAYLOAD_FORMAT
+from .definition import REQUIREMENT_AGENT_DEFINITION
 from .payload_codec import normalize_prompt_payload_format
 from .prompt_builder import RequirementAgentPromptBuilder
 from .runtime_graph_recorder import _RuntimeGraphRecorder
@@ -31,8 +35,8 @@ from .utils import inference_url
 
 
 class RequirementAgentChatService:
-    MAX_TOOL_CALL_ROUNDS = 6
-    AGENT_TYPE = "requirement_agent"
+    MAX_TOOL_CALL_ROUNDS = REQUIREMENT_AGENT_DEFINITION.max_tool_call_rounds
+    AGENT_TYPE = REQUIREMENT_AGENT_DEFINITION.agent_type
 
     def __init__(
         self,
@@ -67,6 +71,8 @@ class RequirementAgentChatService:
             actor_query_fn=self._actor_query,
             actor_write_fn=self._actor_write,
             approval_service=self.approval_service,
+            ai_proxy_client=self.ai_proxy,
+            actor_manager_getter=self._get_actor_manager,
         )
         self._session_graph_store = AgentSessionGraphStore(
             chat_storage=chat_storage,
@@ -75,6 +81,11 @@ class RequirementAgentChatService:
             prompt_payload_normalizer=normalize_prompt_payload_format,
             create_or_get_prompt_update_policy="truthy",
             create_or_get_context_update_policy="allowed",
+        )
+        self._execution_service = AgentExecutionService(
+            definition=REQUIREMENT_AGENT_DEFINITION,
+            chat_storage=chat_storage,
+            session_graph_store=self._session_graph_store,
         )
 
     def _hydrate_session_graph(self, session: dict[str, Any]) -> dict[str, Any]:
@@ -459,44 +470,30 @@ class RequirementAgentChatService:
         model: str = "deepseek-v4-pro",
         use_thinking_mode: bool = True,
     ) -> Generator[dict[str, Any], None, None]:
-        if not self.chat_storage:
-            raise RuntimeError("AI chat storage not initialized")
-
-        session = self.chat_storage._ensure_session_access(session_id=session_id, user_id=user_id)
+        turn = self._execution_service.begin_turn(
+            session_id=session_id,
+            user_id=user_id,
+            project_id=project_id,
+            user_message=user_message,
+            user_metadata={
+                "requirement_id": requirement_id,
+                "model": model,
+                "use_thinking_mode": use_thinking_mode,
+            },
+        )
+        session = turn.session
         prompt_payload_format = normalize_prompt_payload_format(
             session.get("prompt_payload_format"),
             default=DEFAULT_PROMPT_PAYLOAD_FORMAT,
         )
         context_mode = session.get("context_mode") or "full"
-        user_record = self.chat_storage.create_message(
-            session_id=session_id,
-            user_id=user_id,
-            role="user",
-            content=user_message,
-            metadata={
-                "requirement_id": requirement_id,
-                "model": model,
-                "use_thinking_mode": use_thinking_mode,
-            },
-            is_read=True,
-        )
-        self.chat_storage.update_session(session_id=session_id)
-        yield {"event": "user_message", "data": user_record}
+        yield {"event": "user_message", "data": turn.user_record}
 
-        graph_target = self._resolve_session_graph_target(session=session, project_id=project_id)
-        recorder = _RuntimeGraphRecorder(
+        recorder = self._execution_service.create_recorder(
+            turn=turn,
+            recorder_factory=_RuntimeGraphRecorder,
             execution_graph_service=self.execution_graph_service,
-            project_id=project_id,
-            user_id=user_id,
             requirement_id=requirement_id,
-            session_id=session_id,
-            user_message=user_message,
-            graph_id=graph_target["graph_id"],
-            prev_graph_id=graph_target["prev_graph_id"],
-        )
-        self.chat_storage.update_session(
-            session_id=session_id,
-            active_graph_id=recorder.graph_id,
         )
         self.execution_graph_service.patch_graph_meta(
             recorder.graph_id,
@@ -559,15 +556,10 @@ class RequirementAgentChatService:
                     use_thinking_mode=use_thinking_mode,
                 ),
             )
-            while True:
-                try:
-                    event = next(tool_loop)
-                except StopIteration as stop:
-                    loop_result = stop.value or {}
-                    tool_loop_reply = loop_result.get("tool_loop_reply") or ""
-                    context = loop_result.get("context") or {}
-                    break
-                yield event
+            loop_result = yield from self._execution_service.stream_generator(tool_loop)
+            loop_result = loop_result or {}
+            tool_loop_reply = loop_result.get("tool_loop_reply") or ""
+            context = loop_result.get("context") or {}
 
             mode = self._normalize_mode(context)
             write_result = context.get("last_write_result")
@@ -672,10 +664,8 @@ class RequirementAgentChatService:
                     meta_patch=meta_patch,
                 )
 
-            assistant_message = self.chat_storage.create_message(
-                session_id=session_id,
-                user_id=user_id,
-                role="assistant",
+            assistant_message = self._execution_service.persist_assistant(
+                turn=turn,
                 content=assistant_content,
                 metadata={
                     "graph_id": recorder.graph_id,
@@ -717,13 +707,10 @@ class RequirementAgentChatService:
                 error=error_text,
                 final_reply=error_text,
             )
-            error_message = self.chat_storage.create_message(
-                session_id=session_id,
-                user_id=user_id,
-                role="assistant",
-                content=error_text,
-                metadata={"error": True, "graph_id": recorder.graph_id},
-                is_read=False,
+            error_message = self._execution_service.persist_error(
+                turn=turn,
+                graph_id=recorder.graph_id,
+                error=error_text,
             )
             yield {
                 "event": "error",

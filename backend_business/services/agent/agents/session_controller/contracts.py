@@ -14,8 +14,20 @@ class SessionControllerDecisionMode(str, Enum):
     DELEGATE_REQUIREMENT = "delegate_requirement"
     DELEGATE_CONFLICT = "delegate_conflict"
     DELEGATE_CLASSIFICATION = "delegate_classification"
+    DELEGATE_TRACEABILITY = "delegate_traceability"
     APPROVAL_PENDING = "approval_pending"
     ERROR = "error"
+
+    @classmethod
+    def _missing_(cls, value: object):
+        normalized = str(value or "").strip()
+        if not normalized.startswith("delegate_"):
+            return None
+        member = str.__new__(cls, normalized)
+        member._name_ = normalized.upper()
+        member._value_ = normalized
+        cls._value2member_map_[normalized] = member
+        return member
 
 
 class SuspendReason(str, Enum):

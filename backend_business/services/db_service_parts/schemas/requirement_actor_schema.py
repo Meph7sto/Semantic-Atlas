@@ -4,9 +4,6 @@ RequirementActor 相关数据库表定义
 遵循现有 Schema 模式：init_*_schema(cur)
 """
 
-import uuid
-
-
 def init_requirement_actor_schema(cur):
     """初始化 RequirementActor 相关表"""
 
@@ -39,6 +36,16 @@ def init_requirement_actor_schema(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_req_events_seq ON requirement_events(requirement_id, event_sequence)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_req_events_type ON requirement_events(event_type)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_req_events_occurred_at ON requirement_events(occurred_at DESC)")
+
+    # Monotonic fencing tokens prevent an expired Actor lease from writing
+    # after a newer owner has taken over the same requirement.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS requirement_actor_fences (
+            requirement_id TEXT PRIMARY KEY,
+            fencing_token BIGINT NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
 
     # ========================
     # 快照存储表

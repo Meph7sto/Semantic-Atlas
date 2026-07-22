@@ -12,6 +12,7 @@ joblib==1.3.2
 openai>=1.0.0
 python-multipart
 pymysql
+redis>=5.0,<6.0
 
 # LlamaIndex 核心
 llama-index-core>=0.11.0

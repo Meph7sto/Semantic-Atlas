@@ -9,6 +9,9 @@ from backend_business.services.agent.runtime.agent_registry import (
     BUILTIN_AGENT_REGISTRY,
     AgentRegistry,
 )
+from backend_business.services.agent.runtime.tool_scheduling import (
+    ToolExecutionMetadata,
+)
 from backend_business.services.requirements_manage_service import RequirementsManageService
 
 from .delegation import SessionControllerDelegationDispatcher
@@ -55,38 +58,45 @@ class SessionControllerTools:
         self,
         *,
         requirements_service: RequirementsManageService,
-        requirement_agent_service: Any,
-        conflict_agent_service: Any,
+        requirement_agent_service: Any = None,
+        conflict_agent_service: Any = None,
         requirement_classification_agent_service: Any | None = None,
         agent_registry: AgentRegistry | None = None,
+        agent_services: dict[str, Any] | None = None,
     ) -> None:
         self.requirements_service = requirements_service
         self._requirement_agent_service = requirement_agent_service
         self._conflict_agent_service = conflict_agent_service
         self._requirement_classification_agent_service = requirement_classification_agent_service
         self._agent_registry = agent_registry or BUILTIN_AGENT_REGISTRY
-        self._runtime_tool_executor_services = {
+        legacy_services = {
             "requirement_agent": requirement_agent_service,
             "conflict_detection": conflict_agent_service,
             "requirement_classification_agent": requirement_classification_agent_service,
         }
+        self._runtime_tool_executor_services = {
+            key: value for key, value in legacy_services.items() if value is not None
+        }
+        self._runtime_tool_executor_services.update(agent_services or {})
         self._delegation_dispatcher = SessionControllerDelegationDispatcher(
+            agent_registry=self._agent_registry,
             requirement_agent_service=requirement_agent_service,
             conflict_agent_service=conflict_agent_service,
             requirement_classification_agent_service=requirement_classification_agent_service,
         )
 
+    @property
+    def agent_registry(self) -> AgentRegistry:
+        return self._agent_registry
+
     def resolve_runtime_tool_executor(self, *, container_key: str) -> Any:
         """Resolve the tool executor bound to a runtime container."""
         if container_key in {"conductor", "session_controller", ""}:
             return self
-        definition = self._agent_registry.get_by_container_key(container_key)
-        if definition is None:
-            return None
-        service = self._runtime_tool_executor_services.get(definition.container_key)
-        if service is None:
-            return None
-        return getattr(service, "tools", None)
+        return self._agent_registry.resolve_tool_executor(
+            container_key=container_key,
+            services=self._runtime_tool_executor_services,
+        )
 
     def get_tools_list(
         self,
@@ -107,7 +117,7 @@ class SessionControllerTools:
                 "description": "窗口大小，默认 10，最大 20",
             },
         }
-        return [
+        controller_tools = [
             {
                 "type": "function",
                 "function": {
@@ -140,79 +150,37 @@ class SessionControllerTools:
                     },
                 },
             },
-            {
-                "type": "function",
-                "function": {
-                    "name": "invoke_requirement_agent",
-                    "description": (
-                        "将需求管理任务委托给需求管理 Agent 执行。"
-                        "适用于：读取需求详情、修改需求内容、需求状态查询等。"
-                        "task_description 必须是具体的任务描述，包含用户原始意图和上下文。"
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "task_description": {
-                                "type": "string",
-                                "description": "详细的任务描述，包含用户意图和必要上下文",
-                            },
-                            "requirement_id": {
-                                "type": "string",
-                                "description": "如已知目标需求 ID，可选传入",
-                            },
-                        },
-                        "required": ["task_description"],
-                        "additionalProperties": False,
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "invoke_conflict_detection",
-                    "description": (
-                        "将冲突检测任务委托给冲突检测 Agent 执行。"
-                        "适用于：检测两条或多条需求之间是否存在语义冲突。"
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "task_description": {
-                                "type": "string",
-                                "description": "具体的冲突检测任务描述，包含需要检测的需求 ID 或检测条件",
-                            },
-                        },
-                        "required": ["task_description"],
-                        "additionalProperties": False,
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "invoke_requirement_classification_agent",
-                    "description": (
-                        "将需求分类任务委托给需求分类 Agent 执行。"
-                        "适用于：L1/L2/L3/L4、功能/非功能、领域标签、优先级初判。"
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "task_description": {
-                                "type": "string",
-                                "description": "具体的需求分类任务描述，包含目标需求或上下文",
-                            },
-                            "requirement_id": {
-                                "type": "string",
-                                "description": "如已知目标需求 ID，可选传入",
-                            },
-                        },
-                        "required": ["task_description"],
-                        "additionalProperties": False,
-                    },
-                },
-            },
         ]
+        return [*controller_tools, *self._agent_registry.delegation_tool_definitions()]
+
+    def get_tool_execution_metadata(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> ToolExecutionMetadata:
+        project_id = str(context.get("project_id") or "unknown").strip()
+        requirement_id = str(arguments.get("requirement_id") or "").strip()
+        resource_key = (
+            f"requirement:{project_id}:{requirement_id}"
+            if requirement_id
+            else f"project:{project_id}"
+        )
+        if tool_name in {"list_requirements", "search_requirements"}:
+            return ToolExecutionMetadata(
+                read_only=True,
+                idempotent=True,
+                resource_key=resource_key,
+                concurrency_group="requirements",
+            )
+        if self._agent_registry.get_by_delegation_tool(tool_name) is not None:
+            return ToolExecutionMetadata(
+                read_only=False,
+                idempotent=False,
+                resource_key=resource_key,
+                concurrency_group="agent-delegation",
+            )
+        return ToolExecutionMetadata()
 
     def execute(
         self,
@@ -225,12 +193,13 @@ class SessionControllerTools:
             return self._execute_list_requirements(parsed_arguments, context)
         if tool_name == "search_requirements":
             return self._execute_search_requirements(parsed_arguments, context)
-        if tool_name == "invoke_requirement_agent":
-            return self._execute_invoke_requirement_agent(parsed_arguments, context)
-        if tool_name == "invoke_conflict_detection":
-            return self._execute_invoke_conflict_detection(parsed_arguments, context)
-        if tool_name == "invoke_requirement_classification_agent":
-            return self._execute_invoke_requirement_classification_agent(parsed_arguments, context)
+        delegated_definition = self._agent_registry.get_by_delegation_tool(tool_name)
+        if delegated_definition is not None:
+            return self._delegation_dispatcher.execute(
+                delegated_definition,
+                parsed_arguments,
+                context,
+            )
         raise ValueError(f"未知工具: {tool_name}")
 
     def execute_streaming(
@@ -240,12 +209,13 @@ class SessionControllerTools:
         context: dict[str, Any],
     ):
         parsed_arguments = self._parse_arguments(arguments)
-        if tool_name == "invoke_requirement_agent":
-            return self._stream_invoke_requirement_agent(parsed_arguments, context)
-        if tool_name == "invoke_conflict_detection":
-            return self._stream_invoke_conflict_detection(parsed_arguments, context)
-        if tool_name == "invoke_requirement_classification_agent":
-            return self._stream_invoke_requirement_classification_agent(parsed_arguments, context)
+        delegated_definition = self._agent_registry.get_by_delegation_tool(tool_name)
+        if delegated_definition is not None:
+            return self._delegation_dispatcher.stream(
+                delegated_definition,
+                parsed_arguments,
+                context,
+            )
         return self.execute(tool_name, parsed_arguments, context)
 
     @staticmethod
@@ -357,4 +327,3 @@ class SessionControllerTools:
         context: dict[str, Any],
     ):
         return self._delegation_dispatcher.stream_requirement_classification_agent(arguments, context)
-

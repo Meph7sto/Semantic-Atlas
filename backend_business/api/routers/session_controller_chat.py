@@ -365,15 +365,11 @@ def send_message_async(
         raise ErrorResponse("AI chat storage not initialized", 500)
 
     # Persist user message synchronously so the caller can display it.
-    user_record = session_controller_service.chat_storage.create_message(
+    user_record = session_controller_service.persist_user_message(
         session_id=session_id,
         user_id=current_user["user_id"],
-        role="user",
         content=payload.message,
-        metadata={},
-        is_read=True,
     )
-    session_controller_service.chat_storage.update_session(session_id=session_id)
 
     # Kick off agent in background thread.
     thread = threading.Thread(

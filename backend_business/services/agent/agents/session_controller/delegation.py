@@ -1,9 +1,14 @@
-"""Native delegation planning for SessionController tools."""
+"""Definition-driven native delegation planning for SessionController."""
 
 from __future__ import annotations
 
 from typing import Any
 
+from backend_business.services.agent.runtime.agent_definition import AgentDefinition
+from backend_business.services.agent.runtime.agent_registry import (
+    BUILTIN_AGENT_REGISTRY,
+    AgentRegistry,
+)
 
 _DEFAULT_DELEGATED_MAX_TOOL_CALL_ROUNDS = 15
 
@@ -21,63 +26,81 @@ def _resolve_delegated_max_tool_call_rounds(context: dict[str, Any]) -> int:
 
 
 class SessionControllerDelegationDispatcher:
-    """Create native invoke payloads for delegated child agents."""
+    """Create native invoke payloads from catalog delegation metadata."""
 
     def __init__(
         self,
         *,
-        requirement_agent_service: Any,
-        conflict_agent_service: Any,
-        requirement_classification_agent_service: Any | None = None,
+        agent_registry: AgentRegistry | None = None,
+        requirement_agent_service: Any = None,
+        conflict_agent_service: Any = None,
+        requirement_classification_agent_service: Any = None,
     ) -> None:
-        # Constructor signature stays compatible with SessionControllerTools.
+        # Service parameters remain accepted for API compatibility; runtime
+        # execution is resolved by the catalog rather than this planner.
         _ = (
             requirement_agent_service,
             conflict_agent_service,
             requirement_classification_agent_service,
         )
+        self._agent_registry = agent_registry or BUILTIN_AGENT_REGISTRY
+
+    def execute(
+        self,
+        definition: AgentDefinition,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._plan_invoke(definition, arguments, context)
+
+    def stream(
+        self,
+        definition: AgentDefinition,
+        arguments: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._plan_invoke(definition, arguments, context)
 
     def execute_requirement_agent(
         self,
         arguments: dict[str, Any],
         context: dict[str, Any],
     ) -> dict[str, Any]:
-        return self._plan_requirement_invoke(arguments, context)
+        return self._plan_invoke(
+            self._agent_registry.require_by_container_key("requirement_agent"),
+            arguments,
+            context,
+        )
 
-    def stream_requirement_agent(
-        self,
-        arguments: dict[str, Any],
-        context: dict[str, Any],
-    ) -> dict[str, Any]:
-        return self._plan_requirement_invoke(arguments, context)
+    stream_requirement_agent = execute_requirement_agent
 
     def execute_conflict_detection(
         self,
         arguments: dict[str, Any],
         context: dict[str, Any],
     ) -> dict[str, Any]:
-        return self._plan_conflict_invoke(arguments, context)
+        return self._plan_invoke(
+            self._agent_registry.require_by_container_key("conflict_detection"),
+            arguments,
+            context,
+        )
 
-    def stream_conflict_detection(
-        self,
-        arguments: dict[str, Any],
-        context: dict[str, Any],
-    ) -> dict[str, Any]:
-        return self._plan_conflict_invoke(arguments, context)
+    stream_conflict_detection = execute_conflict_detection
 
     def execute_requirement_classification_agent(
         self,
         arguments: dict[str, Any],
         context: dict[str, Any],
     ) -> dict[str, Any]:
-        return self._plan_classification_invoke(arguments, context)
+        return self._plan_invoke(
+            self._agent_registry.require_by_container_key(
+                "requirement_classification_agent"
+            ),
+            arguments,
+            context,
+        )
 
-    def stream_requirement_classification_agent(
-        self,
-        arguments: dict[str, Any],
-        context: dict[str, Any],
-    ) -> dict[str, Any]:
-        return self._plan_classification_invoke(arguments, context)
+    stream_requirement_classification_agent = execute_requirement_classification_agent
 
     @staticmethod
     def _build_invoke_result(
@@ -89,6 +112,7 @@ class SessionControllerDelegationDispatcher:
         max_tool_call_rounds: int | None = None,
         prompt_payload_format: str | None = None,
         context_mode: str | None = None,
+        forwarded_arguments: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         result = {
             "status": "accepted",
@@ -105,75 +129,62 @@ class SessionControllerDelegationDispatcher:
             result["prompt_payload_format"] = prompt_payload_format
         if context_mode:
             result["context_mode"] = context_mode
+        if forwarded_arguments:
+            result.update(forwarded_arguments)
         return result
 
-    def _plan_requirement_invoke(
+    def _plan_invoke(
         self,
+        definition: AgentDefinition,
         arguments: dict[str, Any],
         context: dict[str, Any],
     ) -> dict[str, Any]:
+        delegation = definition.delegation
+        if delegation is None:
+            raise ValueError(f"agent is not delegatable: {definition.agent_type}")
         task_description = str(arguments.get("task_description") or "").strip()
         if not task_description:
             raise ValueError("task_description 不能为空")
-        requirement_id = str(arguments.get("requirement_id") or "").strip() or None
-        if not requirement_id:
-            requirement_id = str(context.get("resolved_requirement_id") or "").strip() or None
-        prompt_payload_format = (
-            str(context.get("delegated_prompt_payload_format") or "").strip() or "markdown"
-        )
-        context_mode = str(context.get("delegated_context_mode") or "").strip() or "full"
-        max_tool_call_rounds = _resolve_delegated_max_tool_call_rounds(context)
-        self._mark_dispatched_agent(context, "requirement_agent")
-        if requirement_id:
-            context["resolved_requirement_id"] = requirement_id
+
+        requirement_id: str | None = None
+        if delegation.accepts_requirement_id:
+            requirement_id = str(arguments.get("requirement_id") or "").strip() or None
+            if not requirement_id:
+                requirement_id = (
+                    str(context.get("resolved_requirement_id") or "").strip() or None
+                )
+            if requirement_id:
+                context["resolved_requirement_id"] = requirement_id
+
+        prompt_payload_format: str | None = None
+        context_mode: str | None = None
+        if delegation.include_prompt_preferences:
+            prompt_payload_format = (
+                str(context.get("delegated_prompt_payload_format") or "").strip()
+                or "markdown"
+            )
+            context_mode = (
+                str(context.get("delegated_context_mode") or "").strip() or "full"
+            )
+
+        forwarded_arguments = {
+            argument_name: value
+            for argument_name in delegation.forwarded_argument_names
+            if (
+                value := str(arguments.get(argument_name) or "").strip()
+            )
+        }
+
+        self._mark_dispatched_agent(context, definition.container_key)
         return self._build_invoke_result(
-            delegated_agent="requirement_agent",
-            route_key="invoke_requirement",
+            delegated_agent=definition.container_key,
+            route_key=delegation.route_key,
             task_description=task_description,
             requirement_id=requirement_id,
-            max_tool_call_rounds=max_tool_call_rounds,
+            max_tool_call_rounds=_resolve_delegated_max_tool_call_rounds(context),
             prompt_payload_format=prompt_payload_format,
             context_mode=context_mode,
-        )
-
-    def _plan_conflict_invoke(
-        self,
-        arguments: dict[str, Any],
-        context: dict[str, Any],
-    ) -> dict[str, Any]:
-        task_description = str(arguments.get("task_description") or "").strip()
-        if not task_description:
-            raise ValueError("task_description 不能为空")
-        max_tool_call_rounds = _resolve_delegated_max_tool_call_rounds(context)
-        self._mark_dispatched_agent(context, "conflict_detection")
-        return self._build_invoke_result(
-            delegated_agent="conflict_detection",
-            route_key="invoke_conflict",
-            task_description=task_description,
-            max_tool_call_rounds=max_tool_call_rounds,
-        )
-
-    def _plan_classification_invoke(
-        self,
-        arguments: dict[str, Any],
-        context: dict[str, Any],
-    ) -> dict[str, Any]:
-        task_description = str(arguments.get("task_description") or "").strip()
-        if not task_description:
-            raise ValueError("task_description 不能为空")
-        requirement_id = str(arguments.get("requirement_id") or "").strip() or None
-        if not requirement_id:
-            requirement_id = str(context.get("resolved_requirement_id") or "").strip() or None
-        max_tool_call_rounds = _resolve_delegated_max_tool_call_rounds(context)
-        self._mark_dispatched_agent(context, "requirement_classification_agent")
-        if requirement_id:
-            context["resolved_requirement_id"] = requirement_id
-        return self._build_invoke_result(
-            delegated_agent="requirement_classification_agent",
-            route_key="invoke_classification",
-            task_description=task_description,
-            requirement_id=requirement_id,
-            max_tool_call_rounds=max_tool_call_rounds,
+            forwarded_arguments=forwarded_arguments,
         )
 
     @staticmethod

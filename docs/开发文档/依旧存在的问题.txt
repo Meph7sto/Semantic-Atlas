@@ -1,28 +1,39 @@
-本轮已收口项
+2026-07-20 Agent 架构审查待处理项
 
-1. multi-agent runtime 的治理边界已经显式化。
-   - `RunRequest` 现在携带 `quota_policy` 与 `memory_policy` 快照，运行时不再只知道 policy id。
-   - `LocalAgentRuntime` 已改为受治理执行边界：显式校验 strict memory contract、并发额度与 timeout。
-   - `agent_run` 取消 / 超时 / 配额失败都会落到统一的 run lifecycle，而不是散落在调用链的隐式异常里。
+以下问题来自对当前 graph/runtime、工具调度、Scratchpad 和 Actor 协调链路的静态审查。它们不要求推翻 graph-first 架构；优先目标是让运行时行为、并发语义和记忆预算与现有设计口径一致。
 
-2. Scratchpad legacy 兼容层已经从运行时主路径移除。
-   - 新主路径只从 `container_state_store` 读取 scratchpad。
-   - 旧图若仍只在 graph meta 中持有 `scratchpad_snapshot`，首次读取时会一次性迁移到 state store，再按新路径读取。
-   - graph meta 中保留 `scratchpad_snapshot` 仅作为派生视图，不再作为运行时 source of truth。
+P0：LocalAgentRuntime 的实时流、取消和超时语义仍需收紧。
+- `LocalAgentRuntime.stream()` 会先等待 runner 完成，再回放内存中的 events；跨 container 委托不能向上游实时转发阶段事件。
+- `cancel()` / timeout 会先标记 run 终态并释放 quota，但 Python worker thread 与正在进行的外部调用只能协作式停止，可能继续运行或产生副作用。
+- 建议引入 RunSupervisor：使用事件队列实时转发；将 cancelling 与 terminal 状态区分；只有 worker 确认退出后才释放配额。对于不可协作的调用，需要明确硬超时隔离策略。
+- 验收：阻塞工具在完成前可被实时观察；取消后不会继续执行下一轮工具调用；timeout 后不会让仍在运行的任务绕过并发额度。
 
-3. run-level state 与 trace-level state 的 source of truth 已明确。
-   - `agent_runs` 继续承担 run lifecycle 的权威状态。
-   - recorder 现在只保存 trace，并在 stage node 上写入 `run_ref` 指向对应 `agent_run_id`。
-   - 因此 execution graph 负责“看见发生了什么”，`agent_runs` 负责“认定 run 处于什么状态”。
+P0：ToolLoopRunner 缺少副作用工具的调度策略。
+- 当前同一轮 tool calls 会逐个创建线程并行执行；能力策略只限制工具名称，不表达读写属性、资源键、幂等性或并发组。
+- `update_requirement_content` 会创建审批请求，属于可观察副作用；多个针对同一 requirement 的调用可能并发产生重复审批或顺序漂移。
+- 建议为工具声明 `read_only`、`idempotent`、`resource_key`、`concurrency_group` 等元数据：只读且资源独立的调用可并行，写操作按资源键串行，并设置每轮并发上限。
+- 验收：同一 requirement 的写型工具严格有序；不同 requirement 的安全读操作仍可并发；工具结果保持稳定顺序。
 
-4. quota / memory policy 已从框架接线升级为执行期约束。
-   - runtime binding 会把 `timeout_seconds`、`max_concurrent_runs`、`max_parallel_runs_per_scope`、`strict_memory_contract` 写入 registry。
-   - `SubgraphRunner` 会把这些 policy 快照下发到 `RunRequest`。
-   - 运行时会在真正执行前做配额校验，在执行后校验 memory contract。
+P1：Scratchpad 缺少跨轮预算和选择性蒸馏。
+- SessionController 创建新图时会复制上一图的完整 `snapshot_all()`；`Scratchpad.format_for_prompt()` 会拼接全部可见条目，并在子图开始时注入提示词。
+- 长会话会导致上下文、延迟和模型成本持续增长，也会增加无关历史干扰当前阶段的概率。
+- 建议增加 memory compiler / retrieval policy：按 container、任务、时效和重要度选择条目；设置 token 与条目上限；超预算时生成压缩摘要并保留原始 trace 供审计。
+- 验收：长会话提示词大小有可观测上限；每个子图只收到与当前任务相关的记忆；原始历史仍可从 graph/state 查询。
 
-当前边界说明
+P1：AgentRegistry 尚未成为唯一的 Agent 扩展边界。
+- `AgentDefinition` 已声明 tool executor、context builder、result postprocessor 等扩展位，但当前 runtime 未统一消费这些字段。
+- requirement、classification、conflict 的定义同时存在于 agent 包和 `runtime/agent_registry.py`；SessionController 仍维护手工 service 映射、委托工具名和图模板节点。
+- `AgentExecutionService` 仍只有重构计划，没有实际实现；业务 service 继续同时承担 session、SSE、graph、持久化和业务适配职责。
+- 建议保留单一 AgentCatalog：每个 Agent 自带唯一 definition、工具工厂、prompt/context/result adapter 和委托 metadata；由薄 application service 统一处理 session、recorder、SSE 与 assistant message 持久化。
+- 验收：新增一个 Agent 不需要修改多个硬编码 map 或 switch；definition 改动只存在一个来源；公共执行路径通过同一 application service。
 
-1. 当前默认 runtime 仍是 governed local runtime，而不是独立宿主级 sandbox。
-   - 这不再是“未治理”的 follow-up，而是当前架构的明确取舍。
-   - 在现有项目范围内，权限、超时、取消、并发额度、memory contract 与 run/trace 对齐都已在 runtime 内收口。
-   - 若后续需要远端 runtime / OS 级隔离 / 多租户硬限额，可在现有 `implementation_type` 扩展点上继续接入，而不是再回到双轨或兼容层。
+P1（仅多实例部署）：分布式 Actor 协调未形成完整闭环。
+- Actor 已被远端实例持有时，当前实例会拒绝请求；`forward_request()` 尚未实现，因此无法路由到持有者。
+- heartbeat 目前只刷新 instance key，没有续期实际 lock key；长时间运行后锁可能过期。
+- 单进程部署不受此项影响。若要横向扩容，应在发布前完成带 fencing token 的原子续租、节点间命令路由和多实例集成测试；否则应把 Actor 部署约束明确为单实例。
+- 验收：多实例下同一 requirement 始终只有一个活跃 Actor；请求可路由到持有者；锁续期、实例故障和恢复路径均可测试。
+
+验证待处理项
+
+- `python -m compileall -q backend_business/services/agent` 已通过。
+- `python -m pytest tests/agent_chat -q` 当前在收集阶段被环境中的 `psycopg2._psycopg` 缺失阻断，24 个模块未执行。修复/重建项目虚拟环境后，应补跑该测试集，并新增上述流式取消、写工具并发、记忆预算和多实例协调的回归测试。

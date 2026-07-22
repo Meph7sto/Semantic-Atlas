@@ -446,7 +446,7 @@ def init_execution_schema(cur):
             runtime_id TEXT NOT NULL,
             parent_run_id TEXT REFERENCES agent_runs(run_id) ON DELETE SET NULL,
             status TEXT NOT NULL
-                CHECK (status IN ('queued', 'running', 'waiting_user', 'succeeded', 'failed', 'timed_out', 'cancelled')),
+                CHECK (status IN ('queued', 'running', 'cancelling', 'timing_out', 'waiting_user', 'succeeded', 'failed', 'timed_out', 'cancelled')),
             input_ref JSONB,
             output_ref JSONB,
             usage_json JSONB,
@@ -458,6 +458,53 @@ def init_execution_schema(cur):
             started_at TIMESTAMPTZ,
             completed_at TIMESTAMPTZ
         )
+        """
+    )
+    cur.execute(
+        """
+        DO $$
+        DECLARE
+            status_constraint_name TEXT;
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                  FROM pg_constraint
+                 WHERE conrelid = 'agent_runs'::regclass
+                   AND contype = 'c'
+                   AND pg_get_constraintdef(oid) ILIKE '%status%'
+                   AND (
+                        conname <> 'chk_agent_runs_status'
+                        OR pg_get_constraintdef(oid) NOT LIKE '%queued%'
+                        OR pg_get_constraintdef(oid) NOT LIKE '%running%'
+                        OR pg_get_constraintdef(oid) NOT LIKE '%cancelling%'
+                        OR pg_get_constraintdef(oid) NOT LIKE '%timing_out%'
+                        OR pg_get_constraintdef(oid) NOT LIKE '%waiting_user%'
+                        OR pg_get_constraintdef(oid) NOT LIKE '%succeeded%'
+                        OR pg_get_constraintdef(oid) NOT LIKE '%failed%'
+                        OR pg_get_constraintdef(oid) NOT LIKE '%timed_out%'
+                        OR pg_get_constraintdef(oid) NOT LIKE '%cancelled%'
+                   )
+            ) OR NOT EXISTS (
+                SELECT 1
+                  FROM pg_constraint
+                 WHERE conrelid = 'agent_runs'::regclass
+                   AND contype = 'c'
+                   AND conname = 'chk_agent_runs_status'
+            ) THEN
+                FOR status_constraint_name IN
+                    SELECT conname
+                      FROM pg_constraint
+                     WHERE conrelid = 'agent_runs'::regclass
+                       AND contype = 'c'
+                       AND pg_get_constraintdef(oid) ILIKE '%status%'
+                LOOP
+                    EXECUTE format('ALTER TABLE agent_runs DROP CONSTRAINT %I', status_constraint_name);
+                END LOOP;
+                ALTER TABLE agent_runs
+                ADD CONSTRAINT chk_agent_runs_status
+                CHECK (status IN ('queued', 'running', 'cancelling', 'timing_out', 'waiting_user', 'succeeded', 'failed', 'timed_out', 'cancelled'));
+            END IF;
+        END $$;
         """
     )
     cur.execute(

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from dataclasses import asdict
 from typing import Any
 
 from backend_business.services.agent.runtime.agent_registry import (
@@ -11,7 +14,30 @@ from backend_business.services.agent.runtime.agent_registry import (
 
 _TEMPLATE_KIND = "session_controller_graph_executor_phase2"
 _TEMPLATE_NAME = "Session Controller GraphExecutor Template"
-_TEMPLATE_VERSION = 4
+_TEMPLATE_VERSION = 5
+
+
+def _agent_catalog_fingerprint(registry: AgentRegistry) -> str:
+    """Hash the catalog fields that shape the generated delegation topology."""
+
+    payload = [
+        {
+            "agent_type": definition.agent_type,
+            "container_key": definition.container_key,
+            "label": definition.label,
+            "role_type": definition.role_type,
+            "delegation": asdict(definition.delegation),
+        }
+        for definition in registry.delegated_definitions()
+        if definition.delegation is not None
+    ]
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def ensure_session_controller_template(
@@ -23,12 +49,14 @@ def ensure_session_controller_template(
 ) -> str:
     """Ensure the built-in SessionController topology template exists."""
     registry = agent_registry or BUILTIN_AGENT_REGISTRY
+    catalog_fingerprint = _agent_catalog_fingerprint(registry)
     existing_templates = execution_graph_service.list_execution_graphs(project_id=project_id)
     for graph in existing_templates:
         meta = graph.get("meta_json") or {}
         if (
             meta.get("system_template_kind") == _TEMPLATE_KIND
             and int(meta.get("template_version") or 0) >= _TEMPLATE_VERSION
+            and meta.get("agent_catalog_fingerprint") == catalog_fingerprint
         ):
             return graph["graph_id"]
 
@@ -39,6 +67,7 @@ def ensure_session_controller_template(
         meta_json={
             "system_template_kind": _TEMPLATE_KIND,
             "template_version": _TEMPLATE_VERSION,
+            "agent_catalog_fingerprint": catalog_fingerprint,
             "hidden": True,
         },
         created_by=actor,
@@ -55,9 +84,10 @@ def ensure_session_controller_template(
         created_by=actor,
     )
     container_id = container["container_id"]
+    delegated_definitions = registry.delegated_definitions()
     delegated_containers: dict[str, dict[str, Any]] = {}
     for order_index, definition in enumerate(
-        registry.selectable_definitions(),
+        delegated_definitions,
         start=1,
     ):
         delegated_containers[definition.container_key] = execution_graph_service.create_container(
@@ -72,10 +102,6 @@ def ensure_session_controller_template(
             order_index=order_index,
             created_by=actor,
         )
-    requirement_container = delegated_containers["requirement_agent"]
-    conflict_container = delegated_containers["conflict_detection"]
-    classification_container = delegated_containers["requirement_classification_agent"]
-
     intake_node = execution_graph_service.create_node(
         graph_id=graph_id,
         container_id=container_id,
@@ -137,57 +163,29 @@ def ensure_session_controller_template(
         order_index=3,
         created_by=actor,
     )
-    invoke_requirement_node = execution_graph_service.create_node(
-        graph_id=graph_id,
-        container_id=container_id,
-        node_key="invoke_requirement_agent",
-        label="Invoke Requirement Agent",
-        node_type="invoke",
-        role_type="agent",
-        phase_label="委托需求 Agent",
-        task_prompt="将任务委托给需求管理 Agent 执行。",
-        conditional_edges=[],
-        config_json={
-            "delegate_agent": "requirement_agent",
-            "result_contract": "session_controller_invoke",
-        },
-        order_index=4,
-        created_by=actor,
-    )
-    invoke_conflict_node = execution_graph_service.create_node(
-        graph_id=graph_id,
-        container_id=container_id,
-        node_key="invoke_conflict_detection",
-        label="Invoke Conflict Detection",
-        node_type="invoke",
-        role_type="agent",
-        phase_label="委托冲突检测 Agent",
-        task_prompt="将任务委托给冲突检测 Agent 执行。",
-        conditional_edges=[],
-        config_json={
-            "delegate_agent": "conflict_detection",
-            "result_contract": "session_controller_invoke",
-        },
-        order_index=5,
-        created_by=actor,
-    )
-    invoke_classification_node = execution_graph_service.create_node(
-        graph_id=graph_id,
-        container_id=container_id,
-        node_key="invoke_requirement_classification_agent",
-        label="Invoke Requirement Classification",
-        node_type="invoke",
-        role_type="agent",
-        phase_label="委托需求分类 Agent",
-        task_prompt="将任务委托给需求分类 Agent 执行。",
-        conditional_edges=[],
-        config_json={
-            "delegate_agent": "requirement_classification_agent",
-            "result_contract": "session_controller_invoke",
-        },
-        order_index=6,
-        created_by=actor,
-    )
+    invoke_nodes: dict[str, dict[str, Any]] = {}
+    for order_index, definition in enumerate(delegated_definitions, start=4):
+        delegation = definition.delegation
+        if delegation is None:
+            continue
+        invoke_nodes[definition.container_key] = execution_graph_service.create_node(
+            graph_id=graph_id,
+            container_id=container_id,
+            node_key=delegation.tool_name,
+            label=delegation.invoke_label,
+            node_type="invoke",
+            role_type="agent",
+            phase_label=delegation.invoke_phase_label,
+            task_prompt=delegation.invoke_task_prompt,
+            conditional_edges=[],
+            config_json={
+                "delegate_agent": definition.container_key,
+                "agent_type": definition.agent_type,
+                "result_contract": "session_controller_invoke",
+            },
+            order_index=order_index,
+            created_by=actor,
+        )
     final_reply_node = execution_graph_service.create_node(
         graph_id=graph_id,
         container_id=container_id,
@@ -198,63 +196,41 @@ def ensure_session_controller_template(
         phase_label="最终回复",
         task_prompt="生成最终用户回复。",
         config_json={"prompt_builder": "session_controller_final_reply"},
-        order_index=7,
+        order_index=4 + len(delegated_definitions),
         created_by=actor,
     )
-    requirement_runtime_node = execution_graph_service.create_node(
-        graph_id=graph_id,
-        container_id=requirement_container["container_id"],
-        node_key="requirement_agent_runtime",
-        label="Requirement Agent Runtime",
-        node_type="llm",
-        role_type="agent",
-        phase_label="需求 Agent 执行",
-        task_prompt="执行需求管理 Agent 的委托任务。",
-        conditional_edges=[],
-        config_json={
-            "prompt_builder": "session_controller_requirement_delegate",
-            "complete_phase_enabled": False,
-            "result_contract": "requirement_agent",
-        },
-        order_index=0,
-        created_by=actor,
-    )
-    conflict_runtime_node = execution_graph_service.create_node(
-        graph_id=graph_id,
-        container_id=conflict_container["container_id"],
-        node_key="conflict_detection_runtime",
-        label="Conflict Detection Runtime",
-        node_type="llm",
-        role_type="agent",
-        phase_label="冲突检测 Agent 执行",
-        task_prompt="执行冲突检测 Agent 的委托任务。",
-        conditional_edges=[],
-        config_json={
-            "prompt_builder": "session_controller_conflict_delegate",
-            "complete_phase_enabled": False,
-            "result_contract": "conflict_detection",
-        },
-        order_index=0,
-        created_by=actor,
-    )
-    classification_runtime_node = execution_graph_service.create_node(
-        graph_id=graph_id,
-        container_id=classification_container["container_id"],
-        node_key="requirement_classification_runtime",
-        label="Requirement Classification Runtime",
-        node_type="llm",
-        role_type="agent",
-        phase_label="需求分类 Agent 执行",
-        task_prompt="执行需求分类 Agent 的委托任务。",
-        conditional_edges=[],
-        config_json={
-            "prompt_builder": "session_controller_classification_delegate",
-            "complete_phase_enabled": False,
-            "result_contract": "requirement_classification",
-        },
-        order_index=0,
-        created_by=actor,
-    )
+    runtime_nodes: dict[str, dict[str, Any]] = {}
+    for definition in delegated_definitions:
+        delegation = definition.delegation
+        if delegation is None:
+            continue
+        runtime_nodes[definition.container_key] = execution_graph_service.create_node(
+            graph_id=graph_id,
+            container_id=delegated_containers[definition.container_key]["container_id"],
+            node_key=delegation.runtime_node_key,
+            label=delegation.runtime_label,
+            node_type="llm",
+            role_type=definition.role_type,
+            phase_label=delegation.runtime_phase_label,
+            task_prompt=delegation.runtime_task_prompt,
+            conditional_edges=[],
+            config_json={
+                "prompt_builder": delegation.prompt_builder_kind,
+                "agent_type": definition.agent_type,
+                "complete_phase_enabled": False,
+                "result_contract": delegation.result_contract,
+            },
+            order_index=0,
+            created_by=actor,
+        )
+    delegation_edges = [
+        {
+            "condition": definition.delegation.route_key,
+            "target_node_id": invoke_nodes[definition.container_key]["node_id"],
+        }
+        for definition in delegated_definitions
+        if definition.delegation is not None
+    ]
     execution_graph_service.update_node(
         node_id=intake_node["node_id"],
         conditional_edges=[
@@ -262,18 +238,7 @@ def ensure_session_controller_template(
                 "condition": "suspend",
                 "target_node_id": suspend_reply_node["node_id"],
             },
-            {
-                "condition": "invoke_requirement",
-                "target_node_id": invoke_requirement_node["node_id"],
-            },
-            {
-                "condition": "invoke_conflict",
-                "target_node_id": invoke_conflict_node["node_id"],
-            },
-            {
-                "condition": "invoke_classification",
-                "target_node_id": invoke_classification_node["node_id"],
-            },
+            *delegation_edges,
             {
                 "condition": "reply",
                 "target_node_id": final_reply_node["node_id"],
@@ -288,18 +253,7 @@ def ensure_session_controller_template(
                 "condition": "suspend",
                 "target_node_id": suspend_reply_node["node_id"],
             },
-            {
-                "condition": "invoke_requirement",
-                "target_node_id": invoke_requirement_node["node_id"],
-            },
-            {
-                "condition": "invoke_conflict",
-                "target_node_id": invoke_conflict_node["node_id"],
-            },
-            {
-                "condition": "invoke_classification",
-                "target_node_id": invoke_classification_node["node_id"],
-            },
+            *delegation_edges,
             {
                 "condition": "reply",
                 "target_node_id": final_reply_node["node_id"],
@@ -307,11 +261,7 @@ def ensure_session_controller_template(
         ],
         updated_by=actor,
     )
-    for invoke_node in (
-        invoke_requirement_node,
-        invoke_conflict_node,
-        invoke_classification_node,
-    ):
+    for invoke_node in invoke_nodes.values():
         execution_graph_service.update_node(
             node_id=invoke_node["node_id"],
             conditional_edges=[
@@ -354,32 +304,18 @@ def ensure_session_controller_template(
         order_index=2,
         created_by=actor,
     )
-    execution_graph_service.create_edge(
-        graph_id=graph_id,
-        source_node_id=invoke_requirement_node["node_id"],
-        target_node_id=requirement_runtime_node["node_id"],
-        edge_type="call",
-        label="call_requirement_agent",
-        order_index=3,
-        created_by=actor,
-    )
-    execution_graph_service.create_edge(
-        graph_id=graph_id,
-        source_node_id=invoke_conflict_node["node_id"],
-        target_node_id=conflict_runtime_node["node_id"],
-        edge_type="call",
-        label="call_conflict_detection",
-        order_index=4,
-        created_by=actor,
-    )
-    execution_graph_service.create_edge(
-        graph_id=graph_id,
-        source_node_id=invoke_classification_node["node_id"],
-        target_node_id=classification_runtime_node["node_id"],
-        edge_type="call",
-        label="call_requirement_classification",
-        order_index=5,
-        created_by=actor,
-    )
+    for order_index, definition in enumerate(delegated_definitions, start=3):
+        delegation = definition.delegation
+        if delegation is None:
+            continue
+        execution_graph_service.create_edge(
+            graph_id=graph_id,
+            source_node_id=invoke_nodes[definition.container_key]["node_id"],
+            target_node_id=runtime_nodes[definition.container_key]["node_id"],
+            edge_type="call",
+            label=delegation.call_edge_label,
+            order_index=order_index,
+            created_by=actor,
+        )
 
     return graph_id

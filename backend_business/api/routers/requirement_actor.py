@@ -4,21 +4,19 @@ RequirementActor API 路由
 提供基于 Actor 模型的需求生命周期管理 API
 """
 
-import asyncio
+import inspect
 import json
 import logging
-import os
-import socket
 from collections.abc import Generator
 from typing import Any, Optional
-
-from fastapi import APIRouter, Depends, Query, Request, WebSocket, WebSocketDisconnect
 
 from backend_business.api.deps.auth import get_current_user
 from backend_business.api.http.errors import ErrorResponse
 from backend_business.api.http.sse import sse_response_raw
 from backend_business.config import settings
 from backend_business.services.actor.dev_trace import subscribe, unsubscribe
+from backend_business.services.agent.actor.actor_runtime import AgentActorRuntime
+from fastapi import APIRouter, Depends, Query, Request, WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
 
@@ -27,37 +25,58 @@ internals_router = APIRouter(prefix="/api/v2/_internals/actors", tags=["requirem
 
 # 延迟初始化以避免循环导入
 _actor_manager = None
+_broker_actor_manager = None
 _event_store = None
 _projection = None
-
-
-def _get_instance_id() -> str:
-    configured = settings.ACTOR_INSTANCE_ID
-    if configured:
-        return configured
-    host = os.environ.get("HOSTNAME") or socket.gethostname() or "unknown-host"
-    return f"{host}:{os.getpid()}"
+_actor_runtime = AgentActorRuntime(
+    query_source="requirement_actor_api",
+    loop_thread_name="actor-broker-loop",
+)
 
 
 def _get_actor_manager():
     """获取 ActorManager 单例"""
-    global _actor_manager
+    global _actor_manager, _broker_actor_manager
     if _actor_manager is None:
-        from backend_business.services.event_store.event_store import EventStore
-        from backend_business.services.actor.actor_manager import ActorManager
-        from backend_business.services.agent.coordinator.distributed_coordinator import (
-            DistributedActorCoordinator,
-        )
-
-        event_store = EventStore(settings.POSTGRES_DSN)
-        coordinator = None
-        if settings.REDIS_URL:
-            coordinator = DistributedActorCoordinator(
-                redis_url=settings.REDIS_URL,
-                instance_id=_get_instance_id(),
-            )
-        _actor_manager = ActorManager(event_store, coordinator=coordinator)
+        _actor_manager = _actor_runtime.get_actor_manager()
+        _broker_actor_manager = _actor_manager
     return _actor_manager
+
+
+_default_get_actor_manager = _get_actor_manager
+
+
+async def _resolve_actor_manager() -> tuple[Any, bool]:
+    """Resolve the manager and whether it must run on the actor broker loop."""
+    global _actor_manager, _broker_actor_manager
+
+    # Router tests and embedding applications historically monkeypatch either
+    # the getter or the manager. Keep those loop-local doubles loop-local.
+    if _get_actor_manager is not _default_get_actor_manager:
+        manager = _get_actor_manager()
+        if inspect.isawaitable(manager):
+            manager = await manager
+        return manager, False
+
+    if _actor_manager is None:
+        manager = await _actor_runtime.get_actor_manager_async()
+        _actor_manager = manager
+        _broker_actor_manager = manager
+    else:
+        manager = _actor_manager
+    return manager, manager is _broker_actor_manager
+
+
+async def _call_actor_manager(method_name: str, *args: Any, **kwargs: Any) -> Any:
+    manager, use_broker = await _resolve_actor_manager()
+    method = getattr(manager, method_name)
+    if use_broker:
+        return await _actor_runtime.await_actor_call(method, *args, **kwargs)
+
+    result = method(*args, **kwargs)
+    if inspect.isawaitable(result):
+        return await result
+    return result
 
 
 def _get_actor(request: Request, current_user: Optional[dict] = None) -> str:
@@ -70,6 +89,13 @@ def _get_actor(request: Request, current_user: Optional[dict] = None) -> str:
         return actor
 
     return "system"
+
+
+def _attach_idempotency_key(request: Request, command: dict[str, Any]) -> None:
+    """Carry the HTTP idempotency identity into distributed actor routing."""
+    idempotency_key = request.headers.get("Idempotency-Key", "").strip()
+    if idempotency_key:
+        command["idempotency_key"] = idempotency_key
 
 
 def _sse_event(event: str, data: Any) -> str:
@@ -131,11 +157,10 @@ async def submit_command(
     """
     actor = _get_actor(request, current_user)
     command["source"] = actor
-
-    manager = _get_actor_manager()
+    _attach_idempotency_key(request, command)
 
     try:
-        result = await manager.send_command(requirement_id, command)
+        result = await _call_actor_manager("send_command", requirement_id, command)
         return result
     except Exception as e:
         _raise_actor_error(e, "Command processing")
@@ -160,11 +185,10 @@ async def create_requirement(
         "metadata": metadata or {}
     }
     command["source"] = _get_actor(request, current_user)
-
-    manager = _get_actor_manager()
+    _attach_idempotency_key(request, command)
 
     try:
-        result = await manager.send_command(requirement_id, command)
+        result = await _call_actor_manager("send_command", requirement_id, command)
         return result
     except Exception as e:
         _raise_actor_error(e, "Create requirement")
@@ -197,11 +221,10 @@ async def update_content(
         "metadata": metadata,
     }
     command["source"] = _get_actor(request, current_user)
-
-    manager = _get_actor_manager()
+    _attach_idempotency_key(request, command)
 
     try:
-        result = await manager.send_command(requirement_id, command)
+        result = await _call_actor_manager("send_command", requirement_id, command)
         return result
     except Exception as e:
         _raise_actor_error(e, "Update content")
@@ -222,11 +245,10 @@ async def change_status(
         "metadata": metadata or {}
     }
     command["source"] = _get_actor(request, current_user)
-
-    manager = _get_actor_manager()
+    _attach_idempotency_key(request, command)
 
     try:
-        result = await manager.send_command(requirement_id, command)
+        result = await _call_actor_manager("send_command", requirement_id, command)
         return result
     except Exception as e:
         _raise_actor_error(e, "Change status")
@@ -249,11 +271,10 @@ async def add_quality_marker(
         "metadata": metadata or {}
     }
     command["source"] = _get_actor(request, current_user)
-
-    manager = _get_actor_manager()
+    _attach_idempotency_key(request, command)
 
     try:
-        result = await manager.send_command(requirement_id, command)
+        result = await _call_actor_manager("send_command", requirement_id, command)
         return result
     except Exception as e:
         _raise_actor_error(e, "Add quality marker")
@@ -270,11 +291,10 @@ async def query_state(
         "type": "QueryState",
         "source": _get_actor(request, current_user)
     }
-
-    manager = _get_actor_manager()
+    _attach_idempotency_key(request, command)
 
     try:
-        result = await manager.send_command(requirement_id, command)
+        result = await _call_actor_manager("send_command", requirement_id, command)
         return result
     except Exception as e:
         _raise_actor_error(e, "Query state")
@@ -379,8 +399,7 @@ async def get_snapshot(
 @router.get("/health/{requirement_id}")
 async def get_actor_health(requirement_id: str):
     """获取单个 Actor 健康状态"""
-    manager = _get_actor_manager()
-    stats = manager.get_stats()
+    stats = await _call_actor_manager("get_stats")
 
     is_active = requirement_id in stats.get("actor_ids", [])
     mailbox_size = stats.get("mailbox_sizes", {}).get(requirement_id, 0)
@@ -396,15 +415,13 @@ async def get_actor_health(requirement_id: str):
 @router.get("/stats")
 async def get_actor_stats():
     """获取全局 Actor 统计信息"""
-    manager = _get_actor_manager()
-    return manager.get_stats()
+    return await _call_actor_manager("get_stats")
 
 
 @internals_router.get("/stats")
 async def get_actor_internals_stats():
     """特权巡检：透出 ActorManager 内部状态。"""
-    manager = _get_actor_manager()
-    return manager.get_stats()
+    return await _call_actor_manager("get_stats")
 
 
 @internals_router.websocket("/ws")
@@ -469,10 +486,8 @@ async def stream_events(requirement_id: str):
 @router.post("/force-activate/{requirement_id}")
 async def force_activate(requirement_id: str):
     """强制激活 Actor"""
-    manager = _get_actor_manager()
-
     try:
-        await manager.activate_actor(requirement_id)
+        await _call_actor_manager("activate_actor", requirement_id)
         return {
             "status": "activated",
             "requirement_id": requirement_id
@@ -485,10 +500,8 @@ async def force_activate(requirement_id: str):
 @router.post("/force-passivate/{requirement_id}")
 async def force_passivate(requirement_id: str):
     """强制休眠 Actor"""
-    manager = _get_actor_manager()
-
     try:
-        await manager.force_passivate(requirement_id)
+        await _call_actor_manager("force_passivate", requirement_id)
         return {
             "status": "passivated",
             "requirement_id": requirement_id
@@ -503,11 +516,9 @@ async def cleanup_idle_actors(
     idle_timeout: int = Query(default=600, ge=60, le=3600)
 ):
     """清理空闲的 Actor"""
-    manager = _get_actor_manager()
-
     try:
-        await manager.passivate_idle_actors(idle_timeout)
-        stats = manager.get_stats()
+        await _call_actor_manager("passivate_idle_actors", idle_timeout)
+        stats = await _call_actor_manager("get_stats")
         return {
             "status": "cleanup_complete",
             "idle_timeout": idle_timeout,
@@ -522,7 +533,8 @@ async def cleanup_idle_actors(
 async def get_transitions():
     """获取所有允许的状态转换"""
     from backend_business.services.actor.actors.state_machine import (
-        RequirementStatus, RequirementStateMachine
+        RequirementStateMachine,
+        RequirementStatus,
     )
 
     state_machine = RequirementStateMachine()
@@ -604,7 +616,6 @@ async def replay_to_version(
         重建的需求状态
     """
     from backend_business.services.event_store.event_store import EventStore
-    from backend_business.services.actor.actors.state_machine import RequirementStatus
 
     event_store = EventStore(settings.POSTGRES_DSN)
 

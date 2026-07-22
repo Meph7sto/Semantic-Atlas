@@ -1,8 +1,18 @@
-"""Conflict detection agent chat package."""
+"""Conflict detection agent package with side-effect-free definition imports."""
 
-from .service import ConflictDetectionAgentService, conflict_detection_agent_service
+from __future__ import annotations
 
-__all__ = [
-    "ConflictDetectionAgentService",
-    "conflict_detection_agent_service",
-]
+from typing import Any
+
+__all__ = ["ConflictDetectionAgentService", "conflict_detection_agent_service"]
+
+
+def __getattr__(name: str) -> Any:
+    if name in __all__:
+        from .service import ConflictDetectionAgentService, conflict_detection_agent_service
+
+        return {
+            "ConflictDetectionAgentService": ConflictDetectionAgentService,
+            "conflict_detection_agent_service": conflict_detection_agent_service,
+        }[name]
+    raise AttributeError(name)

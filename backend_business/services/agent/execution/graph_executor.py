@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Generator
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from backend_business.services.agent.runtime import (
     ScratchpadService,
@@ -38,6 +38,9 @@ from .topology_instantiator import (
     RuntimeGraphSkeleton,
     TopologyInstantiator,
 )
+
+if TYPE_CHECKING:
+    from backend_business.services.agent.runtime.agent_registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -254,12 +257,14 @@ class GraphExecutor:
         scratchpad_service: ScratchpadService | None = None,
         experience_orchestrator: ExperienceOrchestrator | None = None,
         prompt_builder_factory: PromptBuilderFactory | None = None,
+        agent_registry: AgentRegistry | None = None,
     ) -> None:
         self._instantiator = instantiator or TopologyInstantiator()
         self._experience_orchestrator = experience_orchestrator
         self._runner = runner or SubgraphRunner(
             experience_orchestrator=experience_orchestrator,
             prompt_builder_factory=prompt_builder_factory,
+            agent_registry=agent_registry,
         )
         self._scratchpad_service = scratchpad_service
 
@@ -529,9 +534,9 @@ class GraphExecutor:
         )
 
         # Succeeded
-        scratchpad_service.save_snapshot(
+        scratchpad_service.save(
             skeleton.graph_id,
-            container_result.scratchpad_store_snapshot,
+            scratchpad,
             updated_by=actor,
         )
         _persist_graph_status(
@@ -699,7 +704,6 @@ class GraphExecutor:
         mechanism — each round creates an llm node in the execution graph.
         """
         from .tool_loop_runner import ToolLoopRunner
-        from .prompt_interface import PromptBuilderProtocol
 
         prompt_builder = _NormalConversationPromptBuilder()
 
@@ -877,9 +881,9 @@ class GraphExecutor:
             )
 
         # Succeeded
-        scratchpad_service.save_snapshot(
+        scratchpad_service.save(
             skeleton.graph_id,
-            container_result.scratchpad_store_snapshot,
+            scratchpad,
             updated_by=actor,
         )
         _persist_graph_status(
