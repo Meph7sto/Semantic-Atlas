@@ -4,7 +4,7 @@ targets:
     degraded_reason: ''
     injection_miss_count: 0
     invocation_count: 0
-    last_observed_at: '2026-05-01T17:17:24Z'
+    last_observed_at: '2026-07-22T08:26:04Z'
     last_writeback_reason: insufficient_tool_calls
     miss_ratio: 0.0
     needs_refinement: false
@@ -14,7 +14,7 @@ targets:
     rollback_count: 0
     sanitizer_fail_count: 0
     skill_hit_count: 0
-    writeback_skip_count: 18
+    writeback_skip_count: 21
   conflict_detection_agent_normal_conversation:
     degraded: false
     degraded_reason: ''
@@ -105,12 +105,12 @@ targets:
     degraded: false
     degraded_reason: ''
     injection_miss_count: 0
-    invocation_count: 86
+    invocation_count: 101
     iteration: 2
-    last_observed_at: '2026-05-01T17:17:24Z'
+    last_observed_at: '2026-07-22T08:26:04Z'
     last_rewrite_at: '2026-04-18T06:26:47Z'
     last_updated_at: '2026-04-18T06:26:47Z'
-    last_used_at: '2026-05-01T17:17:24Z'
+    last_used_at: '2026-07-22T08:26:04Z'
     last_writeback_reason: content_unchanged
     miss_ratio: 0.0
     needs_refinement: false
@@ -119,15 +119,15 @@ targets:
     rewrite_count: 1
     rollback_count: 0
     sanitizer_fail_count: 0
-    skill_hit_count: 86
+    skill_hit_count: 101
     skill_id: exp_session_controller_decision_20260418T062647Z_002
-    writeback_skip_count: 181
+    writeback_skip_count: 211
   session_controller_final_reply:
     degraded: false
     degraded_reason: ''
     injection_miss_count: 0
     invocation_count: 0
-    last_observed_at: '2026-05-01T17:17:24Z'
+    last_observed_at: '2026-07-22T08:26:04Z'
     last_writeback_reason: insufficient_tool_calls
     miss_ratio: 0.0
     needs_refinement: false
@@ -137,18 +137,18 @@ targets:
     rollback_count: 0
     sanitizer_fail_count: 0
     skill_hit_count: 0
-    writeback_skip_count: 73
+    writeback_skip_count: 85
   session_controller_requirement_delegate:
     created_at: '2026-04-18T00:00:00Z'
     current_skill_path: session_controller_requirement_delegate/current.md
     degraded: false
     degraded_reason: ''
     injection_miss_count: 0
-    invocation_count: 52
+    invocation_count: 61
     iteration: 1
-    last_observed_at: '2026-05-01T17:17:24Z'
+    last_observed_at: '2026-07-22T08:26:04Z'
     last_updated_at: '2026-04-18T00:00:00Z'
-    last_used_at: '2026-05-01T17:17:24Z'
+    last_used_at: '2026-07-22T08:26:04Z'
     last_writeback_reason: insufficient_tool_calls
     miss_ratio: 0.0
     needs_refinement: false
@@ -157,15 +157,15 @@ targets:
     rewrite_count: 0
     rollback_count: 0
     sanitizer_fail_count: 1
-    skill_hit_count: 52
+    skill_hit_count: 61
     skill_id: exp_session_controller_requirement_delegate_seed_20260418_001
-    writeback_skip_count: 54
+    writeback_skip_count: 63
   session_controller_suspend_reply:
     degraded: false
     degraded_reason: ''
     injection_miss_count: 0
     invocation_count: 0
-    last_observed_at: '2026-05-01T17:17:24Z'
+    last_observed_at: '2026-07-22T08:26:04Z'
     last_writeback_reason: insufficient_tool_calls
     miss_ratio: 0.0
     needs_refinement: false
@@ -175,7 +175,7 @@ targets:
     rollback_count: 0
     sanitizer_fail_count: 0
     skill_hit_count: 0
-    writeback_skip_count: 18
+    writeback_skip_count: 21
   topology_conflict_agent_llm:
     created_at: '2026-04-25T15:12:55Z'
     current_skill_path: topology_conflict_agent_llm/current.md
