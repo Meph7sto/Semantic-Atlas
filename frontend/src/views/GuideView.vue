@@ -101,6 +101,42 @@
                 </button>
               </div>
             </div>
+
+            <div
+              class="entry-card video-card sa-card sa-card--interactive"
+              @click="navigateTo('/guide/videos')"
+            >
+              <div class="card-header">
+                <div class="card-icon video-icon">
+                  <Clapperboard class="icon-svg" />
+                </div>
+                <div class="card-badge video">Video</div>
+              </div>
+              <div class="card-content">
+                <h3>演示视频</h3>
+                <p>观看系统从录音采集到需求分析的操作过程</p>
+                <ul class="feature-list">
+                  <li>
+                    <PlayCircle class="check-icon" />
+                    <span>音频转文字</span>
+                  </li>
+                  <li>
+                    <PlayCircle class="check-icon" />
+                    <span>需求条目化</span>
+                  </li>
+                  <li>
+                    <PlayCircle class="check-icon" />
+                    <span>需求分析</span>
+                  </li>
+                </ul>
+              </div>
+              <div class="card-footer">
+                <button type="button" class="primary card-btn video-btn sa-button sa-button--primary">
+                  查看演示视频
+                  <ArrowRight class="btn-icon" />
+                </button>
+              </div>
+            </div>
           </div>
         </section>
       </main>
@@ -110,7 +146,15 @@
 
 <script setup>
 import { useRoute, useRouter } from 'vue-router'
-import { Home, Beaker, ArrowRight, CheckCircle2, Sparkles } from 'lucide-vue-next'
+import {
+  Home,
+  Beaker,
+  Clapperboard,
+  PlayCircle,
+  ArrowRight,
+  CheckCircle2,
+  Sparkles
+} from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -202,9 +246,9 @@ const navigateTo = (path) => {
 /* 入口卡片样式 */
 .entry-cards {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 32px;
-  max-width: 1000px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  max-width: 1200px;
   margin: 0 auto;
 }
 
@@ -256,6 +300,10 @@ const navigateTo = (path) => {
   background: linear-gradient(135deg, #c4692f 0%, #8b4a21 100%);
 }
 
+.video-icon {
+  background: #1b2730;
+}
+
 .card-badge {
   padding: 6px 12px;
   font-size: 11px;
@@ -275,6 +323,12 @@ const navigateTo = (path) => {
   background: #f9ede6;
   color: #c4692f;
   border: 1px solid #c4692f;
+}
+
+.card-badge.video {
+  background: #eef2f1;
+  color: #315c57;
+  border: 1px solid #7ca19b;
 }
 
 .card-content h3 {
@@ -321,6 +375,10 @@ const navigateTo = (path) => {
   color: #d6b77c;
 }
 
+.video-card .check-icon {
+  color: #2f8f89;
+}
+
 .card-footer {
   margin-top: auto;
 }
@@ -352,6 +410,14 @@ const navigateTo = (path) => {
 
 .alpha-btn:hover {
   background: #a85424;
+}
+
+.video-btn {
+  background: #1b2730;
+}
+
+.video-btn:hover {
+  background: #31414c;
 }
 
 /* 响应式 */

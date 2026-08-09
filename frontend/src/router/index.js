@@ -51,6 +51,7 @@ import ReportView from '../views/beta/ReportView.vue'
 
 // Guide view
 import GuideView from '../views/GuideView.vue'
+import VideoShowcaseView from '../views/VideoShowcaseView.vue'
 import RequirementsAcquisitionView from '../views/beta/RequirementsAcquisitionView.vue'
 
 const router = createRouter({
@@ -65,6 +66,12 @@ const router = createRouter({
             path: '/guide',
             name: 'guide',
             component: GuideView,
+            meta: { requiresAuth: false }
+        },
+        {
+            path: '/guide/videos',
+            name: 'video-showcase',
+            component: VideoShowcaseView,
             meta: { requiresAuth: false }
         },
         // Main routes (migrated from frontend_ref)

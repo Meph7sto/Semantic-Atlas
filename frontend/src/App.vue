@@ -16,7 +16,7 @@ const route = useRoute()
 const isMainRoute = computed(() => route.path.startsWith('/beta'))
 const isGuideRoute = computed(() => route.path.startsWith('/guide'))
 const isAlphaRoute = computed(() => !isMainRoute.value && !isGuideRoute.value)
-const showStyleSwitcher = computed(() => isMainRoute.value || isGuideRoute.value)
+const showStyleSwitcher = computed(() => isMainRoute.value || route.path === '/guide')
 
 // Alpha sidebar state
 const isSidebarOpen = ref(true)

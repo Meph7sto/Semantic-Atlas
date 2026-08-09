@@ -34,6 +34,7 @@ Dockerfile text eol=lf
 *.woff2 binary
 *.eot binary
 *.pdf binary
+*.mp4 binary
 *.zip binary
 *.gz binary
 *.tar binary
