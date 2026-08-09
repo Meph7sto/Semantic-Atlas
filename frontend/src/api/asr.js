@@ -6,11 +6,12 @@ export const asrApi = {
     return data
   },
 
-  async createSession(file) {
+  async createSession(file, params = {}) {
     const formData = new FormData()
     formData.append('file', file)
     const { data } = await api.post('/asr/sessions', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      params,
     })
     return data
   },
@@ -34,4 +35,3 @@ export const asrApi = {
     return `/api/v2/asr/sessions/${encodeURIComponent(sessionId)}/export?format=${encodeURIComponent(format)}`
   },
 }
-

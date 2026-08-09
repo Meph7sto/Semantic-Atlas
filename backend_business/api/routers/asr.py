@@ -4,6 +4,7 @@ import json
 import os
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile
@@ -23,6 +24,11 @@ from backend_business.services.asr_orchestrator import asr_orchestrator
 from backend_business.services.db_service import db_service
 
 router = APIRouter(prefix="/api/v2/asr", tags=["asr"])
+
+PCA_DEMO_TRANSCRIPT_PATH = Path(
+    "F:/xwechat_files/wxid_mqr3bqj6oqfw22_8ad5/msg/file/2026-08/"
+    "demo_PCA输液泵需求调研会议记录.txt"
+)
 
 
 def _require_db():
@@ -44,6 +50,27 @@ def _safe_name(filename: str) -> str:
     return safe
 
 
+def _read_text_file(path: Path) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "gb18030"):
+        try:
+            return path.read_text(encoding=encoding)
+        except UnicodeDecodeError:
+            continue
+    return path.read_text(encoding="utf-8", errors="ignore")
+
+
+def _load_pca_demo_transcript() -> str:
+    configured_path = Path(
+        os.environ.get("PCA_DEMO_TRANSCRIPT_PATH", str(PCA_DEMO_TRANSCRIPT_PATH))
+    )
+    if not configured_path.exists():
+        raise ErrorResponse(f"PCA演示转写文本不存在: {configured_path}", 500)
+    text = _read_text_file(configured_path).strip()
+    if not text:
+        raise ErrorResponse("PCA演示转写文本为空", 500)
+    return text
+
+
 @router.get("/health")
 def asr_health(current_user: dict = Depends(get_current_user)):
     status = asr_orchestrator.health()
@@ -54,10 +81,10 @@ def asr_health(current_user: dict = Depends(get_current_user)):
 async def create_transcription_session(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    demo: str = Query(default=""),
     current_user: dict = Depends(get_current_user),
 ):
     db = _require_db()
-    asr_orchestrator.ensure_available_or_raise()
 
     user_id = str(current_user["user_id"])
     source_filename = _safe_name(file.filename or "")
@@ -86,6 +113,36 @@ async def create_transcription_session(
         source_storage_path=storage_path,
     )
 
+    if demo.strip().lower() == "pca":
+        transcript_text = _load_pca_demo_transcript()
+        attempt = db.start_transcription_attempt(
+            session_id=session_id,
+            remote_request_id="pca-demo-transcript",
+        )
+        db.complete_transcription_session(
+            session_id=session_id,
+            attempt_no=int(attempt["attempt_no"]),
+            transcript_text=transcript_text,
+            transcript_segments=[],
+            transcript_metadata={
+                "source": "pca_demo_audio_transcription",
+                "transcript_path": str(
+                    os.environ.get(
+                        "PCA_DEMO_TRANSCRIPT_PATH", str(PCA_DEMO_TRANSCRIPT_PATH)
+                    )
+                ),
+                "uploaded_filename": source_filename,
+                "text_length": len(transcript_text),
+            },
+            remote_request_id="pca-demo-transcript",
+        )
+        refreshed = db.get_transcription_session(
+            session_id=session_id,
+            user_id=user_id,
+        )
+        return refreshed or {**created, "status": "succeeded"}
+
+    asr_orchestrator.ensure_available_or_raise()
     background_tasks.add_task(
         asr_orchestrator.process_session,
         session_id,

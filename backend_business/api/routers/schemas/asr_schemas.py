@@ -23,6 +23,8 @@ class SessionSummary(BaseModel):
     source_filename: str
     source_extension: str
     source_size_bytes: int
+    remote_request_id: str | None = None
+    transcript_metadata: dict[str, Any] | None = None
     attempt_count: int
     error_code: str | None = None
     error_message: str | None = None
@@ -62,4 +64,3 @@ class RetrySessionResponse(BaseModel):
     session_id: str
     status: TranscriptionStatus
     message: str = Field(default="retry queued")
-

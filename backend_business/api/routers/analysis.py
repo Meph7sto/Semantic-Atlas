@@ -394,6 +394,48 @@ def get_latest_trace_batch(session_id: str = Query(...)):
 @router.post("/analysis/runs")
 def save_requirements_analysis_run(req: SaveRequirementsAnalysisRunRequest):
     service = _require_db_service()
+    if (req.meta or {}).get("source") == "pca_demo_click_analysis":
+        high_texts = [
+            str(item.get("statement") or item.get("text") or item.get("title") or "")
+            for item in req.high_level_requirements
+        ]
+        low_texts = [
+            str(item.get("statement") or item.get("text") or item.get("shall_statement") or "")
+            for item in req.low_level_requirements
+        ]
+        service.save_batch(
+            [text for text in high_texts if text],
+            [text for text in low_texts if text],
+            req.trace_result,
+            title="PCA输液泵演示追溯分析",
+            session_id=req.session_id,
+        )
+        conflict_items = []
+        for item in (req.conflict_result or {}).get("items", []):
+            conflict_items.append(
+                {
+                    "requirement_a": item.get("requirement_a_text", ""),
+                    "requirement_b": item.get("requirement_b_text", ""),
+                    "is_conflict": item.get("verdict") == "confirmed",
+                    "raw_response": item.get("description", ""),
+                    "data": item,
+                }
+            )
+        service.save_conflict_batch(req.session_id, conflict_items)
+        classification_requirements = [
+            str(item.get("requirement") or "")
+            for item in (req.classification_result or {}).get("predictions", [])
+        ]
+        service.save_classification(
+            req.session_id,
+            classification_requirements,
+            (req.classification_result or {}).get("predictions", []),
+            label_distribution=(req.classification_result or {}).get(
+                "label_distribution"
+            ),
+            total=(req.classification_result or {}).get("total"),
+            result_json=req.classification_result,
+        )
     analysis_run_id = service.save_requirements_analysis_run(
         req.session_id,
         req.trace_result,

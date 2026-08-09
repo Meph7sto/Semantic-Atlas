@@ -391,6 +391,7 @@ const asrCurrentDetail = ref(null)
 const asrDetailOpen = ref(false)
 const asrDetailError = ref('')
 const asrDetailRefreshing = ref(false)
+const visibleDemoAsrSessionId = ref('')
 const asrTerminalStatuses = new Set(['succeeded', 'failed', 'timeout'])
 let asrDetailPollTimer = null
 
@@ -418,13 +419,24 @@ function onAsrFileChange(event) {
   asrSelectedFile.value = file || null
 }
 
+function isPcaDemoAsrSession(item) {
+  return (
+    item?.remote_request_id === 'pca-demo-transcript' ||
+    item?.transcript_metadata?.source === 'pca_demo_audio_transcription'
+  )
+}
+
 async function createAsrSession() {
   if (!asrSelectedFile.value || asrUploading.value) return
   asrUploading.value = true
   try {
-    await asrApi.createSession(asrSelectedFile.value)
+    const created = await asrApi.createSession(asrSelectedFile.value, { demo: 'pca' })
+    visibleDemoAsrSessionId.value = created?.session_id || ''
     asrSelectedFile.value = null
     await loadAsrSessions()
+    if (created?.session_id) {
+      await viewAsrDetail(created.session_id)
+    }
   } catch (error) {
     window.alert(normalizeError(error, '上传失败'))
   } finally {
@@ -435,7 +447,9 @@ async function createAsrSession() {
 async function loadAsrSessions() {
   try {
     const data = await asrApi.listSessions({ page: 1, per_page: 30 })
-    asrSessions.value = data.items || []
+    asrSessions.value = (data.items || []).filter((item) => {
+      return !isPcaDemoAsrSession(item) || item.session_id === visibleDemoAsrSessionId.value
+    })
   } catch (error) {
     window.alert(normalizeError(error, '加载会话失败'))
   }
@@ -886,29 +900,63 @@ onBeforeUnmount(() => {
   position: fixed;
   top: 0;
   right: 0;
-  width: min(720px, 92vw);
+  width: min(1120px, 76vw);
   height: 100vh;
   overflow-y: auto;
   z-index: 80;
   background: #fdfcf9;
   border-left: 1px solid rgba(28, 40, 52, 0.12);
   box-shadow: -8px 0 24px rgba(28, 40, 52, 0.1);
-  padding: 24px;
+  padding: 32px 34px;
 }
 
 .detail-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 18px;
-  padding-bottom: 14px;
+  gap: 18px;
+  margin-bottom: 24px;
+  padding-bottom: 18px;
   border-bottom: 1px solid rgba(28, 40, 52, 0.08);
+}
+
+.detail-head h2 {
+  margin: 0;
+  font-size: 22px;
 }
 
 .drawer-actions {
   display: flex;
-  gap: 8px;
+  gap: 12px;
+}
+
+.detail-drawer p {
+  margin: 8px 0;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.detail-drawer .preview-block {
+  margin-top: 18px;
+  gap: 12px;
+}
+
+.detail-drawer .preview-block h4 {
+  font-size: 16px;
+}
+
+.detail-drawer .preview-box {
+  max-height: calc(100vh - 300px);
+  min-height: 420px;
+  padding: 20px 22px;
+  font-size: 18px;
+  line-height: 1.85;
+  color: rgba(28, 40, 52, 0.9);
+}
+
+.detail-drawer .action-btn {
+  padding: 10px 22px;
+  font-size: 15px;
 }
 
 /* ── 响应式 ── */
@@ -917,6 +965,17 @@ onBeforeUnmount(() => {
   .form-grid.triple,
   .info-grid {
     grid-template-columns: 1fr;
+  }
+
+  .detail-drawer {
+    width: 96vw;
+    padding: 24px 20px;
+  }
+
+  .detail-drawer .preview-box {
+    max-height: calc(100vh - 280px);
+    min-height: 360px;
+    font-size: 16px;
   }
 }
 </style>

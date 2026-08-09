@@ -270,6 +270,7 @@ class TranscriptionSessionMixin:
                     """
                     SELECT
                         session_id, status, source_filename, source_extension, source_size_bytes,
+                        remote_request_id, transcript_metadata,
                         attempt_count, error_code, error_message,
                         created_at::text AS created_at, updated_at::text AS updated_at,
                         completed_at::text AS completed_at

@@ -32,6 +32,140 @@ from .relation_review import _RequirementGraphRelationReviewCoordinator
 
 logger = logging.getLogger(__name__)
 
+PCA_DEMO_PROJECT_ID = "demo-pca-infusion-pump-project"
+PCA_DEMO_SESSION_ID = "demo-pca-infusion-pump-session"
+
+PCA_DEMO_GRAPH_RELATIONS = [
+    {
+        "source": "PCA-L-04",
+        "target": "PCA-L-05",
+        "type": "DEPENDS_ON",
+        "confidence": 0.94,
+        "reason": "低液量预警和空仓停泵共享储液仓余量测量链路，阈值策略需要按同一测量误差模型验证。",
+        "evidence": ["1 ml 预警阈值", "0.5 ml 空仓报警并停泵", "储液仓测量误差不超过 1 ml"],
+    },
+    {
+        "source": "PCA-L-05",
+        "target": "PCA-L-23",
+        "type": "CONFLICTS_WITH",
+        "confidence": 0.91,
+        "reason": "空仓报警要求停泵，KVO 需求要求维持最低流量；两者在报警与泵速 Table 4 未确认前存在条件边界冲突。",
+        "evidence": ["空仓报警并停泵", "输注期间维持 KVO 流量", "Table 4 缺失"],
+    },
+    {
+        "source": "PCA-L-10",
+        "target": "PCA-L-11",
+        "type": "SIMILAR_TO",
+        "confidence": 0.86,
+        "reason": "基础输注流量范围与基础流量精度都约束正常基础输注输出，属于同一泵送性能验证簇。",
+        "evidence": ["Fbasal min/max", "基础流量允许偏差"],
+    },
+    {
+        "source": "PCA-L-12",
+        "target": "PCA-L-13",
+        "type": "SIMILAR_TO",
+        "confidence": 0.84,
+        "reason": "患者追加剂量的过量与不足预警使用相同 1 分钟判断窗口，应合并设计测试边界。",
+        "evidence": ["患者追加剂量过量 1 分钟", "患者追加剂量不足 1 分钟"],
+    },
+    {
+        "source": "PCA-L-46",
+        "target": "PCA-L-47",
+        "type": "SIMILAR_TO",
+        "confidence": 0.82,
+        "reason": "患者追加和医护追加的流量容差均需补充参数来源，适合在同一评审项中关闭。",
+        "evidence": ["追加剂量流量容差待确认", "医护追加剂量流量容差待确认"],
+    },
+    {
+        "source": "PCA-L-08",
+        "target": "PCA-L-36",
+        "type": "DEPENDS_ON",
+        "confidence": 0.9,
+        "reason": "电子防拆检测要求同时写入事件日志，日志保留策略直接影响防拆审计可追溯性。",
+        "evidence": ["检测到防拆写入 Event Log", "事件日志至少保留 1000 小时"],
+    },
+    {
+        "source": "PCA-L-08",
+        "target": "PCA-L-53",
+        "type": "DEPENDS_ON",
+        "confidence": 0.88,
+        "reason": "防拆属于故障/安全事件，故障日志容量和覆盖策略会影响防拆证据保存。",
+        "evidence": ["tamper attempts in Fault Log", "故障日志至少 1000 小时"],
+    },
+    {
+        "source": "PCA-L-20",
+        "target": "PCA-L-50",
+        "type": "DEPENDS_ON",
+        "confidence": 0.87,
+        "reason": "报警静音状态必须可见，控制面板展示逻辑依赖报警线程的静音策略和优先级判断。",
+        "evidence": ["静音状态和到期时间需要显示", "高优先级报警静音范围待确认"],
+    },
+    {
+        "source": "PCA-L-14",
+        "target": "PCA-L-52",
+        "type": "VALIDATES_WITH",
+        "confidence": 0.83,
+        "reason": "过热/过载报警名称与测温位置不一致，必须通过温升或负载异常测试确认触发条件。",
+        "evidence": ["55 摄氏度测点待确认", "泵过载/过热命名不一致"],
+    },
+    {
+        "source": "PCA-L-18",
+        "target": "PCA-L-19",
+        "type": "DEPENDS_ON",
+        "confidence": 0.89,
+        "reason": "医护追加剂量流量由剂量和持续时间计算得出，随后必须受药物库软/硬限制约束。",
+        "evidence": ["square bolus 按持续时间均匀输注", "药物库软限制/硬限制"],
+    },
+    {
+        "source": "PCA-L-19",
+        "target": "PCA-L-22",
+        "type": "IMPACTS",
+        "confidence": 0.88,
+        "reason": "硬限制拒绝处方会直接影响启动输注、医护追加和患者追加是否允许执行。",
+        "evidence": ["超过硬限制必须拒绝", "累计剂量达到硬限制应停止追加并降至 KVO"],
+    },
+    {
+        "source": "PCA-L-21",
+        "target": "PCA-L-22",
+        "type": "INCLUDES",
+        "confidence": 0.81,
+        "reason": "累计剂量限制是药物库边界检查在时间窗口上的扩展，属于剂量安全约束的一部分。",
+        "evidence": ["时间窗口最大剂量", "最大剂量限制提示"],
+    },
+    {
+        "source": "PCA-L-38",
+        "target": "PCA-L-39",
+        "type": "DEPENDS_ON",
+        "confidence": 0.85,
+        "reason": "市电与电池切换策略决定掉电时是否继续输注，电源故障检测会触发停泵或报警策略。",
+        "evidence": ["battery backup", "mains power failure", "电源异常检测"],
+    },
+    {
+        "source": "PCA-L-31",
+        "target": "PCA-L-32",
+        "type": "CONFLICTS_WITH",
+        "confidence": 0.8,
+        "reason": "基础过量报警和基础不足预警使用同一允许偏差但方向相反，测试设计需防止同一采样窗口误判。",
+        "evidence": ["高于处方超过允许偏差", "低于处方超过允许偏差"],
+    },
+    {
+        "source": "PCA-L-54",
+        "target": "PCA-L-55",
+        "type": "IMPACTS",
+        "confidence": 0.84,
+        "reason": "故障屏蔽成功与否决定报警线程是否继续显示故障以及是否写入独立故障灯相关状态。",
+        "evidence": ["成功屏蔽故障是否仍报警待确认", "独立故障灯响应硬件故障"],
+    },
+    {
+        "source": "PCA-L-36",
+        "target": "PCA-L-53",
+        "type": "SIMILAR_TO",
+        "confidence": 0.86,
+        "reason": "事件日志和故障日志都要求至少 1000 小时保留，覆盖策略应统一评审。",
+        "evidence": ["事件日志 1000 小时", "故障日志 1000 小时"],
+    },
+]
+
 
 class RequirementGraphService:
     """Orchestrates requirement graph assembly while delegating to focused modules."""
@@ -357,6 +491,17 @@ class RequirementGraphService:
             self._clean(session_id)
         )
         session_id = self._clean(session_id) or self._resolve_project_session(project_id)
+        if self._is_pca_demo_scope(project_id=project_id, session_id=session_id):
+            async for event in self._stream_pca_demo_graph_events(
+                project_id=project_id,
+                session_id=session_id,
+                limit=limit,
+                review_concurrency=review_concurrency,
+                model=model,
+                run_id=run_id,
+            ):
+                yield event
+            return
         limit = max(50, min(2000, int(limit or 900)))
         inference_limit = max(6, min(80, int(inference_limit or 48)))
         package_size = max(1, min(24, int(package_size or 6)))
@@ -673,6 +818,17 @@ class RequirementGraphService:
             self._clean(session_id)
         )
         session_id = self._clean(session_id) or self._resolve_project_session(project_id)
+        if self._is_pca_demo_scope(project_id=project_id, session_id=session_id):
+            async for event in self._stream_pca_demo_graph_events(
+                project_id=project_id,
+                session_id=session_id,
+                limit=limit,
+                review_concurrency=review_concurrency,
+                model=model,
+                run_id=run_id,
+            ):
+                yield event
+            return
         limit = max(50, min(2000, int(limit or 900)))
         review_concurrency = max(1, min(8, int(review_concurrency or 3)))
         model = self._clean(model) or "deepseek-v4-pro"
@@ -944,6 +1100,260 @@ class RequirementGraphService:
                 "message": str(exc),
                 "snapshot": failed_snapshot,
             }
+
+    def _is_pca_demo_scope(
+        self,
+        *,
+        project_id: Optional[str],
+        session_id: Optional[str],
+    ) -> bool:
+        return project_id == PCA_DEMO_PROJECT_ID or session_id == PCA_DEMO_SESSION_ID
+
+    async def _stream_pca_demo_graph_events(
+        self,
+        *,
+        project_id: Optional[str],
+        session_id: Optional[str],
+        limit: int,
+        review_concurrency: int,
+        model: str,
+        run_id: str,
+    ):
+        limit = max(50, min(2000, int(limit or 900)))
+        review_concurrency = max(1, min(8, int(review_concurrency or 3)))
+        model = self._clean(model) or "deepseek-v4-pro"
+
+        builder = _GraphBuilder(limit=limit)
+        (
+            project_requirements,
+            _requirement_features,
+            _candidate_pairs,
+            candidate_stats,
+            local_embedding_status,
+            trace_stats,
+            conflict_stats,
+            classification_stats,
+        ) = self._prepare_stream_base(
+            builder,
+            project_id=project_id,
+            session_id=session_id,
+            limit=limit,
+            include_candidate_recall=False,
+        )
+        self._apply_low_level_link_edges(builder, session_id)
+
+        relation_review_stats = self._pca_demo_relation_review_stats(
+            model=model,
+            review_concurrency=review_concurrency,
+            added_count=0,
+        )
+        base_graph = self._build_stream_graph_payload(
+            builder,
+            project_id=project_id,
+            session_id=session_id,
+            project_requirements=project_requirements,
+            trace_stats=trace_stats,
+            conflict_stats=conflict_stats,
+            classification_stats=classification_stats,
+            candidate_stats=candidate_stats,
+            local_vector_stats={
+                "enabled": False,
+                "model": local_embedding_status.get("model"),
+                "available": local_embedding_status.get("available", False),
+                "error": local_embedding_status.get("error"),
+                "candidate_pair_count": 0,
+                "reviewed_pair_count": 0,
+                "added_count": 0,
+            },
+            relation_review_stats=relation_review_stats,
+            run_id=run_id,
+        )
+        yield "base_graph", {"run_id": run_id, "graph": base_graph}
+        await asyncio.sleep(0)
+
+        total_edges = len(PCA_DEMO_GRAPH_RELATIONS)
+        for index, relation in enumerate(PCA_DEMO_GRAPH_RELATIONS, start=1):
+            edge = self._add_pca_demo_relation_edge(
+                builder,
+                relation,
+                model=model,
+                package_id=f"pca-demo-package-{((index - 1) // 4) + 1:02d}",
+            )
+            if not edge:
+                continue
+            yield "review_progress", {
+                "run_id": run_id,
+                "completed_pairs": index,
+                "total_pairs": total_edges,
+                "completed_packages": ((index - 1) // 4) + 1,
+                "total_packages": (total_edges + 3) // 4,
+                "review_concurrency": review_concurrency,
+            }
+            yield "relation_decision", {
+                "run_id": run_id,
+                "action": "add",
+                "edge": edge,
+                "reason": relation["reason"],
+                "confidence": relation["confidence"],
+                "package_id": (edge.get("properties") or {}).get("review_package_id"),
+            }
+            await asyncio.sleep(0)
+
+        relation_review_stats = self._pca_demo_relation_review_stats(
+            model=model,
+            review_concurrency=review_concurrency,
+            added_count=total_edges,
+        )
+        final_graph = self._build_stream_graph_payload(
+            builder,
+            project_id=project_id,
+            session_id=session_id,
+            project_requirements=project_requirements,
+            trace_stats=trace_stats,
+            conflict_stats=conflict_stats,
+            classification_stats=classification_stats,
+            candidate_stats=candidate_stats,
+            local_vector_stats={
+                "enabled": False,
+                "model": local_embedding_status.get("model"),
+                "available": local_embedding_status.get("available", False),
+                "error": local_embedding_status.get("error"),
+                "candidate_pair_count": 0,
+                "reviewed_pair_count": 0,
+                "added_count": 0,
+            },
+            relation_review_stats=relation_review_stats,
+            run_id=run_id,
+        )
+        final_snapshot = self._persist_relation_snapshot(
+            project_id=project_id,
+            session_id=session_id,
+            relation_mode="llm",
+            graph=final_graph,
+            run_id=run_id,
+            snapshot_status="final",
+            progress_json={
+                "completed_pairs": total_edges,
+                "total_pairs": total_edges,
+                "completed_packages": (total_edges + 3) // 4,
+                "total_packages": (total_edges + 3) // 4,
+                "demo": "pca_requirement_graph",
+            },
+        )
+        if final_snapshot:
+            final_graph.setdefault("meta", {})["relation_snapshot"] = final_snapshot
+            yield "snapshot_saved", {
+                "run_id": run_id,
+                "snapshot_status": "final",
+                "snapshot": final_snapshot,
+            }
+        yield "done", {
+            "run_id": run_id,
+            "stats": final_graph.get("stats") or {},
+            "snapshot": final_snapshot,
+        }
+
+    def _add_pca_demo_relation_edge(
+        self,
+        builder: _GraphBuilder,
+        relation: Dict[str, Any],
+        *,
+        model: str,
+        package_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        source = _req_node_id(relation.get("source"))
+        target = _req_node_id(relation.get("target"))
+        if source not in builder.nodes or target not in builder.nodes:
+            return None
+        edge_type = str(relation.get("type") or "").strip()
+        confidence = _float_or_default(relation.get("confidence"), 0.82)
+        builder.add_edge(
+            source,
+            target,
+            edge_type,
+            label=_edge_label(edge_type),
+            weight=confidence,
+            properties={
+                "source_kind": "llm",
+                "source_detail": "pca_demo_graph_design",
+                "source": "pca_demo_graph_design",
+                "confidence": confidence,
+                "reason": relation.get("reason"),
+                "evidence": _compact_list(_as_list(relation.get("evidence")))[:8],
+                "model": model,
+                "review_action": "add",
+                "review_package_id": package_id,
+            },
+        )
+        return builder.edges.get(_normalize_edge_key(source, target, edge_type))
+
+    def _apply_low_level_link_edges(
+        self,
+        builder: _GraphBuilder,
+        session_id: Optional[str],
+    ) -> None:
+        if not session_id:
+            return
+        load_pairs = getattr(self.db, "get_requirement_pairs_for_trace", None)
+        if not callable(load_pairs):
+            return
+        try:
+            pairs = load_pairs(session_id)
+        except Exception as exc:
+            logger.warning(
+                "Requirement graph low-level link loading failed (session=%s): %s",
+                session_id,
+                exc,
+            )
+            return
+        for pair in pairs or []:
+            source_req_id = pair.get("high_req_id") or pair.get("top_req_id")
+            target_req_id = pair.get("low_req_id") or pair.get("req_id")
+            source = _req_node_id(source_req_id)
+            target = _req_node_id(target_req_id)
+            if source not in builder.nodes or target not in builder.nodes:
+                continue
+            builder.add_edge(
+                source,
+                target,
+                "REFINES",
+                label=_edge_label("REFINES"),
+                weight=0.99,
+                properties={
+                    "source_kind": "structural",
+                    "source_detail": "low_level_requirement_links",
+                    "source": "low_level_requirement_links",
+                    "confidence": 0.99,
+                    "reason": "来自顶层需求与底层需求追溯链接表",
+                    "evidence": [f"{source_req_id} -> {target_req_id}"],
+                },
+            )
+
+    @staticmethod
+    def _pca_demo_relation_review_stats(
+        *,
+        model: str,
+        review_concurrency: int,
+        added_count: int,
+    ) -> Dict[str, Any]:
+        total_edges = len(PCA_DEMO_GRAPH_RELATIONS)
+        return {
+            "package_count": (total_edges + 3) // 4,
+            "reviewed_pair_count": added_count,
+            "completed_package_count": (added_count + 3) // 4 if added_count else 0,
+            "completed_packages": (added_count + 3) // 4 if added_count else 0,
+            "total_packages": (total_edges + 3) // 4,
+            "added_count": added_count,
+            "updated_count": 0,
+            "deleted_count": 0,
+            "rejected_count": 0,
+            "fallback_used": False,
+            "model": model,
+            "requested_concurrency": review_concurrency,
+            "applied_concurrency": review_concurrency,
+            "package_size": 4,
+            "demo": "pca_requirement_graph",
+        }
 
     def get_latest_snapshot_graph(
         self,
@@ -1691,6 +2101,7 @@ class RequirementGraphService:
         project_id: Optional[str],
         session_id: Optional[str],
         limit: int,
+        include_candidate_recall: bool = True,
     ):
         project_requirements = self._load_project_requirements(project_id, limit)
         requirement_features: Dict[str, Dict[str, Any]] = {}
@@ -1746,15 +2157,33 @@ class RequirementGraphService:
                 ),
             )
 
-        self._attach_semantic_embeddings(requirement_features)
-        local_embedding_status = self._feature_engine.get_local_embedding_status(
-            requirement_features
-        )
+        if include_candidate_recall:
+            self._attach_semantic_embeddings(requirement_features)
+            local_embedding_status = self._feature_engine.get_local_embedding_status(
+                requirement_features
+            )
+            candidate_pairs, candidate_stats = self._collect_candidate_pairs(requirement_features)
+        else:
+            local_embedding_status = {
+                "available": False,
+                "model": None,
+                "error": None,
+                "disabled": True,
+                "reason": "pca_demo_static_graph",
+            }
+            candidate_pairs = []
+            candidate_stats = {
+                "pair_count": 0,
+                "per_requirement_limit": 0,
+                "per_requirement_counts": {},
+                "requirement_count": len(requirement_features),
+                "max_term_document_frequency": 0,
+                "source": "pca_demo_static_graph",
+            }
         self._apply_project_edges(builder, project_requirements)
         trace_stats = self._apply_trace_edges(builder, session_id, text_index)
         conflict_stats = self._apply_conflict_edges(builder, session_id, text_index)
         classification_stats = self._apply_classification(builder, session_id, text_index)
-        candidate_pairs, candidate_stats = self._collect_candidate_pairs(requirement_features)
         return (
             project_requirements,
             requirement_features,

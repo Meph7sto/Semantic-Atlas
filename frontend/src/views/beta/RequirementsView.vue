@@ -704,6 +704,8 @@
                   ghost-class="drag-ghost"
                   chosen-class="drag-chosen"
                   drag-class="drag-active"
+                  @start="onRequirementDragStart"
+                  @end="onRequirementDragEnd"
                   @change="onDragChange($event, 'backlog')"
                 >
                   <template #item="{ element }">
@@ -770,6 +772,8 @@
                   ghost-class="drag-ghost"
                   chosen-class="drag-chosen"
                   drag-class="drag-active"
+                  @start="onRequirementDragStart"
+                  @end="onRequirementDragEnd"
                   @change="onDragChange($event, 'in_progress')"
                 >
                   <template #item="{ element }">
@@ -836,6 +840,8 @@
                   ghost-class="drag-ghost"
                   chosen-class="drag-chosen"
                   drag-class="drag-active"
+                  @start="onRequirementDragStart"
+                  @end="onRequirementDragEnd"
                   @change="onDragChange($event, 'completed')"
                 >
                   <template #item="{ element }">
@@ -890,7 +896,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth.js';
 import draggable from 'vuedraggable';
@@ -920,6 +926,8 @@ import {
 import { useBetaNavigation, useBetaSidebarProps } from '@/composables/useBetaNavigation';
 import { useAlphaDefects } from '@/composables/useAlphaDefects';
 
+const DEMO_PROJECT_NAME = 'Demo · PCA患者自控镇痛输液泵';
+
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
@@ -944,6 +952,8 @@ const manageReqIdMap = ref(new Map());
 const manageStatusMap = ref(new Map());
 const managePriorityMap = ref(new Map());
 const isSyncingStatus = ref(false);
+const isDraggingRequirement = ref(false);
+const pendingKanbanSync = ref(false);
 const projects = ref([]);
 const isLoadingProjects = ref(false);
 const projectSessionId = ref(''); // 项目绑定的 session
@@ -1176,6 +1186,13 @@ async function loadProjects() {
   try {
     const data = await manageApi.listProjects();
     projects.value = data?.projects || [];
+    if (!selectedProjectId.value) {
+      const demoProject = projects.value.find(project => project.name === DEMO_PROJECT_NAME);
+      if (demoProject?.project_id) {
+        selectedProjectId.value = demoProject.project_id;
+        localStorage.setItem('lastProjectId', demoProject.project_id);
+      }
+    }
   } catch (err) {
     console.warn('加载项目列表失败', err);
     projects.value = [];
@@ -1300,21 +1317,9 @@ function getKanbanBucket(status) {
   }
 }
 
-function mapKanbanBucketToManage(bucket, currentStatus) {
+function mapKanbanBucketToManage(bucket) {
   if (bucket === 'completed') return 'completed';
-  if (bucket === 'in_progress') {
-    if (currentStatus === 'completed' || currentStatus === 'archived') {
-      return 'confirmed';
-    }
-    return 'in_progress';
-  }
-  if (
-    currentStatus === 'completed' ||
-    currentStatus === 'archived' ||
-    currentStatus === 'confirmed'
-  ) {
-    return 'under_review';
-  }
+  if (bucket === 'in_progress') return 'in_progress';
   return 'draft';
 }
 
@@ -1656,6 +1661,8 @@ async function updateRequirementStatus(reqId, newStatus, event) {
     }
   } finally {
     isSyncingStatus.value = false;
+    await nextTick();
+    syncRequirementLists({ force: true });
   }
 }
 
@@ -1671,11 +1678,26 @@ function getLevelBadgeClass(level) {
 }
 
 // 同步需求到各状态列表（从 filteredRequirements 读取，确保状态一致）
-function syncRequirementLists() {
+function syncRequirementLists(options = {}) {
+  const { force = false } = options;
+  if (!force && (isDraggingRequirement.value || isSyncingStatus.value)) {
+    pendingKanbanSync.value = true;
+    return;
+  }
   const all = filteredRequirements.value;
   backlogRequirements.value = all.filter(r => getKanbanBucket(r.status) === 'backlog');
   inProgressRequirements.value = all.filter(r => getKanbanBucket(r.status) === 'in_progress');
   completedRequirements.value = all.filter(r => getKanbanBucket(r.status) === 'completed');
+  pendingKanbanSync.value = false;
+}
+
+function onRequirementDragStart() {
+  isDraggingRequirement.value = true;
+}
+
+async function onRequirementDragEnd() {
+  await nextTick();
+  isDraggingRequirement.value = false;
 }
 
 // 拖拽改变状态处理
@@ -1715,6 +1737,16 @@ function getRequirementKeyCandidates(item) {
     item?.source_top_id,
     manageId
   ].filter(Boolean);
+}
+
+function applyLocalRequirementStatus(item, manageReqId, status) {
+  const candidates = [...new Set([...getRequirementKeyCandidates(item), manageReqId].filter(Boolean))];
+  candidates.forEach(key => {
+    requirementStatusMap.value[key] = status;
+  });
+  if (item) {
+    item.status = status;
+  }
 }
 
 function findRequirementById(reqId) {
@@ -1786,29 +1818,50 @@ function gotoDefectsWithRequirement() {
 }
 
 async function persistStatusToDb(item, targetStatus) {
-  const nextStatus = mapKanbanBucketToManage(targetStatus, item?.status);
+  const nextStatus = mapKanbanBucketToManage(targetStatus);
+  const originalStatus = item?.status || 'draft';
   if ((nextStatus === 'completed' || nextStatus === 'confirmed') && !canMarkAsCompleted(item)) {
     alert('该需求仍有关联未解决缺陷，不能标记为已确认/已完成');
-    syncRequirementLists();
+    syncRequirementLists({ force: true });
     return;
   }
   const manageReqId = resolveManageReqId(item);
   if (!manageReqId) {
-    syncRequirementLists();
+    syncRequirementLists({ force: true });
     return;
   }
+  const touchedKeys = [...new Set([...getRequirementKeyCandidates(item), manageReqId].filter(Boolean))];
+  const previousStatuses = touchedKeys.reduce((acc, key) => {
+    acc[key] = requirementStatusMap.value[key];
+    return acc;
+  }, {});
   try {
     isSyncingStatus.value = true;
+    applyLocalRequirementStatus(item, manageReqId, nextStatus);
+    await nextTick();
+    syncRequirementLists({ force: true });
     await manageApi.updateRequirement(manageReqId, { status: nextStatus });
-    requirementStatusMap.value[item.id] = nextStatus;
-    requirementStatusMap.value[manageReqId] = nextStatus;
     await loadRequirements();
   } catch (err) {
     console.warn('同步状态到数据库失败', err);
     alert('更新需求状态失败: ' + (err?.response?.data?.detail || err?.message || '未知错误'));
-    syncRequirementLists();
+    touchedKeys.forEach(key => {
+      if (previousStatuses[key] === undefined) {
+        delete requirementStatusMap.value[key];
+      } else {
+        requirementStatusMap.value[key] = previousStatuses[key];
+      }
+    });
+    if (item) {
+      item.status = originalStatus;
+    }
+    syncRequirementLists({ force: true });
   } finally {
     isSyncingStatus.value = false;
+    if (!isDraggingRequirement.value || pendingKanbanSync.value) {
+      await nextTick();
+      syncRequirementLists({ force: true });
+    }
   }
 }
 

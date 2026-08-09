@@ -2,6 +2,8 @@ import { ref, computed, watch } from 'vue'
 import { manageApi } from '@/api/project'
 import { requirementsL123Api, l4RequirementsApi, analysisApi } from '@/api/requirements'
 
+const DEMO_PROJECT_NAME = 'Demo · PCA患者自控镇痛输液泵'
+
 function normalizeLevel(raw) {
   const text = String(raw || '').trim().toUpperCase()
   if (!text) return 'L1'
@@ -28,6 +30,13 @@ export function useAnalysisSession() {
     try {
       const data = await manageApi.listProjects()
       projects.value = data?.projects || []
+      if (!selectedProjectId.value) {
+        const demoProject = projects.value.find((project) => project.name === DEMO_PROJECT_NAME)
+        if (demoProject?.project_id) {
+          selectedProjectId.value = demoProject.project_id
+          localStorage.setItem('lastProjectId', demoProject.project_id)
+        }
+      }
     } catch (err) {
       console.warn('加载项目列表失败', err)
       projects.value = []
@@ -129,4 +138,3 @@ export function useAnalysisSession() {
     loadRequirements,
   }
 }
-

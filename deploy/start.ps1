@@ -814,6 +814,18 @@ if ($doBusiness) {
   }
 }
 
+# 3.7) Seed PCA infusion pump demo data for project management and analysis pages.
+if ($doBusiness -and $env:SKIP_PCA_DEMO_SEED -notin @("1", "true", "True", "yes", "YES")) {
+  $PcaDemoSeedScript = Join-Path $BASE_DIR "backend_business/scripts/seed_pca_demo.py"
+  if (Test-Path $PcaDemoSeedScript) {
+    Write-Host "[start] Seeding PCA infusion pump demo data..." -ForegroundColor Cyan
+    & $PythonExe $PcaDemoSeedScript --skip-if-missing
+    if ($LASTEXITCODE -ne 0) {
+      throw "[start] PCA demo seed failed with exit code $LASTEXITCODE."
+    }
+  }
+}
+
 # 4) 启动 FastAPI 推理服务
 if ($doInference) {
   $UvicornArgs = @(
