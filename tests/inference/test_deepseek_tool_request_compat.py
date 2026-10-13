@@ -2,6 +2,8 @@ import asyncio
 import sys
 import types
 
+import pytest
+
 
 class _UnusedTransformerLoader:
     @classmethod
@@ -21,9 +23,16 @@ sys.modules.setdefault(
 
 from backend_inference.core.engine.remote.async_deepseek import AsyncDeepSeekClient
 from backend_inference.core.engine.remote.deepseek import (
+    DEEPSEEK_MODELS,
+    DEFAULT_DEEPSEEK_MODEL,
     DeepSeekClient,
     build_deepseek_tool_body,
 )
+
+
+def test_deepseek_catalog_contains_only_current_models():
+    assert DEEPSEEK_MODELS == ("deepseek-v4-pro", "deepseek-flash")
+    assert DEFAULT_DEEPSEEK_MODEL == "deepseek-v4-pro"
 
 
 def _sample_tools():
@@ -110,18 +119,18 @@ def test_build_deepseek_tool_body_defaults_to_v4_pro_thinking_mode():
     assert body["stream"] is True
 
 
-def test_build_deepseek_tool_body_allows_explicit_v4_flash_with_default_thinking():
+def test_build_deepseek_tool_body_allows_flash_with_default_thinking():
     body = build_deepseek_tool_body(
         messages=[{"role": "user", "content": "Hi"}],
         tools=_sample_tools(),
         max_new_tokens=1024,
         tool_choice="auto",
-        target_model="deepseek-v4-flash",
+        target_model="deepseek-flash",
         temperature=0.6,
         stream=True,
     )
 
-    assert body["model"] == "deepseek-v4-flash"
+    assert body["model"] == "deepseek-flash"
     assert body["thinking"] == {"type": "enabled"}
     assert body["reasoning_effort"] == "high"
     assert "temperature" not in body
@@ -129,26 +138,28 @@ def test_build_deepseek_tool_body_allows_explicit_v4_flash_with_default_thinking
     assert body["stream"] is True
 
 
-def test_build_deepseek_tool_body_can_disable_thinking_for_v4_pro():
+@pytest.mark.parametrize("model", ["deepseek-v4-pro", "deepseek-flash"])
+def test_build_deepseek_tool_body_can_disable_thinking(model):
     body = build_deepseek_tool_body(
         messages=[{"role": "user", "content": "Hi"}],
         tools=_sample_tools(),
         max_new_tokens=1024,
         tool_choice="auto",
-        target_model="deepseek-v4-pro",
+        target_model=model,
         temperature=0.6,
         thinking_enabled=False,
         stream=True,
     )
 
-    assert body["model"] == "deepseek-v4-pro"
+    assert body["model"] == model
     assert body["thinking"] == {"type": "disabled"}
     assert body["temperature"] == 0.6
     assert body["tool_choice"] == "auto"
     assert "reasoning_effort" not in body
 
 
-def test_generate_with_tools_posts_v4_pro_requests(monkeypatch):
+@pytest.mark.parametrize("model", ["deepseek-v4-pro", "deepseek-flash"])
+def test_generate_with_tools_posts_current_model_requests(monkeypatch, model):
     captured = {}
 
     class _Response:
@@ -191,7 +202,7 @@ def test_generate_with_tools_posts_v4_pro_requests(monkeypatch):
     client = DeepSeekClient(
         api_url="https://api.deepseek.com",
         api_key="test-key",
-        model="deepseek-v4-pro",
+        model=model,
     )
 
     result = client.generate_with_tools(
@@ -207,7 +218,7 @@ def test_generate_with_tools_posts_v4_pro_requests(monkeypatch):
         tool_choice="required",
     )
 
-    assert captured["json"]["model"] == "deepseek-v4-pro"
+    assert captured["json"]["model"] == model
     assert captured["json"]["thinking"] == {"type": "enabled"}
     assert captured["json"]["reasoning_effort"] == "high"
     assert captured["json"]["messages"][0]["reasoning_content"] == "should not be sent back"
@@ -216,7 +227,8 @@ def test_generate_with_tools_posts_v4_pro_requests(monkeypatch):
     assert result.tool_calls[0]["function"]["name"] == "get_weather"
 
 
-def test_async_generate_with_tools_posts_v4_pro_requests():
+@pytest.mark.parametrize("model", ["deepseek-v4-pro", "deepseek-flash"])
+def test_async_generate_with_tools_posts_current_model_requests(model):
     captured = {}
 
     class _AsyncResponse:
@@ -261,7 +273,7 @@ def test_async_generate_with_tools_posts_v4_pro_requests():
         client = AsyncDeepSeekClient(
             api_url="https://api.deepseek.com",
             api_key="test-key",
-            model="deepseek-v4-pro",
+            model=model,
         )
         client._session = _AsyncSession()
         return await client.generate_with_tools(
@@ -279,7 +291,7 @@ def test_async_generate_with_tools_posts_v4_pro_requests():
 
     result = asyncio.run(_run())
 
-    assert captured["json"]["model"] == "deepseek-v4-pro"
+    assert captured["json"]["model"] == model
     assert captured["json"]["thinking"] == {"type": "enabled"}
     assert captured["json"]["reasoning_effort"] == "high"
     assert "tool_choice" not in captured["json"]

@@ -52,7 +52,7 @@
             </select>
             <select v-model="selectedModel" class="project-select review-select sa-input" :disabled="isInferringGraph">
               <option value="deepseek-v4-pro">V4 Pro</option>
-              <option value="deepseek-v4-flash">V4 Flash</option>
+              <option value="deepseek-flash">V4.1 Flash</option>
             </select>
             <label class="graph-toggle">
               <input v-model="useThinkingMode" type="checkbox" />
@@ -571,7 +571,13 @@ const selectedProjectId = ref(localStorage.getItem('lastProjectId') || '')
 const sessionId = ref(localStorage.getItem('lastSessionId') || '')
 const packageSize = ref(localStorage.getItem('requirementGraphPackageSize') || '6')
 const reviewConcurrency = ref(localStorage.getItem('requirementGraphReviewConcurrency') || '3')
-const selectedModel = ref(localStorage.getItem('requirementGraphModel') || 'deepseek-v4-pro')
+const savedGraphModel = localStorage.getItem('requirementGraphModel')
+const selectedModel = ref(
+  ['deepseek-v4-pro', 'deepseek-flash'].includes(savedGraphModel) ? savedGraphModel : 'deepseek-v4-pro'
+)
+if (savedGraphModel && savedGraphModel !== selectedModel.value) {
+  localStorage.setItem('requirementGraphModel', selectedModel.value)
+}
 const useThinkingMode = ref(localStorage.getItem('requirementGraphThinking') !== 'false')
 const snapshotHistory = ref([])
 const selectedSnapshotId = ref('')

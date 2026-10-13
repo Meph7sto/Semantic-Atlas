@@ -825,7 +825,7 @@ onMounted(async () => {
                 :disabled="isSending || !sessionId"
               >
                 <option value="deepseek-v4-pro">V4 Pro</option>
-                <option value="deepseek-v4-flash">V4 Flash</option>
+                <option value="deepseek-flash">V4.1 Flash</option>
               </select>
               <label class="inline-flex items-center gap-3 text-xs font-medium text-stone-600">
                 <input

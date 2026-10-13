@@ -1457,7 +1457,7 @@ onMounted(async () => {
                   class="w-full text-xs border-zinc-300 rounded-md focus:ring-black focus:border-black"
                 >
                   <option value="deepseek-v4-pro">deepseek-v4-pro</option>
-                  <option value="deepseek-v4-flash">deepseek-v4-flash</option>
+                  <option value="deepseek-flash">deepseek-flash</option>
                 </select>
               </div>
               <div>
@@ -1483,7 +1483,7 @@ onMounted(async () => {
                   class="w-full text-xs border-zinc-300 rounded-md focus:ring-black focus:border-black"
                 >
                   <option value="deepseek-v4-pro">deepseek-v4-pro</option>
-                  <option value="deepseek-v4-flash">deepseek-v4-flash</option>
+                  <option value="deepseek-flash">deepseek-flash</option>
                 </select>
               </div>
               <label class="flex items-center gap-2 text-xs text-zinc-600 pt-6">

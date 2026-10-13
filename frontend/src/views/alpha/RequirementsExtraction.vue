@@ -627,7 +627,7 @@ onMounted(async () => {
                     class="rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-black focus:ring-black"
                   >
                     <option value="deepseek-v4-pro">DeepSeek V4 Pro</option>
-                    <option value="deepseek-v4-flash">DeepSeek V4 Flash</option>
+                    <option value="deepseek-flash">DeepSeek V4.1 Flash</option>
                   </select>
                   <label class="relative inline-flex items-center cursor-pointer">
                     <input type="checkbox" v-model="form.useThinkingMode" class="sr-only peer">

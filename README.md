@@ -200,6 +200,8 @@ bash deploy/stop_services.sh
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL`  | OpenAI 兼容接口   | -                               |
 | `CLASSIFICATION_LABELS`               | 分类标签          | JSON 数组或逗号分隔             |
 
+DeepSeek 模型列表仅使用当前官方模型 ID：`deepseek-v4-pro` 和 `deepseek-flash`，默认选择 `deepseek-v4-pro`。两个模型均支持独立切换思考模式。模型版本、能力与价格以 [DeepSeek 官方文档](https://api-docs.deepseek.com/zh-cn/quick_start/pricing) 为准。
+
 ### 业务后端
 
 | 变量                                                  | 说明                           | 默认值                                                                |

@@ -107,7 +107,7 @@
             class="h-10 rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-700 focus:border-zinc-500 focus:outline-none"
           >
             <option value="deepseek-v4-pro">DeepSeek V4 Pro</option>
-            <option value="deepseek-v4-flash">DeepSeek V4 Flash</option>
+            <option value="deepseek-flash">DeepSeek V4.1 Flash</option>
           </select>
           <label class="relative inline-flex items-center cursor-pointer">
             <input type="checkbox" v-model="useThinking" class="sr-only peer">

@@ -934,7 +934,7 @@ onBeforeUnmount(() => {
                 class="border border-stone-300 bg-white px-2 py-1 text-xs text-stone-800 outline-none transition focus:border-stone-500"
               >
                 <option value="deepseek-v4-pro">V4 Pro</option>
-                <option value="deepseek-v4-flash">V4 Flash</option>
+                <option value="deepseek-flash">V4.1 Flash</option>
               </select>
               <label class="inline-flex items-center gap-3 text-xs font-medium text-stone-600">
                 <input

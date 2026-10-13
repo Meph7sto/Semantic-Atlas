@@ -6,9 +6,8 @@ import requests
 from .sse import extract_stream_content
 
 DEFAULT_DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions"
-DEEPSEEK_THINKING_MODEL = "deepseek-v4-pro"
-DEEPSEEK_NON_THINKING_MODEL = "deepseek-v4-flash"
-DEFAULT_DEEPSEEK_MODEL = DEEPSEEK_THINKING_MODEL
+DEEPSEEK_MODELS = ("deepseek-v4-pro", "deepseek-flash")
+DEFAULT_DEEPSEEK_MODEL = DEEPSEEK_MODELS[0]
 
 
 @dataclass

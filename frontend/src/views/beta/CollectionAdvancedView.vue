@@ -91,7 +91,7 @@
                 <label class="param-label">模型</label>
                 <select v-model="options.model" class="param-select">
                   <option value="deepseek-v4-pro">DeepSeek V4 Pro</option>
-                  <option value="deepseek-v4-flash">DeepSeek V4 Flash</option>
+                  <option value="deepseek-flash">DeepSeek V4.1 Flash</option>
                 </select>
               </div>
               <ParamNumber label="Max Spans / Bundle" v-model="options.max_spans_per_bundle" :min="1" :max="64" />
@@ -190,7 +190,7 @@
                 <label class="param-label">L4 模型</label>
                 <select v-model="options.l4_model" class="param-select">
                   <option value="deepseek-v4-pro">DeepSeek V4 Pro</option>
-                  <option value="deepseek-v4-flash">DeepSeek V4 Flash</option>
+                  <option value="deepseek-flash">DeepSeek V4.1 Flash</option>
                 </select>
               </div>
               <ParamToggle label="L4 思考模式" desc="独立控制 DeepSeek thinking" v-model="options.l4_use_thinking_mode" />
