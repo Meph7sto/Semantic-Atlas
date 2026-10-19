@@ -436,6 +436,32 @@ function Invoke-RequiredProcess {
   return $process
 }
 
+function Wait-DockerEngine {
+  param([string]$DockerExe)
+
+  & $DockerExe info *> $null
+  if ($LASTEXITCODE -eq 0) { return }
+
+  $context = & $DockerExe context show 2>$null
+  $desktopExe = Join-Path $env:ProgramFiles "Docker/Docker/Docker Desktop.exe"
+  if ($env:DOCKER_HOST -or $context -ne "desktop-linux" -or -not (Test-Path $desktopExe)) {
+    throw "[start] Docker engine is unavailable. Start Docker or check its context, then retry."
+  }
+
+  Write-Host "[start] Starting Docker Desktop; waiting up to 120 seconds for the Linux engine..." -ForegroundColor Cyan
+  if (-not (Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue)) {
+    Start-Process -FilePath $desktopExe -WindowStyle Hidden
+  }
+  $deadline = (Get-Date).AddSeconds(120)
+  do {
+    Start-Sleep -Seconds 2
+    & $DockerExe info *> $null
+    if ($LASTEXITCODE -eq 0) { return }
+  } while ((Get-Date) -lt $deadline)
+
+  throw "[start] Docker Desktop Linux engine did not become ready. Check Docker Desktop / WSL, then retry."
+}
+
 function Test-PostgresPortConflict {
   param([int]$Port)
   if (-not (Test-LocalPortOpen -Port $Port)) {
@@ -522,7 +548,10 @@ if ($doBusiness) {
   $composeFile = Join-Path $BASE_DIR "docker-compose.yml"
   if (Test-Path $composeFile) {
     $dockerCmd = Get-Command docker -ErrorAction SilentlyContinue
-    $dockerComposeCmd = Get-Command docker-compose -ErrorAction SilentlyContinue
+    if (-not $dockerCmd) {
+      throw "[start] Docker is required for PostgreSQL. Install/start Docker Desktop, then retry."
+    }
+    Wait-DockerEngine -DockerExe $dockerCmd.Source
     $portLocked = $env:POSTGRES_PORT_LOCK -in @("1", "true", "True")
     $needsOverride = $false
     if (-not $portLocked) {
@@ -562,40 +591,22 @@ if ($doBusiness) {
         $composeArgs = @("compose", "-f", $composeFile, "up", "-d")
         if ($forceRecreate) { $composeArgs += "--force-recreate" }
         $composeArgs += "postgres", "adminer"
-        Start-Process -FilePath $dockerCmd.Source -ArgumentList $composeArgs -NoNewWindow -Wait
+        Invoke-RequiredNativeCommand -FilePath $dockerCmd.Source -ArgumentList $composeArgs -WorkingDirectory $BASE_DIR -StepName "PostgreSQL docker compose"
         $containerId = & $dockerCmd.Source ps -q -f "name=semantic-atlas-postgres"
-        if ($containerId) {
-          Ensure-PostgresAccess -DockerExe $dockerCmd.Source -ContainerName "semantic-atlas-postgres" -DbUser $env:POSTGRES_USER -DbPassword $env:POSTGRES_PASSWORD -DbName $env:POSTGRES_DB | Out-Null
+        if ($LASTEXITCODE -ne 0 -or -not $containerId) {
+          throw "[start] PostgreSQL container is not running."
+        }
+        if (-not (Ensure-PostgresAccess -DockerExe $dockerCmd.Source -ContainerName "semantic-atlas-postgres" -DbUser $env:POSTGRES_USER -DbPassword $env:POSTGRES_PASSWORD -DbName $env:POSTGRES_DB)) {
+          throw "[start] PostgreSQL user/database setup failed."
         }
       }
       catch {
-        Write-Warning "[start] Failed to start PostgreSQL via docker compose: $_"
+        throw "[start] Failed to start PostgreSQL via docker compose: $_"
       }
-    }
-    elseif ($dockerComposeCmd) {
-      try {
-        Write-Host "[start] Starting PostgreSQL via docker-compose..." -ForegroundColor Cyan
-        $composeArgs = @("-f", $composeFile, "up", "-d")
-        if ($forceRecreate) { $composeArgs += "--force-recreate" }
-        $composeArgs += "postgres", "adminer"
-        Start-Process -FilePath $dockerComposeCmd.Source -ArgumentList $composeArgs -NoNewWindow -Wait
-        if ($dockerCmd) {
-          $containerId = & $dockerCmd.Source ps -q -f "name=semantic-atlas-postgres"
-          if ($containerId) {
-            Ensure-PostgresAccess -DockerExe $dockerCmd.Source -ContainerName "semantic-atlas-postgres" -DbUser $env:POSTGRES_USER -DbPassword $env:POSTGRES_PASSWORD -DbName $env:POSTGRES_DB | Out-Null
-          }
-        }
-      }
-      catch {
-        Write-Warning "[start] Failed to start PostgreSQL via docker-compose: $_"
-      }
-    }
-    else {
-      Write-Warning "[start] Docker not found; skipping PostgreSQL startup."
     }
   }
   else {
-    Write-Warning "[start] docker-compose.yml not found; skipping PostgreSQL startup."
+    throw "[start] docker-compose.yml not found; cannot start PostgreSQL."
   }
 }
 
@@ -801,7 +812,7 @@ if ($doInference -or $doBusiness) {
 
 # 3.6) PostgreSQL smoke test (default when business enabled)
 if ($doBusiness) {
-  $TestScript = Join-Path $BASE_DIR "tests/fixtures/test_postgres.py"
+  $TestScript = Join-Path $BASE_DIR "deploy/check_postgres.py"
   if (Test-Path $TestScript) {
     Write-Host "[start] Running PostgreSQL smoke test..." -ForegroundColor Cyan
     & $PythonExe $TestScript
@@ -810,7 +821,7 @@ if ($doBusiness) {
     }
   }
   else {
-    Write-Warning "[start] PostgreSQL test script not found; skipping smoke test."
+    throw "[start] PostgreSQL readiness script not found: $TestScript"
   }
 }
 

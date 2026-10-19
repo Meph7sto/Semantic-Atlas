@@ -78,7 +78,7 @@ else {
   }
 }
 
-if ($NginxExe) {
+if ($NginxExe -and (Test-Path $NginxPidPath)) {
   try {
     & $NginxExe -c $NginxConf -p $DeployDir -g "pid logs/nginx.pid;" -s stop
   }
@@ -122,7 +122,7 @@ if ($nginxLeft.Count -gt 0) {
   Write-Warning "Nginx 停止失败，可能有残留进程。"
 }
 else {
-  Write-Host "Nginx 停止成功。"
+  Write-Host "Nginx 已停止或未运行。"
 }
 
 Write-Host "[stop] 结束占用端口的进程: 8000 (FastAPI Inference), 5002 (FastAPI Business), 8008 (Nginx), 5173 (Vite Dev)"
