@@ -22,10 +22,6 @@ function buildUnauthorizedRedirectTarget() {
         return null
     }
 
-    if (pathname === '/alpha' || pathname.startsWith('/alpha/')) {
-        return `/guide?${query}`
-    }
-
     return `/beta/login?${query}`
 }
 

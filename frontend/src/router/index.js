@@ -364,13 +364,6 @@ const router = createRouter({
 })
 
 function buildAuthFallbackRoute(to) {
-    if (to.path === '/alpha' || to.path.startsWith('/alpha/')) {
-        return {
-            name: 'guide',
-            query: { redirect: to.fullPath }
-        }
-    }
-
     return {
         name: 'beta-login',
         query: { redirect: to.fullPath }
